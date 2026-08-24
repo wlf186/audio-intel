@@ -27,8 +27,10 @@ def _try_lock(handle: BinaryIO) -> bool:
     if os.name == "nt":
         if _msvcrt is None:  # pragma: no cover - defensive platform guard
             raise RuntimeError("Windows locking support is unavailable")
-        handle.seek(0)
-        if not handle.read(1):
+        # Reading a byte locked by another Windows process raises EACCES, so
+        # initialize new lock files using metadata before attempting the lock.
+        if os.fstat(handle.fileno()).st_size == 0:
+            handle.seek(0)
             handle.write(b"\0")
             handle.flush()
         handle.seek(0)

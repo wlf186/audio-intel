@@ -466,7 +466,8 @@ def system_snapshot() -> dict[str, Any]:
         import psutil
 
         memory = psutil.virtual_memory()
-        disk = psutil.disk_usage(settings.root)
+        # psutil's Windows extension requires str rather than a PathLike object.
+        disk = psutil.disk_usage(str(settings.root))
         hardware: dict[str, Any] = {
             "cpu_percent": psutil.cpu_percent(interval=None),
             "memory_used": memory.used,

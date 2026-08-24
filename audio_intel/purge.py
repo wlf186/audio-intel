@@ -9,18 +9,25 @@ from .config import settings
 from .db import compact_database, delete_job_record, prepare_job_for_purge
 
 
+def _allocated_bytes_for_entry(path: Path) -> int:
+    """Return allocated bytes where available, falling back to logical size."""
+    stat = path.lstat()
+    blocks = getattr(stat, "st_blocks", None)
+    return blocks * 512 if blocks is not None else stat.st_size
+
+
 def allocated_bytes(path: Path) -> int:
     if not path.exists() and not path.is_symlink():
         return 0
-    total = path.lstat().st_blocks * 512
+    total = _allocated_bytes_for_entry(path)
     if not path.is_dir() or path.is_symlink():
         return total
     for directory, directories, files in os.walk(path, followlinks=False):
         root = Path(directory)
         for name in directories:
-            total += (root / name).lstat().st_blocks * 512
+            total += _allocated_bytes_for_entry(root / name)
         for name in files:
-            total += (root / name).lstat().st_blocks * 512
+            total += _allocated_bytes_for_entry(root / name)
     return total
 
 
