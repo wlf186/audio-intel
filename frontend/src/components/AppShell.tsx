@@ -1,0 +1,9 @@
+import type {ReactNode} from 'react'
+import {AudioLines,CircleHelp,ListMusic,Mic2,MonitorCog} from 'lucide-react'
+import {BrandMark} from './BrandMark'
+
+export type Page='asr'|'tts'|'jobs'|'system'
+const items:[Page,string,string,typeof AudioLines][]=[['asr','01','转写工作台',AudioLines],['tts','02','语音合成',Mic2],['jobs','03','任务记录',ListMusic],['system','04','系统状态',MonitorCog]]
+export function AppShell({page,setPage,children,services,connectionError}:{page:Page;setPage:(p:Page)=>void;children:ReactNode;services:string[];connectionError?:string}){
+ return <div className="app-shell" data-page={page}><header><button className="brand" aria-label="返回转写工作台" onClick={()=>setPage('asr')}><BrandMark/></button><nav aria-label="主导航">{items.map(([id,index,label,Icon])=><button key={id} className={page===id?'active':''} aria-current={page===id?'page':undefined} onClick={()=>setPage(id)}><span className="nav-index">{index}</span><Icon size={19}/><span className="nav-label">{label}</span></button>)}</nav><div className="head-actions"><span className="local-mode"><i/>LOCAL // OFFLINE</span><a href="/docs" target="_blank" rel="noreferrer" title="API 文档" aria-label="打开 API 文档"><CircleHelp/></a></div></header><main>{connectionError?<div className="connection-banner" role="alert">服务连接异常：{connectionError}</div>:null}{children}</main><footer><span className="footer-id">CORE_SYS</span><span><i className={services.includes('asr')?'ready':''}/> ASR_ENGINE <b>{services.includes('asr')?'READY':'OFFLINE'}</b></span><span><i className={services.includes('tts')?'ready':''}/> TTS_ENGINE <b>{services.includes('tts')?'READY':'OFFLINE'}</b></span><span className="local-copy">▣ DATA_LOCAL // 完全本地模式</span><span className="bind">NET_LISTEN // 0.0.0.0:20810</span></footer></div>
+}

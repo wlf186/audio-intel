@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 72" role="img" aria-labelledby="title">
+  <title id="title">Sandevistan-Audio</title>
+  <path fill="#f4ed00" d="M3 10h37l13 14-9 9-11-12H18l12 14-12 14h15l11-12 9 9-13 16H3l25-27L3 10Z"/>
+  <path fill="#f4ed00" d="M109 10H72L59 24l9 9 11-12h15L82 35l12 14H79L68 37l-9 9 13 16h37L84 35l25-25Z"/>
+  <path fill="#070b0c" d="M42 33h6v4h-6zm22 0h6v4h-6z"/>
+  <path fill="#e9eee9" d="M47 27h3v16h-3zm5-9h4v34h-4zm6 5h3v24h-3z"/>
+  <path fill="#00e7ee" d="M57 15h2v9h-2zm0 24h2v18h-2z"/>
+</svg>

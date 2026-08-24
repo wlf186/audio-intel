@@ -1,0 +1,16 @@
+{
+  "name": "audio-intel-ui",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.15.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
+    "build": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && vite build",
+    "preview": "vite preview",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {"lucide-react": "^0.468.0", "react": "^19.1.1", "react-dom": "^19.1.1"},
+  "devDependencies": {"@playwright/test": "^1.60.0", "@types/react": "^19.1.10", "@types/react-dom": "^19.1.7", "typescript": "^5.9.2", "vite": "^7.1.3"}
+}
