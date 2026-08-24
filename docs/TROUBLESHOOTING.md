@@ -1,5 +1,7 @@
 # 故障排查
 
+以下命令默认使用 Linux 的 `service.sh`。Windows 11 原生用户将其替换为 `service.cmd`，并优先查看 [Windows 专项排障](WINDOWS.md#5-常见问题)。
+
 ## 快速诊断
 
 ```bash

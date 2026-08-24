@@ -1,0 +1,142 @@
+# Windows 11 原生部署
+
+本文只适用于 **Windows 11 x64 原生环境**，不使用 WSL 或 Docker。项目提供 PowerShell 一键安装和运维脚本；模型、Python、缓存、日志、数据库和生成结果都保存在仓库目录内。
+
+Windows 自动化会在 GitHub 的 Windows runner 上验证依赖解析、后端测试、前端构建和 mock 全链路。当前尚未在 Windows NVIDIA 实机上完成真实模型推理验收，因此不要把 CI 通过理解为 Windows GPU 性能或真实推理结果保证。
+
+## 1. 机器与软件要求
+
+- Windows 11 x64，建议完成 Windows Update。
+- 16 GB 内存起步，32 GB 推荐；完整安装至少预留 30 GB。
+- 本地 NTFS 磁盘，建议克隆到短路径，例如 `C:\ai\audio-intel`。避免 OneDrive、网络盘和移动盘。
+- Git for Windows、Node.js 22 LTS（自带 npm）。Python 3.12 和 uv 由项目安装到 `.runtime\`。
+- GPU 可选。GPU 模式需要 NVIDIA 显卡、可用的 `nvidia-smi` 和 **580 或更高版本驱动**。安装器使用官方 PyTorch 2.11 CUDA 13.0 wheel，通常不需要另装完整 CUDA Toolkit。
+
+官方参考：[PyTorch Windows 安装](https://pytorch.org/get-started/locally/)、[CUDA 驱动兼容矩阵](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html)、[uv Windows 安装](https://docs.astral.sh/uv/getting-started/installation/)。
+
+## 2. 全新安装
+
+打开 Windows Terminal 或 PowerShell：
+
+```powershell
+New-Item -ItemType Directory -Path C:\ai -Force | Out-Null
+Set-Location C:\ai
+git clone https://github.com/wlf186/audio-intel.git
+Set-Location audio-intel
+
+.\service.cmd doctor
+.\service.cmd setup all
+.\service.cmd start all
+
+Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
+```
+
+浏览器访问 `http://127.0.0.1:20810`，API 文档位于 `http://127.0.0.1:20810/docs`。
+
+只安装或启动部分能力：
+
+```powershell
+.\service.cmd setup asr
+.\service.cmd start asr
+
+.\service.cmd setup tts
+.\service.cmd start tts
+
+.\service.cmd status
+.\service.cmd logs all
+.\service.cmd stop all
+```
+
+`start asr` 和 `start tts` 都会同时确保 API 已启动。关闭 PowerShell 窗口不会主动停止后台进程。
+
+## 3. 代理与配置
+
+代理变量必须在执行 setup 的同一个 PowerShell 中设置：
+
+```powershell
+$env:HTTP_PROXY = 'http://127.0.0.1:7890'
+$env:HTTPS_PROXY = $env:HTTP_PROXY
+.\service.cmd setup all
+```
+
+企业代理使用自签 CA 时，优先导出组织提供的 PEM 证书，不要关闭 TLS 校验：
+
+```powershell
+$env:UV_SYSTEM_CERTS = '1'
+$env:REQUESTS_CA_BUNDLE = 'C:\certs\company-ca.pem'
+```
+
+运行配置同样使用当前 PowerShell 的环境变量；脚本不会自动读取 `.env`：
+
+```powershell
+$env:AUDIO_INTEL_PORT = '20810'
+$env:AUDIO_INTEL_API_KEY = 'replace-with-a-long-random-value'
+.\service.cmd start all
+```
+
+## 4. GPU 验证
+
+```powershell
+nvidia-smi
+.\.runtime\asr\Scripts\python.exe -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU only')"
+```
+
+驱动低于 580 时先从 NVIDIA 官方渠道更新。RTX 笔记本通常使用 WDDM，桌面和浏览器会占用一部分显存；4 GB 显卡出现 OOM 时关闭其他 GPU 程序后重试，或为任务选择 CPU。服务不会把 GPU 任务静默回退到 CPU。
+
+## 5. 常见问题
+
+### PowerShell 拒绝运行脚本
+
+优先通过 `service.cmd` 调用，它只为当前进程使用 `ExecutionPolicy Bypass`，不会更改用户或系统策略。若组织组策略仍然阻止执行，请联系管理员，不要把系统策略永久改成 `Unrestricted`。
+
+### 路径过长或模型解压失败
+
+将仓库移动到 `C:\ai\audio-intel` 等短路径。必要时以管理员身份启用 Windows 长路径并重启：
+
+```powershell
+New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
+  -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force
+```
+
+该设置并不能修复所有旧程序，因此短路径仍是首选。参见 [Microsoft MAX_PATH 文档](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation)。
+
+### Hugging Face 提示无法创建符号链接
+
+下载仍可继续，但可能重复占用磁盘。可在 Windows 设置中启用“开发人员模式”，或以管理员身份安装；不要仅为了隐藏问题而关闭所有警告。参见 [Hugging Face 缓存限制](https://huggingface.co/docs/huggingface_hub/guides/manage-cache)。
+
+### 下载很慢或中断
+
+```powershell
+Get-ChildItem Env: | Where-Object Name -Match 'proxy'
+Invoke-WebRequest -Method Head https://huggingface.co
+Invoke-WebRequest -Method Head https://modelscope.cn
+.\service.cmd setup all
+```
+
+模型下载支持续传，只有下载完成才写入 `.complete`。不要手工创建该文件。避免把仓库放在实时同步目录；杀毒软件扫描大型权重时也可能显著拖慢下载和加载，仅在确认代码与模型来源可信后才考虑对项目的 `models`、`cache`、`.runtime` 做最小范围排除。
+
+### 端口或防火墙问题
+
+```powershell
+Get-NetTCPConnection -LocalPort 20810 -ErrorAction SilentlyContinue
+.\service.cmd status
+.\service.cmd logs all
+```
+
+本机访问不需要新增防火墙规则。局域网访问只应允许“专用网络”，并应配置 `AUDIO_INTEL_API_KEY`；不要把 20810 直接暴露到公网。远程页面在普通 HTTP 下可能无法获得麦克风权限，文件上传不受影响。
+
+### 内存不足、任务暂停或文件被占用
+
+保留 Windows 的系统管理分页文件，长时间 TTS/ASR 时连接电源并禁用自动睡眠。升级、移动 `.runtime` 或删除模型前先执行 `.\service.cmd stop all`。若任务因强制关机中断，重启服务后队列会恢复过期任务。
+
+## 6. 升级与验证
+
+```powershell
+.\service.cmd stop all
+git pull --ff-only
+.\service.cmd setup all
+.\service.cmd start all
+.\.runtime\api\Scripts\python.exe scripts\smoke_test.py
+```
+
+升级前备份 `data\`。不要从其他机器复制 `.runtime\`；在目标机器重新 setup。模型目录可以复制，但每个模型的 `.complete` 内容必须与项目固定的 revision 一致。

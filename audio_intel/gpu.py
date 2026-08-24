@@ -1,15 +1,63 @@
 from __future__ import annotations
 
-import fcntl
+import errno
+import os
 import subprocess
 import time
 from contextlib import contextmanager
-from typing import Callable, Iterator
+from typing import BinaryIO, Callable, Iterator
+
+try:  # POSIX advisory file locks
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - exercised on Windows CI
+    _fcntl = None
+
+try:  # Windows byte-range file locks
+    import msvcrt as _msvcrt
+except ImportError:  # pragma: no cover - exercised on Linux CI
+    _msvcrt = None
 
 from .config import settings
 
 
 COMPUTE_DEVICES = {"cpu", "gpu"}
+
+
+def _try_lock(handle: BinaryIO) -> bool:
+    if os.name == "nt":
+        if _msvcrt is None:  # pragma: no cover - defensive platform guard
+            raise RuntimeError("Windows locking support is unavailable")
+        handle.seek(0)
+        if not handle.read(1):
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            _msvcrt.locking(handle.fileno(), _msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError as exc:
+            if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+                return False
+            raise
+    if _fcntl is None:  # pragma: no cover - defensive platform guard
+        raise RuntimeError("POSIX locking support is unavailable")
+    try:
+        _fcntl.flock(handle.fileno(), _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        return True
+    except BlockingIOError:
+        return False
+
+
+def _unlock(handle: BinaryIO) -> None:
+    if os.name == "nt":
+        if _msvcrt is None:  # pragma: no cover - defensive platform guard
+            raise RuntimeError("Windows locking support is unavailable")
+        handle.seek(0)
+        _msvcrt.locking(handle.fileno(), _msvcrt.LK_UNLCK, 1)
+        return
+    if _fcntl is None:  # pragma: no cover - defensive platform guard
+        raise RuntimeError("POSIX locking support is unavailable")
+    _fcntl.flock(handle.fileno(), _fcntl.LOCK_UN)
 
 
 def gpu_snapshot(index: int = 0) -> dict[str, int | str] | None:
@@ -52,16 +100,14 @@ def gpu_lease(on_wait: Callable[[], None] | None = None, poll_seconds: float = 0
     with lock_path.open("a+b") as handle:
         next_notice = 0.0
         while True:
-            try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if _try_lock(handle):
                 break
-            except BlockingIOError:
-                now = time.monotonic()
-                if on_wait is not None and now >= next_notice:
-                    on_wait()
-                    next_notice = now + 2.0
-                time.sleep(poll_seconds)
+            now = time.monotonic()
+            if on_wait is not None and now >= next_notice:
+                on_wait()
+                next_notice = now + 2.0
+            time.sleep(poll_seconds)
         try:
             yield
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            _unlock(handle)

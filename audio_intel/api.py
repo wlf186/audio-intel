@@ -455,7 +455,7 @@ def create_app() -> FastAPI:
         index = settings.frontend_dir / "index.html"
         if index.is_file():
             return FileResponse(index)
-        return HTMLResponse("<h1>Sandevistan-Audio</h1><p>Frontend is not built. Run ./service.sh setup api.</p>", status_code=503)
+        return HTMLResponse("<h1>Sandevistan-Audio</h1><p>Frontend is not built. Run service.sh or service.cmd setup api.</p>", status_code=503)
 
     return app
 

@@ -10,6 +10,7 @@ Treat `models/`, `data/`, `cache/`, `tmp/`, `logs/`, `run/`, and `.runtime/` as 
 
 - `./service.sh setup all` installs project-local runtimes and downloads required models.
 - `./service.sh start all` starts the API, ASR worker, and TTS worker on port 20810. Use `status`, `logs all`, and `stop all` for operations.
+- On native Windows 11, use `service.cmd` with the same actions and targets; see `docs/WINDOWS.md`.
 - `.runtime/api/bin/python -m pytest -q` runs backend tests.
 - `corepack pnpm@10.15.1 --dir frontend typecheck` checks TypeScript.
 - `corepack pnpm@10.15.1 --dir frontend build` creates the production UI in `frontend/dist/`.

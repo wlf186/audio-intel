@@ -13,6 +13,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def runtime_python(name: str) -> Path:
+    if platform.system() == "Windows":
+        return ROOT / ".runtime" / name / "Scripts" / "python.exe"
+    return ROOT / ".runtime" / name / "bin" / "python"
+
+
 def command_version(command: str, argument: str = "--version") -> str | None:
     if shutil.which(command) is None:
         return None
@@ -42,11 +48,13 @@ def check_port() -> str:
         sock.close()
 
 
+system = platform.system()
+machine = platform.machine().lower()
 report = {
     "root": str(ROOT),
     "python": sys.version.split()[0],
     "platform": {"system": platform.system(), "machine": platform.machine()},
-    "supported_platform": platform.system() == "Linux" and platform.machine() == "x86_64",
+    "supported_platform": system in {"Linux", "Windows"} and machine in {"x86_64", "amd64"},
     "tools": {name: command_version(name) for name in ("git", "curl", "node", "corepack")},
     "memory_total_bytes": memory_total(),
     "disk_free_bytes": shutil.disk_usage(ROOT).free,
@@ -54,7 +62,7 @@ report = {
     "port_20810": check_port(),
     "ffmpeg_required": False,
     "nvidia_smi": shutil.which("nvidia-smi") is not None,
-    "runtime_environments": {name: (ROOT / ".runtime" / name / "bin/python").is_file() for name in ("api", "asr", "tts")},
+    "runtime_environments": {name: runtime_python(name).is_file() for name in ("api", "asr", "tts")},
     "frontend": (ROOT / "frontend/dist/index.html").is_file(),
     "models": {name: (ROOT / "models" / name / ".complete").is_file() for name in (
         "Qwen3-ASR-0.6B", "Qwen3-ForcedAligner-0.6B", "FSMN-VAD", "CAM++",

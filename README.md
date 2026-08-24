@@ -4,7 +4,9 @@
 
 ## 快速复原
 
-当前自动安装流程验证于 **Ubuntu 22.04/24.04 x86_64**。需要 Git、curl、tar、Node.js 20.19+ 与 Corepack；Python 3.12 和 uv 会安装到项目目录。完整 ASR + TTS 建议至少 16 GB 内存（32 GB 更舒适）和 30 GB 可用磁盘。NVIDIA GPU 可选；GPU 模式要求 `nvidia-smi` 正常且驱动兼容 PyTorch CUDA 13.0，CPU 模式不需要显卡。
+自动安装支持 **Ubuntu 22.04/24.04 x86_64** 和 **Windows 11 x64 原生环境**。完整 ASR + TTS 建议至少 16 GB 内存（32 GB 更舒适）和 30 GB 可用磁盘。NVIDIA GPU 可选；GPU 模式要求 `nvidia-smi` 正常且驱动兼容 PyTorch CUDA 13.0，CPU 模式不需要显卡。Windows 自动化会在 Windows CI 验证，但真实模型尚无 Windows GPU 实机验收记录。
+
+Linux 需要 Git、curl、tar、Node.js 20.19+ 与 Corepack；Python 3.12 和 uv 会安装到项目目录：
 
 ```bash
 git clone https://github.com/wlf186/audio-intel.git
@@ -20,6 +22,17 @@ cd audio-intel
 ./service.sh start all
 
 curl http://127.0.0.1:20810/api/v1/health
+```
+
+Windows 11 原生环境建议使用本地 NTFS 短路径和 Node.js 22 LTS：
+
+```powershell
+git clone https://github.com/wlf186/audio-intel.git C:\ai\audio-intel
+Set-Location C:\ai\audio-intel
+.\service.cmd doctor
+.\service.cmd setup all
+.\service.cmd start all
+Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 ```
 
 浏览器访问 `http://127.0.0.1:20810`，API 文档位于 `http://127.0.0.1:20810/docs`。只需要部分能力时可减少模型下载：
@@ -43,7 +56,7 @@ export HTTPS_PROXY=$HTTP_PROXY
 ./service.sh setup all
 ```
 
-详细步骤见 [安装与复原](docs/INSTALL.md)，常见下载、GPU、端口与运行问题见 [故障排查](docs/TROUBLESHOOTING.md)。局域网可用本机 IP 访问；普通 HTTP 下浏览器录音权限受浏览器安全策略限制，文件上传不受影响。
+Linux 详细步骤见 [安装与复原](docs/INSTALL.md)，Windows 原生部署见 [Windows 11 指南](docs/WINDOWS.md)，通用问题见 [故障排查](docs/TROUBLESHOOTING.md)。局域网可用本机 IP 访问；普通 HTTP 下浏览器录音权限受浏览器安全策略限制，文件上传不受影响。
 
 ## 运行架构
 
@@ -156,6 +169,15 @@ corepack pnpm@10.15.1 --dir frontend typecheck
 corepack pnpm@10.15.1 --dir frontend test:e2e
 AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all  # 仅供快速管线验收，不是生产默认值
 ./scripts/smoke_test.sh
+```
+
+Windows mock 全链路验证：
+
+```powershell
+$env:AUDIO_INTEL_MOCK_MODE = '1'
+.\service.cmd start all
+.\.runtime\api\Scripts\python.exe scripts\smoke_test.py
+.\service.cmd stop all
 ```
 
 生产默认值始终是真实模型模式；mock 模式只用于验证任务队列、API、导出和 UI。

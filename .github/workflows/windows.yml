@@ -1,0 +1,72 @@
+name: Native Windows smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      AUDIO_INTEL_MOCK_MODE: "1"
+      AUDIO_INTEL_PORT: "20810"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Native preflight
+        shell: cmd
+        run: service.cmd doctor
+
+      - name: Install API runtime and build frontend
+        shell: cmd
+        run: service.cmd setup api
+
+      - name: Resolve Windows model dependencies
+        shell: powershell
+        run: |
+          $uv = ".\.runtime\bin\uv.exe"
+          $python = ".\.runtime\api\Scripts\python.exe"
+          & $uv pip install --python $python --dry-run --python-platform x86_64-pc-windows-msvc --python-version 3.12 --torch-backend cu130 torch==2.11.0 torchaudio==2.11.0 -r requirements-asr.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $uv pip install --python $python --dry-run --python-platform x86_64-pc-windows-msvc --python-version 3.12 --torch-backend cu130 torch==2.11.0 torchaudio==2.11.0 -r requirements-tts.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Backend and frontend checks
+        shell: powershell
+        run: |
+          & .\.runtime\api\Scripts\python.exe -m pytest -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & corepack.cmd pnpm@10.15.1 --dir frontend typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Start and exercise native services
+        shell: cmd
+        run: |
+          service.cmd start all
+          service.cmd status
+          .runtime\api\Scripts\python.exe scripts\smoke_test.py
+
+      - name: Stop services
+        if: always()
+        shell: cmd
+        run: service.cmd stop all
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-logs
+          path: logs/
+          if-no-files-found: ignore

@@ -2,7 +2,7 @@
 
 ## 1. 支持范围
 
-当前一键脚本仅验证于 Ubuntu 22.04/24.04 x86_64。macOS、Windows、ARM 和容器部署尚未验证。CPU 可运行全部能力，但 ASR 默认选择 GPU、TTS 默认选择 CPU；无 GPU 时请在页面或 API 中选择 `cpu`。
+本文命令针对 Ubuntu 22.04/24.04 x86_64。原生 Windows 11 x64 使用独立的 [Windows 部署指南](WINDOWS.md)；macOS、ARM 和容器部署尚未验证。CPU 可运行全部能力，但 ASR 默认选择 GPU、TTS 默认选择 CPU；无 GPU 时请在页面或 API 中选择 `cpu`。
 
 建议资源：16 GB RAM 起步、32 GB RAM 推荐、完整安装预留 30 GB 磁盘。已验证 GPU 为 4 GB RTX A1000。安装脚本固定 Python 3.12、PyTorch 2.11.0 CUDA 13.0 和受控的模型 revision。
 
