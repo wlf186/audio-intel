@@ -85,7 +85,7 @@ function Ensure-Environment {
     $python = Get-PythonPath $Name
     if (-not (Test-Path $python)) {
         Invoke-WithRetry { & $UvBin python install 3.12 } "Install managed Python 3.12"
-        Invoke-Native { & $UvBin venv --managed-python --python 3.12 (Join-Path $RuntimeDir $Name) } "Create $Name environment"
+        Invoke-Native { & $UvBin venv --python 3.12 (Join-Path $RuntimeDir $Name) } "Create $Name environment"
     }
     return $python
 }
