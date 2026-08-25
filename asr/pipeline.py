@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import subprocess
@@ -31,6 +32,17 @@ SHORT_DIARIZATION_COSINE_THRESHOLD = 0.4
 MAX_AUTO_SPEAKERS = 15
 VOICEPRINT_COSINE_THRESHOLD = 0.31
 VOICEPRINT_EMBEDDING_MODEL = "CAM++/campplus_cn_common"
+AUTO_REFINE_LOW_SUPPORT_TURNS = 2
+AUTO_REFINE_STABLE_TURNS = 3
+AUTO_REFINE_MIN_TURN_SECONDS = 1.0
+AUTO_REFINE_MAX_TURN_SECONDS = 12.0
+AUTO_REFINE_WINDOW_COSINE = 0.50
+AUTO_REFINE_TURN_COSINE = 0.535
+AUTO_REFINE_WINDOW_MARGIN = 0.08
+AUTO_REFINE_TURN_MARGIN = 0.04
+
+
+logger = logging.getLogger(__name__)
 
 
 def decode_audio(source: Path, output: Path) -> tuple[Any, int]:
@@ -153,6 +165,13 @@ def diarize(
     vectors = torch.cat([item["spk_embedding"] for item in embeddings], dim=0).detach().cpu().numpy()
     cluster = ClusterBackend(merge_thr=0.78).cpu()
     labels = _cluster_speakers(vectors, speakers, cluster)
+    if speakers is None:
+        try:
+            labels = _refine_auto_speaker_labels(
+                audio, chunks, vad_with_audio, labels, vectors, model, batch_size,
+            )
+        except Exception as exc:
+            logger.warning("Automatic speaker refinement skipped: %s", exc)
     matches: dict[str, dict[str, Any]] = {}
     voiceprint_status = {"status": "disabled", "indexed_samples": 0}
     speaker_centers = None
@@ -279,6 +298,181 @@ def _cluster_speakers(vectors: Any, speakers: int | None, cluster: Any) -> Any:
     if len(np.unique(labels)) > MAX_AUTO_SPEAKERS:
         labels = fcluster(tree, MAX_AUTO_SPEAKERS, criterion="maxclust") - 1
     return labels.astype("int", copy=False)
+
+
+def _canonical_labels(labels: Any) -> Any:
+    import numpy as np
+
+    mapping: dict[int, int] = {}
+    canonical = []
+    for value in labels:
+        key = int(value)
+        mapping.setdefault(key, len(mapping))
+        canonical.append(mapping[key])
+    return np.asarray(canonical, dtype="int")
+
+
+def _cosine_centers(vectors: Any, labels: Any) -> Any:
+    import numpy as np
+
+    centers = np.stack([vectors[labels == index].mean(axis=0) for index in range(int(labels.max()) + 1)])
+    norms = np.linalg.norm(centers, axis=1, keepdims=True)
+    return centers / np.maximum(norms, np.finfo(centers.dtype).eps)
+
+
+def _mutual_nearest(similarities: Any) -> Any:
+    import numpy as np
+
+    values = similarities.copy()
+    np.fill_diagonal(values, -np.inf)
+    return np.argmax(values, axis=1)
+
+
+def _pair_margin(similarities: Any, first: int, second: int) -> float:
+    alternatives = [
+        float(similarities[member, other])
+        for member in (first, second)
+        for other in range(len(similarities))
+        if other not in (first, second)
+    ]
+    return float(similarities[first, second]) - max(alternatives, default=-1.0)
+
+
+def _candidate_auto_merges(labels: Any, vectors: Any, turns: list[Any]) -> list[tuple[int, int]]:
+    counts = Counter(int(item[2]) for item in turns)
+    if not any(count <= AUTO_REFINE_LOW_SUPPORT_TURNS for count in counts.values()):
+        return []
+    centers = _cosine_centers(vectors, labels)
+    similarities = centers @ centers.T
+    nearest = _mutual_nearest(similarities)
+    candidates = []
+    for low, low_count in counts.items():
+        if low_count > AUTO_REFINE_LOW_SUPPORT_TURNS:
+            continue
+        stable = int(nearest[low])
+        if counts.get(stable, 0) < AUTO_REFINE_STABLE_TURNS or int(nearest[stable]) != low:
+            continue
+        score = float(similarities[low, stable])
+        margin = _pair_margin(similarities, low, stable)
+        if score >= AUTO_REFINE_WINDOW_COSINE and margin >= AUTO_REFINE_WINDOW_MARGIN:
+            candidates.append((low, stable))
+    return candidates
+
+
+def _turn_cluster_centers(
+    audio: Any,
+    turns: list[Any],
+    candidate_clusters: set[int],
+    model: Any,
+    batch_size: int,
+) -> dict[int, Any]:
+    import numpy as np
+    import torch
+
+    selected: list[tuple[int, float, float]] = []
+    speaker_ids = sorted({int(item[2]) for item in turns})
+    for speaker_id in speaker_ids:
+        limit = 3 if speaker_id in candidate_clusters else 1
+        eligible = sorted(
+            (
+                (float(item[1]) - float(item[0]), float(item[0]), float(item[1]))
+                for item in turns
+                if int(item[2]) == speaker_id and float(item[1]) - float(item[0]) >= AUTO_REFINE_MIN_TURN_SECONDS
+            ),
+            reverse=True,
+        )[:limit]
+        for duration, start, end in eligible:
+            if duration > AUTO_REFINE_MAX_TURN_SECONDS:
+                midpoint = (start + end) / 2
+                start = midpoint - AUTO_REFINE_MAX_TURN_SECONDS / 2
+                end = midpoint + AUTO_REFINE_MAX_TURN_SECONDS / 2
+            selected.append((speaker_id, start, end))
+    if not selected:
+        return {}
+    output = model.generate(
+        input=[audio[int(start * 16000):int(end * 16000)] for _, start, end in selected],
+        cache={},
+        is_final=True,
+        batch_size=batch_size,
+    )
+    vectors = torch.cat([item["spk_embedding"] for item in output], dim=0).detach().cpu().numpy()
+    if len(vectors) != len(selected):
+        raise ValueError("CAM++ returned an unexpected number of turn embeddings")
+    centers = {}
+    for speaker_id in speaker_ids:
+        indices = [index for index, item in enumerate(selected) if item[0] == speaker_id]
+        if not indices:
+            continue
+        center = vectors[indices].mean(axis=0)
+        norm = float(np.linalg.norm(center))
+        if math.isfinite(norm) and norm > 0:
+            centers[speaker_id] = center / norm
+    return centers
+
+
+def _accepted_auto_merges(
+    candidates: list[tuple[int, int]],
+    turn_centers: dict[int, Any],
+) -> tuple[dict[int, int], list[tuple[int, int, float, float]]]:
+    import numpy as np
+
+    ordered_ids = sorted(turn_centers)
+    if len(ordered_ids) < 2:
+        return {}, []
+    turn_matrix = np.stack([turn_centers[speaker_id] for speaker_id in ordered_ids])
+    similarities = turn_matrix @ turn_matrix.T
+    nearest = _mutual_nearest(similarities)
+    positions = {speaker_id: index for index, speaker_id in enumerate(ordered_ids)}
+    merges: dict[int, int] = {}
+    accepted = []
+    for low, stable in candidates:
+        if low not in positions or stable not in positions:
+            continue
+        first, second = positions[low], positions[stable]
+        if int(nearest[first]) != second or int(nearest[second]) != first:
+            continue
+        score = float(similarities[first, second])
+        margin = _pair_margin(similarities, first, second)
+        if score < AUTO_REFINE_TURN_COSINE or margin < AUTO_REFINE_TURN_MARGIN:
+            continue
+        merges[low] = stable
+        accepted.append((low, stable, round(score, 4), round(margin, 4)))
+    return merges, accepted
+
+
+def _refine_auto_speaker_labels(
+    audio: Any,
+    chunks: list[Any],
+    vad_with_audio: list[Any],
+    labels: Any,
+    vectors: Any,
+    model: Any,
+    batch_size: int,
+) -> Any:
+    import numpy as np
+    from funasr.models.campplus.utils import postprocess
+
+    labels = _canonical_labels(labels)
+    if labels.size <= 1 or int(labels.max()) == 0:
+        return labels
+    preliminary = postprocess(chunks, vad_with_audio, labels, vectors)
+    candidates = _candidate_auto_merges(labels, vectors, preliminary)
+    if not candidates:
+        return labels
+    candidate_clusters = {speaker_id for pair in candidates for speaker_id in pair}
+    turn_centers = _turn_cluster_centers(audio, preliminary, candidate_clusters, model, batch_size)
+    merges, accepted = _accepted_auto_merges(candidates, turn_centers)
+    if not merges:
+        return labels
+    refined = np.asarray([merges.get(int(label), int(label)) for label in labels], dtype="int")
+    refined = _canonical_labels(refined)
+    logger.info(
+        "Automatic speaker refinement merged %d -> %d clusters: %s",
+        int(labels.max()) + 1,
+        int(refined.max()) + 1,
+        accepted,
+    )
+    return refined
 
 
 def run_stage(operation: str, payload: dict[str, Any], directory: Path) -> dict[str, Any]:

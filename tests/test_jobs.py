@@ -60,6 +60,24 @@ def test_processing_time_accumulates_across_retries(tmp_path, monkeypatch) -> No
     assert first_total + 2 <= finished["processing_seconds"] <= first_total + 5
 
 
+def test_cancel_request_is_immediate_and_idempotent(tmp_path, monkeypatch) -> None:
+    local = local_settings(tmp_path)
+    install_settings(local, monkeypatch)
+    db_module.init_db()
+    queued = db_module.create_job("asr", "queued", {"input_path": "local"})
+    running = db_module.create_job("tts", "running", {"text": "busy"})
+    db_module.claim_job("tts", "worker-one")
+
+    assert db_module.request_cancel(queued["id"])["state"] == "cancelled"
+    cancelling = db_module.request_cancel(running["id"])
+    assert cancelling["state"] == "running"
+    assert cancelling["stage"] == "cancelling"
+    assert cancelling["cancel_requested"] is True
+    repeated = db_module.request_cancel(running["id"])
+    assert repeated["state"] == "running"
+    assert repeated["stage"] == "cancelling"
+
+
 def test_historical_jobs_backfill_compute_device_names(tmp_path, monkeypatch) -> None:
     local = local_settings(tmp_path)
     install_settings(local, monkeypatch)

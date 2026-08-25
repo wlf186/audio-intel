@@ -78,7 +78,7 @@ Linux 详细步骤见 [安装与复原](docs/INSTALL.md)，Windows 原生部署�
 
 ASR 按 FSMN-VAD 的语音区间合并为约 20–60 秒的块。11 种对齐器支持语言返回字/词级时间戳，并利用这些时间戳把 ASR 大块重新切成连续的说话人轮次；即使选择“仅句级时间戳”，多人任务也会在内部对齐后隐藏字词明细。短录音会绕过 FunASR 少于 20 个声纹窗口时的单人回退，已知人数使用 KMeans，自动人数使用短音频余弦聚类。其他语言仍返回语音段时间戳。CAM++ 采用 single-active-speaker 模式，真正重叠语音仍只会归属给一位说话人。
 
-ASR 默认使用 GPU，TTS 默认使用 CPU。两者均可按任务选择 `cpu` 或 `gpu`：CPU 使用 FP32，GPU 使用 BF16，不使用量化；GPU 任务通过项目内的全局锁串行执行，避免 4 GB 显存同时装载多个大模型。ASR 的 FSMN-VAD 和 CAM++ 始终在 CPU 上运行，设备选项会同时切换 ASR 主模型和 ForcedAligner；GPU 模式下 CAM++ 会在 CPU 内部批处理，并与 GPU 识别和对齐重叠执行。TTS GPU 模式会在显存充足时对同一任务的相邻文本块执行 batch 2，声码器仍逐块解码；显存不足或发生 OOM 时自动在当前任务内恢复为串行处理。GPU 不可用时会明确返回 `503`，不会静默回退到 CPU。可通过 `GET /api/v1/capabilities` 查询当前设备能力、说话人数上限与默认值。
+ASR 默认使用 GPU，TTS 默认使用 CPU。两者均可按任务选择 `cpu` 或 `gpu`：CPU 使用 FP32，GPU 使用 BF16，不使用量化；GPU 任务通过项目内的全局锁串行执行，避免 4 GB 显存同时装载多个大模型。ASR 的 FSMN-VAD 和 CAM++ 始终在 CPU 上运行，设备选项会同时切换 ASR 主模型和 ForcedAligner；GPU 模式下 CAM++ 会在 CPU 内部批处理，并与 GPU 识别和对齐重叠执行。自动说话人数会对低支持度的疑似拆分簇执行一次保守的整段声纹复核，只有滑窗和整段两个视角均有充分区分度时才合并；手动指定人数不受该复核影响。TTS GPU 模式会在显存充足时对同一任务的相邻文本块执行 batch 2，声码器仍逐块解码；显存不足或发生 OOM 时自动在当前任务内恢复为串行处理。GPU 不可用时会明确返回 `503`，不会静默回退到 CPU。可通过 `GET /api/v1/capabilities` 查询当前设备能力、说话人数上限与默认值。
 
 “声纹库”可为同一人员保存多个独立样本。样本既可从同一 ASR 说话人的选中段落加入，也可上传音频并创建一个可见的 ASR 入库任务来自动生成转写和字词时间戳。ASR 的 `use_voiceprint_library` 默认开启，只在普通说话人分离结束后用 CAM++ 匹配并命名，不会改变聚类、说话人 ID 或分段；任务中的名称是历史快照，之后修改库中人员名称不会回写历史任务。
 
@@ -150,7 +150,7 @@ curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/
 - `GET /api/v1/events`（SSE）
 - `GET /v1/models` 与 OpenAI 兼容音频端点
 
-任务响应中的 `processing_seconds` 是累计实际处理耗时，不包含排队等待，并会跨失败重试累加；运行中任务配合 `processing_as_of` 可实时显示。`compute_device` 返回 `cpu` 或 `gpu`，`compute_device_name` 返回任务提交/执行时持久化的具体设备名；GPU 名称动态取自实际 `cuda:0`，不会因以后更换硬件而改写历史记录。永久删除会清理任务输入、输出、错误文件、临时目录和 SQLite 记录，并在批次结束后执行安全擦除、WAL 截断与数据库压缩。
+任务响应中的 `processing_seconds` 是累计实际处理耗时，不包含排队等待，并会跨失败重试累加；运行中任务配合 `processing_as_of` 可实时显示。`compute_device` 返回 `cpu` 或 `gpu`，`compute_device_name` 返回任务提交/执行时持久化的具体设备名；GPU 名称动态取自实际 `cuda:0`，不会因以后更换硬件而改写历史记录。ASR/TTS worker 使用常驻监督器管理可复用的任务执行进程；取消先等待短暂的协作退出，随后在必要时终止当前任务的完整进程树，确认 GPU 与文件锁释放后才进入“已取消”。默认协作等待 1 秒，可通过 `AUDIO_INTEL_CANCEL_GRACE_SECONDS` 调整。永久删除会清理任务输入、输出、错误文件、临时目录和 SQLite 记录，并在批次结束后执行安全擦除、WAL 截断与数据库压缩。
 
 ## OpenAI 兼容消费
 

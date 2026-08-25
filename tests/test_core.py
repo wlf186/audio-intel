@@ -5,6 +5,8 @@ from threading import Event
 from types import SimpleNamespace
 import wave
 
+import numpy as np
+
 from audio_intel.config import settings
 from audio_intel.utils import safe_filename, timecode, waveform_peaks
 from asr import pipeline as asr_pipeline
@@ -110,6 +112,52 @@ def test_asr_voiceprint_match_changes_labels_without_changing_speaker_ids() -> N
         "id": "Speaker_0", "label": "尼克杨", "label_source": "voiceprint",
         "voiceprint_match": {"person_id": "voice_nick", "name": "尼克杨", "score": .72},
     }]
+
+
+def test_asr_auto_speaker_refinement_finds_split_stable_speaker() -> None:
+    labels = np.asarray([0, 0, 1, 1, 2, 2, 2, 3])
+    vectors = np.asarray([
+        [1.0, 0.0, 0.0], [0.99, 0.01, 0.0],
+        [0.0, 1.0, 0.0], [0.01, 0.99, 0.0],
+        [0.0, 0.0, 1.0], [0.0, 0.02, 0.98], [0.0, 0.0, 1.0],
+        [0.02, 0.0, 0.98],
+    ])
+    turns = [
+        (0.0, 1.0, 0), (3.0, 4.0, 0), (6.0, 7.0, 0),
+        (1.0, 2.0, 1), (4.0, 5.0, 1), (7.0, 8.0, 1),
+        (2.0, 3.0, 2), (5.0, 6.0, 2), (8.0, 9.0, 2),
+        (9.0, 10.0, 3),
+    ]
+
+    candidates = asr_pipeline._candidate_auto_merges(labels, vectors, turns)
+    assert candidates == [(3, 2)]
+
+    merges, _ = asr_pipeline._accepted_auto_merges(candidates, {
+        0: np.asarray([1.0, 0.0, 0.0]),
+        1: np.asarray([0.0, 1.0, 0.0]),
+        2: np.asarray([0.0, 0.0, 1.0]),
+        3: np.asarray([0.02, 0.0, 0.9998]),
+    })
+    assert merges == {3: 2}
+
+
+def test_asr_auto_speaker_refinement_preserves_uncertain_one_off_speaker() -> None:
+    candidates = [(3, 2)]
+    merges, accepted = asr_pipeline._accepted_auto_merges(candidates, {
+        0: np.asarray([1.0, 0.0, 0.0]),
+        1: np.asarray([0.0, 1.0, 0.0]),
+        2: np.asarray([0.0, 0.0, 1.0]),
+        # Similar enough to warrant a second look, but not enough independent
+        # evidence to erase a genuine participant who only spoke once.
+        3: np.asarray([0.84, 0.0, 0.5426]),
+    })
+    assert merges == {}
+    assert accepted == []
+
+
+def test_asr_auto_speaker_labels_are_canonical_after_merge() -> None:
+    labels = asr_pipeline._canonical_labels(np.asarray([7, 7, 2, 9, 2]))
+    assert labels.tolist() == [0, 0, 1, 2, 1]
 
 
 def test_asr_gpu_overlaps_batched_diarization(tmp_path, monkeypatch) -> None:

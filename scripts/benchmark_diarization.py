@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,10 @@ DIALOGUE = [
     ("C", "Uncle_Fu", "我来跟他们确认。"),
     ("A", "Vivian", "行，下午三点再同步。"),
 ]
+ONE_OFF_SPEAKERS = [
+    ("D", "Serena", "我补充一句，客户确认周五可以验收。"),
+    ("D", "Eric", "我补充一句，客户确认周五可以验收。"),
+]
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -51,10 +56,11 @@ def synthesize(output: Path, compute_device: str) -> None:
     np.random.seed(20810)
     print(f"Loading TTS model on {compute_device}...", flush=True)
     model = load_model("preset", compute_device)
+    utterances = DIALOGUE + ONE_OFF_SPEAKERS
     waveforms = []
     rate = 24000
-    for base in range(0, len(DIALOGUE), 2):
-        batch = DIALOGUE[base:base + 2]
+    for base in range(0, len(utterances), 2):
+        batch = utterances[base:base + 2]
         with _sequential_speech_decode(model):
             generated, item_rate = model.generate_custom_voice(
                 text=[item[2] for item in batch],
@@ -66,13 +72,20 @@ def synthesize(output: Path, compute_device: str) -> None:
         if item_rate != rate:
             raise RuntimeError(f"Unexpected sample rate: {item_rate}")
         waveforms.extend(np.asarray(item, dtype=np.float32) for item in generated)
-        print(f"Synthesized {min(base + 2, len(DIALOGUE))}/{len(DIALOGUE)} turns", flush=True)
+        print(f"Synthesized {min(base + 2, len(utterances))}/{len(utterances)} turns", flush=True)
 
-    def compose(name: str, count: int, overlap: bool = False, fixed_gap: float | None = None) -> None:
+    def compose(
+        name: str,
+        indices: list[int],
+        overlap: bool = False,
+        fixed_gap: float | None = None,
+    ) -> None:
         starts = []
         cursor = 0
         overlap_indices = {2, 5, 8, 11, 14}
-        for index, waveform in enumerate(waveforms[:count]):
+        selected_waveforms = [waveforms[index] for index in indices]
+        selected_utterances = [utterances[index] for index in indices]
+        for index, waveform in enumerate(selected_waveforms):
             if index == 0:
                 start = 0
             elif overlap and index in overlap_indices:
@@ -85,9 +98,10 @@ def synthesize(output: Path, compute_device: str) -> None:
 
         mixed = np.zeros(cursor, dtype=np.float32)
         reference = []
-        for index, (start, waveform) in enumerate(zip(starts, waveforms[:count])):
+        for (start, waveform), (speaker, voice, text) in zip(
+            zip(starts, selected_waveforms), selected_utterances,
+        ):
             mixed[start:start + len(waveform)] += waveform
-            speaker, voice, text = DIALOGUE[index]
             reference.append({
                 "speaker": speaker,
                 "voice": voice,
@@ -102,10 +116,21 @@ def synthesize(output: Path, compute_device: str) -> None:
         write_json(output / f"{name}.reference.json", reference)
         print(f"Wrote {name}.wav ({len(mixed) / rate:.2f}s)", flush=True)
 
-    compose("rapid-clean", len(DIALOGUE))
-    compose("short-known3", 4, fixed_gap=0.12)
-    compose("rapid-overlap", len(DIALOGUE), overlap=True)
-    write_json(output / "manifest.json", {"sample_rate": rate, "voices": ["Vivian", "Dylan", "Uncle_Fu"]})
+    all_dialogue = list(range(len(DIALOGUE)))
+    one_off_position = 10
+    compose("rapid-clean", all_dialogue)
+    compose("short-known3", list(range(4)), fixed_gap=0.12)
+    compose("rapid-overlap", all_dialogue, overlap=True)
+    compose("single-speaker", [0, 3, 7, 11, 14], fixed_gap=0.12)
+    compose("rapid-two", [index for index, item in enumerate(DIALOGUE) if item[0] in {"A", "B"}])
+    for offset, (_, voice, _) in enumerate(ONE_OFF_SPEAKERS):
+        one_off_index = len(DIALOGUE) + offset
+        sequence = all_dialogue[:one_off_position] + [one_off_index] + all_dialogue[one_off_position:]
+        compose(f"fourth-once-{voice.lower()}", sequence)
+    write_json(output / "manifest.json", {
+        "sample_rate": rate,
+        "voices": ["Vivian", "Dylan", "Uncle_Fu", "Serena", "Eric"],
+    })
 
 
 def score_result(reference: list[dict[str, Any]], result: dict[str, Any]) -> dict[str, Any]:
@@ -133,13 +158,18 @@ def score_result(reference: list[dict[str, Any]], result: dict[str, Any]) -> dic
     single_speaker_frames = 0
     correct_frames = 0
     overlap_frames = 0
+    speaker_frames = {speaker: 0 for speaker in reference_speakers}
+    correct_speaker_frames = {speaker: 0 for speaker in reference_speakers}
     for timestamp in times:
         active_reference = [item["speaker"] for item in reference if item["start"] <= timestamp < item["end"]]
         active_prediction = [item["speaker"] for item in predicted if item["start"] <= timestamp < item["end"]]
         if len(active_reference) == 1:
+            reference_speaker = active_reference[0]
             single_speaker_frames += 1
-            if active_prediction and mapping.get(active_prediction[0]) == active_reference[0]:
+            speaker_frames[reference_speaker] += 1
+            if active_prediction and mapping.get(active_prediction[0]) == reference_speaker:
                 correct_frames += 1
+                correct_speaker_frames[reference_speaker] += 1
         elif len(active_reference) > 1:
             overlap_frames += 1
 
@@ -171,6 +201,10 @@ def score_result(reference: list[dict[str, Any]], result: dict[str, Any]) -> dic
         "speaker_count": len(result.get("speakers", [])),
         "segment_count": len(predicted),
         "single_speaker_accuracy": round(correct_frames / max(single_speaker_frames, 1), 4),
+        "speaker_recall": {
+            speaker: round(correct_speaker_frames[speaker] / max(speaker_frames[speaker], 1), 4)
+            for speaker in reference_speakers
+        },
         "turn_boundary_f1_500ms": round(boundary_f1, 4),
         "overlap_seconds": round(overlap_frames * 0.01, 3),
         "text_preserved": "".join(item["text"] for item in predicted) == result["text"],
@@ -185,6 +219,10 @@ def evaluate(output: Path, compute_device: str) -> None:
         "rapid-clean": [None, 3],
         "short-known3": [None, 3],
         "rapid-overlap": [3],
+        "single-speaker": [None],
+        "rapid-two": [None],
+        "fourth-once-serena": [None],
+        "fourth-once-eric": [None],
     }
     report = {}
     failures = []
@@ -210,19 +248,33 @@ def evaluate(output: Path, compute_device: str) -> None:
         reference = json.loads((output / f"{name}.reference.json").read_text(encoding="utf-8"))
         for speaker_count in speaker_counts:
             mode = "auto" if speaker_count is None else f"known{speaker_count}"
+            started = time.perf_counter()
             diarization = diarize(audio, vad, speaker_count, batch_size=16)
+            diarization_seconds = time.perf_counter() - started
             result = assemble(aligned, diarization, duration, True)
             write_json(output / "results" / f"{name}-{mode}.json", result)
             metrics = score_result(reference, result)
-            diagnostic = name == "rapid-overlap" or (name == "rapid-clean" and speaker_count is None)
-            expected_segments = 14 if name == "rapid-clean" else 4
+            metrics["diarization_seconds"] = round(diarization_seconds, 3)
+            diagnostic = name == "rapid-overlap"
+            expected_speakers = {
+                "single-speaker": 1,
+                "rapid-two": 2,
+                "fourth-once-serena": 4,
+                "fourth-once-eric": 4,
+            }.get(name, 3)
+            expected_segments = {
+                "single-speaker": 1,
+                "rapid-two": 8,
+            }.get(name, 14 if name in {"rapid-clean", "fourth-once-serena", "fourth-once-eric"} else 4)
             passed = metrics["text_preserved"]
             if not diagnostic:
-                passed = passed and metrics["speaker_count"] == 3
+                passed = passed and metrics["speaker_count"] == expected_speakers
                 passed = passed and metrics["segment_count"] >= expected_segments
                 passed = passed and metrics["single_speaker_accuracy"] >= 0.90
                 if name == "rapid-clean":
                     passed = passed and metrics["turn_boundary_f1_500ms"] >= 0.85
+                if name.startswith("fourth-once-"):
+                    passed = passed and metrics["speaker_recall"].get("D", 0.0) >= 0.90
             metrics["diagnostic_only"] = diagnostic
             metrics["passed"] = passed
             report[f"{name}-{mode}"] = metrics

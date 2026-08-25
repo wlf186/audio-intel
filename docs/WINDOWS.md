@@ -129,7 +129,7 @@ Get-NetTCPConnection -LocalPort 20810 -ErrorAction SilentlyContinue
 
 ### 内存不足、任务暂停或文件被占用
 
-保留 Windows 的系统管理分页文件，长时间 TTS/ASR 时连接电源并禁用自动睡眠。升级、移动 `.runtime` 或删除模型前先执行 `.\service.cmd stop all`。若任务因强制关机中断，重启服务后队列会恢复过期任务。
+保留 Windows 的系统管理分页文件，长时间 TTS/ASR 时连接电源并禁用自动睡眠。升级、移动 `.runtime` 或删除模型前先执行 `.\service.cmd stop all`。执行中任务通过界面取消时，worker 会终止该任务的完整 Windows 进程树，确认退出后才开放删除；若任务因强制关机中断，重启服务会先清理已记录的遗留执行进程，再恢复过期任务。
 
 ## 6. 升级与验证
 

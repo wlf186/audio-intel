@@ -304,14 +304,27 @@ def claim_job(kind: str, worker_id: str) -> dict[str, Any] | None:
 
 
 def request_cancel(job_id: str) -> dict[str, Any] | None:
-    job = get_job(job_id)
-    if job is None:
-        return None
-    if job["state"] == "queued":
-        return finish_job(job_id, "cancelled", stage="cancelled", progress=job["progress"], cancel_requested=1)
-    if job["state"] == "running":
-        return update_job(job_id, cancel_requested=1, stage="cancelling")
-    return job
+    now = utcnow()
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT state FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if row is None:
+            db.execute("COMMIT")
+            return None
+        if row["state"] == "queued":
+            db.execute(
+                """UPDATE jobs SET state='cancelled',stage='cancelled',cancel_requested=1,
+                   finished_at=?,updated_at=? WHERE id=? AND state='queued'""",
+                (now, now, job_id),
+            )
+        elif row["state"] == "running":
+            db.execute(
+                """UPDATE jobs SET cancel_requested=1,stage='cancelling',updated_at=?
+                   WHERE id=? AND state='running'""",
+                (now, job_id),
+            )
+        db.execute("COMMIT")
+    return get_job(job_id)
 
 
 def retry_job(job_id: str) -> dict[str, Any] | None:

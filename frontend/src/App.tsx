@@ -40,6 +40,7 @@ export default function App(){
  const openJob=(job:Job)=>{if(job.state==='succeeded'){setSelected(current=>({...current,[job.kind]:job.id}));setReveal({kind:job.kind,jobId:job.id,token:++revealSequence.current});navigate(job.kind)}else navigate('jobs')}
  const onRevealHandled=useCallback((token:number)=>setReveal(current=>current?.token===token?undefined:current),[])
  const onJobSubmitted=useCallback((job:Job)=>{refreshSequence.current+=1;setJobs(current=>[job,...current.filter(item=>item.id!==job.id)].slice(0,jobLimit));setConnectionError('')},[])
+ const onJobUpdated=useCallback((snapshot:Job)=>setJobs(current=>current.map(job=>job.id===snapshot.id?snapshot:job)),[])
  const onJobResultUpdated=useCallback((jobId:string,result:JobResult)=>setJobs(current=>current.map(job=>job.id===jobId?{...job,result,updated_at:new Date().toISOString()}:job)),[])
  const gpuAvailable=health?Boolean(health.hardware.gpu):undefined
  const login=async(key:string)=>{await api.login(key);setAuth({required:true,authenticated:true});setAuthError('')}
@@ -48,7 +49,7 @@ export default function App(){
   {page==='asr'?<AsrPage jobs={jobs} onJobSubmitted={onJobSubmitted} onJobResultUpdated={onJobResultUpdated} selectedJobId={selected.asr} onSelect={openJob} gpuAvailable={gpuAvailable} maxSpeakers={capabilities?.asr.speaker_count.max||15} voiceprints={voiceprints} refreshVoiceprints={refreshVoiceprints} revealRequest={reveal?.kind==='asr'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
   {page==='tts'?<TtsPage jobs={jobs} onJobSubmitted={onJobSubmitted} selectedJobId={selected.tts} onSelect={openJob} gpuAvailable={gpuAvailable} voiceprints={voiceprints} revealRequest={reveal?.kind==='tts'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
   {page==='voiceprints'?<VoiceprintsPage people={voiceprints} refresh={refreshVoiceprints} onJobSubmitted={onJobSubmitted} gpuAvailable={gpuAvailable}/>:null}
-  {page==='jobs'?<JobsPage jobs={jobs} refresh={refresh} openJob={openJob}/>:null}
+  {page==='jobs'?<JobsPage jobs={jobs} refresh={refresh} openJob={openJob} onJobUpdated={onJobUpdated}/>:null}
   {page==='system'?<SystemPage health={health}/>:null}
  </AppShell>{!auth||!authenticated?<AuthGate loading={!auth&&!authError} error={authError} onLogin={login}/>:null}</>
 }

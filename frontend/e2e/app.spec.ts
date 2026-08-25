@@ -166,6 +166,33 @@ test('task duration, single/multi/select-all and partial batch deletion are inte
  await page.screenshot({path:'/tmp/audio-intel-jobs-batch-mobile.png',fullPage:false})
 })
 
+test('running task shows safe cancellation and becomes deletable after shutdown',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ const now=new Date().toISOString()
+ const running={id:'tts-cancel',kind:'tts',state:'running',stage:'synthesizing_1_of_1',progress:.45,display_name:'待停止合成',created_at:now,updated_at:now,started_at:now,processing_seconds:8,processing_as_of:now,attempts:1,request:{compute_device:'gpu'}}
+ const cancelling={...running,stage:'cancelling',updated_at:new Date(Date.now()+1000).toISOString()}
+ const cancelled={...cancelling,state:'cancelled',stage:'cancelled',finished_at:new Date(Date.now()+2000).toISOString(),updated_at:new Date(Date.now()+2000).toISOString()}
+ let statusRequests=0
+ await page.route('**/api/v1/jobs/tts-cancel/cancel',route=>route.fulfill({json:cancelling}))
+ await page.route('**/api/v1/jobs/tts-cancel',route=>{statusRequests+=1;return route.fulfill({json:statusRequests<2?cancelling:cancelled})})
+ await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[running]}}))
+ await page.goto('/#jobs')
+ const row=page.locator('.table-row').filter({hasText:'待停止合成'})
+ await row.getByTitle('取消任务').click()
+ await expect(row.getByLabel('正在安全停止 待停止合成')).toBeDisabled()
+ await expect(row).toContainText('正在安全停止')
+ await expect(page.getByRole('status')).toContainText('现在可以重试或永久删除')
+ await expect(row.getByTitle('永久删除')).toBeVisible()
+ await page.screenshot({path:'/tmp/audio-intel-cancelled-desktop.png',fullPage:false})
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await expect(row.getByTitle('永久删除')).toBeVisible()
+ await page.screenshot({path:'/tmp/audio-intel-cancelled-mobile.png',fullPage:false})
+ expect(errors).toEqual([])
+})
+
 test('first TTS submission appears immediately and survives a stale poll',async({page})=>{
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))

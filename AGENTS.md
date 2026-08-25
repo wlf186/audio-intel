@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-`audio_intel/` contains the FastAPI gateway, SQLite job queue, workers, GPU coordination, model manifest, and cleanup logic. ASR and TTS pipelines live in `asr/` and `tts/`. The React 19/Vite UI is under `frontend/src/`, browser tests are in `frontend/e2e/`, and backend tests are in `tests/`. Operational scripts belong in `scripts/`; `service.sh` is the supported service entrypoint.
+`audio_intel/` contains the FastAPI gateway, SQLite job queue, worker supervisors, GPU coordination, model manifest, and cleanup logic. Each ASR/TTS supervisor owns one reusable execution process so a cancelled task can be terminated without stopping its queue; terminal cancellation must only be recorded after the complete task process tree exits. ASR and TTS pipelines live in `asr/` and `tts/`. The React 19/Vite UI is under `frontend/src/`, browser tests are in `frontend/e2e/`, and backend tests are in `tests/`. Operational scripts belong in `scripts/`; `service.sh` is the supported service entrypoint.
 
 Python is split into four boundaries: `api`, `asr`, `tts`, and the internal `aligner` used by TTS for overlong clone references. Never install qwen-asr into the TTS environment: qwen-asr and qwen-tts require incompatible Transformers versions. Aligner is not a worker or a public service target; `setup tts` owns both environments.
 
