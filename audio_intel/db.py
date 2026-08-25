@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import unicodedata
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -12,6 +13,7 @@ from .config import settings
 
 
 JOB_STATES = {"queued", "running", "succeeded", "failed", "cancelled"}
+VOICEPRINT_SAMPLE_STATES = {"pending", "ready", "failed"}
 
 
 def utcnow() -> str:
@@ -114,7 +116,73 @@ def init_db() -> None:
                             "UPDATE jobs SET request_json=?,updated_at=? WHERE id=?",
                             (json.dumps(request, ensure_ascii=False), utcnow(), row["id"]),
                         )
-                db.execute("UPDATE schema_meta SET version=3 WHERE version<3")
+            db.execute("UPDATE schema_meta SET version=3 WHERE version<3")
+        version = db.execute("SELECT MIN(version) FROM schema_meta").fetchone()[0]
+        if version < 4:
+            db.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS voiceprint_people (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    name_key TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS voiceprint_samples (
+                    id TEXT PRIMARY KEY,
+                    person_id TEXT NOT NULL REFERENCES voiceprint_people(id) ON DELETE CASCADE,
+                    state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','ready','failed')),
+                    language TEXT NOT NULL DEFAULT 'Auto',
+                    audio_path TEXT,
+                    transcript TEXT,
+                    words_json TEXT,
+                    duration REAL,
+                    embedding BLOB,
+                    embedding_model TEXT,
+                    embedding_error TEXT,
+                    source_job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+                    source_segment_id INTEGER,
+                    source_speaker_id TEXT,
+                    error_message TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_voiceprint_source_segment
+                    ON voiceprint_samples(source_job_id, source_segment_id)
+                    WHERE source_job_id IS NOT NULL AND source_segment_id IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS idx_voiceprint_samples_person
+                    ON voiceprint_samples(person_id, created_at);
+                CREATE TABLE IF NOT EXISTS voiceprint_aliases (
+                    alias_id TEXT PRIMARY KEY,
+                    person_id TEXT NOT NULL REFERENCES voiceprint_people(id) ON DELETE CASCADE
+                );
+                """
+            )
+            for row in db.execute("SELECT * FROM voices ORDER BY created_at,id").fetchall():
+                key = person_name_key(row["name"])
+                person = db.execute(
+                    "SELECT id FROM voiceprint_people WHERE name_key=?", (key,)
+                ).fetchone()
+                person_id = person["id"] if person else row["id"]
+                if person is None:
+                    db.execute(
+                        "INSERT INTO voiceprint_people(id,name,name_key,created_at,updated_at) VALUES(?,?,?,?,?)",
+                        (person_id, row["name"], key, row["created_at"], row["updated_at"]),
+                    )
+                db.execute(
+                    "INSERT OR IGNORE INTO voiceprint_aliases(alias_id,person_id) VALUES(?,?)",
+                    (row["id"], person_id),
+                )
+                db.execute(
+                    """INSERT INTO voiceprint_samples(
+                       id,person_id,state,language,audio_path,transcript,created_at,updated_at
+                       ) VALUES(?,?,?,?,?,?,?,?)""",
+                    (
+                        "sample_" + uuid.uuid4().hex[:16], person_id, "ready", row["language"],
+                        row["ref_audio_path"], row["ref_text"], row["created_at"], row["updated_at"],
+                    ),
+                )
+            db.execute("UPDATE schema_meta SET version=4 WHERE version<4")
 
 
 def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -128,6 +196,10 @@ def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if "cancel_requested" in item:
         item["cancel_requested"] = bool(item["cancel_requested"])
     return item
+
+
+def person_name_key(name: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", name).strip().split()).casefold()
 
 
 def create_job(kind: str, display_name: str, request: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
@@ -327,28 +399,193 @@ def list_workers() -> list[dict[str, Any]]:
     return [_decode(row) for row in rows]  # type: ignore[misc]
 
 
-def create_voice(name: str, language: str, ref_audio_path: str, ref_text: str) -> dict[str, Any]:
-    voice_id = "voice_" + uuid.uuid4().hex[:16]
+def create_voiceprint_person(name: str, person_id: str | None = None) -> dict[str, Any]:
+    clean_name = " ".join(unicodedata.normalize("NFKC", name).strip().split())
+    if not clean_name:
+        raise ValueError("Voiceprint person name is required")
     now = utcnow()
+    person_id = person_id or "voice_" + uuid.uuid4().hex[:16]
     with connect() as db:
         db.execute(
-            "INSERT INTO voices(id,name,language,ref_audio_path,ref_text,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-            (voice_id, name, language, ref_audio_path, ref_text, now, now),
+            "INSERT INTO voiceprint_people(id,name,name_key,created_at,updated_at) VALUES(?,?,?,?,?)",
+            (person_id, clean_name, person_name_key(clean_name), now, now),
         )
-    return get_voice(voice_id)  # type: ignore[return-value]
+        db.execute(
+            "INSERT OR IGNORE INTO voiceprint_aliases(alias_id,person_id) VALUES(?,?)",
+            (person_id, person_id),
+        )
+    return get_voiceprint_person(person_id)  # type: ignore[return-value]
 
 
-def get_voice(voice_id: str) -> dict[str, Any] | None:
+def get_voiceprint_person(person_id: str) -> dict[str, Any] | None:
     with connect() as db:
-        row = db.execute("SELECT * FROM voices WHERE id=?", (voice_id,)).fetchone()
+        alias = db.execute(
+            "SELECT person_id FROM voiceprint_aliases WHERE alias_id=?", (person_id,)
+        ).fetchone()
+        resolved = alias["person_id"] if alias else person_id
+        row = db.execute("SELECT * FROM voiceprint_people WHERE id=?", (resolved,)).fetchone()
     return dict(row) if row else None
 
 
-def list_voices() -> list[dict[str, Any]]:
+def find_voiceprint_person(name: str) -> dict[str, Any] | None:
     with connect() as db:
-        return [dict(row) for row in db.execute("SELECT * FROM voices ORDER BY created_at DESC").fetchall()]
+        row = db.execute(
+            "SELECT * FROM voiceprint_people WHERE name_key=?", (person_name_key(name),)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def rename_voiceprint_person(person_id: str, name: str) -> dict[str, Any] | None:
+    clean_name = " ".join(unicodedata.normalize("NFKC", name).strip().split())
+    if not clean_name:
+        raise ValueError("Voiceprint person name is required")
+    now = utcnow()
+    with connect() as db:
+        cursor = db.execute(
+            "UPDATE voiceprint_people SET name=?,name_key=?,updated_at=? WHERE id=?",
+            (clean_name, person_name_key(clean_name), now, person_id),
+        )
+    return get_voiceprint_person(person_id) if cursor.rowcount else None
+
+
+def delete_voiceprint_person_record(person_id: str) -> bool:
+    with connect() as db:
+        cursor = db.execute("DELETE FROM voiceprint_people WHERE id=?", (person_id,))
+    return cursor.rowcount == 1
+
+
+def create_voiceprint_sample(
+    person_id: str,
+    *,
+    state: str = "pending",
+    language: str = "Auto",
+    audio_path: str | None = None,
+    transcript: str | None = None,
+    words: list[dict[str, Any]] | None = None,
+    duration: float | None = None,
+    source_job_id: str | None = None,
+    source_segment_id: int | None = None,
+    source_speaker_id: str | None = None,
+    sample_id: str | None = None,
+) -> dict[str, Any]:
+    if state not in VOICEPRINT_SAMPLE_STATES:
+        raise ValueError("Invalid voiceprint sample state")
+    sample_id = sample_id or "sample_" + uuid.uuid4().hex[:16]
+    now = utcnow()
+    with connect() as db:
+        db.execute(
+            """INSERT INTO voiceprint_samples(
+               id,person_id,state,language,audio_path,transcript,words_json,duration,
+               source_job_id,source_segment_id,source_speaker_id,created_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                sample_id, person_id, state, language, audio_path, transcript,
+                json.dumps(words, ensure_ascii=False) if words is not None else None,
+                duration, source_job_id, source_segment_id, source_speaker_id, now, now,
+            ),
+        )
+    return get_voiceprint_sample(sample_id)  # type: ignore[return-value]
+
+
+def _decode_voiceprint_sample(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    item = dict(row)
+    raw_words = item.pop("words_json", None)
+    item["words"] = json.loads(raw_words) if raw_words else []
+    return item
+
+
+def get_voiceprint_sample(sample_id: str) -> dict[str, Any] | None:
+    with connect() as db:
+        row = db.execute("SELECT * FROM voiceprint_samples WHERE id=?", (sample_id,)).fetchone()
+    return _decode_voiceprint_sample(row)
+
+
+def list_voiceprint_samples(person_id: str | None = None) -> list[dict[str, Any]]:
+    clause = "WHERE person_id=?" if person_id else ""
+    params = (person_id,) if person_id else ()
+    with connect() as db:
+        rows = db.execute(
+            f"SELECT * FROM voiceprint_samples {clause} ORDER BY created_at DESC,id", params
+        ).fetchall()
+    return [_decode_voiceprint_sample(row) for row in rows]  # type: ignore[misc]
+
+
+def list_voiceprint_people() -> list[dict[str, Any]]:
+    samples = list_voiceprint_samples()
+    by_person: dict[str, list[dict[str, Any]]] = {}
+    for sample in samples:
+        by_person.setdefault(sample["person_id"], []).append(sample)
+    with connect() as db:
+        rows = db.execute("SELECT * FROM voiceprint_people ORDER BY name_key,id").fetchall()
+    return [{**dict(row), "samples": by_person.get(row["id"], [])} for row in rows]
+
+
+def update_voiceprint_sample(sample_id: str, **values: Any) -> dict[str, Any] | None:
+    allowed = {
+        "state", "language", "audio_path", "transcript", "words_json", "duration",
+        "embedding", "embedding_model", "embedding_error", "source_job_id",
+        "source_segment_id", "source_speaker_id", "error_message",
+    }
+    changes = {key: value for key, value in values.items() if key in allowed}
+    if "state" in changes and changes["state"] not in VOICEPRINT_SAMPLE_STATES:
+        raise ValueError("Invalid voiceprint sample state")
+    if "words_json" in changes and not isinstance(changes["words_json"], str):
+        changes["words_json"] = json.dumps(changes["words_json"], ensure_ascii=False)
+    if not changes:
+        return get_voiceprint_sample(sample_id)
+    changes["updated_at"] = utcnow()
+    assignment = ",".join(f"{key}=?" for key in changes)
+    with connect() as db:
+        db.execute(f"UPDATE voiceprint_samples SET {assignment} WHERE id=?", (*changes.values(), sample_id))
+    return get_voiceprint_sample(sample_id)
+
+
+def delete_voiceprint_sample_record(sample_id: str) -> bool:
+    with connect() as db:
+        cursor = db.execute("DELETE FROM voiceprint_samples WHERE id=?", (sample_id,))
+    return cursor.rowcount == 1
+
+
+def create_voice(name: str, language: str, ref_audio_path: str, ref_text: str) -> dict[str, Any]:
+    person = find_voiceprint_person(name) or create_voiceprint_person(name)
+    create_voiceprint_sample(
+        person["id"], state="ready", language=language,
+        audio_path=ref_audio_path, transcript=ref_text,
+    )
+    return get_voice(person["id"])  # type: ignore[return-value]
+
+
+def get_voice(voice_id: str) -> dict[str, Any] | None:
+    person = get_voiceprint_person(voice_id)
+    if person is None:
+        return None
+    samples = [
+        sample for sample in list_voiceprint_samples(person["id"])
+        if sample["state"] == "ready" and sample.get("audio_path") and sample.get("transcript")
+    ]
+    if not samples:
+        return None
+    sample = samples[0]
+    return {
+        "id": person["id"], "name": person["name"], "language": sample["language"],
+        "ref_audio_path": sample["audio_path"], "ref_text": sample["transcript"],
+        "sample_id": sample["id"], "words": sample.get("words") or [], "duration": sample.get("duration"),
+        "created_at": person["created_at"], "updated_at": person["updated_at"],
+    }
+
+
+def list_voices() -> list[dict[str, Any]]:
+    voices = []
+    for person in list_voiceprint_people():
+        voice = get_voice(person["id"])
+        if voice is not None:
+            voices.append(voice)
+    return voices
 
 
 def delete_voice_record(voice_id: str) -> None:
-    with connect() as db:
-        db.execute("DELETE FROM voices WHERE id=?", (voice_id,))
+    person = get_voiceprint_person(voice_id)
+    if person is not None:
+        delete_voiceprint_person_record(person["id"])

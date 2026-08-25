@@ -11,11 +11,28 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import settings
-from .db import claim_job, finish_job, get_job, init_db, recover_stale, update_job, upsert_worker, utcnow
+from .db import (
+    claim_job, finish_job, get_job, init_db, recover_stale, update_job,
+    update_voiceprint_sample, upsert_worker, utcnow,
+)
 
 
 class JobCancelled(RuntimeError):
     pass
+
+
+def _fail_voiceprint_import(job: dict[str, Any], message: str) -> None:
+    request = job.get("request") or {}
+    if request.get("purpose") != "voiceprint_import":
+        return
+    try:
+        update_voiceprint_sample(
+            request.get("voiceprint_sample_id", ""), state="failed",
+            error_message=message[:500],
+        )
+    except Exception:
+        # Sample bookkeeping must never prevent the job from reaching a terminal state.
+        pass
 
 
 class JobContext:
@@ -76,11 +93,13 @@ def run(kind: str) -> None:
                 result_json=result, heartbeat_at=utcnow(),
             )
         except JobCancelled as exc:
+            _fail_voiceprint_import(job, str(exc))
             finish_job(
                 job["id"], "cancelled", stage="cancelled", error_code="cancelled",
                 error_message=str(exc), heartbeat_at=utcnow(),
             )
         except Exception as exc:  # keep the worker alive for subsequent jobs
+            _fail_voiceprint_import(job, str(exc))
             error_path = settings.jobs_dir / job["id"] / "error.log"
             error_path.parent.mkdir(parents=True, exist_ok=True)
             error_path.write_text(traceback.format_exc(), encoding="utf-8")

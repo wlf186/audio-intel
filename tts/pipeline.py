@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import math
+import json
 import re
+import subprocess
+import sys
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Iterator
@@ -16,6 +19,7 @@ _cpu_models: dict[str, Any] = {}
 GPU_TTS_BATCH_SIZE = 2
 GPU_TTS_MIN_TOTAL_MIB = 3500
 GPU_TTS_MIN_EFFECTIVE_FREE_MIB = 1100
+MAX_CLONE_REFERENCE_SECONDS = 15.0
 
 
 def split_text(text: str, limit: int = 300) -> list[str]:
@@ -162,6 +166,8 @@ def process_job(context: JobContext) -> dict[str, Any]:
         lease.__enter__()
     model = None
     try:
+        if request["voice_mode"] != "preset":
+            _prepare_clone_reference(context, request, compute_device)
         model = None if settings.mock_mode else load_model(request["voice_mode"], compute_device)
         return _process_loaded(context, request, chunks, model, compute_device)
     finally:
@@ -249,7 +255,13 @@ def _process_loaded(
     mime = {"wav": "audio/wav", "flac": "audio/flac", "mp3": "audio/mpeg"}[output_format]
     return {
         "duration": round(len(merged) / rate, 3), "sample_rate": rate, "format": output_format,
-        "voice_mode": request["voice_mode"], "speaker": request.get("speaker") or request.get("voice_profile_id"),
+        "voice_mode": request["voice_mode"],
+        "speaker": request.get("speaker") or request.get("voiceprint_person_name") or request.get("voice_profile_id"),
+        "voiceprint_person_id": request.get("voiceprint_person_id"),
+        "voiceprint_sample_id": request.get("voiceprint_sample_id"),
+        "reference_duration_original": request.get("reference_duration_original"),
+        "reference_duration_used": request.get("reference_duration_used"),
+        "reference_truncated": bool(request.get("reference_truncated")),
         "compute_device": compute_device,
         "compute_device_name": compute_device_name(compute_device, request.get("compute_device_name")),
         "precision": "FP32" if compute_device == "cpu" else "BF16",
@@ -257,3 +269,105 @@ def _process_loaded(
         "waveform": waveform_peaks(merged, 240),
         "artifacts": [{"name": path.name, "path": str(path), "mime_type": mime, "size_bytes": path.stat().st_size}],
     }
+
+
+def _word_text_end(text: str, words: list[dict[str, Any]], last_index: int) -> int | None:
+    cursor = 0
+    end_offset = None
+    for index, word in enumerate(words):
+        token = str(word.get("text", ""))
+        if not token:
+            continue
+        offset = text.find(token, cursor)
+        if offset < 0:
+            return None
+        cursor = offset + len(token)
+        if index == last_index:
+            end_offset = cursor
+            break
+    return end_offset
+
+
+def _align_reference(
+    context: JobContext,
+    request: dict[str, Any],
+    duration: float,
+    compute_device: str,
+) -> list[dict[str, Any]]:
+    language = request.get("reference_language") or request.get("language")
+    if language in {None, "", "Auto"}:
+        raise ValueError("An explicit reference language is required to align an overlong clone sample")
+    input_path = context.work_dir / "clone-align-input.json"
+    output_path = context.work_dir / "clone-align-output.json"
+    payload = {
+        "model_path": str(settings.models_dir / "Qwen3-ForcedAligner-0.6B"),
+        "compute_device": compute_device,
+        "chunks": [{
+            "path": request["reference_audio_path"], "text": request["reference_text"],
+            "language": language, "start": 0.0, "end": duration,
+        }],
+    }
+    input_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    environment = {
+        **__import__("os").environ,
+        "PYTHONPATH": str(settings.root), "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1",
+    }
+    context.progress(0.08, f"aligning_clone_reference_{compute_device}")
+    subprocess.run(
+        [sys.executable, "-m", "asr.stage", "align", str(input_path), str(output_path)],
+        check=True, env=environment,
+    )
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    return result["chunks"][0].get("words", [])
+
+
+def _prepare_clone_reference(
+    context: JobContext,
+    request: dict[str, Any],
+    compute_device: str,
+) -> None:
+    import soundfile as sf
+
+    path = str(request["reference_audio_path"])
+    try:
+        info = sf.info(path)
+        duration = float(info.frames) / float(info.samplerate)
+    except Exception:
+        import av
+        with av.open(path) as container:
+            duration = float(container.duration or 0) / float(av.time_base)
+    request["reference_duration_original"] = round(duration, 3)
+    request["reference_duration_used"] = round(duration, 3)
+    request["reference_truncated"] = False
+    if duration <= MAX_CLONE_REFERENCE_SECONDS:
+        return
+    words = list(request.get("reference_words") or [])
+    if not words:
+        words = _align_reference(context, request, duration, compute_device)
+        request["reference_words"] = words
+        if request.get("voiceprint_sample_id"):
+            from audio_intel.db import update_voiceprint_sample
+            update_voiceprint_sample(request["voiceprint_sample_id"], words_json=words)
+    eligible = [index for index, word in enumerate(words) if float(word.get("end", 0)) <= MAX_CLONE_REFERENCE_SECONDS]
+    if not eligible:
+        raise ValueError("Clone reference contains no complete aligned word within 15 seconds")
+    last_index = eligible[-1]
+    cutoff = float(words[last_index]["end"])
+    text_end = _word_text_end(request["reference_text"], words, last_index)
+    if text_end is None:
+        words = _align_reference(context, request, duration, compute_device)
+        last_index = max(
+            (index for index, word in enumerate(words) if float(word.get("end", 0)) <= MAX_CLONE_REFERENCE_SECONDS),
+            default=-1,
+        )
+        text_end = _word_text_end(request["reference_text"], words, last_index) if last_index >= 0 else None
+        if text_end is None:
+            raise ValueError("Aligned clone reference text does not match the stored transcript")
+        cutoff = float(words[last_index]["end"])
+    from audio_intel.media import extract_audio_clip
+    clipped = context.work_dir / "clone-reference.wav"
+    extract_audio_clip(Path(path), clipped, 0.0, cutoff)
+    request["reference_audio_path"] = str(clipped)
+    request["reference_text"] = request["reference_text"][:text_end]
+    request["reference_duration_used"] = round(cutoff, 3)
+    request["reference_truncated"] = True

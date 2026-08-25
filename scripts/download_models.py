@@ -64,7 +64,10 @@ def main() -> None:
             repo, revision = MODELSCOPE_MODELS[directory]
             modelscope(repo, directory, revision)
     if target in {"all", "tts"}:
-        for directory in ("Qwen3-TTS-12Hz-0.6B-Base", "Qwen3-TTS-12Hz-0.6B-CustomVoice"):
+        for directory in (
+            "Qwen3-TTS-12Hz-0.6B-Base", "Qwen3-TTS-12Hz-0.6B-CustomVoice",
+            "Qwen3-ForcedAligner-0.6B",
+        ):
             repo, revision = HF_MODELS[directory]
             hf(repo, directory, revision)
 

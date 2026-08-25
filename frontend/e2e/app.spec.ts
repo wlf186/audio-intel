@@ -228,3 +228,142 @@ test('task history labels shortened IDs and copies the complete ID over HTTP fal
  await page.screenshot({path:'/tmp/audio-intel-job-id-copy-mobile.png',fullPage:false})
  expect(errors).toEqual([])
 })
+
+test('ASR speaker limit, filter, rename and voiceprint segment enrollment are interactive',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ const now='2026-08-25T12:00:00+00:00'
+ const result={text:'尼克发言。凯文回答。',language:'Chinese',duration:4,timestamp_precision:'word_or_character',speakers:[{id:'Speaker_0',label:'尼克杨',label_source:'manual'},{id:'Speaker_1',label:'Speaker 1',label_source:'default'}],segments:[{id:0,start:0,end:2,speaker:'Speaker_0',speaker_label:'尼克杨',text:'尼克发言。',words:[{text:'尼克发言',start:.2,end:1.6}]},{id:1,start:2,end:4,speaker:'Speaker_1',speaker_label:'Speaker 1',text:'凯文回答。',words:[{text:'凯文回答',start:2.2,end:3.6}]}],waveform:[.2,.4],artifacts:[]}
+ const job={id:'asr-speaker-tools',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'meeting.wav',created_at:now,updated_at:now,request:{compute_device:'cpu'},result}
+ const people=[{id:'voice_nick',name:'尼克杨',sample_count:1,created_at:now,updated_at:now,samples:[{id:'sample_nick',person_id:'voice_nick',state:'ready',language:'Chinese',transcript:'已有样本',words:[],duration:5,created_at:now,updated_at:now,tts_eligible:true,embedding_status:'ready',audio_url:'/sample.wav'}]}]
+ let enrollment:{job_id:string;segment_ids:number[]}|undefined
+ await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[job]}}))
+ await page.route('**/api/v1/health',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
+ await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:people}}))
+ await page.route('**/api/v1/jobs/asr-speaker-tools/source',route=>route.fulfill({contentType:'audio/wav',body:Buffer.from('RIFF-test')}))
+ await page.route('**/api/v1/jobs/asr-speaker-tools/speakers/Speaker_1',route=>route.fulfill({json:{...result,speakers:[result.speakers[0],{id:'Speaker_1',label:'凯文',label_source:'manual'}],segments:[result.segments[0],{...result.segments[1],speaker_label:'凯文'}]}}))
+ await page.route('**/api/v1/voiceprints/people/voice_nick/samples/from-asr',async route=>{enrollment=await route.request().postDataJSON();await route.fulfill({status:201,json:{items:[]}})})
+ await page.goto('/#asr')
+ await expect(page.getByLabel('说话人数').locator('option')).toHaveCount(16)
+ await expect(page.getByLabel('说话人数').locator('option').last()).toHaveText('15')
+ await page.getByLabel('按说话人过滤').selectOption('Speaker_0')
+ await page.getByLabel('选择片段 1').check()
+ await page.getByLabel('按说话人过滤').selectOption('Speaker_1')
+ await expect(page.getByLabel('段落选择操作')).toHaveCount(0)
+ await expect(page.locator('.segments article')).toHaveCount(1)
+ await expect(page.locator('.segments article')).toContainText('凯文回答')
+ await expect(page.getByLabel('选择片段 2')).toBeEnabled()
+ const renameTrigger=page.locator('.segments .speaker')
+ await renameTrigger.click()
+ const renameDialog=page.getByRole('dialog',{name:'重命名说话人'})
+ const renameInput=renameDialog.getByLabel('新名称')
+ await expect(renameInput).toBeFocused()
+ await page.keyboard.press('Escape')
+ await expect(renameDialog).toHaveCount(0)
+ await expect(renameTrigger).toBeFocused()
+ await renameTrigger.click()
+ await renameInput.fill('凯文')
+ await page.getByRole('button',{name:'保存名称'}).click()
+ await expect(page.getByLabel('按说话人过滤').locator('option',{hasText:'凯文'})).toHaveCount(1)
+ await page.getByLabel('按说话人过滤').selectOption('Speaker_0')
+ await page.getByLabel('选择片段 1').check()
+ await page.getByRole('button',{name:'加入声纹库'}).click()
+ await expect(page.getByRole('dialog',{name:'加入声纹库'})).toContainText('已匹配：尼克杨')
+ await page.getByRole('button',{name:'确认加入'}).click()
+ expect(enrollment).toEqual({job_id:'asr-speaker-tools',segment_ids:[0]})
+ expect(errors).toEqual([])
+})
+
+test('voiceprint library sample can be explicitly selected for TTS clone',async({page})=>{
+ const now='2026-08-25T12:00:00+00:00'
+ const people=[{id:'voice_nick',name:'尼克杨',sample_count:1,created_at:now,updated_at:now,samples:[{id:'sample_long',person_id:'voice_nick',state:'ready',language:'Chinese',transcript:'这是一条超过十五秒的准确参考文本。',words:[],duration:20,created_at:now,updated_at:now,tts_eligible:true,embedding_status:'ready',audio_url:'/sample.wav'}]}]
+ let submitted:Record<string,string>={}
+ await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[]}}))
+ await page.route('**/api/v1/health',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
+ await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:people}}))
+ await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
+ await page.route('**/api/v1/tts/jobs',async route=>{const data=await route.request().postDataBuffer();const body=data?.toString()||'';submitted={body};await route.fulfill({status:202,json:{id:'tts-voiceprint',kind:'tts',state:'queued',stage:'queued',progress:0,display_name:'声纹克隆',created_at:now,request:{compute_device:'cpu'}}})})
+ await page.goto('/#tts')
+ await page.getByRole('button',{name:'声音克隆'}).click()
+ await page.getByRole('button',{name:'声纹库',exact:true}).click()
+ await expect(page.getByLabel('TTS 声纹样本')).toHaveValue('sample_long')
+ await expect(page.getByText(/精确截断至 15 秒以内/)).toBeVisible()
+ await page.getByRole('button',{name:'生成语音'}).click()
+ expect(submitted.body).toContain('voiceprint')
+ expect(submitted.body).toContain('sample_long')
+ await page.locator('nav').getByRole('button',{name:/声纹库/}).click()
+ await expect(page.getByRole('heading',{name:'声纹库'})).toBeVisible()
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+})
+
+test('compact desktop widths keep the full shell and TTS workspace in view',async({page})=>{
+ for(const width of [1180,1100,1024,960,901]){
+  await page.setViewportSize({width,height:820})
+  await page.goto('/#tts')
+  await expect(page.getByRole('heading',{name:'语音合成'})).toBeVisible()
+  await expect(page.locator('nav').getByRole('button',{name:/系统状态/})).toBeVisible()
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+  const bounds=await page.evaluate(()=>[document.querySelector('.app-shell>header')?.getBoundingClientRect(),document.querySelector('.app-shell>main')?.getBoundingClientRect()].map(rect=>({left:rect?.left||0,right:rect?.right||0})))
+  expect(bounds.every(rect=>rect.left>=0&&rect.right<=width+.5)).toBe(true)
+  if(width===1024)await page.screenshot({path:'/tmp/audio-intel-compact-1024.png',fullPage:false})
+ }
+})
+
+test('view result reveals ASR and TTS result panels on mobile',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ const now='2026-08-25T12:00:00+00:00'
+ const asrResult={text:'移动端结果。',language:'Chinese',duration:3,timestamp_precision:'segment',speakers:[{id:'Speaker_0',label:'Speaker 0'}],segments:[{id:0,start:0,end:3,speaker:'Speaker_0',speaker_label:'Speaker 0',text:'移动端结果。'}],waveform:[.2,.5,.3],artifacts:[]}
+ const jobs=[
+  {id:'mobile-asr',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'移动端转写',created_at:now,updated_at:now,request:{compute_device:'cpu'},result:asrResult},
+  {id:'mobile-tts',kind:'tts',state:'succeeded',stage:'completed',progress:1,display_name:'移动端合成',created_at:now,updated_at:now,request:{compute_device:'cpu'},result:{duration:2,speaker:'Vivian',format:'wav',compute_device:'cpu',waveform:[.2,.4],artifacts:[]}},
+ ]
+ await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:jobs}}))
+ await page.route('**/api/v1/health',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
+ await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[]}}))
+ await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
+ await page.route('**/api/v1/jobs/*/source',route=>route.fulfill({contentType:'audio/wav',body:Buffer.from('RIFF-test')}))
+ await page.setViewportSize({width:390,height:844})
+ await page.goto('/#jobs')
+ const assertRevealed=async(selector:string)=>expect.poll(async()=>{const box=await page.locator(selector).boundingBox();return Boolean(box&&box.y>=59&&box.y<844)}).toBe(true)
+ await page.locator('.table-row').filter({hasText:'移动端转写'}).getByTitle('查看结果').click()
+ await expect(page).toHaveURL(/#asr$/)
+ await assertRevealed('.result-panel')
+ await page.locator('nav').getByRole('button',{name:/任务记录/}).click()
+ await page.locator('.table-row').filter({hasText:'移动端合成'}).getByTitle('查看结果').click()
+ await expect(page).toHaveURL(/#tts$/)
+ await assertRevealed('.tts-preview')
+ await page.screenshot({path:'/tmp/audio-intel-mobile-result-reveal.png',fullPage:false})
+ expect(errors).toEqual([])
+})
+
+test('long mobile transcripts scroll inside the bounded result panel',async({page})=>{
+ const now='2026-08-25T12:00:00+00:00'
+ const segments=Array.from({length:220},(_,id)=>({id,start:id*2,end:id*2+1.8,speaker:`Speaker_${id%3}`,speaker_label:`Speaker ${id%3}`,text:`第 ${id+1} 条会议转写内容，用于验证长列表内部滚动。`}))
+ const result={text:segments.map(item=>item.text).join(''),language:'Chinese',duration:440,timestamp_precision:'segment',speakers:Array.from({length:3},(_,id)=>({id:`Speaker_${id}`,label:`Speaker ${id}`})),segments,waveform:[.2,.5,.3],artifacts:[]}
+ const job={id:'long-mobile-asr',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'超长会议记录',created_at:now,updated_at:now,request:{compute_device:'cpu'},result}
+ await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[job]}}))
+ await page.route('**/api/v1/health',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
+ await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[]}}))
+ await page.setViewportSize({width:390,height:844})
+ await page.goto('/#asr')
+ await expect(page.locator('.segments article')).toHaveCount(220)
+ await page.locator('.result-panel').evaluate(element=>element.scrollIntoView({block:'start'}))
+ await expect(page.locator('.result-panel')).toBeInViewport()
+ await page.waitForTimeout(50)
+ const dimensions=await page.locator('.segments').evaluate(element=>({clientHeight:element.clientHeight,scrollHeight:element.scrollHeight}))
+ expect(dimensions.clientHeight).toBeGreaterThan(100)
+ expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight*10)
+ expect(await page.evaluate(()=>document.documentElement.scrollHeight)).toBeLessThan(3000)
+ await page.locator('.segments').evaluate(element=>{element.scrollTop=element.scrollHeight})
+ await expect(page.getByText('第 220 条会议转写内容，用于验证长列表内部滚动。')).toBeInViewport()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/audio-intel-long-transcript-mobile.png',fullPage:false})
+})

@@ -6,7 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from .config import settings
-from .db import compact_database, delete_job_record, prepare_job_for_purge
+from .db import (
+    compact_database,
+    delete_job_record,
+    delete_voiceprint_sample_record,
+    get_voiceprint_sample,
+    prepare_job_for_purge,
+)
 
 
 def _allocated_bytes_for_entry(path: Path) -> int:
@@ -81,6 +87,14 @@ def purge_jobs(job_ids: list[str], compact: bool = True) -> dict[str, Any]:
             reclaimed = sum(allocated_bytes(path) for path in paths)
             for path in paths:
                 _remove_and_verify(path)
+            request = job.get("request") or {}
+            if request.get("purpose") == "voiceprint_import":
+                sample = get_voiceprint_sample(request.get("voiceprint_sample_id", ""))
+                if sample is not None and sample.get("state") != "ready":
+                    sample_path = Path(sample["audio_path"]).resolve() if sample.get("audio_path") else None
+                    if sample_path and settings.voiceprints_dir.resolve() in sample_path.parents:
+                        _remove_and_verify(sample_path)
+                    delete_voiceprint_sample_record(sample["id"])
             if not delete_job_record(job_id):
                 raise RuntimeError("任务文件已删除，但数据库记录未能清理；请重试删除")
             deleted.append({"id": job_id, "reclaimed_bytes": reclaimed})

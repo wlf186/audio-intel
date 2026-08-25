@@ -75,11 +75,13 @@ Linux 详细步骤见 [安装与复原](docs/INSTALL.md)，Windows 原生部署�
                 CPU FP32 / GPU BF16 + SDPA + 自适应单任务微批处理 → WAV / FLAC / MP3
 ```
 
-ASR 按 FSMN-VAD 的语音区间合并为约 20–60 秒的块。11 种对齐器支持语言返回字/词级时间戳；其他语言仍返回语音段时间戳。CAM++ 当前采用 single-active-speaker 模式，重叠语音会按最大时间重叠归属给一位说话人。
+ASR 按 FSMN-VAD 的语音区间合并为约 20–60 秒的块。11 种对齐器支持语言返回字/词级时间戳，并利用这些时间戳把 ASR 大块重新切成连续的说话人轮次；即使选择“仅句级时间戳”，多人任务也会在内部对齐后隐藏字词明细。短录音会绕过 FunASR 少于 20 个声纹窗口时的单人回退，已知人数使用 KMeans，自动人数使用短音频余弦聚类。其他语言仍返回语音段时间戳。CAM++ 采用 single-active-speaker 模式，真正重叠语音仍只会归属给一位说话人。
 
-ASR 默认使用 GPU，TTS 默认使用 CPU。两者均可按任务选择 `cpu` 或 `gpu`：CPU 使用 FP32，GPU 使用 BF16，不使用量化；GPU 任务通过项目内的全局锁串行执行，避免 4 GB 显存同时装载多个大模型。ASR 的 FSMN-VAD 和 CAM++ 始终在 CPU 上运行，设备选项会同时切换 ASR 主模型和 ForcedAligner；GPU 模式下 CAM++ 会在 CPU 内部批处理，并与 GPU 识别和对齐重叠执行。TTS GPU 模式会在显存充足时对同一任务的相邻文本块执行 batch 2，声码器仍逐块解码；显存不足或发生 OOM 时自动在当前任务内恢复为串行处理。GPU 不可用时会明确返回 `503`，不会静默回退到 CPU。可通过 `GET /api/v1/capabilities` 查询当前设备能力与默认值。
+ASR 默认使用 GPU，TTS 默认使用 CPU。两者均可按任务选择 `cpu` 或 `gpu`：CPU 使用 FP32，GPU 使用 BF16，不使用量化；GPU 任务通过项目内的全局锁串行执行，避免 4 GB 显存同时装载多个大模型。ASR 的 FSMN-VAD 和 CAM++ 始终在 CPU 上运行，设备选项会同时切换 ASR 主模型和 ForcedAligner；GPU 模式下 CAM++ 会在 CPU 内部批处理，并与 GPU 识别和对齐重叠执行。TTS GPU 模式会在显存充足时对同一任务的相邻文本块执行 batch 2，声码器仍逐块解码；显存不足或发生 OOM 时自动在当前任务内恢复为串行处理。GPU 不可用时会明确返回 `503`，不会静默回退到 CPU。可通过 `GET /api/v1/capabilities` 查询当前设备能力、说话人数上限与默认值。
 
-声音克隆使用 Base 模型的 ICL 路径，要求 3–15 秒左右的干净参考音频和逐字准确的参考文本；代码固定 `x_vector_only_mode=False`。预置音色使用 CustomVoice 模型的 9 个官方音色。两个模型不会同时驻留内存。
+“声纹库”可为同一人员保存多个独立样本。样本既可从同一 ASR 说话人的选中段落加入，也可上传音频并创建一个可见的 ASR 入库任务来自动生成转写和字词时间戳。ASR 的 `use_voiceprint_library` 默认开启，只在普通说话人分离结束后用 CAM++ 匹配并命名，不会改变聚类、说话人 ID 或分段；任务中的名称是历史快照，之后修改库中人员名称不会回写历史任务。
+
+声音克隆使用 Base 模型的 ICL 路径，要求干净参考音频和逐字准确的参考文本；代码固定 `x_vector_only_mode=False`。除直接上传外，可明确选择声纹库中的人员和样本。超过 15 秒的库样本会先依据已有字词时间戳在完整词边界截断；旧样本没有时间戳时按需运行 ForcedAligner。预置音色使用 CustomVoice 模型的 9 个官方音色。两个 TTS 模型不会同时驻留内存。
 
 ## 本地目录
 
@@ -101,7 +103,8 @@ run/          PID 文件
 # ASR
 curl -F file=@meeting.wav \
   -F language=Auto -F speaker_count=auto \
-  -F diarize=true -F align=true -F compute_device=gpu \
+  -F diarize=true -F align=true -F use_voiceprint_library=true \
+  -F compute_device=gpu \
   http://127.0.0.1:20810/api/v1/asr/jobs
 
 # TTS 预置音色
@@ -132,6 +135,9 @@ curl http://127.0.0.1:20810/api/v1/jobs/JOB_ID/source -o source.wav
 - `GET /api/v1/jobs/{id}/artifacts/{name}`
 - `GET /api/v1/jobs/{id}/source`（ASR 原始音源；`?download=true` 强制下载）
 - `PATCH /api/v1/jobs/{id}/speakers/{speaker_id}`
+- `GET|POST /api/v1/voiceprints/people`、`PATCH|DELETE /api/v1/voiceprints/people/{id}`
+- `POST /api/v1/voiceprints/people/{id}/samples/from-asr`（同一说话人的段落分别入库）
+- `POST /api/v1/voiceprints/people/{id}/samples/upload`、`DELETE /api/v1/voiceprints/people/{id}/samples/{sample_id}`
 - `POST /api/v1/tts/voices`、`GET /api/v1/tts/voices`
 - `GET /api/v1/events`（SSE）
 

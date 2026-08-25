@@ -5,6 +5,7 @@ import json
 import mimetypes
 import os
 import shutil
+import sqlite3
 import time
 import uuid
 from datetime import datetime
@@ -22,20 +23,34 @@ from .gpu import COMPUTE_DEVICES, gpu_snapshot
 from .db import (
     create_job,
     create_voice,
+    create_voiceprint_person,
+    create_voiceprint_sample,
+    delete_job_record,
     delete_voice_record,
+    delete_voiceprint_person_record,
+    delete_voiceprint_sample_record,
+    find_voiceprint_person,
     get_job,
     get_voice,
+    get_voiceprint_person,
+    get_voiceprint_sample,
     init_db,
     list_jobs,
     list_voices,
+    list_voiceprint_people,
+    list_voiceprint_samples,
     list_workers,
+    person_name_key,
+    rename_voiceprint_person,
     request_cancel,
     retry_job,
     update_job,
+    update_voiceprint_sample,
     utcnow,
 )
 from .utils import safe_filename
 from .purge import purge_jobs
+from starlette.concurrency import run_in_threadpool
 
 
 PRESET_SPEAKERS = ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee"]
@@ -48,6 +63,15 @@ ALIGNER_LANGUAGES = [
 class BatchDeleteRequest(BaseModel):
     job_ids: list[str]
     purge: bool = False
+
+
+class PersonNameRequest(BaseModel):
+    name: str
+
+
+class AddAsrSamplesRequest(BaseModel):
+    job_id: str
+    segment_ids: list[int]
 
 
 def require_api_key(authorization: str | None = Header(default=None)) -> None:
@@ -104,6 +128,30 @@ def public_job(job: dict[str, Any]) -> dict[str, Any]:
     if job.get("state") == "succeeded":
         result["result_url"] = f"/api/v1/jobs/{job['id']}/result"
     return result
+
+
+def public_voiceprint_sample(sample: dict[str, Any]) -> dict[str, Any]:
+    item = {
+        key: value for key, value in sample.items()
+        if key not in {"audio_path", "embedding", "embedding_model", "embedding_error"}
+    }
+    item["tts_eligible"] = bool(
+        sample.get("state") == "ready" and sample.get("audio_path") and sample.get("transcript")
+    )
+    item["embedding_status"] = (
+        "ready" if sample.get("embedding") else "failed" if sample.get("embedding_error") else "pending"
+    )
+    if sample.get("audio_path"):
+        item["audio_url"] = f"/api/v1/voiceprints/samples/{sample['id']}/audio"
+    return item
+
+
+def public_voiceprint_person(person: dict[str, Any]) -> dict[str, Any]:
+    samples = [public_voiceprint_sample(sample) for sample in person.get("samples", [])]
+    return {
+        "id": person["id"], "name": person["name"], "created_at": person["created_at"],
+        "updated_at": person["updated_at"], "sample_count": len(samples), "samples": samples,
+    }
 
 
 def job_or_404(job_id: str) -> dict[str, Any]:
@@ -176,6 +224,8 @@ def create_app() -> FastAPI:
             "asr": {
                 "model": "Qwen3-ASR-0.6B",
                 "diarization": "CAM++ single-active-speaker",
+                "speaker_count": {"min": 1, "max": 15, "default": "auto"},
+                "voiceprint_library": True,
                 "timestamp_precisions": ["segment", "word_or_character"],
                 "aligner_languages": ALIGNER_LANGUAGES,
                 "exports": ["json", "srt", "vtt", "txt"],
@@ -183,12 +233,16 @@ def create_app() -> FastAPI:
             },
             "tts": {
                 "models": ["Qwen3-TTS-12Hz-0.6B-Base", "Qwen3-TTS-12Hz-0.6B-CustomVoice"],
-                "voice_modes": ["preset", "profile", "inline_clone"],
+                "voice_modes": ["preset", "profile", "inline_clone", "voiceprint"],
                 "preset_speakers": PRESET_SPEAKERS,
                 "formats": ["wav", "flac", "mp3"],
                 "compute_devices": compute_capabilities("cpu"),
             },
-            "limits": {"max_upload_bytes": settings.max_upload_bytes, "max_tts_chars": settings.max_tts_chars},
+            "limits": {
+                "max_upload_bytes": settings.max_upload_bytes,
+                "max_tts_chars": settings.max_tts_chars,
+                "max_clone_reference_seconds": 15,
+            },
         }
 
     @app.post("/api/v1/asr/jobs", status_code=202)
@@ -201,6 +255,7 @@ def create_app() -> FastAPI:
         context: str = Form(""),
         export_formats: str = Form("json,srt,vtt,txt"),
         compute_device: str = Form("gpu"),
+        use_voiceprint_library: bool = Form(True),
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         ensure_service("asr")
@@ -215,6 +270,7 @@ def create_app() -> FastAPI:
             shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
             raise HTTPException(status_code=422, detail="speaker_count must be auto or an integer") from exc
         if speaker_value is not None and not 1 <= speaker_value <= 15:
+            shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
             raise HTTPException(status_code=422, detail="speaker_count must be between 1 and 15")
         formats = [item.strip().lower() for item in export_formats.split(",") if item.strip()]
         if not formats or any(item not in {"json", "srt", "vtt", "txt"} for item in formats):
@@ -223,7 +279,7 @@ def create_app() -> FastAPI:
             "input_path": str(input_path), "original_name": original_name, "size_bytes": size,
             "language": language, "speaker_count": speaker_value, "diarize": diarize,
             "align": align, "context": context, "export_formats": formats, "compute_device": compute_device,
-            "compute_device_name": compute_device_name,
+            "compute_device_name": compute_device_name, "use_voiceprint_library": use_voiceprint_library,
         }
         return public_job(create_job("asr", original_name, request_data, job_id))
 
@@ -234,6 +290,7 @@ def create_app() -> FastAPI:
         voice_mode: str = Form("preset"),
         speaker: str | None = Form(None),
         voice_profile_id: str | None = Form(None),
+        voiceprint_sample_id: str | None = Form(None),
         reference_audio: UploadFile | None = File(None),
         reference_text: str | None = Form(None),
         instruct: str = Form(""),
@@ -247,8 +304,8 @@ def create_app() -> FastAPI:
         clean_text = text.strip()
         if not clean_text or len(clean_text) > settings.max_tts_chars:
             raise HTTPException(status_code=422, detail=f"Text must contain 1-{settings.max_tts_chars} characters")
-        if voice_mode not in {"preset", "profile", "inline_clone"}:
-            raise HTTPException(status_code=422, detail="voice_mode must be preset, profile or inline_clone")
+        if voice_mode not in {"preset", "profile", "inline_clone", "voiceprint"}:
+            raise HTTPException(status_code=422, detail="voice_mode must be preset, profile, inline_clone or voiceprint")
         if response_format not in {"wav", "flac", "mp3"}:
             raise HTTPException(status_code=422, detail="response_format must be wav, flac or mp3")
         request_data: dict[str, Any] = {
@@ -265,7 +322,36 @@ def create_app() -> FastAPI:
             voice = get_voice(voice_profile_id or "")
             if voice is None:
                 raise HTTPException(status_code=422, detail="Voice profile not found")
-            request_data.update({"reference_audio_path": voice["ref_audio_path"], "reference_text": voice["ref_text"]})
+            source = Path(voice["ref_audio_path"]).resolve()
+            target = settings.jobs_dir / job_id / "input" / "voice-reference.wav"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            request_data.update({
+                "reference_audio_path": str(target), "reference_text": voice["ref_text"],
+                "reference_words": voice.get("words") or [], "reference_duration": voice.get("duration"),
+                "reference_language": voice.get("language") or language,
+            })
+        elif voice_mode == "voiceprint":
+            sample = get_voiceprint_sample(voiceprint_sample_id or "")
+            person = get_voiceprint_person(sample["person_id"]) if sample else None
+            if (
+                sample is None or person is None or sample.get("state") != "ready"
+                or not sample.get("audio_path") or not sample.get("transcript")
+            ):
+                raise HTTPException(status_code=422, detail="Voiceprint sample is not ready for TTS cloning")
+            source = Path(sample["audio_path"]).resolve()
+            if settings.voiceprints_dir.resolve() not in source.parents and settings.voices_dir.resolve() not in source.parents:
+                raise HTTPException(status_code=422, detail="Voiceprint sample audio is unavailable")
+            target = settings.jobs_dir / job_id / "input" / "voiceprint-reference.wav"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            request_data.update({
+                "voiceprint_person_id": person["id"], "voiceprint_person_name": person["name"],
+                "voiceprint_sample_id": sample["id"], "reference_audio_path": str(target),
+                "reference_text": sample["transcript"], "reference_words": sample.get("words") or [],
+                "reference_language": sample.get("language") or language,
+                "reference_duration": sample.get("duration"),
+            })
         else:
             if reference_audio is None or not (reference_text or "").strip():
                 raise HTTPException(status_code=422, detail="Inline cloning requires reference_audio and reference_text")
@@ -294,16 +380,209 @@ def create_app() -> FastAPI:
 
     @app.delete("/api/v1/tts/voices/{voice_id}", status_code=204)
     def remove_voice(voice_id: str, purge: bool = Query(False), _: None = Depends(require_api_key)) -> Response:
-        voice = get_voice(voice_id)
-        if voice is None:
+        person = get_voiceprint_person(voice_id)
+        if person is None:
             raise HTTPException(status_code=404, detail="Voice profile not found")
         if not purge:
             raise HTTPException(status_code=409, detail="Set purge=true to permanently delete this voice profile")
-        ref_path = Path(voice["ref_audio_path"])
-        if settings.voices_dir in ref_path.resolve().parents:
-            shutil.rmtree(ref_path.parent, ignore_errors=True)
-        delete_voice_record(voice_id)
+        for sample in list_voiceprint_samples(person["id"]):
+            path = Path(sample["audio_path"]).resolve() if sample.get("audio_path") else None
+            if path and (settings.voices_dir.resolve() in path.parents or settings.voiceprints_dir.resolve() in path.parents):
+                path.unlink(missing_ok=True)
+        delete_voice_record(person["id"])
         return Response(status_code=204)
+
+    @app.get("/api/v1/voiceprints/people")
+    def voiceprint_people(_: None = Depends(require_api_key)) -> dict[str, Any]:
+        return {"items": [public_voiceprint_person(item) for item in list_voiceprint_people()]}
+
+    @app.post("/api/v1/voiceprints/people", status_code=201)
+    def add_voiceprint_person(
+        payload: PersonNameRequest, _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        try:
+            return public_voiceprint_person(create_voiceprint_person(payload.name))
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="A voiceprint person with this name already exists") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.patch("/api/v1/voiceprints/people/{person_id}")
+    def edit_voiceprint_person(
+        person_id: str, payload: PersonNameRequest, _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        try:
+            person = rename_voiceprint_person(person_id, payload.name)
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="A voiceprint person with this name already exists") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if person is None:
+            raise HTTPException(status_code=404, detail="Voiceprint person not found")
+        person["samples"] = list_voiceprint_samples(person_id)
+        return public_voiceprint_person(person)
+
+    def ensure_sample_jobs_inactive(samples: list[dict[str, Any]]) -> None:
+        for sample in samples:
+            source_job_id = sample.get("source_job_id")
+            source_job = get_job(source_job_id) if source_job_id else None
+            if source_job and (source_job.get("request") or {}).get("purpose") == "voiceprint_import" and source_job["state"] in {"queued", "running"}:
+                raise HTTPException(status_code=409, detail="Cancel the active voiceprint import task before deleting its sample")
+
+    def remove_voiceprint_audio(sample: dict[str, Any]) -> None:
+        if not sample.get("audio_path"):
+            return
+        path = Path(sample["audio_path"]).resolve()
+        roots = {settings.voiceprints_dir.resolve(), settings.voices_dir.resolve()}
+        if any(root in path.parents for root in roots):
+            path.unlink(missing_ok=True)
+
+    @app.delete("/api/v1/voiceprints/people/{person_id}", status_code=204)
+    def remove_voiceprint_person(
+        person_id: str, purge: bool = Query(False), _: None = Depends(require_api_key),
+    ) -> Response:
+        person = get_voiceprint_person(person_id)
+        if person is None:
+            raise HTTPException(status_code=404, detail="Voiceprint person not found")
+        if not purge:
+            raise HTTPException(status_code=409, detail="Set purge=true to permanently delete this person")
+        samples = list_voiceprint_samples(person["id"])
+        ensure_sample_jobs_inactive(samples)
+        for sample in samples:
+            remove_voiceprint_audio(sample)
+        delete_voiceprint_person_record(person["id"])
+        shutil.rmtree(settings.voiceprints_dir / person["id"], ignore_errors=True)
+        return Response(status_code=204)
+
+    @app.post("/api/v1/voiceprints/people/{person_id}/samples/from-asr", status_code=201)
+    async def add_voiceprint_samples_from_asr(
+        person_id: str, payload: AddAsrSamplesRequest, _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        person = get_voiceprint_person(person_id)
+        if person is None:
+            raise HTTPException(status_code=404, detail="Voiceprint person not found")
+        job = job_or_404(payload.job_id)
+        if job["kind"] != "asr" or job["state"] != "succeeded":
+            raise HTTPException(status_code=409, detail="Only completed ASR segments can be added")
+        segment_ids = list(dict.fromkeys(payload.segment_ids))
+        if not segment_ids:
+            raise HTTPException(status_code=422, detail="Select at least one ASR segment")
+        segments_by_id = {int(item["id"]): item for item in (job.get("result") or {}).get("segments", [])}
+        try:
+            segments = [segments_by_id[item] for item in segment_ids]
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="ASR segment not found") from exc
+        speaker_ids = {item.get("speaker") for item in segments}
+        if len(speaker_ids) != 1:
+            raise HTTPException(status_code=422, detail="Selected segments must belong to the same speaker")
+        existing_sources = {
+            (sample.get("source_job_id"), sample.get("source_segment_id"))
+            for sample in list_voiceprint_samples()
+        }
+        if any((job["id"], item["id"]) in existing_sources for item in segments):
+            raise HTTPException(status_code=409, detail="One or more selected segments already exist in the voiceprint library")
+        source = Path((job.get("request") or {}).get("input_path", "")).resolve()
+        input_root = (settings.jobs_dir / job["id"] / "input").resolve()
+        if input_root not in source.parents or not source.is_file():
+            raise HTTPException(status_code=404, detail="Source recording is unavailable")
+        from .media import extract_audio_clip
+
+        created: list[dict[str, Any]] = []
+        paths: list[Path] = []
+        try:
+            for segment in segments:
+                sample_id = "sample_" + uuid.uuid4().hex[:16]
+                path = settings.voiceprints_dir / person["id"] / f"{sample_id}.wav"
+                duration = await run_in_threadpool(
+                    extract_audio_clip, source, path, float(segment["start"]), float(segment["end"]),
+                )
+                paths.append(path)
+                words = [
+                    {
+                        "text": word.get("text", ""),
+                        "start": round(max(0.0, float(word["start"]) - float(segment["start"])), 3),
+                        "end": round(max(0.0, float(word["end"]) - float(segment["start"])), 3),
+                    }
+                    for word in segment.get("words", [])
+                ]
+                sample = create_voiceprint_sample(
+                    person["id"], sample_id=sample_id, state="ready",
+                    language=(job.get("result") or {}).get("language") or "Auto",
+                    audio_path=str(path), transcript=str(segment.get("text", "")), words=words,
+                    duration=duration, source_job_id=job["id"], source_segment_id=int(segment["id"]),
+                    source_speaker_id=str(segment.get("speaker") or "Speaker_0"),
+                )
+                created.append(sample)
+        except Exception:
+            for sample in created:
+                delete_voiceprint_sample_record(sample["id"])
+            for path in paths:
+                path.unlink(missing_ok=True)
+            raise
+        return {"items": [public_voiceprint_sample(item) for item in created]}
+
+    @app.post("/api/v1/voiceprints/people/{person_id}/samples/upload", status_code=202)
+    async def upload_voiceprint_sample(
+        person_id: str,
+        file: UploadFile = File(...),
+        language: str = Form("Auto"),
+        compute_device: str = Form("gpu"),
+        _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        ensure_service("asr")
+        person = get_voiceprint_person(person_id)
+        if person is None:
+            raise HTTPException(status_code=404, detail="Voiceprint person not found")
+        compute_device, compute_device_name = validate_compute_device(compute_device)
+        job_id = uuid.uuid4().hex
+        sample_id = "sample_" + uuid.uuid4().hex[:16]
+        original_name = safe_filename(file.filename or "voiceprint-audio.bin")
+        input_path = settings.jobs_dir / job_id / "input" / original_name
+        size = await save_upload(file, input_path, settings.max_upload_bytes)
+        request_data = {
+            "purpose": "voiceprint_import", "voiceprint_sample_id": sample_id,
+            "input_path": str(input_path), "original_name": original_name, "size_bytes": size,
+            "language": language, "speaker_count": 1, "diarize": False, "align": True,
+            "context": "", "export_formats": ["json", "txt"], "compute_device": compute_device,
+            "compute_device_name": compute_device_name, "use_voiceprint_library": False,
+        }
+        job = create_job("asr", f"声纹样本入库 · {person['name']}", request_data, job_id)
+        try:
+            sample = create_voiceprint_sample(
+                person["id"], sample_id=sample_id, state="pending", language=language,
+                source_job_id=job_id,
+            )
+        except Exception:
+            delete_job_record(job_id)
+            shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
+            raise
+        return {"sample": public_voiceprint_sample(sample), "job": public_job(job)}
+
+    @app.delete("/api/v1/voiceprints/people/{person_id}/samples/{sample_id}", status_code=204)
+    def remove_voiceprint_sample(
+        person_id: str, sample_id: str, purge: bool = Query(False),
+        _: None = Depends(require_api_key),
+    ) -> Response:
+        sample = get_voiceprint_sample(sample_id)
+        if sample is None or sample["person_id"] != person_id:
+            raise HTTPException(status_code=404, detail="Voiceprint sample not found")
+        if not purge:
+            raise HTTPException(status_code=409, detail="Set purge=true to permanently delete this sample")
+        ensure_sample_jobs_inactive([sample])
+        remove_voiceprint_audio(sample)
+        delete_voiceprint_sample_record(sample_id)
+        return Response(status_code=204)
+
+    @app.get("/api/v1/voiceprints/samples/{sample_id}/audio")
+    def voiceprint_sample_audio(sample_id: str, _: None = Depends(require_api_key)) -> FileResponse:
+        sample = get_voiceprint_sample(sample_id)
+        if sample is None or not sample.get("audio_path"):
+            raise HTTPException(status_code=404, detail="Voiceprint sample audio is unavailable")
+        path = Path(sample["audio_path"]).resolve()
+        roots = {settings.voiceprints_dir.resolve(), settings.voices_dir.resolve()}
+        if not any(root in path.parents for root in roots) or not path.is_file():
+            raise HTTPException(status_code=404, detail="Voiceprint sample audio is unavailable")
+        return FileResponse(path, media_type="audio/wav")
 
     @app.get("/api/v1/jobs")
     def jobs(
@@ -333,6 +612,12 @@ def create_app() -> FastAPI:
         job = request_cancel(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
+        request_data = job.get("request") or {}
+        if request_data.get("purpose") == "voiceprint_import" and job["state"] == "cancelled":
+            update_voiceprint_sample(
+                request_data.get("voiceprint_sample_id", ""), state="failed",
+                error_message="Voiceprint import task was cancelled",
+            )
         return public_job(job)
 
     @app.post("/api/v1/jobs/{job_id}/retry")
@@ -343,6 +628,12 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
+        request_data = job.get("request") or {}
+        if request_data.get("purpose") == "voiceprint_import":
+            update_voiceprint_sample(
+                request_data.get("voiceprint_sample_id", ""), state="pending",
+                error_message=None, embedding_error=None,
+            )
         return public_job(job)
 
     @app.delete("/api/v1/jobs/{job_id}", status_code=204)
@@ -409,6 +700,7 @@ def create_app() -> FastAPI:
         for speaker in result.get("speakers", []):
             if speaker.get("id") == speaker_id:
                 speaker["label"] = name
+                speaker["label_source"] = "manual"
                 found = True
         if not found:
             raise HTTPException(status_code=404, detail="Speaker not found")
@@ -527,22 +819,28 @@ def add_openai_routes(app: FastAPI) -> None:
         language: str = Form("Auto"), response_format: str = Form("json"),
         diarize: bool = Form(True), speaker_count: str = Form("auto"),
         compute_device: str = Form("gpu"),
+        use_voiceprint_library: bool = Form(True),
         _: None = Depends(require_api_key),
     ) -> Response:
         ensure_service("asr")
         compute_device, compute_device_name = validate_compute_device(compute_device)
         if model not in {"qwen3-asr-0.6b", "Qwen/Qwen3-ASR-0.6B"}:
             raise HTTPException(status_code=404, detail="Unknown transcription model")
+        try:
+            speakers = None if speaker_count == "auto" else int(speaker_count)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="speaker_count must be auto or an integer") from exc
+        if speakers is not None and not 1 <= speakers <= 15:
+            raise HTTPException(status_code=422, detail="speaker_count must be between 1 and 15")
         job_id = uuid.uuid4().hex
         name = safe_filename(file.filename or "audio.bin")
         target = settings.jobs_dir / job_id / "input" / name
         size = await save_upload(file, target, settings.max_upload_bytes)
-        speakers = None if speaker_count == "auto" else int(speaker_count)
         request_data = {
             "input_path": str(target), "original_name": name, "size_bytes": size, "language": language,
             "speaker_count": speakers, "diarize": diarize, "align": True, "context": "",
             "export_formats": ["json", "srt", "vtt", "txt"], "compute_device": compute_device,
-            "compute_device_name": compute_device_name,
+            "compute_device_name": compute_device_name, "use_voiceprint_library": use_voiceprint_library,
         }
         create_job("asr", name, request_data, job_id)
         job = await wait_for_job(job_id)

@@ -80,7 +80,59 @@ def test_historical_jobs_backfill_compute_device_names(tmp_path, monkeypatch) ->
     assert db_module.get_job(old_tts["id"])["request"]["compute_device_name"] == "CPU"
     assert db_module.get_job(named["id"])["request"]["compute_device_name"] == "Original GPU"
     with sqlite3.connect(local.database_path) as database:
-        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 3
+        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 4
+
+
+def test_schema_upgrade_reaches_voiceprints_without_a_gpu(tmp_path, monkeypatch) -> None:
+    local = local_settings(tmp_path)
+    install_settings(local, monkeypatch)
+    monkeypatch.setattr(gpu_module, "gpu_snapshot", lambda *_: None)
+    db_module.init_db()
+    with sqlite3.connect(local.database_path) as database:
+        database.execute("UPDATE schema_meta SET version=2")
+
+    db_module.init_db()
+    db_module.init_db()
+
+    with sqlite3.connect(local.database_path) as database:
+        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 4
+        assert database.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='voiceprint_people'"
+        ).fetchone()[0] == 1
+
+
+def test_voiceprint_people_samples_and_import_job_purge_are_independent(tmp_path, monkeypatch) -> None:
+    local = local_settings(tmp_path)
+    install_settings(local, monkeypatch)
+    db_module.init_db()
+    person = db_module.create_voiceprint_person(" 尼克  杨 ")
+    assert db_module.find_voiceprint_person("尼克 杨")["id"] == person["id"]
+    with __import__("pytest").raises(sqlite3.IntegrityError):
+        db_module.create_voiceprint_person("尼克 杨")
+
+    successful_job = db_module.create_job("asr", "声纹样本入库", {"purpose": "voiceprint_import"})
+    sample_path = local.voiceprints_dir / person["id"] / "ready.wav"
+    sample_path.parent.mkdir(parents=True, exist_ok=True)
+    sample_path.write_bytes(b"RIFF-ready")
+    ready = db_module.create_voiceprint_sample(
+        person["id"], state="ready", audio_path=str(sample_path), transcript="测试",
+        source_job_id=successful_job["id"],
+    )
+    db_module.update_job(successful_job["id"], state="succeeded", stage="completed")
+    create_payload(local, successful_job["id"])
+    assert purge_module.purge_jobs([successful_job["id"]])["deleted_count"] == 1
+    assert db_module.get_voiceprint_sample(ready["id"])["audio_path"] == str(sample_path)
+    assert sample_path.is_file()
+
+    pending_job = db_module.create_job("asr", "声纹样本入库", {
+        "purpose": "voiceprint_import", "voiceprint_sample_id": "sample_pending",
+    })
+    db_module.create_voiceprint_sample(
+        person["id"], sample_id="sample_pending", state="pending", source_job_id=pending_job["id"],
+    )
+    create_payload(local, pending_job["id"])
+    assert purge_module.purge_jobs([pending_job["id"]])["deleted_count"] == 1
+    assert db_module.get_voiceprint_sample("sample_pending") is None
 
 
 def test_batch_delete_purges_files_queue_and_database(tmp_path, monkeypatch) -> None:

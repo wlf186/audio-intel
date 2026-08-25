@@ -6,12 +6,18 @@ import os
 import subprocess
 import sys
 import wave
+import shutil
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 from audio_intel.config import settings
+from audio_intel.db import (
+    get_voiceprint_sample,
+    list_voiceprint_people,
+    update_voiceprint_sample,
+)
 from audio_intel.gpu import compute_device_name, gpu_lease
 from audio_intel.utils import atomic_json, timecode, waveform_peaks
 from audio_intel.worker import JobContext
@@ -20,6 +26,11 @@ from audio_intel.worker import JobContext
 ALIGNER_LANGUAGES = {"Chinese", "English", "Cantonese", "French", "German", "Italian", "Japanese", "Korean", "Portuguese", "Russian", "Spanish"}
 GPU_DIARIZATION_BATCH_SIZE = 16
 GPU_DIARIZATION_MIN_CPUS = 8
+SHORT_DIARIZATION_WINDOW_LIMIT = 20
+SHORT_DIARIZATION_COSINE_THRESHOLD = 0.4
+MAX_AUTO_SPEAKERS = 15
+VOICEPRINT_COSINE_THRESHOLD = 0.31
+VOICEPRINT_EMBEDDING_MODEL = "CAM++/campplus_cn_common"
 
 
 def decode_audio(source: Path, output: Path) -> tuple[Any, int]:
@@ -114,7 +125,9 @@ def diarize(
     vad: list[dict[str, float]],
     speakers: int | None,
     batch_size: int = 1,
-) -> list[dict[str, Any]]:
+    voiceprint_people: list[dict[str, Any]] | None = None,
+    return_metadata: bool = False,
+) -> Any:
     import torch
     from funasr import AutoModel
     from funasr.models.campplus.cluster_backend import ClusterBackend
@@ -129,7 +142,8 @@ def diarize(
     vad_with_audio = [[item["start"], item["end"], audio[int(item["start"] * 16000):int(item["end"] * 16000)]] for item in vad]
     chunks = sv_chunk(vad_with_audio)
     if not chunks:
-        return [{**item, "speaker": "Speaker_0"} for item in vad]
+        diarized = [{**item, "speaker": "Speaker_0"} for item in vad]
+        return (diarized, {}, {"status": "empty_audio", "indexed_samples": 0}) if return_metadata else diarized
     embeddings = model.generate(
         input=[chunk[2] for chunk in chunks],
         cache={},
@@ -138,12 +152,133 @@ def diarize(
     )
     vectors = torch.cat([item["spk_embedding"] for item in embeddings], dim=0).detach().cpu().numpy()
     cluster = ClusterBackend(merge_thr=0.78).cpu()
-    labels = cluster(vectors, oracle_num=speakers)
+    labels = _cluster_speakers(vectors, speakers, cluster)
+    matches: dict[str, dict[str, Any]] = {}
+    voiceprint_status = {"status": "disabled", "indexed_samples": 0}
+    speaker_centers = None
     try:
-        diarized = postprocess(chunks, vad_with_audio, labels, vectors)
-        return [{"start": float(item[0]), "end": float(item[1]), "speaker": f"Speaker_{int(item[2])}"} for item in diarized]
+        diarized, speaker_centers = postprocess(
+            chunks, vad_with_audio, labels, vectors, return_spk_center=True,
+        )
+        result = [{"start": float(item[0]), "end": float(item[1]), "speaker": f"Speaker_{int(item[2])}"} for item in diarized]
     except Exception:
-        return [{"start": float(chunk[0]), "end": float(chunk[1]), "speaker": f"Speaker_{int(label)}"} for chunk, label in zip(chunks, labels)]
+        result = [{"start": float(chunk[0]), "end": float(chunk[1]), "speaker": f"Speaker_{int(label)}"} for chunk, label in zip(chunks, labels)]
+    if voiceprint_people is not None:
+        if speaker_centers is None:
+            voiceprint_status = {"status": "degraded", "indexed_samples": 0}
+        else:
+            try:
+                matches, voiceprint_status = _match_voiceprints(model, speaker_centers, voiceprint_people)
+            except Exception:
+                voiceprint_status = {"status": "degraded", "indexed_samples": 0}
+    return (result, matches, voiceprint_status) if return_metadata else result
+
+
+def _extract_embedding(model: Any, audio_path: str) -> Any:
+    import numpy as np
+
+    output = model.generate(input=audio_path, cache={}, is_final=True, batch_size=1)
+    if not output or "spk_embedding" not in output[0]:
+        raise ValueError("CAM++ returned no speaker embedding")
+    vector = output[0]["spk_embedding"][0].detach().cpu().numpy().astype(np.float32, copy=False)
+    norm = float(np.linalg.norm(vector))
+    if not math.isfinite(norm) or norm <= 0:
+        raise ValueError("CAM++ returned an invalid speaker embedding")
+    return vector / norm
+
+
+def _match_voiceprints(
+    model: Any,
+    speaker_centers: Any,
+    people: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    import numpy as np
+    from scipy.optimize import linear_sum_assignment
+
+    person_ids: list[str] = []
+    person_names: list[str] = []
+    person_vectors: list[Any] = []
+    indexed_samples = 0
+    skipped_samples = 0
+    for person in people:
+        sample_vectors = []
+        for sample in person.get("samples", []):
+            if sample.get("state") != "ready" or not sample.get("audio_path"):
+                continue
+            vector = None
+            raw = sample.get("embedding")
+            if raw:
+                decoded = np.frombuffer(raw, dtype=np.float32)
+                if decoded.size == int(speaker_centers.shape[1]):
+                    norm = float(np.linalg.norm(decoded))
+                    if norm > 0:
+                        vector = decoded / norm
+            if vector is None:
+                try:
+                    vector = _extract_embedding(model, sample["audio_path"])
+                    update_voiceprint_sample(
+                        sample["id"], embedding=vector.astype(np.float32).tobytes(),
+                        embedding_model=VOICEPRINT_EMBEDDING_MODEL, embedding_error=None,
+                    )
+                except Exception as exc:
+                    skipped_samples += 1
+                    update_voiceprint_sample(sample["id"], embedding_error=str(exc)[:500])
+                    continue
+            indexed_samples += 1
+            sample_vectors.append(vector)
+        if sample_vectors:
+            center = np.mean(np.stack(sample_vectors), axis=0)
+            center /= max(float(np.linalg.norm(center)), np.finfo(np.float32).eps)
+            person_ids.append(person["id"])
+            person_names.append(person["name"])
+            person_vectors.append(center)
+    if not person_vectors:
+        status = "empty" if not skipped_samples else "degraded"
+        return {}, {"status": status, "indexed_samples": indexed_samples, "skipped_samples": skipped_samples}
+
+    current = np.asarray(speaker_centers, dtype=np.float32)
+    current /= np.maximum(np.linalg.norm(current, axis=1, keepdims=True), np.finfo(np.float32).eps)
+    scores = current @ np.stack(person_vectors).T
+    rows, columns = linear_sum_assignment(-scores)
+    matches = {}
+    for row, column in zip(rows, columns):
+        score = float(scores[row, column])
+        if score >= VOICEPRINT_COSINE_THRESHOLD:
+            matches[f"Speaker_{int(row)}"] = {
+                "person_id": person_ids[column], "name": person_names[column],
+                "score": round(score, 4),
+            }
+    return matches, {
+        "status": "matched" if matches else "no_match", "indexed_samples": indexed_samples,
+        "skipped_samples": skipped_samples, "matched_speakers": len(matches),
+    }
+
+
+def _cluster_speakers(vectors: Any, speakers: int | None, cluster: Any) -> Any:
+    """Avoid FunASR's unconditional single-speaker fallback for short recordings."""
+    import numpy as np
+
+    window_count = int(vectors.shape[0])
+    if window_count >= SHORT_DIARIZATION_WINDOW_LIMIT:
+        return cluster(vectors, oracle_num=speakers)
+    if window_count <= 1 or speakers == 1:
+        return np.zeros(window_count, dtype="int")
+    if speakers is not None:
+        return cluster.kmeans_cluster(vectors, min(speakers, window_count))
+
+    from scipy.cluster.hierarchy import fcluster, linkage
+    from scipy.spatial.distance import squareform
+
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    normalized = vectors / np.maximum(norms, np.finfo(vectors.dtype).eps)
+    distances = np.clip(1.0 - normalized @ normalized.T, 0.0, 2.0)
+    distances = (distances + distances.T) / 2
+    np.fill_diagonal(distances, 0.0)
+    tree = linkage(squareform(distances, checks=False), method="average")
+    labels = fcluster(tree, 1.0 - SHORT_DIARIZATION_COSINE_THRESHOLD, criterion="distance") - 1
+    if len(np.unique(labels)) > MAX_AUTO_SPEAKERS:
+        labels = fcluster(tree, MAX_AUTO_SPEAKERS, criterion="maxclust") - 1
+    return labels.astype("int", copy=False)
 
 
 def run_stage(operation: str, payload: dict[str, Any], directory: Path) -> dict[str, Any]:
@@ -176,34 +311,171 @@ def _parallel_diarization_enabled(compute_device: str) -> bool:
 
 def speaker_at(start: float, end: float, diarization: list[dict[str, Any]]) -> str:
     midpoint = (start + end) / 2
-    containing = [item for item in diarization if item["start"] <= midpoint <= item["end"]]
-    if containing:
-        return containing[0]["speaker"]
-    scored = [(max(0.0, min(end, item["end"]) - max(start, item["start"])), item["speaker"]) for item in diarization]
-    return max(scored, default=(0, "Speaker_0"))[1]
+    overlap_by_speaker: dict[str, float] = {}
+    midpoint_speakers = set()
+    first_index: dict[str, int] = {}
+    for index, item in enumerate(diarization):
+        speaker = item["speaker"]
+        overlap_by_speaker[speaker] = overlap_by_speaker.get(speaker, 0.0) + max(
+            0.0, min(end, item["end"]) - max(start, item["start"]),
+        )
+        first_index.setdefault(speaker, index)
+        if item["start"] <= midpoint <= item["end"]:
+            midpoint_speakers.add(speaker)
+    if overlap_by_speaker and max(overlap_by_speaker.values()) > 0:
+        return max(
+            overlap_by_speaker,
+            key=lambda speaker: (
+                overlap_by_speaker[speaker],
+                speaker in midpoint_speakers,
+                -first_index[speaker],
+            ),
+        )
+    if diarization:
+        nearest = min(
+            enumerate(diarization),
+            key=lambda pair: (
+                max(pair[1]["start"] - end, start - pair[1]["end"], 0.0),
+                pair[0],
+            ),
+        )[1]
+        return nearest["speaker"]
+    return "Speaker_0"
 
 
-def assemble(chunks: list[dict[str, Any]], diarization: list[dict[str, Any]], duration: float, aligned: bool) -> dict[str, Any]:
-    segments = []
-    for chunk in chunks:
-        words = chunk.get("words") or []
-        speaker = speaker_at(chunk["start"], chunk["end"], diarization)
-        if words:
-            word_items = [{**word, "speaker": speaker_at(word["start"], word["end"], diarization)} for word in words]
-            speaker = Counter(word["speaker"] for word in word_items).most_common(1)[0][0]
+def _aligned_word_offsets(text: str, words: list[dict[str, Any]]) -> list[int] | None:
+    offsets = []
+    cursor = 0
+    for word in words:
+        token = str(word.get("text", ""))
+        if not token:
+            offsets.append(cursor)
+            continue
+        offset = text.find(token, cursor)
+        if offset < 0:
+            return None
+        offsets.append(offset)
+        cursor = offset + len(token)
+    return offsets
+
+
+def _segment_payload(
+    start: float,
+    end: float,
+    speaker: str,
+    text: str,
+    words: list[dict[str, Any]],
+    expose_words: bool,
+) -> dict[str, Any]:
+    return {
+        "start": round(start, 3),
+        "end": round(end, 3),
+        "speaker": speaker,
+        "speaker_label": speaker.replace("_", " "),
+        "text": text,
+        "words": words if expose_words else [],
+    }
+
+
+def _speaker_turns(
+    chunk: dict[str, Any],
+    diarization: list[dict[str, Any]],
+    expose_words: bool,
+) -> tuple[list[dict[str, Any]], set[str]]:
+    words = chunk.get("words") or []
+    fallback_speaker = speaker_at(chunk["start"], chunk["end"], diarization)
+    if not words:
+        return [
+            _segment_payload(
+                chunk["start"], chunk["end"], fallback_speaker,
+                chunk.get("text", ""), [], expose_words,
+            )
+        ], {fallback_speaker}
+
+    word_items = [
+        {**word, "speaker": speaker_at(word["start"], word["end"], diarization)}
+        for word in words
+    ]
+    observed_speakers = {word["speaker"] for word in word_items}
+    offsets = _aligned_word_offsets(chunk.get("text", ""), word_items)
+    if offsets is None:
+        speaker = Counter(word["speaker"] for word in word_items).most_common(1)[0][0]
+        return [
+            _segment_payload(
+                chunk["start"], chunk["end"], speaker,
+                chunk.get("text", ""), word_items, expose_words,
+            )
+        ], observed_speakers
+
+    runs: list[dict[str, Any]] = []
+    for index, word in enumerate(word_items):
+        if runs and (not word.get("text") or runs[-1]["speaker"] == word["speaker"]):
+            runs[-1]["last"] = index
+            runs[-1]["words"].append(word)
         else:
-            word_items = []
-        segments.append({
-            "id": len(segments), "start": round(chunk["start"], 3), "end": round(chunk["end"], 3),
-            "speaker": speaker, "speaker_label": speaker.replace("_", " "), "text": chunk.get("text", ""),
-            "words": word_items,
-        })
-    speaker_ids = sorted({segment["speaker"] for segment in segments}) or ["Speaker_0"]
+            runs.append({"speaker": word["speaker"], "first": index, "last": index, "words": [word]})
+
+    boundaries = [float(chunk["start"])]
+    for previous, current in zip(runs, runs[1:]):
+        previous_end = float(previous["words"][-1]["end"])
+        current_start = float(current["words"][0]["start"])
+        boundary = max(boundaries[-1], min(float(chunk["end"]), (previous_end + current_start) / 2))
+        boundaries.append(boundary)
+    boundaries.append(float(chunk["end"]))
+
+    segments = []
+    chunk_text = chunk.get("text", "")
+    for index, run in enumerate(runs):
+        text_start = 0 if index == 0 else offsets[run["first"]]
+        text_end = len(chunk_text) if index + 1 == len(runs) else offsets[runs[index + 1]["first"]]
+        segments.append(
+            _segment_payload(
+                boundaries[index], boundaries[index + 1], run["speaker"],
+                chunk_text[text_start:text_end], run["words"], expose_words,
+            )
+        )
+    return segments, observed_speakers
+
+
+def assemble(
+    chunks: list[dict[str, Any]],
+    diarization: list[dict[str, Any]],
+    duration: float,
+    aligned: bool,
+    expose_words: bool | None = None,
+    voiceprint_matches: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    expose_words = aligned if expose_words is None else expose_words
+    segments: list[dict[str, Any]] = []
+    speaker_ids: set[str] = set()
+    for chunk in chunks:
+        turns, observed = _speaker_turns(chunk, diarization, expose_words)
+        speaker_ids.update(observed)
+        for turn in turns:
+            turn["id"] = len(segments)
+            segments.append(turn)
+    ordered_speakers = sorted(speaker_ids or {"Speaker_0"})
+    matches = voiceprint_matches or {}
+    speakers = []
+    labels = {}
+    for speaker_id in ordered_speakers:
+        match = matches.get(speaker_id)
+        label = match["name"] if match else speaker_id.replace("_", " ")
+        labels[speaker_id] = label
+        payload = {
+            "id": speaker_id, "label": label,
+            "label_source": "voiceprint" if match else "default",
+        }
+        if match:
+            payload["voiceprint_match"] = match
+        speakers.append(payload)
+    for segment in segments:
+        segment["speaker_label"] = labels.get(segment["speaker"], segment["speaker_label"])
     language = Counter(chunk.get("language", "Unknown") for chunk in chunks).most_common(1)[0][0] if chunks else "Unknown"
     return {
-        "text": "".join(segment["text"] for segment in segments), "language": language,
-        "duration": round(duration, 3), "timestamp_precision": "word_or_character" if aligned else "segment",
-        "diarization_mode": "single_active_speaker", "speakers": [{"id": item, "label": item.replace("_", " ")} for item in speaker_ids],
+        "text": "".join(chunk.get("text", "") for chunk in chunks), "language": language,
+        "duration": round(duration, 3), "timestamp_precision": "word_or_character" if expose_words else "segment",
+        "diarization_mode": "single_active_speaker", "speakers": speakers,
         "segments": segments,
     }
 
@@ -243,20 +515,41 @@ def process_job(context: JobContext) -> dict[str, Any]:
         vad = run_vad(audio, rate)
     chunks = write_chunks(audio, rate, combine_vad(vad, duration), context.work_dir / "chunks")
     context.progress(0.20, "speaker_diarization")
+    voiceprint_matches: dict[str, dict[str, Any]] = {}
+    use_voiceprints = bool(request.get("use_voiceprint_library", True) and request.get("diarize"))
+    voiceprint_status: dict[str, Any] = {
+        "enabled": use_voiceprints, "status": "disabled" if not use_voiceprints else "empty",
+        "indexed_samples": 0,
+    }
+    voiceprint_people: list[dict[str, Any]] = []
+    if use_voiceprints:
+        try:
+            voiceprint_people = list_voiceprint_people()
+        except Exception:
+            voiceprint_status["status"] = "degraded"
     diarization_executor = None
     diarization_future = None
     if request.get("diarize") and not settings.mock_mode and _parallel_diarization_enabled(compute_device):
         diarization_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="asr-diarization")
-        diarization_future = diarization_executor.submit(
-            diarize,
-            audio,
-            vad,
-            request.get("speaker_count"),
-            GPU_DIARIZATION_BATCH_SIZE,
-        )
+        if voiceprint_people:
+            diarization_future = diarization_executor.submit(
+                diarize, audio, vad, request.get("speaker_count"), GPU_DIARIZATION_BATCH_SIZE,
+                voiceprint_people, True,
+            )
+        else:
+            diarization_future = diarization_executor.submit(
+                diarize, audio, vad, request.get("speaker_count"), GPU_DIARIZATION_BATCH_SIZE,
+            )
         diarization = []
     elif request.get("diarize") and not settings.mock_mode:
-        diarization = diarize(audio, vad, request.get("speaker_count"), batch_size=1)
+        if voiceprint_people:
+            diarization, voiceprint_matches, match_status = diarize(
+                audio, vad, request.get("speaker_count"), batch_size=1,
+                voiceprint_people=voiceprint_people, return_metadata=True,
+            )
+            voiceprint_status.update(match_status)
+        else:
+            diarization = diarize(audio, vad, request.get("speaker_count"), batch_size=1)
     elif settings.mock_mode:
         midpoint = duration * 0.52
         diarization = [{"start": 0, "end": midpoint, "speaker": "Speaker_0"}, {"start": midpoint, "end": duration, "speaker": "Speaker_1"}]
@@ -271,7 +564,24 @@ def process_job(context: JobContext) -> dict[str, Any]:
             transcribed = run_model_stage(context, "transcribe", {"model_path": str(settings.models_dir / "Qwen3-ASR-0.6B"), "chunks": chunks, "language": request.get("language"), "context": request.get("context", "")}, context.work_dir, compute_device, 0.32)
         items = transcribed["chunks"]
         language = next((item.get("language") for item in items if item.get("language")), request.get("language", "Unknown"))
-        should_align = bool(request.get("align")) and language in ALIGNER_LANGUAGES
+        requested_alignment = bool(request.get("align"))
+        can_align = language in ALIGNER_LANGUAGES
+        internal_speaker_alignment = False
+        if can_align and request.get("diarize") and not requested_alignment:
+            requested_speakers = request.get("speaker_count")
+            if requested_speakers is not None:
+                internal_speaker_alignment = requested_speakers > 1
+            else:
+                if diarization_future is not None:
+                    future_result = diarization_future.result()
+                    if voiceprint_people:
+                        diarization, voiceprint_matches, match_status = future_result
+                        voiceprint_status.update(match_status)
+                    else:
+                        diarization = future_result
+                    diarization_future = None
+                internal_speaker_alignment = len({item["speaker"] for item in diarization}) > 1
+        should_align = can_align and (requested_alignment or internal_speaker_alignment)
         context.progress(0.68, f"qwen3_forced_alignment_{compute_device}" if should_align else "building_segment_timestamps")
         if should_align and settings.mock_mode:
             for item in items:
@@ -282,21 +592,78 @@ def process_job(context: JobContext) -> dict[str, Any]:
         elif should_align:
             items = run_model_stage(context, "align", {"model_path": str(settings.models_dir / "Qwen3-ForcedAligner-0.6B"), "chunks": items}, context.work_dir, compute_device, 0.68)["chunks"]
         if diarization_future is not None:
-            diarization = diarization_future.result()
+            future_result = diarization_future.result()
+            if voiceprint_people:
+                diarization, voiceprint_matches, match_status = future_result
+                voiceprint_status.update(match_status)
+            else:
+                diarization = future_result
     finally:
         if diarization_executor is not None:
             diarization_executor.shutdown(wait=True)
     context.progress(0.88, "merging_speakers_and_timestamps")
-    result = assemble(items, diarization, duration, should_align)
+    result = assemble(
+        items,
+        diarization,
+        duration,
+        should_align,
+        expose_words=requested_alignment and should_align,
+        voiceprint_matches=voiceprint_matches,
+    )
     result.update({
         "compute_device": compute_device,
         "compute_device_name": compute_device_name(compute_device, request.get("compute_device_name")),
         "precision": "FP32" if compute_device == "cpu" else "BF16",
         "quantized": False,
+        "voiceprint_library": voiceprint_status,
     })
     try:
         result["waveform"] = waveform_peaks(audio, 240)
     except Exception:
         result["waveform"] = []
     context.progress(0.96, "writing_exports")
-    return write_asr_exports(context.job_id, result, request.get("export_formats", ["json", "srt", "vtt", "txt"]))
+    result = write_asr_exports(context.job_id, result, request.get("export_formats", ["json", "srt", "vtt", "txt"]))
+    if request.get("purpose") == "voiceprint_import":
+        _finalize_voiceprint_import(request, normalized, result)
+    return result
+
+
+def _finalize_voiceprint_import(
+    request: dict[str, Any], normalized: Path, result: dict[str, Any],
+) -> None:
+    sample = get_voiceprint_sample(request.get("voiceprint_sample_id", ""))
+    if sample is None:
+        raise ValueError("Voiceprint sample was deleted before import completed")
+    target = settings.voiceprints_dir / sample["person_id"] / f"{sample['id']}.wav"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(".partial.wav")
+    try:
+        shutil.copy2(normalized, temporary)
+        os.replace(temporary, target)
+        vector = None
+        if not settings.mock_mode:
+            from funasr import AutoModel
+
+            model = AutoModel(
+                model=str(settings.models_dir / "CAM++"), device="cpu",
+                disable_update=True, disable_pbar=True,
+            )
+            vector = _extract_embedding(model, str(target))
+        words = [
+            {"text": word.get("text", ""), "start": word["start"], "end": word["end"]}
+            for segment in result.get("segments", []) for word in segment.get("words", [])
+        ]
+        values = dict(
+            state="ready", language=result.get("language") or request.get("language") or "Auto",
+            audio_path=str(target), transcript=result.get("text", ""), words_json=words,
+            duration=result.get("duration"), embedding_error=None, error_message=None,
+        )
+        if vector is not None:
+            values.update(
+                embedding=vector.astype("float32").tobytes(), embedding_model=VOICEPRINT_EMBEDDING_MODEL,
+            )
+        update_voiceprint_sample(sample["id"], **values)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
+        raise

@@ -1,4 +1,4 @@
-import type {BatchDeleteResult,Health,Job} from './types'
+import type {BatchDeleteResult,Capabilities,Health,Job,JobResult,VoiceprintPerson,VoiceprintSample} from './types'
 
 const key=()=>sessionStorage.getItem('audio-intel:key')||''
 export async function request<T>(path:string,init:RequestInit={}):Promise<T>{
@@ -10,6 +10,7 @@ export const api={
   jobs:(query='')=>request<{items:Job[]}>(`/api/v1/jobs${query}`),
   job:(id:string)=>request<Job>(`/api/v1/jobs/${id}`),
   health:()=>request<Health>('/api/v1/health'),
+  capabilities:()=>request<Capabilities>('/api/v1/capabilities'),
   submitAsr:(data:FormData)=>request<Job>('/api/v1/asr/jobs',{method:'POST',body:data}),
   submitTts:(data:FormData)=>request<Job>('/api/v1/tts/jobs',{method:'POST',body:data}),
   cancel:(id:string)=>request<Job>(`/api/v1/jobs/${id}/cancel`,{method:'POST'}),
@@ -18,6 +19,14 @@ export const api={
   removeMany:(jobIds:string[])=>request<BatchDeleteResult>('/api/v1/jobs/batch-delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:jobIds,purge:true})}),
   voices:()=>request<{items:Array<{id:string;name:string;language:string}>;preset_speakers:string[]}>('/api/v1/tts/voices'),
   addVoice:(data:FormData)=>request<{id:string}>('/api/v1/tts/voices',{method:'POST',body:data}),
+  renameSpeaker:(jobId:string,speakerId:string,name:string)=>request<JobResult>(`/api/v1/jobs/${jobId}/speakers/${encodeURIComponent(speakerId)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}),
+  voiceprints:()=>request<{items:VoiceprintPerson[]}>('/api/v1/voiceprints/people'),
+  addVoiceprintPerson:(name:string)=>request<VoiceprintPerson>('/api/v1/voiceprints/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}),
+  renameVoiceprintPerson:(id:string,name:string)=>request<VoiceprintPerson>(`/api/v1/voiceprints/people/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}),
+  removeVoiceprintPerson:(id:string)=>request<void>(`/api/v1/voiceprints/people/${id}?purge=true`,{method:'DELETE'}),
+  addAsrSamples:(personId:string,jobId:string,segmentIds:number[])=>request<{items:VoiceprintSample[]}>(`/api/v1/voiceprints/people/${personId}/samples/from-asr`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:jobId,segment_ids:segmentIds})}),
+  uploadVoiceprintSample:(personId:string,data:FormData)=>request<{sample:VoiceprintSample;job:Job}>(`/api/v1/voiceprints/people/${personId}/samples/upload`,{method:'POST',body:data}),
+  removeVoiceprintSample:(personId:string,sampleId:string)=>request<void>(`/api/v1/voiceprints/people/${personId}/samples/${sampleId}?purge=true`,{method:'DELETE'}),
 }
 export function artifactUrl(jobId:string,name:string){return `/api/v1/jobs/${jobId}/artifacts/${encodeURIComponent(name)}`}
 export function sourceUrl(jobId:string,download=false){return `/api/v1/jobs/${jobId}/source${download?'?download=true':''}`}

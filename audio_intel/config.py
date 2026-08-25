@@ -46,11 +46,16 @@ class Settings:
     def voices_dir(self) -> Path:
         return self.data_dir / "voices"
 
+    @property
+    def voiceprints_dir(self) -> Path:
+        return self.data_dir / "voiceprints"
+
     def ensure_directories(self) -> None:
         for path in (
             self.data_dir,
             self.jobs_dir,
             self.voices_dir,
+            self.voiceprints_dir,
             self.temp_dir,
             self.cache_dir,
             self.log_dir,

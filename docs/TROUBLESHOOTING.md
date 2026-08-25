@@ -31,6 +31,18 @@ curl -I https://modelscope.cn
 - 4 GB 显存下 ASR、Aligner 与 TTS GPU 任务仍由全局锁串行运行。TTS 仅在单个任务内对相邻文本块尝试 batch 2，并逐块执行声码器解码；显存门控失败或 OOM 时会自动恢复为 batch 1。
 - OOM 后先确认没有其他 GPU 程序，再重试任务；不要同时启动另一套模型服务。
 
+## 多人会议被合并为同一说话人
+
+- 支持 ForcedAligner 的语言会按字词时间戳把长 ASR 块重新切成说话人轮次；选择“仅句级时间戳”也会在内部完成对齐，不会返回字词明细。
+- 说话人数已知时请在提交页选择准确人数，短录音和短促交互会更稳定；自动人数仍可能受音色相似、噪声和混响影响。
+- 当前是 single-active-speaker 模式，真正同时说话的区间只会标记一位主导说话人。
+- 可停止服务后运行本地合成回归；生成音频和报告只写入已忽略的 `tmp/`：
+
+```bash
+.runtime/tts/bin/python scripts/benchmark_diarization.py synthesize --compute-device gpu
+.runtime/asr/bin/python scripts/benchmark_diarization.py evaluate --compute-device gpu
+```
+
 ## 前端或服务无法访问
 
 - `corepack pnpm@10.15.1 --dir frontend build` 可重建前端。
