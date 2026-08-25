@@ -1,5 +1,5 @@
 import {useEffect,useMemo,useRef,useState} from 'react'
-import {Eye,LoaderCircle,RotateCcw,Trash2,XCircle} from 'lucide-react'
+import {Check,Copy,Eye,LoaderCircle,RotateCcw,Trash2,XCircle} from 'lucide-react'
 import {api,size} from '../lib/api'
 import type {Job} from '../lib/types'
 
@@ -28,14 +28,28 @@ function deviceName(job:Job){
  return device==='cpu'?'CPU':'GPU'
 }
 
+async function copyText(value:string){
+ try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(value);return}}catch{}
+ const textarea=document.createElement('textarea')
+ const active=document.activeElement instanceof HTMLElement?document.activeElement:undefined
+ textarea.value=value
+ textarea.readOnly=true
+ textarea.style.position='fixed'
+ textarea.style.opacity='0'
+ document.body.appendChild(textarea)
+ try{textarea.focus();textarea.select();if(!document.execCommand('copy'))throw new Error('Copy command failed')}finally{textarea.remove();active?.focus()}
+}
+
 export function JobsPage({jobs,refresh,openJob}:{jobs:Job[];refresh:()=>void;openJob:(j:Job)=>void}){
  const [filter,setFilter]=useState('all')
  const [selected,setSelected]=useState<Set<string>>(()=>new Set())
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
  const [notice,setNotice]=useState('')
+ const [copiedId,setCopiedId]=useState('')
  const [now,setNow]=useState(()=>Date.now())
  const selectAll=useRef<HTMLInputElement>(null)
+ const copyResetTimer=useRef<number>(undefined)
  const shown=useMemo(()=>jobs.filter(job=>filter==='all'||job.kind===filter||job.state===filter),[jobs,filter])
  const eligible=useMemo(()=>shown.filter(job=>job.state!=='running'),[shown])
  const selectedCount=selected.size
@@ -45,10 +59,12 @@ export function JobsPage({jobs,refresh,openJob}:{jobs:Job[];refresh:()=>void;ope
  useEffect(()=>{if(!shown.some(job=>job.state==='running'&&job.started_at))return;const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer)},[shown])
  useEffect(()=>{if(selectAll.current)selectAll.current.indeterminate=partiallySelected},[partiallySelected])
  useEffect(()=>{const available=new Set(jobs.filter(job=>job.state!=='running').map(job=>job.id));setSelected(current=>{const next=new Set([...current].filter(id=>available.has(id)));return next.size===current.size?current:next})},[jobs])
+ useEffect(()=>()=>{if(copyResetTimer.current!==undefined)clearTimeout(copyResetTimer.current)},[])
 
  const changeFilter=(value:string)=>{setFilter(value);setSelected(new Set());setError('');setNotice('')}
  const toggle=(id:string)=>setSelected(current=>{const next=new Set(current);if(next.has(id))next.delete(id);else next.add(id);return next})
  const toggleAll=()=>setSelected(current=>{if(allSelected){const next=new Set(current);eligible.forEach(job=>next.delete(job.id));return next}return new Set(eligible.map(job=>job.id))})
+ const copyJobId=async(id:string)=>{try{await copyText(id);setCopiedId(id);if(copyResetTimer.current!==undefined)clearTimeout(copyResetTimer.current);copyResetTimer.current=window.setTimeout(()=>setCopiedId(current=>current===id?'':current),2000)}catch{setError(current=>[current,`无法自动复制任务 ID，请手动复制：${id}`].filter(Boolean).join('；'))}}
  const act=async(operation:()=>Promise<unknown>)=>{setError('');setNotice('');try{await operation();refresh()}catch(cause){setError((cause as Error).message)}}
  const remove=async(ids:string[])=>{
   const requested=new Set(ids)
@@ -72,11 +88,11 @@ export function JobsPage({jobs,refresh,openJob}:{jobs:Job[];refresh:()=>void;ope
  return <section className="page-pad jobs-page hud-page" data-module="TASK_HISTORY / LOG_03">
   <div className="page-heading"><div><h1>任务记录</h1><p>输入、结果和导出文件均持久化在项目目录，可选择任务永久清理。</p></div><div className="filter">{Object.entries(filterLabels).map(([value,label])=><button className={filter===value?'active':''} onClick={()=>changeFilter(value)} key={value}>{label}</button>)}</div></div>
   {selectedCount?<div className="selection-bar" role="region" aria-label="批量任务操作"><span><b>{selectedCount}</b> 个任务已选择</span><button disabled={busy} onClick={()=>void remove([...selected])}>{busy?<LoaderCircle className="spin"/>:<Trash2/>}{busy?'正在安全清理…':'永久删除所选任务'}</button></div>:null}
-  {notice?<p className="notice" role="status">{notice}</p>:null}{error?<p className="error" role="alert">{error}</p>:null}
+  {notice?<p className="notice" role="status">{notice}</p>:null}{error?<p className="error" role="alert">{error}</p>:null}{copiedId?<span className="sr-only" role="status" aria-live="polite">已复制完整任务 ID {copiedId}</span>:null}
   <div className="jobs-table"><div className="table-head"><span className="select-cell"><input ref={selectAll} type="checkbox" aria-label="全选当前筛选任务" checked={allSelected} disabled={!eligible.length||busy} onChange={toggleAll}/></span><span>任务</span><span>类型</span><span>状态</span><span>创建时间</span><span>耗时</span><span>进度</span><span>操作</span></div>{shown.map(job=>{
    const canDelete=job.state!=='running'
    const device=deviceName(job)
-   return <div className={`table-row ${selected.has(job.id)?'selected':''}`} key={job.id}><span className="select-cell"><input type="checkbox" aria-label={`选择任务 ${job.display_name}`} checked={selected.has(job.id)} disabled={!canDelete||busy} title={canDelete?'选择任务':'运行中的任务需先取消'} onChange={()=>toggle(job.id)}/></span><span className="job-name"><b>{job.display_name}</b><small title={`${job.id} · ${device}`}>{job.id.slice(0,12)} · {device} · <i>{elapsed(job,now)}</i></small></span><span className="kind">{job.kind.toUpperCase()}</span><span className={`status ${job.state}`}>{stateLabels[job.state]}</span><span>{new Date(job.created_at).toLocaleString()}</span><span className="elapsed">{elapsed(job,now)}<small>{(job.attempts||0)>1?`${job.attempts} 次尝试`:'实际处理'}</small></span><span>{Math.round(job.progress*100)}% · {job.stage.replaceAll('_',' ')}</span><span className="actions">{job.state==='succeeded'?<button title="查看结果" onClick={()=>openJob(job)}><Eye/></button>:null}{['queued','running'].includes(job.state)?<button title="取消任务" onClick={()=>void act(()=>api.cancel(job.id))}><XCircle/></button>:null}{['failed','cancelled'].includes(job.state)?<button title="重试" onClick={()=>void act(()=>api.retry(job.id))}><RotateCcw/></button>:null}{canDelete?<button title="永久删除" disabled={busy} onClick={()=>void remove([job.id])}><Trash2/></button>:null}</span></div>
+   return <div className={`table-row ${selected.has(job.id)?'selected':''}`} key={job.id}><span className="select-cell"><input type="checkbox" aria-label={`选择任务 ${job.display_name}`} checked={selected.has(job.id)} disabled={!canDelete||busy} title={canDelete?'选择任务':'运行中的任务需先取消'} onChange={()=>toggle(job.id)}/></span><span className="job-name"><b>{job.display_name}</b><small className="job-meta"><span className="job-id" title={`完整任务 ID：${job.id}`}>任务 ID：{job.id.slice(0,12)}…</span><button type="button" className={`copy-job-id ${copiedId===job.id?'copied':''}`} aria-label={`${copiedId===job.id?'已复制':'复制'}完整任务 ID ${job.id}`} title={copiedId===job.id?'已复制完整任务 ID':'复制完整任务 ID'} onClick={()=>void copyJobId(job.id)}>{copiedId===job.id?<Check/>:<Copy/>}</button><span aria-hidden="true">·</span><span>{device}</span><span aria-hidden="true">·</span><i>{elapsed(job,now)}</i></small></span><span className="kind">{job.kind.toUpperCase()}</span><span className={`status ${job.state}`}>{stateLabels[job.state]}</span><span>{new Date(job.created_at).toLocaleString()}</span><span className="elapsed">{elapsed(job,now)}<small>{(job.attempts||0)>1?`${job.attempts} 次尝试`:'实际处理'}</small></span><span>{Math.round(job.progress*100)}% · {job.stage.replaceAll('_',' ')}</span><span className="actions">{job.state==='succeeded'?<button title="查看结果" onClick={()=>openJob(job)}><Eye/></button>:null}{['queued','running'].includes(job.state)?<button title="取消任务" onClick={()=>void act(()=>api.cancel(job.id))}><XCircle/></button>:null}{['failed','cancelled'].includes(job.state)?<button title="重试" onClick={()=>void act(()=>api.retry(job.id))}><RotateCcw/></button>:null}{canDelete?<button title="永久删除" disabled={busy} onClick={()=>void remove([job.id])}><Trash2/></button>:null}</span></div>
   })}</div>
  </section>
 }

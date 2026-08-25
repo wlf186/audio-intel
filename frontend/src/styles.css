@@ -153,7 +153,7 @@ select:focus{border-color:var(--cyan)}
 .empty{height:100%;min-height:240px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#74817f;text-align:center}
 .empty svg{color:#55615f}
 .empty h2{color:#cbd2ce}
-.empty.small{min-height:165px;border:1px dashed #344243}
+.empty.small{height:auto;min-height:165px;border:1px dashed #344243}
 .search-empty{min-height:220px}
 
 .tts-grid{min-height:100%;display:grid;grid-template-columns:minmax(520px,1fr) 460px;position:relative}
@@ -215,6 +215,12 @@ select:focus{border-color:var(--cyan)}
 .job-name{display:flex;flex-direction:column;min-width:0}
 .job-name b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .job-name small{line-height:1.45;overflow-wrap:anywhere}
+.job-name small.job-meta{display:flex;align-items:center;gap:4px;flex-wrap:wrap;overflow-wrap:normal}
+.job-id{white-space:nowrap}
+.copy-job-id{width:18px;height:18px;flex:0 0 18px;display:grid;place-items:center;padding:2px;border:1px solid #344243;background:#0b1213;color:#8aa09d}
+.copy-job-id:hover{border-color:var(--yellow);color:var(--yellow)}
+.copy-job-id.copied{border-color:var(--green);color:var(--green);background:#08170d}
+.copy-job-id svg{width:11px;height:11px}
 .job-name small i{display:none;font-style:normal;color:#7ebfc1}
 .table-row small{color:#687775;font:9px ui-monospace,monospace}
 .select-cell{display:grid;place-items:center}.select-cell input{appearance:none;width:17px;height:17px;margin:0;border:1px solid #526163;background:#080d0e;position:relative;cursor:pointer}
