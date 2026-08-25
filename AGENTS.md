@@ -6,7 +6,7 @@
 
 Python is split into four boundaries: `api`, `asr`, `tts`, and the internal `aligner` used by TTS for overlong clone references. Never install qwen-asr into the TTS environment: qwen-asr and qwen-tts require incompatible Transformers versions. Aligner is not a worker or a public service target; `setup tts` owns both environments.
 
-Treat `models/`, `data/`, `cache/`, `tmp/`, `logs/`, `run/`, and `.runtime/` as local runtime state. Never commit model weights, generated audio, databases, PID files, or credentials.
+Treat `models/`, `data/`, `cache/`, `tmp/`, `logs/`, `run/`, and `.runtime/` as local runtime state. The `run/` directory contains supervisor PID files and transient executor identity metadata. Never commit model weights, generated audio, databases, process metadata, or credentials.
 
 ## Build, Test, and Development Commands
 
@@ -29,6 +29,8 @@ Direct Python requirements remain human-edited; generated, hashed locks live und
 ## Testing Guidelines
 
 Name backend tests `test_*.py` and Playwright files `*.spec.ts`. Cover queue state transitions, filesystem cleanup, API error responses, and migration compatibility with pytest/FastAPI `TestClient`. Auth changes must test Bearer clients, browser sessions, same-origin writes, media Range requests, logout, and restart invalidation. UI changes require an interaction assertion, console-error check, and desktop plus 390 px mobile overflow validation. Use mocks for routine tests; real-model inference is mandatory when changing model loading, precision, device routing, runtime separation, or audio pipelines.
+
+Worker cancellation changes must verify that the complete executor process tree has exited before the job reaches a terminal state, task temporary files are removed, and the next queued job proceeds without restarting the supervisor. Keep Linux and native Windows process behavior compatible; run real ASR and TTS GPU cancellation smoke tests when process supervision or device cleanup changes.
 
 Model identity comes only from `audio_intel/model_manifest.json`. Download, doctor, readiness, and health checks must require `.complete` contents to match the expected revision; existence alone is never sufficient. Keep all model loading offline at runtime and never accept user-supplied model repositories, configs, or checkpoints.
 

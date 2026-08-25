@@ -63,17 +63,19 @@ Linux 详细步骤见 [安装与复原](docs/INSTALL.md)，Windows 原生部署�
 ```text
 20810 FastAPI + 本地 Web UI
         │
-        ├── SQLite WAL 异步任务队列 ── ASR worker
-        │       FSMN-VAD (CPU) → CAM++ (CPU)
-        │       → Qwen3-ASR-0.6B (CPU FP32 / GPU BF16 子进程)
-        │       → 子进程退出释放显存
-        │       → ForcedAligner-0.6B (与 ASR 使用同一设备)
-        │       → JSON / SRT / VTT / TXT
+        ├── SQLite WAL 异步任务队列 ── ASR worker 监督器
+        │       └── 可重启任务执行器
+        │           FSMN-VAD (CPU) → CAM++ (CPU)
+        │           → Qwen3-ASR-0.6B (CPU FP32 / GPU BF16 阶段子进程)
+        │           → 阶段子进程退出释放模型内存
+        │           → ForcedAligner-0.6B (与 ASR 使用同一设备)
+        │           → JSON / SRT / VTT / TXT
         │
-        └── SQLite WAL 异步任务队列 ── TTS worker
-                Qwen3-TTS CustomVoice 或 Base（二选一）
-                └── 超长克隆参考 → 独立 aligner 环境（按需启动后退出）
-                CPU FP32 / GPU BF16 + SDPA + 自适应单任务微批处理 → WAV / FLAC / MP3
+        └── SQLite WAL 异步任务队列 ── TTS worker 监督器
+                └── 可重启任务执行器
+                    Qwen3-TTS CustomVoice 或 Base（二选一）
+                    └── 超长克隆参考 → 独立 aligner 环境（按需启动后退出）
+                    CPU FP32 / GPU BF16 + SDPA + 自适应单任务微批处理 → WAV / FLAC / MP3
 ```
 
 ASR 按 FSMN-VAD 的语音区间合并为约 20–60 秒的块。11 种对齐器支持语言返回字/词级时间戳，并利用这些时间戳把 ASR 大块重新切成连续的说话人轮次；即使选择“仅句级时间戳”，多人任务也会在内部对齐后隐藏字词明细。短录音会绕过 FunASR 少于 20 个声纹窗口时的单人回退，已知人数使用 KMeans，自动人数使用短音频余弦聚类。其他语言仍返回语音段时间戳。CAM++ 采用 single-active-speaker 模式，真正重叠语音仍只会归属给一位说话人。
@@ -92,7 +94,7 @@ data/         SQLite、原始输入、持久化结果、声音档案
 tmp/          任务临时文件（成功或失败后自动清理）
 cache/        uv、pip、Hugging Face、ModelScope、Torch 缓存
 logs/         API / ASR / TTS 日志
-run/          PID 文件
+run/          监督器 PID 与执行器身份元数据
 .runtime/     uv 与隔离的 api/asr/tts/aligner Python 环境
 ```
 
@@ -178,7 +180,7 @@ AUDIO_INTEL_API_KEY='replace-with-a-long-random-value' ./service.sh start all
 
 浏览器首次访问会提示输入 Key，并将其换成只存在内存中的 HttpOnly 同源会话 Cookie；原始 Key 不进入 URL 或浏览器存储，服务重启后需重新登录。CLI 和外部客户端继续使用 `Authorization: Bearer ...`。`/api/v1/health` 始终公开但只暴露状态、版本和离线标志；硬件、进程、模型路径等信息位于受保护的 `/api/v1/system`。
 
-可复制 `.env.example` 为 `.env`，编辑后用 `set -a; source .env; set +a` 加载；`service.sh` 不会隐式读取环境文件。常用变量包括 `AUDIO_INTEL_HOST`、`AUDIO_INTEL_PORT`、`AUDIO_INTEL_API_KEY`、目录覆盖、上传限制和文本限制。不要提交 `.env`，也不要在未配置 TLS 和访问控制时直接暴露到公网。
+可复制 `.env.example` 为 `.env`，编辑后用 `set -a; source .env; set +a` 加载；`service.sh` 不会隐式读取环境文件。常用变量包括 `AUDIO_INTEL_HOST`、`AUDIO_INTEL_PORT`、`AUDIO_INTEL_API_KEY`、`AUDIO_INTEL_CANCEL_GRACE_SECONDS`、目录覆盖、上传限制和文本限制。不要提交 `.env`，也不要在未配置 TLS 和访问控制时直接暴露到公网。
 
 ## 验证
 

@@ -22,6 +22,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - `/api/v1/health` 现在是公开最小探针；原详细结构迁移到受保护的 `/api/v1/system`。监控脚本如依赖硬件、worker、模型或路径字段必须切换端点并增加 Bearer Header。
 - `.complete` 必须包含固定模型 revision。旧的空 marker 会在 setup 时被判定为无效并修复。
 - TTS 安装现在同时创建独立 aligner 环境；不要复用旧 TTS 环境中的 qwen-asr。
+- ASR/TTS worker 现在由监督器管理可重启执行器，`setup all` 会将进程树管理所需的 `psutil` 同步到两个模型环境。启动时会校验并清理可信的遗留执行器元数据，再恢复中断任务；无需新增数据库迁移，schema 仍为 v4。
 
 ## 升级后验证
 
