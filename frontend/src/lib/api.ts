@@ -1,15 +1,19 @@
-import type {BatchDeleteResult,Capabilities,Health,Job,JobResult,VoiceprintPerson,VoiceprintSample} from './types'
+import type {AuthSession,BatchDeleteResult,Capabilities,Health,Job,JobResult,Probe,VoiceprintPerson,VoiceprintSample} from './types'
 
-const key=()=>sessionStorage.getItem('audio-intel:key')||''
+export class HttpError extends Error{status:number;constructor(status:number,message:string){super(message);this.status=status}}
 export async function request<T>(path:string,init:RequestInit={}):Promise<T>{
-  const headers=new Headers(init.headers); if(key()) headers.set('Authorization',`Bearer ${key()}`)
-  const response=await fetch(path,{...init,headers}); if(!response.ok){const body=await response.json().catch(()=>({detail:response.statusText}));throw new Error(body.detail||body.title||`HTTP ${response.status}`)}
+  const headers=new Headers(init.headers)
+  const response=await fetch(path,{...init,headers,credentials:'same-origin'}); if(!response.ok){const body=await response.json().catch(()=>({detail:response.statusText}));if(response.status===401)window.dispatchEvent(new Event('audio-intel:unauthorized'));throw new HttpError(response.status,body.detail||body.title||`HTTP ${response.status}`)}
   if(response.status===204)return undefined as T; return response.json()
 }
 export const api={
+  probe:()=>request<Probe>('/api/v1/health'),
+  auth:()=>request<AuthSession>('/api/v1/auth/session'),
+  login:(key:string)=>request<void>('/api/v1/auth/session',{method:'POST',headers:{Authorization:`Bearer ${key}`}}),
+  logout:()=>request<void>('/api/v1/auth/session',{method:'DELETE'}),
   jobs:(query='')=>request<{items:Job[]}>(`/api/v1/jobs${query}`),
   job:(id:string)=>request<Job>(`/api/v1/jobs/${id}`),
-  health:()=>request<Health>('/api/v1/health'),
+  system:()=>request<Health>('/api/v1/system'),
   capabilities:()=>request<Capabilities>('/api/v1/capabilities'),
   submitAsr:(data:FormData)=>request<Job>('/api/v1/asr/jobs',{method:'POST',body:data}),
   submitTts:(data:FormData)=>request<Job>('/api/v1/tts/jobs',{method:'POST',body:data}),

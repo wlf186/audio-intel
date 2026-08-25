@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "name": "Qwen3-ASR-0.6B",
+      "provider": "huggingface",
+      "repository": "Qwen/Qwen3-ASR-0.6B",
+      "revision": "5eb144179a02acc5e5ba31e748d22b0cf3e303b0",
+      "required_files": ["config.json", "model.safetensors", "tokenizer_config.json"],
+      "targets": ["asr"],
+      "device": "CPU FP32 / GPU BF16",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/blob/main/LICENSE"
+    },
+    {
+      "name": "Qwen3-ForcedAligner-0.6B",
+      "provider": "huggingface",
+      "repository": "Qwen/Qwen3-ForcedAligner-0.6B",
+      "revision": "c7cbfc2048c462b0d63a45797104fc9db3ad62b7",
+      "required_files": ["config.json", "model.safetensors", "tokenizer_config.json"],
+      "targets": ["asr", "tts"],
+      "device": "CPU FP32 / GPU BF16",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B/blob/main/LICENSE"
+    },
+    {
+      "name": "FSMN-VAD",
+      "provider": "modelscope",
+      "repository": "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+      "revision": "v2.0.4",
+      "required_files": ["config.yaml", "model.pt"],
+      "targets": ["asr"],
+      "device": "CPU · FP32",
+      "license": "Apache-2.0",
+      "license_url": "https://modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"
+    },
+    {
+      "name": "CAM++",
+      "provider": "modelscope",
+      "repository": "iic/speech_campplus_sv_zh-cn_16k-common",
+      "revision": "v2.0.2",
+      "required_files": ["config.yaml", "campplus_cn_common.bin"],
+      "targets": ["asr"],
+      "device": "CPU · FP32",
+      "license": "Apache-2.0",
+      "license_url": "https://modelscope.cn/models/iic/speech_campplus_sv_zh-cn_16k-common"
+    },
+    {
+      "name": "Qwen3-TTS-12Hz-0.6B-Base",
+      "provider": "huggingface",
+      "repository": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+      "revision": "5d83992436eae1d760afd27aff78a71d676296fc",
+      "required_files": ["config.json", "model.safetensors", "speech_tokenizer/model.safetensors"],
+      "targets": ["tts"],
+      "device": "CPU FP32 / GPU BF16",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base/blob/main/LICENSE"
+    },
+    {
+      "name": "Qwen3-TTS-12Hz-0.6B-CustomVoice",
+      "provider": "huggingface",
+      "repository": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+      "revision": "85e237c12c027371202489a0ec509ded67b5e4b5",
+      "required_files": ["config.json", "model.safetensors", "speech_tokenizer/model.safetensors"],
+      "targets": ["tts"],
+      "device": "CPU FP32 / GPU BF16",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/blob/main/LICENSE"
+    }
+  ]
+}

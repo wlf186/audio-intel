@@ -1,0 +1,81 @@
+name: Linux quality gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      AUDIO_INTEL_MOCK_MODE: "1"
+      AUDIO_INTEL_PORT: "20810"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install API runtime and build frontend
+        run: ./service.sh setup api
+
+      - name: Verify dependency locks
+        run: .runtime/api/bin/python scripts/lock_dependencies.py --check
+
+      - name: Backend and frontend checks
+        run: |
+          .runtime/api/bin/python -m pytest -q
+          corepack pnpm@10.15.1 --dir frontend typecheck
+          corepack pnpm@10.15.1 --dir frontend build
+
+      - name: Dependency audits
+        run: |
+          corepack pnpm@10.15.1 --dir frontend audit --audit-level high
+          .runtime/bin/uv tool run pip-audit -r requirements-lock/linux/api.txt --disable-pip
+
+      - name: Start and exercise services
+        run: |
+          AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all
+          .runtime/api/bin/python scripts/smoke_test.py
+
+      - name: Browser checks
+        run: |
+          corepack pnpm@10.15.1 --dir frontend exec playwright install --with-deps chromium
+          corepack pnpm@10.15.1 --dir frontend test:e2e
+
+      - name: Audit model runtimes with documented VEX exclusions
+        if: github.event_name == 'schedule'
+        run: |
+          for runtime in asr tts aligner; do
+            .runtime/bin/uv tool run pip-audit -r "requirements-lock/linux/$runtime.txt" --disable-pip \
+              --vulnerability-service osv \
+              --ignore-vuln PYSEC-2026-3447 \
+              --ignore-vuln PYSEC-2025-194 \
+              --ignore-vuln PYSEC-2026-2288 \
+              --ignore-vuln PYSEC-2026-2289 \
+              --ignore-vuln PYSEC-2026-2290 \
+              --ignore-vuln PYSEC-2025-217
+          done
+
+      - name: Stop services
+        if: always()
+        run: ./service.sh stop all
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-logs
+          path: logs/
+          if-no-files-found: ignore

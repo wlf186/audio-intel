@@ -12,8 +12,14 @@ Sandevistan-Audio source code is licensed under Apache-2.0. That license applies
 | FunASR toolkit | <https://github.com/modelscope/FunASR> | MIT; model weights have separate terms |
 | ModelScope SDK | <https://github.com/modelscope/modelscope> | Apache-2.0 |
 | PyTorch / torchaudio | <https://github.com/pytorch/pytorch> | BSD-style license |
+| qwen-asr / qwen-tts Python packages | <https://pypi.org/project/qwen-asr/>, <https://pypi.org/project/qwen-tts/> | Apache-2.0 |
+| Transformers / Hugging Face Hub | <https://github.com/huggingface/transformers>, <https://github.com/huggingface/huggingface_hub> | Apache-2.0 |
+| FastAPI / Starlette / Uvicorn | <https://fastapi.tiangolo.com/>, <https://www.starlette.io/>, <https://www.uvicorn.org/> | MIT / BSD-3-Clause |
+| React / Vite | <https://react.dev/>, <https://vite.dev/> | MIT |
 
 Users must review the current upstream model cards and licenses before use or redistribution. Upstream terms control if this notice and an upstream source disagree.
+
+This table identifies the principal direct runtime components; it is not a complete transitive software bill of materials. The exact resolved Python dependency inventory is recorded in `requirements-lock/`, and the exact frontend inventory and integrity hashes are recorded in `frontend/pnpm-lock.yaml`. See `docs/DEPENDENCIES.md` for the maintenance and security-audit policy.
 
 Voice cloning must only be used with audio and identities for which the operator has permission. Operators are responsible for consent, disclosure, generated-audio use, and compliance with applicable law.
 

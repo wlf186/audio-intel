@@ -47,12 +47,24 @@ if ($null -ne $nvidia) {
 }
 
 $runtimeStatus = [ordered]@{}
-foreach ($name in @("api", "asr", "tts")) {
+foreach ($name in @("api", "asr", "tts", "aligner")) {
     $runtimeStatus[$name] = Test-Path (Join-Path $RootDir ".runtime\$name\Scripts\python.exe")
 }
 $modelStatus = [ordered]@{}
-foreach ($name in @("Qwen3-ASR-0.6B", "Qwen3-ForcedAligner-0.6B", "FSMN-VAD", "CAM++", "Qwen3-TTS-12Hz-0.6B-Base", "Qwen3-TTS-12Hz-0.6B-CustomVoice")) {
-    $modelStatus[$name] = Test-Path (Join-Path $RootDir "models\$name\.complete")
+$manifest = Get-Content -Path (Join-Path $RootDir "audio_intel\model_manifest.json") -Raw | ConvertFrom-Json
+foreach ($model in $manifest.models) {
+    $modelDir = Join-Path $RootDir "models\$($model.name)"
+    $marker = Join-Path $modelDir ".complete"
+    $actual = if (Test-Path $marker) { (Get-Content -Path $marker -Raw).Trim() } else { $null }
+    $missingFiles = @()
+    foreach ($relativePath in $model.required_files) {
+        $requiredPath = Join-Path $modelDir $relativePath
+        if (-not (Test-Path $requiredPath) -or (Get-Item $requiredPath).Length -eq 0) {
+            $missingFiles += $relativePath
+        }
+    }
+    $state = if (-not (Test-Path $marker)) { "missing" } elseif ([string]::IsNullOrWhiteSpace($actual)) { "empty_marker" } elseif ($actual -ne $model.revision) { "revision_mismatch" } elseif ($missingFiles.Count -gt 0) { "incomplete" } else { "installed" }
+    $modelStatus[$model.name] = [ordered]@{ installed = $state -eq "installed"; state = $state; revision = $model.revision; actual_revision = $actual; missing_files = $missingFiles }
 }
 
 $report = [ordered]@{

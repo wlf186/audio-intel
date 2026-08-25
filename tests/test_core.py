@@ -25,6 +25,15 @@ def test_tts_sentence_chunking_preserves_text() -> None:
     assert all(len(item) <= 100 for item in chunks)
 
 
+def test_tts_uses_dedicated_aligner_runtime(monkeypatch) -> None:
+    monkeypatch.delenv("AUDIO_INTEL_ALIGNER_PYTHON", raising=False)
+    expected = "Scripts" if __import__("platform").system() == "Windows" else "bin"
+    assert expected in tts_pipeline.aligner_python().parts
+    assert "aligner" in tts_pipeline.aligner_python().parts
+    monkeypatch.setenv("AUDIO_INTEL_ALIGNER_PYTHON", "/opt/audio-intel/aligner-python")
+    assert str(tts_pipeline.aligner_python()) == "/opt/audio-intel/aligner-python"
+
+
 def test_asr_merge_and_exports(tmp_path, monkeypatch) -> None:
     local = replace(settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp")
     local.ensure_directories()

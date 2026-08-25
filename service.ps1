@@ -95,11 +95,13 @@ function Ensure-Ready {
     if ($Component -eq "api" -and -not (Test-Path (Join-Path $RootDir "frontend\dist\index.html"))) {
         & (Join-Path $RootDir "scripts\bootstrap.ps1") "api"
     }
-    if ($Component -eq "asr" -and $env:AUDIO_INTEL_MOCK_MODE -ne "1" -and -not (Test-Path (Join-Path $RootDir "models\Qwen3-ASR-0.6B\.complete"))) {
-        & (Join-Path $RootDir "scripts\bootstrap.ps1") "asr"
-    }
-    if ($Component -eq "tts" -and $env:AUDIO_INTEL_MOCK_MODE -ne "1" -and -not (Test-Path (Join-Path $RootDir "models\Qwen3-TTS-12Hz-0.6B-Base\.complete"))) {
-        & (Join-Path $RootDir "scripts\bootstrap.ps1") "tts"
+    if ($env:AUDIO_INTEL_MOCK_MODE -ne "1" -and ($Component -eq "asr" -or $Component -eq "tts")) {
+        $ready = & (Get-RuntimePython $Component) -c "from audio_intel.config import settings; from audio_intel.model_registry import target_ready; raise SystemExit(0 if target_ready(settings.models_dir, '$Component') else 1)"
+        $modelsReady = $LASTEXITCODE -eq 0
+        $alignerReady = $Component -ne "tts" -or (Test-Path (Get-RuntimePython "aligner"))
+        if (-not $modelsReady -or -not $alignerReady) {
+            & (Join-Path $RootDir "scripts\bootstrap.ps1") $Component
+        }
     }
 }
 

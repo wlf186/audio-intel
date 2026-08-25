@@ -11,6 +11,12 @@
 curl -v http://127.0.0.1:20810/api/v1/health
 ```
 
+若已启用 API Key，公开 `/health` 只返回最小状态。详细诊断使用：
+
+```bash
+curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/v1/system
+```
+
 ## 下载缓慢或中断
 
 确认代理已导出到执行 `setup` 的同一个 shell：
@@ -61,4 +67,11 @@ mv .runtime/api .runtime/api.broken
 ./service.sh start all
 ```
 
-ASR/TTS 环境同理。确认恢复后再自行删除 `.broken` 目录。
+ASR/TTS 环境同理。TTS 的超长克隆参考对齐失败时，还需一起重建 `.runtime/aligner`，最简单的做法是重新执行 `./service.sh setup tts`。确认恢复后再自行删除 `.broken` 目录。
+
+## API Key 页面反复要求登录
+
+- 浏览器会话只保存在 API 进程内，服务重启后重新输入 Key 属于预期行为。
+- 页面不会在 `sessionStorage`、`localStorage` 或 URL 中保存原始 Key；不要自行把 Key 拼到媒体 URL。
+- 反向代理必须让页面、API 和音频文件保持同源，并正确传递 Cookie、Range、Origin 与 HTTPS scheme。
+- CLI 不使用浏览器 Cookie，继续发送 `Authorization: Bearer ...`。

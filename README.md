@@ -6,7 +6,7 @@
 
 自动安装支持 **Ubuntu 22.04/24.04 x86_64** 和 **Windows 11 x64 原生环境**。完整 ASR + TTS 建议至少 16 GB 内存（32 GB 更舒适）和 30 GB 可用磁盘。NVIDIA GPU 可选；GPU 模式要求 `nvidia-smi` 正常且驱动兼容 PyTorch CUDA 13.0，CPU 模式不需要显卡。Windows 自动化会在 Windows CI 验证，但真实模型尚无 Windows GPU 实机验收记录。
 
-Linux 需要 Git、curl、tar、Node.js 20.19+ 与 Corepack；Python 3.12 和 uv 会安装到项目目录：
+Linux 需要 Git、curl、tar、Node.js 22.20+（推荐 Node.js 24 LTS）与 Corepack；Python 3.12 和固定版本的 uv 会安装到项目目录：
 
 ```bash
 git clone https://github.com/wlf186/audio-intel.git
@@ -24,7 +24,7 @@ cd audio-intel
 curl http://127.0.0.1:20810/api/v1/health
 ```
 
-Windows 11 原生环境建议使用本地 NTFS 短路径和 Node.js 22 LTS：
+Windows 11 原生环境建议使用本地 NTFS 短路径和 Node.js 24 LTS：
 
 ```powershell
 git clone https://github.com/wlf186/audio-intel.git C:\ai\audio-intel
@@ -72,6 +72,7 @@ Linux 详细步骤见 [安装与复原](docs/INSTALL.md)，Windows 原生部署�
         │
         └── SQLite WAL 异步任务队列 ── TTS worker
                 Qwen3-TTS CustomVoice 或 Base（二选一）
+                └── 超长克隆参考 → 独立 aligner 环境（按需启动后退出）
                 CPU FP32 / GPU BF16 + SDPA + 自适应单任务微批处理 → WAV / FLAC / MP3
 ```
 
@@ -92,7 +93,7 @@ tmp/          任务临时文件（成功或失败后自动清理）
 cache/        uv、pip、Hugging Face、ModelScope、Torch 缓存
 logs/         API / ASR / TTS 日志
 run/          PID 文件
-.runtime/     uv 与隔离的 api/asr/tts Python 环境
+.runtime/     uv 与隔离的 api/asr/tts/aligner Python 环境
 ```
 
 输入与结果默认一直保留，只有调用带 `purge=true` 的删除 API 或在前端确认永久删除后才会清理。
@@ -102,6 +103,7 @@ run/          PID 文件
 ```bash
 # ASR
 curl -F file=@meeting.wav \
+  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -F language=Auto -F speaker_count=auto \
   -F diarize=true -F align=true -F use_voiceprint_library=true \
   -F compute_device=gpu \
@@ -109,28 +111,31 @@ curl -F file=@meeting.wav \
 
 # TTS 预置音色
 curl -F text='你好，这是本地语音。' \
+  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -F language=Chinese -F voice_mode=preset -F speaker=Vivian \
   -F response_format=wav -F compute_device=cpu \
   http://127.0.0.1:20810/api/v1/tts/jobs
 
 # 查询任务及结果
-curl http://127.0.0.1:20810/api/v1/jobs/JOB_ID
-curl http://127.0.0.1:20810/api/v1/jobs/JOB_ID/result
+curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/v1/jobs/JOB_ID
+curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/v1/jobs/JOB_ID/result
 
 # 批量永久删除任务（排队任务会先原子取消，运行中任务会逐项拒绝）
 curl -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -d '{"job_ids":["JOB_ID_1","JOB_ID_2"],"purge":true}' \
   http://127.0.0.1:20810/api/v1/jobs/batch-delete
 
 # ASR 原始音源（支持 Range，可直接用于播放器）
-curl http://127.0.0.1:20810/api/v1/jobs/JOB_ID/source -o source.wav
+curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/v1/jobs/JOB_ID/source -o source.wav
 ```
 
-可管理的主要端点：
+以下仅列出主要端点；完整且实时的接口定义以 `/docs` 和 `/openapi.json` 为准：
 
 - `POST /api/v1/asr/jobs`、`POST /api/v1/tts/jobs`
 - `GET /api/v1/jobs`、`GET /api/v1/jobs/{id}`
 - `POST /api/v1/jobs/{id}/cancel`、`POST /api/v1/jobs/{id}/retry`
+- `DELETE /api/v1/jobs/{id}?purge=true`
 - `POST /api/v1/jobs/batch-delete`（最多 100 个 ID，返回逐项结果与实际释放空间）
 - `GET /api/v1/jobs/{id}/artifacts/{name}`
 - `GET /api/v1/jobs/{id}/source`（ASR 原始音源；`?download=true` 强制下载）
@@ -138,8 +143,12 @@ curl http://127.0.0.1:20810/api/v1/jobs/JOB_ID/source -o source.wav
 - `GET|POST /api/v1/voiceprints/people`、`PATCH|DELETE /api/v1/voiceprints/people/{id}`
 - `POST /api/v1/voiceprints/people/{id}/samples/from-asr`（同一说话人的段落分别入库）
 - `POST /api/v1/voiceprints/people/{id}/samples/upload`、`DELETE /api/v1/voiceprints/people/{id}/samples/{sample_id}`
-- `POST /api/v1/tts/voices`、`GET /api/v1/tts/voices`
+- `GET /api/v1/voiceprints/samples/{sample_id}/audio`
+- `POST /api/v1/tts/voices`、`GET /api/v1/tts/voices`、`DELETE /api/v1/tts/voices/{id}`
+- `GET /api/v1/health`（公开最小探针）、`GET /api/v1/system`（详细且受保护）
+- `GET|POST|DELETE /api/v1/auth/session`
 - `GET /api/v1/events`（SSE）
+- `GET /v1/models` 与 OpenAI 兼容音频端点
 
 任务响应中的 `processing_seconds` 是累计实际处理耗时，不包含排队等待，并会跨失败重试累加；运行中任务配合 `processing_as_of` 可实时显示。`compute_device` 返回 `cpu` 或 `gpu`，`compute_device_name` 返回任务提交/执行时持久化的具体设备名；GPU 名称动态取自实际 `cuda:0`，不会因以后更换硬件而改写历史记录。永久删除会清理任务输入、输出、错误文件、临时目录和 SQLite 记录，并在批次结束后执行安全擦除、WAL 截断与数据库压缩。
 
@@ -147,10 +156,12 @@ curl http://127.0.0.1:20810/api/v1/jobs/JOB_ID/source -o source.wav
 
 ```bash
 curl -F file=@meeting.wav -F model=qwen3-asr-0.6b -F compute_device=gpu \
+  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -F response_format=verbose_json \
   http://127.0.0.1:20810/v1/audio/transcriptions
 
 curl -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -d '{"model":"qwen3-tts-0.6b","input":"你好","voice":"Vivian","response_format":"wav","compute_device":"cpu"}' \
   http://127.0.0.1:20810/v1/audio/speech -o speech.wav
 ```
@@ -165,12 +176,15 @@ curl -H 'Content-Type: application/json' \
 AUDIO_INTEL_API_KEY='replace-with-a-long-random-value' ./service.sh start all
 ```
 
+浏览器首次访问会提示输入 Key，并将其换成只存在内存中的 HttpOnly 同源会话 Cookie；原始 Key 不进入 URL 或浏览器存储，服务重启后需重新登录。CLI 和外部客户端继续使用 `Authorization: Bearer ...`。`/api/v1/health` 始终公开但只暴露状态、版本和离线标志；硬件、进程、模型路径等信息位于受保护的 `/api/v1/system`。
+
 可复制 `.env.example` 为 `.env`，编辑后用 `set -a; source .env; set +a` 加载；`service.sh` 不会隐式读取环境文件。常用变量包括 `AUDIO_INTEL_HOST`、`AUDIO_INTEL_PORT`、`AUDIO_INTEL_API_KEY`、目录覆盖、上传限制和文本限制。不要提交 `.env`，也不要在未配置 TLS 和访问控制时直接暴露到公网。
 
 ## 验证
 
 ```bash
-.runtime/api/bin/pytest -q
+.runtime/api/bin/python -m pytest -q
+.runtime/api/bin/python scripts/lock_dependencies.py --check
 corepack pnpm@10.15.1 --dir frontend typecheck
 corepack pnpm@10.15.1 --dir frontend test:e2e
 AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all  # 仅供快速管线验收，不是生产默认值
@@ -186,7 +200,7 @@ $env:AUDIO_INTEL_MOCK_MODE = '1'
 .\service.cmd stop all
 ```
 
-生产默认值始终是真实模型模式；mock 模式只用于验证任务队列、API、导出和 UI。
+生产默认值始终是真实模型模式；mock 模式只用于验证任务队列、API、导出和 UI。依赖版本、锁文件和当前无法升级的模型运行时公告见 [依赖维护说明](docs/DEPENDENCIES.md)，升级步骤见 [升级指南](docs/UPGRADE.md)。
 
 真实模型的可恢复两小时设备矩阵测试（先分别使用 CPU/GPU 合成，再使用同一份 CPU 合成音频分别执行 CPU/GPU ASR）：
 

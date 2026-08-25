@@ -1,5 +1,7 @@
+torch==2.11.0
+torchaudio==2.11.0
 qwen-tts==0.1.1
-qwen-asr==0.0.6
+setuptools==81.0.0
 huggingface-hub==0.36.2
 av==16.1.0
 numpy==2.5.2

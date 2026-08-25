@@ -53,8 +53,9 @@ test('ASR playback, seek and transcript search are interactive',async({page})=>{
  expect(paused).toBe(true)
  await expect(clock).not.toHaveText('00:00:00.000')
  const waveform=page.locator('.wave-area canvas')
+ const duration=await page.locator('audio').evaluate((element:HTMLAudioElement)=>element.duration)
  await waveform.click({position:{x:Math.max(5,(await waveform.boundingBox())!.width*.7),y:25}})
- await expect.poll(async()=>page.locator('audio').evaluate((element:HTMLAudioElement)=>element.currentTime)).toBeGreaterThan(2)
+ await expect.poll(async()=>page.locator('audio').evaluate((element:HTMLAudioElement)=>element.currentTime)).toBeGreaterThan(duration*.5)
  await page.locator('.transcript-tools input').fill('不存在的内容')
  await expect(page.locator('.segments article')).toHaveCount(0)
  await expect(page.getByText('没有匹配的转写片段')).toBeVisible()
@@ -89,9 +90,38 @@ test('ASR and TTS compute device defaults and selections survive polling',async(
  await page.reload()
  const ttsDevice=page.getByLabel('TTS 计算设备')
  await expect(ttsDevice).toHaveValue('cpu')
+ await expect(page.getByText('CPU · FP32 · SDPA · BATCH 1')).toBeVisible()
  await ttsDevice.selectOption('gpu')
+ await expect(page.getByText('GPU · BF16 · SDPA · ADAPTIVE BATCH 1–2')).toBeVisible()
  await page.waitForTimeout(2500)
  await expect(ttsDevice).toHaveValue('gpu')
+})
+
+test('API key login and logout use an ephemeral browser session',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ let authenticated=false
+ let submittedAuthorization=''
+ await page.route('**/api/v1/auth/session',async route=>{
+  if(route.request().method()==='GET')return route.fulfill({json:{required:true,authenticated}})
+  if(route.request().method()==='POST'){submittedAuthorization=route.request().headers().authorization||'';authenticated=true;return route.fulfill({status:204})}
+  authenticated=false
+  return route.fulfill({status:204})
+ })
+ await page.goto('/#system')
+ await expect(page.getByRole('dialog',{name:'访问验证'})).toBeVisible()
+ await page.screenshot({path:'/tmp/audio-intel-auth-login.png',fullPage:false})
+ await page.getByPlaceholder('输入 AUDIO_INTEL_API_KEY').fill('browser-secret')
+ await page.getByRole('button',{name:'进入工作台'}).click()
+ await expect(page.getByRole('dialog',{name:'访问验证'})).toHaveCount(0)
+ await expect(page.locator('.model-list>div')).toHaveCount(6)
+ await page.screenshot({path:'/tmp/audio-intel-authenticated-system.png',fullPage:false})
+ expect(submittedAuthorization).toBe('Bearer browser-secret')
+ expect(await page.evaluate(()=>({stored:sessionStorage.getItem('audio-intel:key'),url:location.href}))).toEqual({stored:null,url:expect.not.stringContaining('browser-secret')})
+ await page.getByRole('button',{name:'退出本地会话'}).click()
+ await expect(page.getByRole('dialog',{name:'访问验证'})).toBeVisible()
+ expect(errors).toEqual([])
 })
 
 test('task duration, single/multi/select-all and partial batch deletion are interactive',async({page})=>{
@@ -157,7 +187,7 @@ test('first TTS submission appears immediately and survives a stale poll',async(
  })
  await page.route('**/api/v1/tts/jobs',route=>{submitted=true;return route.fulfill({status:202,json:queued})})
  await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
- await page.route('**/api/v1/health',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{gpu:{name:'Test GPU',memory_used_mib:0,memory_total_mib:4096,utilization:0}},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{gpu:{name:'Test GPU',memory_used_mib:0,memory_total_mib:4096,utilization:0}},models:[],storage:{}}}))
  await page.goto('/#tts')
  await expect(page).toHaveTitle('Sandevistan-Audio')
  await expect(page.getByRole('heading',{name:'语音合成'})).toBeVisible()
@@ -189,7 +219,7 @@ test('first ASR submission appears immediately from the accepted job response',a
  const listGate=new Promise<void>(resolve=>{releaseList=resolve})
  await page.route('**/api/v1/jobs',async route=>{if(submitted)await listGate;return route.fulfill({json:{items:submitted?[queued]:[]}})})
  await page.route('**/api/v1/asr/jobs',route=>{submitted=true;return route.fulfill({status:202,json:queued})})
- await page.route('**/api/v1/health',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{gpu:{name:'Test GPU',memory_used_mib:0,memory_total_mib:4096,utilization:0}},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{gpu:{name:'Test GPU',memory_used_mib:0,memory_total_mib:4096,utilization:0}},models:[],storage:{}}}))
  await page.goto('/#asr')
  await page.locator('input[type="file"]').setInputFiles({name:'first-submit.wav',mimeType:'audio/wav',buffer:Buffer.from('RIFF-test')})
  await page.getByRole('button',{name:'开始转写'}).click()
@@ -212,7 +242,7 @@ test('task history labels shortened IDs and copies the complete ID over HTTP fal
   Object.defineProperty(document,'execCommand',{configurable:true,value:(command:string)=>{if(command!=='copy')return false;const active=document.activeElement as HTMLTextAreaElement|null;(window as typeof window&{__copiedJobId?:string}).__copiedJobId=active?.value;return true}})
  })
  await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[job]}}))
- await page.route('**/api/v1/health',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
  await page.goto('/#jobs')
  const shortId=page.locator('.job-id')
  await expect(shortId).toHaveText('任务 ID：fedcba098765…')
@@ -239,7 +269,7 @@ test('ASR speaker limit, filter, rename and voiceprint segment enrollment are in
  const people=[{id:'voice_nick',name:'尼克杨',sample_count:1,created_at:now,updated_at:now,samples:[{id:'sample_nick',person_id:'voice_nick',state:'ready',language:'Chinese',transcript:'已有样本',words:[],duration:5,created_at:now,updated_at:now,tts_eligible:true,embedding_status:'ready',audio_url:'/sample.wav'}]}]
  let enrollment:{job_id:string;segment_ids:number[]}|undefined
  await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[job]}}))
- await page.route('**/api/v1/health',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
  await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:people}}))
  await page.route('**/api/v1/jobs/asr-speaker-tools/source',route=>route.fulfill({contentType:'audio/wav',body:Buffer.from('RIFF-test')}))
@@ -281,7 +311,7 @@ test('voiceprint library sample can be explicitly selected for TTS clone',async(
  const people=[{id:'voice_nick',name:'尼克杨',sample_count:1,created_at:now,updated_at:now,samples:[{id:'sample_long',person_id:'voice_nick',state:'ready',language:'Chinese',transcript:'这是一条超过十五秒的准确参考文本。',words:[],duration:20,created_at:now,updated_at:now,tts_eligible:true,embedding_status:'ready',audio_url:'/sample.wav'}]}]
  let submitted:Record<string,string>={}
  await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[]}}))
- await page.route('**/api/v1/health',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
  await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:people}}))
  await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
@@ -324,7 +354,7 @@ test('view result reveals ASR and TTS result panels on mobile',async({page})=>{
   {id:'mobile-tts',kind:'tts',state:'succeeded',stage:'completed',progress:1,display_name:'移动端合成',created_at:now,updated_at:now,request:{compute_device:'cpu'},result:{duration:2,speaker:'Vivian',format:'wav',compute_device:'cpu',waveform:[.2,.4],artifacts:[]}},
  ]
  await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:jobs}}))
- await page.route('**/api/v1/health',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
  await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[]}}))
  await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
@@ -349,7 +379,7 @@ test('long mobile transcripts scroll inside the bounded result panel',async({pag
  const result={text:segments.map(item=>item.text).join(''),language:'Chinese',duration:440,timestamp_precision:'segment',speakers:Array.from({length:3},(_,id)=>({id:`Speaker_${id}`,label:`Speaker ${id}`})),segments,waveform:[.2,.5,.3],artifacts:[]}
  const job={id:'long-mobile-asr',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'超长会议记录',created_at:now,updated_at:now,request:{compute_device:'cpu'},result}
  await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[job]}}))
- await page.route('**/api/v1/health',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
  await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[]}}))
  await page.setViewportSize({width:390,height:844})

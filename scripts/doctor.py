@@ -11,6 +11,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from audio_intel.model_registry import model_installation, model_manifest
 
 
 def runtime_python(name: str) -> Path:
@@ -62,12 +65,15 @@ report = {
     "port_20810": check_port(),
     "ffmpeg_required": False,
     "nvidia_smi": shutil.which("nvidia-smi") is not None,
-    "runtime_environments": {name: runtime_python(name).is_file() for name in ("api", "asr", "tts")},
+    "runtime_environments": {name: runtime_python(name).is_file() for name in ("api", "asr", "tts", "aligner")},
     "frontend": (ROOT / "frontend/dist/index.html").is_file(),
-    "models": {name: (ROOT / "models" / name / ".complete").is_file() for name in (
-        "Qwen3-ASR-0.6B", "Qwen3-ForcedAligner-0.6B", "FSMN-VAD", "CAM++",
-        "Qwen3-TTS-12Hz-0.6B-Base", "Qwen3-TTS-12Hz-0.6B-CustomVoice",
-    )},
+    "models": {
+        model["name"]: {
+            key: value for key, value in model_installation(ROOT / "models", model).items()
+            if key != "marker"
+        }
+        for model in model_manifest()
+    },
 }
 try:
     output = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"], capture_output=True, text=True, timeout=3, check=True)

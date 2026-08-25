@@ -9,6 +9,7 @@ $ErrorActionPreference = "Stop"
 $RootDir = Split-Path -Parent $PSScriptRoot
 $RuntimeDir = Join-Path $RootDir ".runtime"
 $UvVersion = "0.12.5"
+$UvWindowsSha256 = "4c4d49d8738847d9b71ba319e49a5688c93eac0fe6204b1df24e98528dddf39a"
 $UvBin = Join-Path $RuntimeDir "bin\uv.exe"
 
 if (-not [Environment]::Is64BitOperatingSystem) { throw "Only 64-bit Windows is supported" }
@@ -52,7 +53,11 @@ function Invoke-WithRetry {
     }
 }
 
-if (-not (Test-Path $UvBin)) {
+$uvReady = Test-Path $UvBin
+if ($uvReady) {
+    try { $uvReady = (& $UvBin --version 2>$null) -like "uv $UvVersion*" } catch { $uvReady = $false }
+}
+if (-not $uvReady) {
     Write-Host "[setup] Downloading uv $UvVersion for Windows x64..."
     $archive = Join-Path $RuntimeDir "uv.zip"
     $extract = Join-Path $RuntimeDir "uv-extract"
@@ -66,6 +71,8 @@ if (-not (Test-Path $UvBin)) {
             Start-Sleep -Seconds (2 * $attempt)
         }
     }
+    $actualHash = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualHash -ne $UvWindowsSha256) { throw "uv checksum verification failed" }
     Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
     Expand-Archive -Path $archive -DestinationPath $extract -Force
     $downloadedUv = Get-ChildItem -Path $extract -Filter "uv.exe" -Recurse | Select-Object -First 1
@@ -91,8 +98,23 @@ function Ensure-Environment {
 }
 
 function Install-Requirements {
-    param([string]$Python, [string]$Requirements)
-    Invoke-WithRetry { & $UvBin pip install --python $Python -r (Join-Path $RootDir $Requirements) } "Install $Requirements"
+    param([string]$Name, [string]$Python, [string]$Requirements)
+    $lock = Join-Path $RootDir "requirements-lock\windows\$Name.txt"
+    if (Test-Path $lock) {
+        Invoke-WithRetry { & $UvBin pip sync --python $Python --require-hashes --strict $lock } "Sync $Name environment"
+    } else {
+        Invoke-WithRetry { & $UvBin pip install --python $Python -r (Join-Path $RootDir $Requirements) } "Install $Requirements"
+    }
+}
+
+function Install-ModelEnvironment {
+    param([string]$Name, [string]$Python, [string]$Requirements)
+    $lock = Join-Path $RootDir "requirements-lock\windows\$Name.txt"
+    if (Test-Path $lock) {
+        Invoke-WithRetry { & $UvBin pip sync --python $Python --torch-backend cu130 --require-hashes --strict $lock } "Sync $Name environment"
+    } else {
+        Invoke-WithRetry { & $UvBin pip install --python $Python --torch-backend cu130 -r (Join-Path $RootDir $Requirements) } "Install $Name dependencies"
+    }
 }
 
 function Invoke-Pnpm {
@@ -110,7 +132,7 @@ function Invoke-Pnpm {
 
 if ($Target -eq "all" -or $Target -eq "api") {
     $apiPython = Ensure-Environment "api"
-    Install-Requirements $apiPython "requirements-api.txt"
+    Install-Requirements "api" $apiPython "requirements-api.txt"
     if (Test-Path (Join-Path $RootDir "frontend\package.json")) {
         Write-Host "[setup] Building the local frontend..."
         Push-Location (Join-Path $RootDir "frontend")
@@ -125,20 +147,15 @@ if ($Target -eq "all" -or $Target -eq "api") {
 
 if ($Target -eq "all" -or $Target -eq "asr") {
     $asrPython = Ensure-Environment "asr"
-    Invoke-WithRetry { & $UvBin pip install --python $asrPython torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu130 } "Install ASR PyTorch"
-    Install-Requirements $asrPython "requirements-asr.txt"
+    Install-ModelEnvironment "asr" $asrPython "requirements-asr.txt"
     Invoke-Native { & $asrPython (Join-Path $RootDir "scripts\download_models.py") asr } "Download ASR models"
 }
 
 if ($Target -eq "all" -or $Target -eq "tts") {
     $ttsPython = Ensure-Environment "tts"
-    & $ttsPython -c "import torch; assert torch.version.cuda" 2>$null
-    $reinstall = $LASTEXITCODE -ne 0
-    $torchArguments = @("pip", "install", "--python", $ttsPython)
-    if ($reinstall) { $torchArguments += @("--reinstall-package", "torch", "--reinstall-package", "torchaudio") }
-    $torchArguments += @("torch==2.11.0", "torchaudio==2.11.0", "--index-url", "https://download.pytorch.org/whl/cu130")
-    Invoke-WithRetry { & $UvBin @torchArguments } "Install TTS PyTorch"
-    Install-Requirements $ttsPython "requirements-tts.txt"
+    Install-ModelEnvironment "tts" $ttsPython "requirements-tts.txt"
+    $alignerPython = Ensure-Environment "aligner"
+    Install-ModelEnvironment "aligner" $alignerPython "requirements-aligner.txt"
     Invoke-Native { & $ttsPython (Join-Path $RootDir "scripts\download_models.py") tts } "Download TTS models"
 }
 

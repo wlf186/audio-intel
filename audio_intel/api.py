@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import mimetypes
 import os
+import secrets
 import shutil
 import sqlite3
 import time
@@ -11,6 +13,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator
+from urllib.parse import urlsplit
 
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
@@ -74,12 +77,37 @@ class AddAsrSamplesRequest(BaseModel):
     segment_ids: list[int]
 
 
-def require_api_key(authorization: str | None = Header(default=None)) -> None:
-    if not settings.api_key:
+SESSION_COOKIE = "audio_intel_session"
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _valid_bearer(authorization: str | None) -> bool:
+    if not settings.api_key or not authorization or not authorization.startswith("Bearer "):
+        return False
+    return hmac.compare_digest(authorization[7:], settings.api_key)
+
+
+def _same_origin(request: Request) -> bool:
+    source = request.headers.get("origin") or request.headers.get("referer")
+    if not source:
+        return False
+    parsed = urlsplit(source)
+    return (parsed.scheme, parsed.netloc) == (request.url.scheme, request.url.netloc)
+
+
+def _session_authenticated(request: Request) -> bool:
+    token = request.cookies.get(SESSION_COOKIE)
+    return bool(token and token in request.app.state.auth_sessions)
+
+
+def require_api_key(request: Request, authorization: str | None = Header(default=None)) -> None:
+    if not settings.api_key or _valid_bearer(authorization):
         return
-    expected = f"Bearer {settings.api_key}"
-    if authorization != expected:
-        raise HTTPException(status_code=401, detail="Invalid or missing API key", headers={"WWW-Authenticate": "Bearer"})
+    if _session_authenticated(request):
+        if request.method in SAFE_METHODS or _same_origin(request):
+            return
+        raise HTTPException(status_code=403, detail="Cookie-authenticated writes must be same-origin")
+    raise HTTPException(status_code=401, detail="Invalid or missing API key", headers={"WWW-Authenticate": "Bearer"})
 
 
 async def save_upload(upload: UploadFile, target: Path, limit: int | None = None) -> int:
@@ -195,6 +223,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url=None,
     )
+    app.state.auth_sessions = set()
 
     @app.exception_handler(HTTPException)
     async def http_problem(_: Request, exc: HTTPException) -> JSONResponse:
@@ -214,6 +243,43 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/health")
     def health() -> dict[str, Any]:
+        return {"status": "ok", "version": __version__, "offline": True}
+
+    @app.get("/api/v1/auth/session")
+    def auth_session(request: Request, authorization: str | None = Header(default=None)) -> dict[str, bool]:
+        required = bool(settings.api_key)
+        authenticated = not required or _valid_bearer(authorization) or _session_authenticated(request)
+        return {"required": required, "authenticated": authenticated}
+
+    @app.post("/api/v1/auth/session", status_code=204)
+    def create_auth_session(request: Request, authorization: str | None = Header(default=None)) -> Response:
+        if not settings.api_key:
+            return Response(status_code=204)
+        if not _valid_bearer(authorization):
+            raise HTTPException(status_code=401, detail="Invalid or missing API key", headers={"WWW-Authenticate": "Bearer"})
+        previous = request.cookies.get(SESSION_COOKIE)
+        if previous:
+            request.app.state.auth_sessions.discard(previous)
+        token = secrets.token_urlsafe(32)
+        request.app.state.auth_sessions.add(token)
+        response = Response(status_code=204)
+        response.set_cookie(
+            SESSION_COOKIE, token, httponly=True, secure=request.url.scheme == "https",
+            samesite="strict", path="/",
+        )
+        return response
+
+    @app.delete("/api/v1/auth/session", status_code=204)
+    def delete_auth_session(request: Request) -> Response:
+        token = request.cookies.get(SESSION_COOKIE)
+        if token:
+            request.app.state.auth_sessions.discard(token)
+        response = Response(status_code=204)
+        response.delete_cookie(SESSION_COOKIE, path="/", samesite="strict")
+        return response
+
+    @app.get("/api/v1/system")
+    def system(_: None = Depends(require_api_key)) -> dict[str, Any]:
         return system_snapshot()
 
     @app.get("/api/v1/capabilities")
@@ -770,18 +836,17 @@ def system_snapshot() -> dict[str, Any]:
     except ImportError:
         hardware = {}
     hardware["gpu"] = gpu_snapshot()
-    model_specs = [
-        ("Qwen3-ASR-0.6B", "CPU FP32 / GPU BF16"),
-        ("Qwen3-ForcedAligner-0.6B", "CPU FP32 / GPU BF16"),
-        ("FSMN-VAD", "CPU · FP32"),
-        ("CAM++", "CPU · FP32"),
-        ("Qwen3-TTS-12Hz-0.6B-Base", "CPU FP32 / GPU BF16"),
-        ("Qwen3-TTS-12Hz-0.6B-CustomVoice", "CPU FP32 / GPU BF16"),
-    ]
-    models = [
-        {"name": name, "device": device, "installed": (settings.models_dir / name / ".complete").is_file(), "path": str(settings.models_dir / name)}
-        for name, device in model_specs
-    ]
+    from .model_registry import model_installation, model_manifest
+    models = []
+    for model in model_manifest():
+        installation = model_installation(settings.models_dir, model)
+        models.append({
+            "name": model["name"], "device": model["device"],
+            "installed": installation["installed"], "state": installation["state"],
+            "revision": installation["revision"], "actual_revision": installation["actual_revision"],
+            "missing_files": installation["missing_files"],
+            "path": str(settings.models_dir / model["name"]),
+        })
     return {
         "status": "ok", "version": __version__, "offline": True,
         "bind": f"{settings.host}:{settings.port}", "services": sorted(settings.enabled_services),

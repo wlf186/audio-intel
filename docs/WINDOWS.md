@@ -9,7 +9,7 @@ Windows 自动化会在 GitHub 的 Windows runner 上验证依赖解析、后端
 - Windows 11 x64，建议完成 Windows Update。
 - 16 GB 内存起步，32 GB 推荐；完整安装至少预留 30 GB。
 - 本地 NTFS 磁盘，建议克隆到短路径，例如 `C:\ai\audio-intel`。避免 OneDrive、网络盘和移动盘。
-- Git for Windows、Node.js 22 LTS（自带 npm）。Python 3.12 和 uv 由项目安装到 `.runtime\`。
+- Git for Windows、Node.js 24 LTS（最低 22.20，自带 npm）。Python 3.12 和 uv 由项目安装到 `.runtime\`。
 - GPU 可选。GPU 模式需要 NVIDIA 显卡、可用的 `nvidia-smi` 和 **580 或更高版本驱动**。安装器使用官方 PyTorch 2.11 CUDA 13.0 wheel，通常不需要另装完整 CUDA Toolkit。
 
 官方参考：[PyTorch Windows 安装](https://pytorch.org/get-started/locally/)、[CUDA 驱动兼容矩阵](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html)、[uv Windows 安装](https://docs.astral.sh/uv/getting-started/installation/)。
@@ -115,6 +115,8 @@ Invoke-WebRequest -Method Head https://modelscope.cn
 
 模型下载支持续传，只有下载完成才写入 `.complete`。不要手工创建该文件。避免把仓库放在实时同步目录；杀毒软件扫描大型权重时也可能显著拖慢下载和加载，仅在确认代码与模型来源可信后才考虑对项目的 `models`、`cache`、`.runtime` 做最小范围排除。
 
+`.complete` 的内容必须等于项目模型清单中的 revision。空文件和旧 revision 都会被 doctor 标记，重新运行对应的 `setup asr` 或 `setup tts` 会校验并修复。
+
 ### 端口或防火墙问题
 
 ```powershell
@@ -140,3 +142,5 @@ git pull --ff-only
 ```
 
 升级前备份 `data\`。不要从其他机器复制 `.runtime\`；在目标机器重新 setup。模型目录可以复制，但每个模型的 `.complete` 内容必须与项目固定的 revision 一致。
+
+`setup tts` 同时维护独立的 `.runtime\aligner`，这是超长克隆样本按词边界截断所需的内部运行时，不是额外服务。更多版本与锁文件说明见 [依赖维护](DEPENDENCIES.md)。

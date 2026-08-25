@@ -4,7 +4,8 @@ import math
 import json
 import re
 import subprocess
-import sys
+import os
+import platform
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Iterator
@@ -20,6 +21,15 @@ GPU_TTS_BATCH_SIZE = 2
 GPU_TTS_MIN_TOTAL_MIB = 3500
 GPU_TTS_MIN_EFFECTIVE_FREE_MIB = 1100
 MAX_CLONE_REFERENCE_SECONDS = 15.0
+
+
+def aligner_python() -> Path:
+    configured = os.getenv("AUDIO_INTEL_ALIGNER_PYTHON", "").strip()
+    if configured:
+        return Path(configured)
+    executable = "python.exe" if platform.system() == "Windows" else "python"
+    scripts = "Scripts" if platform.system() == "Windows" else "bin"
+    return settings.root / ".runtime" / "aligner" / scripts / executable
 
 
 def split_text(text: str, limit: int = 300) -> list[str]:
@@ -314,7 +324,7 @@ def _align_reference(
     }
     context.progress(0.08, f"aligning_clone_reference_{compute_device}")
     subprocess.run(
-        [sys.executable, "-m", "asr.stage", "align", str(input_path), str(output_path)],
+        [str(aligner_python()), "-m", "asr.stage", "align", str(input_path), str(output_path)],
         check=True, env=environment,
     )
     result = json.loads(output_path.read_text(encoding="utf-8"))

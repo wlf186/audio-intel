@@ -1,0 +1,42 @@
+# 依赖维护
+
+## 运行时矩阵
+
+| 环境 | 关键版本 | 用途 |
+|---|---|---|
+| api | Python 3.12、FastAPI 0.141.1、Uvicorn 0.52.4 | API、队列管理、测试与前端托管 |
+| asr | PyTorch 2.11.0+cu130、qwen-asr 0.0.6、Transformers 4.57.6 | ASR、ForcedAligner、VAD、说话人分离 |
+| tts | PyTorch 2.11.0+cu130、qwen-tts 0.1.1、Transformers 4.57.3 | TTS 推理与声音克隆 |
+| aligner | PyTorch 2.11.0+cu130、qwen-asr 0.0.6、Transformers 4.57.6 | TTS 超长参考样本的按需对齐 |
+
+qwen-tts 0.1.1 与 qwen-asr 0.0.6 精确要求不同 Transformers 版本，严禁同环境安装。Torch 2.11 要求 `setuptools<82`，因此模型环境固定到已修复已知旧版公告且满足该约束的 setuptools 81.0.0。
+
+前端固定 pnpm 10.15.1，支持 Node 22.20+，CI 和文档推荐 Node 24 LTS。TypeScript 7、Vite 8、lucide-react 1.x 以及 Torch/Qwen 大版本升级不属于例行补丁，应单独做兼容与真实模型验证。
+
+## 锁文件
+
+根目录 `requirements-*.txt` 是人工维护的直接依赖；`requirements-lock/{linux,windows}/` 是 Python 3.12、x86_64 的完整哈希锁。安装器使用 `uv pip sync --require-hashes --strict`，模型环境额外指定 CUDA 13.0 Torch backend。
+
+更新直接依赖后执行：
+
+```bash
+.runtime/api/bin/python scripts/lock_dependencies.py
+.runtime/api/bin/python scripts/lock_dependencies.py --check
+```
+
+提交直接清单和两个平台的全部生成锁。CI 会重建锁并拒绝差异。uv 本身固定为 0.12.5，Linux 和 Windows 下载均验证上游 SHA256。
+
+## 安全公告与 VEX
+
+API 锁和前端锁要求审计无已知漏洞。Qwen/Torch 当前精确约束使部分包暂时无法安全提升，以下公告仅在模型运行时审计中显式放行：
+
+- `PYSEC-2026-3447` / `GHSA-h35f-9h28-mq5c`：仅影响 macOS 文件系统上构建 sdist 时的 Unicode 排除规则；项目仅支持 Linux/Windows 运行且运行时不构建发行包。修复版 setuptools 83 又与 Torch 2.11 的 `<82` 约束冲突。
+- `PYSEC-2025-194` / `GHSA-rrmf-rvhw-rf47`：`torch.jit.script` 处理攻击者本地脚本的内存破坏路径；服务不接收或编译用户脚本。
+- `PYSEC-2026-2288` / `GHSA-69w3-r845-3855`：Trainer 恶意 checkpoint 路径。
+- `PYSEC-2026-2289` / `GHSA-29pf-2h5f-8g72`：恶意远程配置/仓库加载路径。
+- `PYSEC-2026-2290` / `GHSA-fgcw-684q-jj6r`：LightGlue 模型路径。
+- `PYSEC-2025-217` / `CVE-2025-14929`：X-CLIP 恶意 checkpoint 转换路径。
+
+本项目不使用 `torch.jit.script`、Trainer、LightGlue 或 X-CLIP，不接收用户提供的模型、checkpoint、配置或 Python 脚本；模型由受版本控制的 manifest 固定仓库和 revision，生产推理设置 Hugging Face/Transformers 离线模式并只加载项目本地目录。这是有边界的风险接受，不等于公告已修复。
+
+每周 CI 使用上述精确 allowlist；任何新增公告都必须先让流水线失败，再选择升级或新增带依据的 VEX。每次 Qwen 包发布时重新检查是否可解除 Transformers 固定版本与对应豁免。

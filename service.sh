@@ -26,6 +26,11 @@ export TOKENIZERS_PARALLELISM=false
 
 pid_alive() { [[ -f "$RUN_DIR/$1.pid" ]] && kill -0 "$(cat "$RUN_DIR/$1.pid")" 2>/dev/null; }
 
+models_ready() {
+  local component="$1"
+  "$ROOT_DIR/.runtime/$component/bin/python" -c 'import sys; from audio_intel.config import settings; from audio_intel.model_registry import target_ready; raise SystemExit(0 if target_ready(settings.models_dir, sys.argv[1]) else 1)' "$component"
+}
+
 ensure_ready() {
   local component="$1"
   if [[ "$AUDIO_INTEL_MOCK_MODE" == "1" && "$component" != "api" ]]; then
@@ -38,10 +43,10 @@ ensure_ready() {
   if [[ "$component" == "api" && ! -f "$ROOT_DIR/frontend/dist/index.html" ]]; then
     "$ROOT_DIR/scripts/bootstrap.sh" api
   fi
-  if [[ "$component" == "asr" && "$AUDIO_INTEL_MOCK_MODE" != "1" && ! -f "$ROOT_DIR/models/Qwen3-ASR-0.6B/.complete" ]]; then
+  if [[ "$component" == "asr" && "$AUDIO_INTEL_MOCK_MODE" != "1" ]] && ! models_ready asr; then
     "$ROOT_DIR/scripts/bootstrap.sh" asr
   fi
-  if [[ "$component" == "tts" && "$AUDIO_INTEL_MOCK_MODE" != "1" && ! -f "$ROOT_DIR/models/Qwen3-TTS-12Hz-0.6B-Base/.complete" ]]; then
+  if [[ "$component" == "tts" && "$AUDIO_INTEL_MOCK_MODE" != "1" ]] && { [[ ! -x "$ROOT_DIR/.runtime/aligner/bin/python" ]] || ! models_ready tts; }; then
     "$ROOT_DIR/scripts/bootstrap.sh" tts
   fi
 }

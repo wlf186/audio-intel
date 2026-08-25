@@ -2,7 +2,9 @@
 
 ## Project Structure & Module Organization
 
-`audio_intel/` contains the FastAPI gateway, SQLite job queue, workers, GPU coordination, and cleanup logic. ASR and TTS pipelines live in `asr/` and `tts/`. The React 19/Vite UI is under `frontend/src/`, browser tests are in `frontend/e2e/`, and backend tests are in `tests/`. Operational scripts belong in `scripts/`; `service.sh` is the supported service entrypoint.
+`audio_intel/` contains the FastAPI gateway, SQLite job queue, workers, GPU coordination, model manifest, and cleanup logic. ASR and TTS pipelines live in `asr/` and `tts/`. The React 19/Vite UI is under `frontend/src/`, browser tests are in `frontend/e2e/`, and backend tests are in `tests/`. Operational scripts belong in `scripts/`; `service.sh` is the supported service entrypoint.
+
+Python is split into four boundaries: `api`, `asr`, `tts`, and the internal `aligner` used by TTS for overlong clone references. Never install qwen-asr into the TTS environment: qwen-asr and qwen-tts require incompatible Transformers versions. Aligner is not a worker or a public service target; `setup tts` owns both environments.
 
 Treat `models/`, `data/`, `cache/`, `tmp/`, `logs/`, `run/`, and `.runtime/` as local runtime state. Never commit model weights, generated audio, databases, PID files, or credentials.
 
@@ -12,6 +14,7 @@ Treat `models/`, `data/`, `cache/`, `tmp/`, `logs/`, `run/`, and `.runtime/` as 
 - `./service.sh start all` starts the API, ASR worker, and TTS worker on port 20810. Use `status`, `logs all`, and `stop all` for operations.
 - On native Windows 11, use `service.cmd` with the same actions and targets; see `docs/WINDOWS.md`.
 - `.runtime/api/bin/python -m pytest -q` runs backend tests.
+- `.runtime/api/bin/python scripts/lock_dependencies.py --check` verifies Linux and Windows dependency locks.
 - `corepack pnpm@10.15.1 --dir frontend typecheck` checks TypeScript.
 - `corepack pnpm@10.15.1 --dir frontend build` creates the production UI in `frontend/dist/`.
 - `corepack pnpm@10.15.1 --dir frontend test:e2e` runs Playwright against the local service.
@@ -21,9 +24,15 @@ Treat `models/`, `data/`, `cache/`, `tmp/`, `logs/`, `run/`, and `.runtime/` as 
 
 Use four-space indentation, type hints, `snake_case` functions, and `PascalCase` classes in Python. In React, use `PascalCase` components, `camelCase` hooks/helpers, and explicit TypeScript types for API data. Keep API fields in `snake_case` to match Python responses. Prefer small, focused changes and preserve the surrounding no-semicolon frontend style. No repository-wide formatter is configured; avoid unrelated formatting churn.
 
+Direct Python requirements remain human-edited; generated, hashed locks live under `requirements-lock/{linux,windows}`. Regenerate all locks with `scripts/lock_dependencies.py` and commit them together. Keep Python 3.12, uv, pnpm, Torch/CUDA, Qwen packages, and model revisions pinned unless the change explicitly includes compatibility and real-inference validation.
+
 ## Testing Guidelines
 
-Name backend tests `test_*.py` and Playwright files `*.spec.ts`. Cover queue state transitions, filesystem cleanup, API error responses, and migration compatibility with pytest/FastAPI `TestClient`. UI changes require an interaction assertion, console-error check, and desktop plus 390 px mobile overflow validation. Use mocks for routine tests; run real-model inference only when changing model loading, precision, device routing, or audio pipelines.
+Name backend tests `test_*.py` and Playwright files `*.spec.ts`. Cover queue state transitions, filesystem cleanup, API error responses, and migration compatibility with pytest/FastAPI `TestClient`. Auth changes must test Bearer clients, browser sessions, same-origin writes, media Range requests, logout, and restart invalidation. UI changes require an interaction assertion, console-error check, and desktop plus 390 px mobile overflow validation. Use mocks for routine tests; real-model inference is mandatory when changing model loading, precision, device routing, runtime separation, or audio pipelines.
+
+Model identity comes only from `audio_intel/model_manifest.json`. Download, doctor, readiness, and health checks must require `.complete` contents to match the expected revision; existence alone is never sufficient. Keep all model loading offline at runtime and never accept user-supplied model repositories, configs, or checkpoints.
+
+SQLite schema v4 data, historical jobs, voices, and voiceprint samples are persistent compatibility surfaces. Back up `data/` before migration work. Speaker names in completed jobs are snapshots; voiceprint renames must not rewrite history. Purges must keep path-containment checks, reject active imports, and clean both files and database records.
 
 ## Commit & Pull Request Guidelines
 
@@ -31,4 +40,4 @@ Use Conventional Commit subjects such as `feat(jobs): persist GPU device names` 
 
 ## Security & Configuration
 
-Keep the service on trusted networks unless `AUDIO_INTEL_API_KEY` and external TLS are configured. Preserve offline model loading and project-local cache paths; do not add silent cloud fallbacks.
+Keep the service on trusted networks unless `AUDIO_INTEL_API_KEY` and external TLS are configured. `/api/v1/health` is the only intentionally public operational probe; detailed system data and all media remain protected. Browser auth uses an opaque HttpOnly same-origin session cookie and must never place the raw key in storage or URLs. Preserve offline model loading and project-local cache paths; do not add silent cloud fallbacks.
