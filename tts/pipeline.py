@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import math
 import re
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from audio_intel.config import settings
 from audio_intel.gpu import compute_device_name, gpu_lease
@@ -12,6 +13,9 @@ from audio_intel.worker import JobContext
 
 
 _cpu_models: dict[str, Any] = {}
+GPU_TTS_BATCH_SIZE = 2
+GPU_TTS_MIN_TOTAL_MIB = 3500
+GPU_TTS_MIN_EFFECTIVE_FREE_MIB = 1100
 
 
 def split_text(text: str, limit: int = 300) -> list[str]:
@@ -56,6 +60,73 @@ def mock_speech(text: str, rate: int = 24000) -> tuple[Any, int]:
         envelope = min(1.0, t * 8) * min(1.0, (duration - t) * 8)
         audio.append(.10 * math.sin(2 * math.pi * (170 + 15 * math.sin(t * 2)) * t) * envelope)
     return audio, rate
+
+
+def _gpu_can_microbatch(torch_module: Any) -> bool:
+    try:
+        free_bytes, total_bytes = torch_module.cuda.mem_get_info()
+        reclaimable_bytes = max(
+            0,
+            torch_module.cuda.memory_reserved() - torch_module.cuda.memory_allocated(),
+        )
+        mib = 1024 * 1024
+        return (
+            total_bytes / mib >= GPU_TTS_MIN_TOTAL_MIB
+            and (free_bytes + reclaimable_bytes) / mib >= GPU_TTS_MIN_EFFECTIVE_FREE_MIB
+        )
+    except Exception:
+        return False
+
+
+@contextmanager
+def _sequential_speech_decode(model: Any) -> Iterator[None]:
+    tokenizer = model.model.speech_tokenizer
+    original_decode = tokenizer.decode
+
+    def decode_sequentially(encoded: Any) -> tuple[list[Any], int]:
+        items = encoded if isinstance(encoded, list) else [encoded]
+        waveforms: list[Any] = []
+        sample_rate = 0
+        for item in items:
+            decoded, item_rate = original_decode([item])
+            if sample_rate and item_rate != sample_rate:
+                raise RuntimeError("Speech tokenizer returned inconsistent sample rates")
+            sample_rate = item_rate
+            waveforms.extend(decoded)
+        return waveforms, sample_rate
+
+    tokenizer.decode = decode_sequentially
+    try:
+        yield
+    finally:
+        tokenizer.decode = original_decode
+
+
+def _generate_tts_batch(
+    model: Any,
+    request: dict[str, Any],
+    texts: list[str],
+    clone_prompt: Any,
+) -> tuple[list[Any], int]:
+    batched = len(texts) > 1
+    text: str | list[str] = texts if batched else texts[0]
+    language = request.get("language") or "Auto"
+    decode_context = _sequential_speech_decode(model) if batched else nullcontext()
+    with decode_context:
+        if request["voice_mode"] == "preset":
+            return model.generate_custom_voice(
+                text=text,
+                language=[language] * len(texts) if batched else language,
+                speaker=[request["speaker"]] * len(texts) if batched else request["speaker"],
+                instruct=[request.get("instruct") or ""] * len(texts) if batched else request.get("instruct") or "",
+                non_streaming_mode=True,
+            )
+        return model.generate_voice_clone(
+            text=text,
+            language=[language] * len(texts) if batched else language,
+            voice_clone_prompt=clone_prompt,
+            non_streaming_mode=True,
+        )
 
 
 def encode(path: Path, audio: Any, rate: int, output_format: str) -> Path:
@@ -119,27 +190,49 @@ def _process_loaded(
             ref_audio=request["reference_audio_path"], ref_text=request["reference_text"],
             x_vector_only_mode=False,
         )
-    for index, text in enumerate(chunks):
+    torch_module = None
+    batching_enabled = False
+    if compute_device == "gpu" and model is not None:
+        import torch
+        torch_module = torch
+        batching_enabled = _gpu_can_microbatch(torch_module)
+    index = 0
+    while index < len(chunks):
         context.progress(0.15 + 0.72 * index / max(len(chunks), 1), f"synthesizing_{index + 1}_of_{len(chunks)}")
+        batch_size = 1
+        if batching_enabled and index + 1 < len(chunks) and _gpu_can_microbatch(torch_module):
+            batch_size = GPU_TTS_BATCH_SIZE
+        texts = chunks[index:index + batch_size]
         if settings.mock_mode:
-            audio, rate = mock_speech(text)
-        elif request["voice_mode"] == "preset":
-            generated, rate = model.generate_custom_voice(
-                text=text, language=request.get("language") or "Auto", speaker=request["speaker"],
-                instruct=request.get("instruct") or "", non_streaming_mode=True,
-            )
-            audio = generated[0]
+            generated = []
+            for text in texts:
+                audio, rate = mock_speech(text)
+                generated.append(audio)
         else:
-            generated, rate = model.generate_voice_clone(
-                text=text, language=request.get("language") or "Auto", voice_clone_prompt=clone_prompt,
-                non_streaming_mode=True,
-            )
-            audio = generated[0]
+            try:
+                generated, rate = _generate_tts_batch(model, request, texts, clone_prompt)
+            except torch_module.OutOfMemoryError:
+                if len(texts) == 1:
+                    raise
+                batching_enabled = False
+                import gc
+                gc.collect()
+                torch_module.cuda.empty_cache()
+                generated = []
+                for text in texts:
+                    item_generated, item_rate = _generate_tts_batch(model, request, [text], clone_prompt)
+                    if generated and item_rate != rate:
+                        raise RuntimeError("TTS model returned inconsistent sample rates")
+                    rate = item_rate
+                    generated.extend(item_generated)
+        if len(generated) != len(texts):
+            raise RuntimeError(f"TTS model returned {len(generated)} waveforms for {len(texts)} texts")
         if settings.mock_mode:
-            waveforms.append(list(audio))
+            waveforms.extend(list(audio) for audio in generated)
         else:
             import numpy as np
-            waveforms.append(np.asarray(audio, dtype=np.float32))
+            waveforms.extend(np.asarray(audio, dtype=np.float32) for audio in generated)
+        index += len(texts)
     if settings.mock_mode:
         silence = [0.0] * int(rate * 0.18)
         merged = []

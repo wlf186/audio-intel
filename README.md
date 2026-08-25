@@ -72,12 +72,12 @@ Linux 详细步骤见 [安装与复原](docs/INSTALL.md)，Windows 原生部署�
         │
         └── SQLite WAL 异步任务队列 ── TTS worker
                 Qwen3-TTS CustomVoice 或 Base（二选一）
-                CPU FP32 / GPU BF16 + SDPA + batch 1 → WAV / FLAC / MP3
+                CPU FP32 / GPU BF16 + SDPA + 自适应单任务微批处理 → WAV / FLAC / MP3
 ```
 
 ASR 按 FSMN-VAD 的语音区间合并为约 20–60 秒的块。11 种对齐器支持语言返回字/词级时间戳；其他语言仍返回语音段时间戳。CAM++ 当前采用 single-active-speaker 模式，重叠语音会按最大时间重叠归属给一位说话人。
 
-ASR 默认使用 GPU，TTS 默认使用 CPU。两者均可按任务选择 `cpu` 或 `gpu`：CPU 使用 FP32，GPU 使用 BF16，不使用量化；GPU 任务通过项目内的全局锁串行执行，避免 4 GB 显存同时装载多个大模型。ASR 的 FSMN-VAD 和 CAM++ 始终在 CPU 上运行，设备选项会同时切换 ASR 主模型和 ForcedAligner。GPU 不可用时会明确返回 `503`，不会静默回退到 CPU。可通过 `GET /api/v1/capabilities` 查询当前设备能力与默认值。
+ASR 默认使用 GPU，TTS 默认使用 CPU。两者均可按任务选择 `cpu` 或 `gpu`：CPU 使用 FP32，GPU 使用 BF16，不使用量化；GPU 任务通过项目内的全局锁串行执行，避免 4 GB 显存同时装载多个大模型。ASR 的 FSMN-VAD 和 CAM++ 始终在 CPU 上运行，设备选项会同时切换 ASR 主模型和 ForcedAligner；GPU 模式下 CAM++ 会在 CPU 内部批处理，并与 GPU 识别和对齐重叠执行。TTS GPU 模式会在显存充足时对同一任务的相邻文本块执行 batch 2，声码器仍逐块解码；显存不足或发生 OOM 时自动在当前任务内恢复为串行处理。GPU 不可用时会明确返回 `503`，不会静默回退到 CPU。可通过 `GET /api/v1/capabilities` 查询当前设备能力与默认值。
 
 声音克隆使用 Base 模型的 ICL 路径，要求 3–15 秒左右的干净参考音频和逐字准确的参考文本；代码固定 `x_vector_only_mode=False`。预置音色使用 CustomVoice 模型的 9 个官方音色。两个模型不会同时驻留内存。
 

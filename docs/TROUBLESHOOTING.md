@@ -28,7 +28,7 @@ curl -I https://modelscope.cn
 
 - `nvidia-smi` 必须成功，驱动需兼容安装的 PyTorch CUDA 13.0 wheel。
 - API 返回 503 时选择 CPU，服务不会静默回退。
-- 4 GB 显存必须保持 batch 1；ASR、Aligner 与 TTS GPU 任务由全局锁串行运行。
+- 4 GB 显存下 ASR、Aligner 与 TTS GPU 任务仍由全局锁串行运行。TTS 仅在单个任务内对相邻文本块尝试 batch 2，并逐块执行声码器解码；显存门控失败或 OOM 时会自动恢复为 batch 1。
 - OOM 后先确认没有其他 GPU 程序，再重试任务；不要同时启动另一套模型服务。
 
 ## 前端或服务无法访问

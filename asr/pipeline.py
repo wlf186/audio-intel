@@ -7,6 +7,7 @@ import subprocess
 import sys
 import wave
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,8 @@ from audio_intel.worker import JobContext
 
 
 ALIGNER_LANGUAGES = {"Chinese", "English", "Cantonese", "French", "German", "Italian", "Japanese", "Korean", "Portuguese", "Russian", "Spanish"}
+GPU_DIARIZATION_BATCH_SIZE = 16
+GPU_DIARIZATION_MIN_CPUS = 8
 
 
 def decode_audio(source: Path, output: Path) -> tuple[Any, int]:
@@ -106,18 +109,33 @@ def write_chunks(audio: Any, rate: int, chunks: list[dict[str, float]], director
     return output
 
 
-def diarize(audio: Any, vad: list[dict[str, float]], speakers: int | None) -> list[dict[str, Any]]:
+def diarize(
+    audio: Any,
+    vad: list[dict[str, float]],
+    speakers: int | None,
+    batch_size: int = 1,
+) -> list[dict[str, Any]]:
     import torch
     from funasr import AutoModel
     from funasr.models.campplus.cluster_backend import ClusterBackend
     from funasr.models.campplus.utils import postprocess, sv_chunk
 
-    model = AutoModel(model=str(settings.models_dir / "CAM++"), device="cpu", disable_update=True)
+    model = AutoModel(
+        model=str(settings.models_dir / "CAM++"),
+        device="cpu",
+        disable_update=True,
+        disable_pbar=True,
+    )
     vad_with_audio = [[item["start"], item["end"], audio[int(item["start"] * 16000):int(item["end"] * 16000)]] for item in vad]
     chunks = sv_chunk(vad_with_audio)
     if not chunks:
         return [{**item, "speaker": "Speaker_0"} for item in vad]
-    embeddings = model.generate(input=[chunk[2] for chunk in chunks], cache={}, is_final=True)
+    embeddings = model.generate(
+        input=[chunk[2] for chunk in chunks],
+        cache={},
+        is_final=True,
+        batch_size=batch_size,
+    )
     vectors = torch.cat([item["spk_embedding"] for item in embeddings], dim=0).detach().cpu().numpy()
     cluster = ClusterBackend(merge_thr=0.78).cpu()
     labels = cluster(vectors, oracle_num=speakers)
@@ -150,6 +168,10 @@ def run_model_stage(
         return run_stage(operation, payload, directory)
     with gpu_lease(lambda: context.progress(progress, "waiting_for_gpu")):
         return run_stage(operation, payload, directory)
+
+
+def _parallel_diarization_enabled(compute_device: str) -> bool:
+    return compute_device == "gpu" and (os.cpu_count() or 1) >= GPU_DIARIZATION_MIN_CPUS
 
 
 def speaker_at(start: float, end: float, diarization: list[dict[str, Any]]) -> str:
@@ -221,31 +243,49 @@ def process_job(context: JobContext) -> dict[str, Any]:
         vad = run_vad(audio, rate)
     chunks = write_chunks(audio, rate, combine_vad(vad, duration), context.work_dir / "chunks")
     context.progress(0.20, "speaker_diarization")
-    if request.get("diarize") and not settings.mock_mode:
-        diarization = diarize(audio, vad, request.get("speaker_count"))
+    diarization_executor = None
+    diarization_future = None
+    if request.get("diarize") and not settings.mock_mode and _parallel_diarization_enabled(compute_device):
+        diarization_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="asr-diarization")
+        diarization_future = diarization_executor.submit(
+            diarize,
+            audio,
+            vad,
+            request.get("speaker_count"),
+            GPU_DIARIZATION_BATCH_SIZE,
+        )
+        diarization = []
+    elif request.get("diarize") and not settings.mock_mode:
+        diarization = diarize(audio, vad, request.get("speaker_count"), batch_size=1)
     elif settings.mock_mode:
         midpoint = duration * 0.52
         diarization = [{"start": 0, "end": midpoint, "speaker": "Speaker_0"}, {"start": midpoint, "end": duration, "speaker": "Speaker_1"}]
     else:
         diarization = [{"start": 0, "end": duration, "speaker": "Speaker_0"}]
-    context.progress(0.32, f"qwen3_asr_{compute_device}")
-    if settings.mock_mode:
-        examples = ["欢迎使用完全本地化的语音智能工作台。", "识别、说话人和时间戳都会保存在当前项目中。"]
-        transcribed = {"chunks": [{**item, "text": examples[i % len(examples)], "language": "Chinese"} for i, item in enumerate(chunks)]}
-    else:
-        transcribed = run_model_stage(context, "transcribe", {"model_path": str(settings.models_dir / "Qwen3-ASR-0.6B"), "chunks": chunks, "language": request.get("language"), "context": request.get("context", "")}, context.work_dir, compute_device, 0.32)
-    items = transcribed["chunks"]
-    language = next((item.get("language") for item in items if item.get("language")), request.get("language", "Unknown"))
-    should_align = bool(request.get("align")) and language in ALIGNER_LANGUAGES
-    context.progress(0.68, f"qwen3_forced_alignment_{compute_device}" if should_align else "building_segment_timestamps")
-    if should_align and settings.mock_mode:
-        for item in items:
-            text = item["text"]
-            units = list(text)
-            step = (item["end"] - item["start"]) / max(len(units), 1)
-            item["words"] = [{"text": unit, "start": round(item["start"] + i * step, 3), "end": round(item["start"] + (i + 1) * step, 3)} for i, unit in enumerate(units)]
-    elif should_align:
-        items = run_model_stage(context, "align", {"model_path": str(settings.models_dir / "Qwen3-ForcedAligner-0.6B"), "chunks": items}, context.work_dir, compute_device, 0.68)["chunks"]
+    try:
+        context.progress(0.32, f"qwen3_asr_{compute_device}")
+        if settings.mock_mode:
+            examples = ["欢迎使用完全本地化的语音智能工作台。", "识别、说话人和时间戳都会保存在当前项目中。"]
+            transcribed = {"chunks": [{**item, "text": examples[i % len(examples)], "language": "Chinese"} for i, item in enumerate(chunks)]}
+        else:
+            transcribed = run_model_stage(context, "transcribe", {"model_path": str(settings.models_dir / "Qwen3-ASR-0.6B"), "chunks": chunks, "language": request.get("language"), "context": request.get("context", "")}, context.work_dir, compute_device, 0.32)
+        items = transcribed["chunks"]
+        language = next((item.get("language") for item in items if item.get("language")), request.get("language", "Unknown"))
+        should_align = bool(request.get("align")) and language in ALIGNER_LANGUAGES
+        context.progress(0.68, f"qwen3_forced_alignment_{compute_device}" if should_align else "building_segment_timestamps")
+        if should_align and settings.mock_mode:
+            for item in items:
+                text = item["text"]
+                units = list(text)
+                step = (item["end"] - item["start"]) / max(len(units), 1)
+                item["words"] = [{"text": unit, "start": round(item["start"] + i * step, 3), "end": round(item["start"] + (i + 1) * step, 3)} for i, unit in enumerate(units)]
+        elif should_align:
+            items = run_model_stage(context, "align", {"model_path": str(settings.models_dir / "Qwen3-ForcedAligner-0.6B"), "chunks": items}, context.work_dir, compute_device, 0.68)["chunks"]
+        if diarization_future is not None:
+            diarization = diarization_future.result()
+    finally:
+        if diarization_executor is not None:
+            diarization_executor.shutdown(wait=True)
     context.progress(0.88, "merging_speakers_and_timestamps")
     result = assemble(items, diarization, duration, should_align)
     result.update({
