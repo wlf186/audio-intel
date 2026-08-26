@@ -23,6 +23,9 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - `.complete` 必须包含固定模型 revision。旧的空 marker 会在 setup 时被判定为无效并修复。
 - TTS 安装现在同时创建独立 aligner 环境；不要复用旧 TTS 环境中的 qwen-asr。
 - ASR/TTS worker 现在由监督器管理可重启执行器，`setup all` 会将进程树管理所需的 `psutil` 同步到两个模型环境。启动时会校验并清理可信的遗留执行器元数据，再恢复中断任务；无需新增数据库迁移，schema 仍为 v4。
+- 原生 ASR/TTS API、OpenAI 兼容音频端点和提交页现在默认启用 `accelerate_single_task`。依赖旧版 batch 1 默认行为的客户端必须显式传入 `false`；模型、精度、ASR 分块与说话人语义不变。
+- ASR/TTS 页面参数现在分别保存在浏览器 localStorage，并提供页面级“恢复默认配置”；清除站点数据后会恢复默认。TTS 文本仅保留在 sessionStorage，文件和未确认的麦克风录音不会持久化。
+- 声纹库新增浏览器麦克风录音入口，继续复用现有样本上传 API，不新增数据库字段或迁移。远程普通 HTTP 访问仍可能被浏览器拒绝麦克风权限，可继续使用文件上传。
 
 ## 升级后验证
 

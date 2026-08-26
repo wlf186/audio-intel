@@ -35,7 +35,7 @@ curl -I https://modelscope.cn
 - `nvidia-smi` 必须成功，驱动需兼容安装的 PyTorch CUDA 13.0 wheel。
 - API 返回 503 时选择 CPU，服务不会静默回退。
 - 4 GB 显存下 ASR、Aligner 与 TTS GPU 任务仍由全局锁串行运行。TTS 默认仅在单个任务内对相邻文本块尝试 batch 2，并逐块执行声码器解码。
-- 开启“单任务加速”后，ASR/TTS 会按硬件自动扩大内部批次；OOM 时按 `16→12→8→6→4→2→1` 回退并重试当前批次。完成任务可在结果 JSON 的 `acceleration.target_batch_size`、`stage_batch_sizes` 和 `oom_fallbacks` 查看实际选择。
+- “单任务加速”现在默认开启，ASR/TTS 会按硬件自动扩大内部批次；OOM 时按 `16→12→8→6→4→2→1` 回退并重试当前批次。排障或对照 batch 1 时可在页面关闭，API 客户端则显式传入 `accelerate_single_task=false`。完成任务可在结果 JSON 的 `acceleration.target_batch_size`、`stage_batch_sizes` 和 `oom_fallbacks` 查看实际选择。
 - OOM 后先确认没有其他 GPU 程序，再重试任务；不要同时启动另一套模型服务。
 
 若要判断开关在当前机器和素材上的实际收益，至少执行三组交替基准；短音频或单句文本只有一个块时通常没有明显收益：
@@ -69,9 +69,24 @@ curl -I https://modelscope.cn
 ## 前端或服务无法访问
 
 - `corepack pnpm@10.15.1 --dir frontend build` 可重建前端。
-- `ss -ltnp | grep 20810` 检查端口占用；也可设置 `AUDIO_INTEL_PORT`。
+- 页脚 `NET_LISTEN` 和受保护的 `/api/v1/system` 中 `bind` 字段会显示服务实际配置的监听地址与端口；`0.0.0.0` 表示监听所有网卡，不等同于必须通过该地址访问。
+- 默认端口可用 `ss -ltnp | grep 20810` 检查占用；若设置了 `AUDIO_INTEL_PORT`，请改查实际端口。
 - 查看 `logs/api.log`、`logs/asr.log`、`logs/tts.log`；PID 位于 `run/`。
 - 服务配置改变后使用 `./service.sh restart all`。
+
+## 浏览器麦克风无法录音
+
+- 浏览器麦克风要求安全上下文。本机请使用 `http://localhost:<端口>` 或 `http://127.0.0.1:<端口>`；通过局域网 IP 远程访问时应在反向代理配置 HTTPS，普通 HTTP 通常会被浏览器拒绝。
+- 点击“开始录音”后，在浏览器站点权限和操作系统隐私设置中允许麦克风。若提示设备占用，请关闭会议、录音或语音聊天程序后重试。
+- 每次最长录制 30 秒，停止后先试听或重录，再确认创建声纹入库任务。未确认的录音只存在页面内存中，切换人员或离开页面会释放麦克风并清除暂存录音。
+- 浏览器不支持 MediaRecorder、权限仍不可用或需要远程 HTTP 访问时，切回“上传文件”即可继续入库。
+
+## ASR/TTS 配置没有保持或需要重置
+
+- ASR 与 TTS 参数分别保存在版本化的 `localStorage` 项中，互不覆盖；每个页面的“恢复默认配置”只重置本页参数。
+- TTS 合成文本和参考文本只在当前 `sessionStorage` 会话保留，选择的音频文件不会进入浏览器存储。
+- 清除浏览器站点数据或 localStorage 后会自动恢复默认配置；仅清理图片、脚本等 HTTP 缓存通常不会删除参数偏好。
+- 原始 API Key 从不进入 localStorage、sessionStorage 或 URL；参数记忆不会改变下方浏览器鉴权的安全行为。
 
 ## 重建项目内运行时
 

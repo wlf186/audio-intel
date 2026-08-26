@@ -21,6 +21,7 @@ export default function App(){
  const [capabilities,setCapabilities]=useState<Capabilities>()
  const [voiceprints,setVoiceprints]=useState<VoiceprintPerson[]>([])
  const [connectionError,setConnectionError]=useState('')
+ const [systemError,setSystemError]=useState('')
  const [auth,setAuth]=useState<AuthSession>()
  const [authError,setAuthError]=useState('')
  const [selected,setSelected]=useState<Partial<Record<Job['kind'],string>>>({})
@@ -29,7 +30,7 @@ export default function App(){
  const revealSequence=useRef(0)
  const refreshVoiceprints=useCallback(async()=>{const response=await api.voiceprints();setVoiceprints(response.items)},[])
  const authenticated=auth?.authenticated===true
- const refresh=useCallback(async()=>{if(!authenticated)return;const sequence=++refreshSequence.current;try{const [nextJobs,nextHealth]=await Promise.all([api.jobs(),api.system()]);if(sequence!==refreshSequence.current)return;setJobs(current=>{const previous=new Map(current.map(job=>[job.id,job]));const merged=nextJobs.items.map(job=>{const existing=previous.get(job.id);return existing&&sameJobSnapshot(existing,job)?existing:job});return merged.length===current.length&&merged.every((job,index)=>job===current[index])?current:merged});setHealth(nextHealth);setConnectionError('')}catch(error){if(sequence===refreshSequence.current)setConnectionError((error as Error).message)}},[authenticated])
+ const refresh=useCallback(async()=>{if(!authenticated)return;const sequence=++refreshSequence.current;const [jobsResult,healthResult]=await Promise.allSettled([api.jobs(),api.system()]);if(sequence!==refreshSequence.current)return;if(jobsResult.status==='fulfilled')setJobs(current=>{const previous=new Map(current.map(job=>[job.id,job]));const merged=jobsResult.value.items.map(job=>{const existing=previous.get(job.id);return existing&&sameJobSnapshot(existing,job)?existing:job});return merged.length===current.length&&merged.every((job,index)=>job===current[index])?current:merged});if(healthResult.status==='fulfilled'){setHealth(healthResult.value);setSystemError('')}else setSystemError((healthResult.reason as Error).message);const failure=jobsResult.status==='rejected'?jobsResult.reason:healthResult.status==='rejected'?healthResult.reason:undefined;setConnectionError(failure?(failure as Error).message:'')},[authenticated])
  useEffect(()=>{let active=true;void (async()=>{try{const status=await api.auth();const legacy=sessionStorage.getItem('audio-intel:key');if(status.required&&!status.authenticated&&legacy){try{await api.login(legacy);status.authenticated=true}finally{sessionStorage.removeItem('audio-intel:key')}}if(active)setAuth(status)}catch(error){if(active)setAuthError((error as Error).message)}})();const unauthorized=()=>setAuth(current=>current?{...current,authenticated:false}:{required:true,authenticated:false});addEventListener('audio-intel:unauthorized',unauthorized);return()=>{active=false;removeEventListener('audio-intel:unauthorized',unauthorized)}},[])
  useEffect(()=>{if(!authenticated)return;void refresh();const timer=setInterval(()=>void refresh(),2000);return()=>clearInterval(timer)},[authenticated,refresh])
  useEffect(()=>{if(!authenticated)return;void Promise.all([api.capabilities().then(setCapabilities),refreshVoiceprints()]).catch(error=>setConnectionError((error as Error).message))},[authenticated,refreshVoiceprints])
@@ -44,12 +45,12 @@ export default function App(){
  const onJobResultUpdated=useCallback((jobId:string,result:JobResult)=>setJobs(current=>current.map(job=>job.id===jobId?{...job,result,updated_at:new Date().toISOString()}:job)),[])
  const gpuAvailable=health?Boolean(health.hardware.gpu):undefined
  const login=async(key:string)=>{await api.login(key);setAuth({required:true,authenticated:true});setAuthError('')}
- const logout=async()=>{await api.logout();setJobs([]);setHealth(undefined);setCapabilities(undefined);setVoiceprints([]);setAuth({required:true,authenticated:false})}
- return <><AppShell page={page} setPage={navigate} services={health?.services||[]} connectionError={connectionError} authRequired={auth?.required&&authenticated} onLogout={()=>void logout()}>
+ const logout=async()=>{await api.logout();setJobs([]);setHealth(undefined);setSystemError('');setCapabilities(undefined);setVoiceprints([]);setAuth({required:true,authenticated:false})}
+ return <><AppShell page={page} setPage={navigate} health={health} systemError={systemError} connectionError={connectionError} authRequired={auth?.required&&authenticated} onLogout={()=>void logout()}>
   {page==='asr'?<AsrPage jobs={jobs} onJobSubmitted={onJobSubmitted} onJobResultUpdated={onJobResultUpdated} selectedJobId={selected.asr} onSelect={openJob} gpuAvailable={gpuAvailable} maxSpeakers={capabilities?.asr.speaker_count.max||15} voiceprints={voiceprints} refreshVoiceprints={refreshVoiceprints} revealRequest={reveal?.kind==='asr'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
   {page==='tts'?<TtsPage jobs={jobs} onJobSubmitted={onJobSubmitted} selectedJobId={selected.tts} onSelect={openJob} gpuAvailable={gpuAvailable} voiceprints={voiceprints} revealRequest={reveal?.kind==='tts'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
   {page==='voiceprints'?<VoiceprintsPage people={voiceprints} refresh={refreshVoiceprints} onJobSubmitted={onJobSubmitted} gpuAvailable={gpuAvailable}/>:null}
   {page==='jobs'?<JobsPage jobs={jobs} refresh={refresh} openJob={openJob} onJobUpdated={onJobUpdated}/>:null}
-  {page==='system'?<SystemPage health={health}/>:null}
+  {page==='system'?<SystemPage health={health} systemError={systemError}/>:null}
  </AppShell>{!auth||!authenticated?<AuthGate loading={!auth&&!authError} error={authError} onLogin={login}/>:null}</>
 }

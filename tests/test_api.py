@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 import wave
 
 from fastapi.testclient import TestClient
@@ -25,7 +26,7 @@ def test_api_queues_asr_and_validates_tts(tmp_path, monkeypatch) -> None:
         assert response.json()["state"] == "queued"
         assert response.json()["request"]["compute_device"] == "gpu"
         assert response.json()["request"]["compute_device_name"] == "Test GPU"
-        assert response.json()["request"]["accelerate_single_task"] is False
+        assert response.json()["request"]["accelerate_single_task"] is True
         assert response.json()["compute_device_name"] == "Test GPU"
         assert response.json()["source_url"].endswith("/source")
         source = client.get(response.json()["source_url"])
@@ -50,26 +51,26 @@ def test_api_queues_asr_and_validates_tts(tmp_path, monkeypatch) -> None:
         assert tts.status_code == 202
         assert tts.json()["request"]["compute_device"] == "cpu"
         assert tts.json()["compute_device_name"] == "CPU"
-        assert tts.json()["request"]["accelerate_single_task"] is False
+        assert tts.json()["request"]["accelerate_single_task"] is True
         explicit = client.post("/api/v1/asr/jobs", files={"file": ("cpu.wav", b"RIFF-cpu", "audio/wav")}, data={"compute_device": "cpu"})
         assert explicit.status_code == 202
         assert explicit.json()["request"]["compute_device"] == "cpu"
-        accelerated = client.post(
+        unaccelerated = client.post(
             "/api/v1/tts/jobs",
             data={
                 "text": "test", "voice_mode": "preset", "speaker": "Vivian",
-                "accelerate_single_task": "true",
+                "accelerate_single_task": "false",
             },
         )
-        assert accelerated.status_code == 202
-        assert accelerated.json()["request"]["accelerate_single_task"] is True
+        assert unaccelerated.status_code == 202
+        assert unaccelerated.json()["request"]["accelerate_single_task"] is False
         bad_device = client.post("/api/v1/tts/jobs", data={"text": "test", "voice_mode": "preset", "speaker": "Vivian", "compute_device": "tpu"})
         assert bad_device.status_code == 422
         capabilities = client.get("/api/v1/capabilities").json()
         assert next(item for item in capabilities["asr"]["compute_devices"] if item["id"] == "gpu")["default"] is True
         assert next(item for item in capabilities["tts"]["compute_devices"] if item["id"] == "cpu")["default"] is True
-        assert capabilities["asr"]["single_task_acceleration"] == {"supported": True, "default": False}
-        assert capabilities["tts"]["single_task_acceleration"] == {"supported": True, "default": False}
+        assert capabilities["asr"]["single_task_acceleration"] == {"supported": True, "default": True}
+        assert capabilities["tts"]["single_task_acceleration"] == {"supported": True, "default": True}
 
 
 def test_gpu_request_fails_cleanly_when_unavailable(tmp_path, monkeypatch) -> None:
@@ -81,6 +82,83 @@ def test_gpu_request_fails_cleanly_when_unavailable(tmp_path, monkeypatch) -> No
         response = client.post("/api/v1/tts/jobs", data={"text": "test", "voice_mode": "preset", "speaker": "Vivian", "compute_device": "gpu"})
         assert response.status_code == 503
         assert "GPU compute is unavailable" in response.json()["detail"]
+
+
+def test_voiceprint_upload_accepts_browser_recording_container(tmp_path, monkeypatch) -> None:
+    local = replace(
+        settings,
+        data_dir=tmp_path / "data",
+        temp_dir=tmp_path / "tmp",
+        enabled_services=frozenset({"asr"}),
+    )
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    monkeypatch.setattr(api_module, "gpu_snapshot", lambda *_: None)
+    with TestClient(api_module.create_app()) as client:
+        person = client.post("/api/v1/voiceprints/people", json={"name": "浏览器录音"}).json()
+        response = client.post(
+            f"/api/v1/voiceprints/people/{person['id']}/samples/upload",
+            files={
+                "file": (
+                    "voiceprint-recording-20260826120000.webm",
+                    b"browser-webm-opus",
+                    "audio/webm;codecs=opus",
+                ),
+            },
+            data={"language": "Chinese", "compute_device": "cpu"},
+        )
+
+        assert response.status_code == 202
+        payload = response.json()
+        assert payload["sample"]["state"] == "pending"
+        assert payload["job"]["request"]["purpose"] == "voiceprint_import"
+        assert payload["job"]["request"]["language"] == "Chinese"
+        assert payload["job"]["request"]["compute_device"] == "cpu"
+        assert payload["job"]["request"]["original_name"].endswith(".webm")
+        input_path = Path(payload["job"]["request"]["input_path"])
+        assert input_path.read_bytes() == b"browser-webm-opus"
+
+
+def test_openai_compatible_acceleration_defaults_and_explicit_opt_out(tmp_path, monkeypatch) -> None:
+    local = replace(settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp", enabled_services=frozenset({"asr", "tts"}))
+    local.ensure_directories()
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    monkeypatch.setattr(api_module, "gpu_snapshot", lambda *_: {"name": "Test GPU", "memory_used_mib": 0, "memory_total_mib": 4096, "utilization": 0})
+    captured: list[tuple[str, dict[str, object]]] = []
+    artifact = tmp_path / "speech.wav"
+    artifact.write_bytes(b"RIFF-test")
+
+    def fake_create_job(kind: str, _: str, request: dict[str, object], job_id: str | None = None) -> dict[str, str]:
+        captured.append((kind, request))
+        return {"id": job_id or f"{kind}-job"}
+
+    async def fake_wait_for_job(_: str, timeout: float = 24 * 3600) -> dict[str, object]:
+        return {
+            "state": "succeeded",
+            "result": {
+                "text": "transcribed",
+                "artifacts": [{"path": str(artifact), "mime_type": "audio/wav"}],
+            },
+        }
+
+    monkeypatch.setattr(api_module, "create_job", fake_create_job)
+    monkeypatch.setattr(api_module, "wait_for_job", fake_wait_for_job)
+    with TestClient(api_module.create_app()) as client:
+        omitted_asr = client.post("/v1/audio/transcriptions", files={"file": ("sample.wav", b"RIFF-test", "audio/wav")})
+        disabled_asr = client.post(
+            "/v1/audio/transcriptions",
+            files={"file": ("sample.wav", b"RIFF-test", "audio/wav")},
+            data={"accelerate_single_task": "false"},
+        )
+        omitted_tts = client.post("/v1/audio/speech", json={"input": "test", "voice": "Vivian"})
+        disabled_tts = client.post(
+            "/v1/audio/speech",
+            json={"input": "test", "voice": "Vivian", "accelerate_single_task": False},
+        )
+
+    assert [response.status_code for response in (omitted_asr, disabled_asr, omitted_tts, disabled_tts)] == [200, 200, 200, 200]
+    assert [request["accelerate_single_task"] for _, request in captured] == [True, False, True, False]
 
 
 def test_voiceprint_api_adds_asr_segments_and_tts_uses_selected_sample(tmp_path, monkeypatch) -> None:

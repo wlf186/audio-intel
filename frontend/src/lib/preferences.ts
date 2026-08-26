@@ -1,0 +1,77 @@
+import type {ComputeDevice} from './types'
+
+export type AsrPreferences={language:string;speakerCount:string;align:boolean;useVoiceprints:boolean;computeDevice:ComputeDevice;accelerateSingleTask:boolean}
+export type TtsPreferences={mode:'preset'|'inline_clone';cloneSource:'upload'|'voiceprint';speaker:string;language:string;computeDevice:ComputeDevice;personId:string;sampleId:string;accelerateSingleTask:boolean}
+export type TtsContent={text:string;refText:string}
+
+export const asrPreferencesKey='audio-intel:asr-preferences:v1'
+export const ttsPreferencesKey='audio-intel:tts-preferences:v1'
+export const ttsContentKey='audio-intel:tts-content:v1'
+export const defaultAsrPreferences:AsrPreferences={language:'Auto',speakerCount:'auto',align:true,useVoiceprints:true,computeDevice:'gpu',accelerateSingleTask:true}
+export const defaultTtsPreferences:TtsPreferences={mode:'preset',cloneSource:'upload',speaker:'Vivian',language:'Chinese',computeDevice:'cpu',personId:'',sampleId:'',accelerateSingleTask:true}
+export const defaultTtsContent:TtsContent={text:'欢迎使用 Sandevistan-Audio。这是一套完全本地运行的语音智能服务。',refText:''}
+
+const asrLanguages=new Set(['Auto','Chinese','English','Cantonese','Japanese','Korean'])
+const ttsLanguages=new Set(['Chinese','English','Auto','Japanese','Korean'])
+const legacyAsrKeys=['audio-intel:asr-device-v1','audio-intel:asr-voiceprints-v1','audio-intel:asr-acceleration-v1','audio-intel:asr-single-task-acceleration-v1']
+const legacyTtsKeys=['audio-intel:tts-draft-v2','audio-intel:tts-draft-v1']
+
+function record(value:unknown):Record<string,unknown>{return value!==null&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{}}
+function parsed(storage:Storage,key:string):Record<string,unknown>|undefined{try{const raw=storage.getItem(key);return raw?record(JSON.parse(raw)):undefined}catch{return undefined}}
+function text(value:unknown,fallback:string){return typeof value==='string'?value:fallback}
+function bool(value:unknown,fallback:boolean){return typeof value==='boolean'?value:fallback}
+function device(value:unknown,fallback:ComputeDevice):ComputeDevice{return value==='cpu'||value==='gpu'?value:fallback}
+function write(storage:Storage,key:string,value:unknown){try{storage.setItem(key,JSON.stringify(value))}catch{/* Preferences remain usable in memory when browser storage is unavailable. */}}
+function remove(storage:Storage,key:string){try{storage.removeItem(key)}catch{/* Ignore disabled browser storage. */}}
+
+function normalizeAsr(value:Record<string,unknown>,maxSpeakers:number):AsrPreferences{
+ const speaker=text(value.speakerCount??value.speakers,defaultAsrPreferences.speakerCount)
+ const speakerNumber=Number(speaker)
+ return {
+  language:asrLanguages.has(text(value.language,''))?text(value.language,''):defaultAsrPreferences.language,
+  speakerCount:speaker==='auto'||Number.isInteger(speakerNumber)&&speakerNumber>=1&&speakerNumber<=maxSpeakers?speaker:'auto',
+  align:bool(value.align,defaultAsrPreferences.align),useVoiceprints:bool(value.useVoiceprints,defaultAsrPreferences.useVoiceprints),
+  computeDevice:device(value.computeDevice,defaultAsrPreferences.computeDevice),accelerateSingleTask:bool(value.accelerateSingleTask,defaultAsrPreferences.accelerateSingleTask),
+ }
+}
+
+function normalizeTts(value:Record<string,unknown>):TtsPreferences{
+ const mode=value.mode==='inline_clone'?'inline_clone':'preset'
+ const cloneSource=value.cloneSource==='voiceprint'?'voiceprint':'upload'
+ const language=text(value.language,'')
+ return {mode,cloneSource,speaker:text(value.speaker,defaultTtsPreferences.speaker),language:ttsLanguages.has(language)?language:defaultTtsPreferences.language,
+  computeDevice:device(value.computeDevice,defaultTtsPreferences.computeDevice),personId:text(value.personId,''),sampleId:text(value.sampleId,''),
+  accelerateSingleTask:bool(value.accelerateSingleTask,defaultTtsPreferences.accelerateSingleTask)}
+}
+
+export function loadAsrPreferences(maxSpeakers:number):AsrPreferences{
+ const stored=parsed(localStorage,asrPreferencesKey)
+ if(stored)return normalizeAsr(stored,maxSpeakers)
+ const legacy:Record<string,unknown>={}
+ try{
+  const oldDevice=sessionStorage.getItem(legacyAsrKeys[0]);if(oldDevice)legacy.computeDevice=oldDevice
+  const oldVoiceprints=sessionStorage.getItem(legacyAsrKeys[1]);if(oldVoiceprints!==null)legacy.useVoiceprints=oldVoiceprints!=='false'
+  const oldAcceleration=sessionStorage.getItem(legacyAsrKeys[2])??sessionStorage.getItem(legacyAsrKeys[3]);if(oldAcceleration!==null)legacy.accelerateSingleTask=oldAcceleration==='true'
+ }catch{/* Use defaults when session storage is unavailable. */}
+ const migrated=normalizeAsr(legacy,maxSpeakers);saveAsrPreferences(migrated);legacyAsrKeys.forEach(key=>remove(sessionStorage,key));return migrated
+}
+export function saveAsrPreferences(value:AsrPreferences){write(localStorage,asrPreferencesKey,value)}
+export function clearAsrPreferences(){remove(localStorage,asrPreferencesKey)}
+
+export function loadTtsPreferences():TtsPreferences{
+ const stored=parsed(localStorage,ttsPreferencesKey)
+ if(stored)return normalizeTts(stored)
+ const legacy=legacyTtsKeys.map(key=>parsed(sessionStorage,key)).find(Boolean)
+ const migrated=normalizeTts(legacy||{});saveTtsPreferences(migrated);return migrated
+}
+export function saveTtsPreferences(value:TtsPreferences){write(localStorage,ttsPreferencesKey,value)}
+export function clearTtsPreferences(){remove(localStorage,ttsPreferencesKey)}
+
+export function loadTtsContent():TtsContent{
+ const stored=parsed(sessionStorage,ttsContentKey)
+ const legacy=stored?undefined:legacyTtsKeys.map(key=>parsed(sessionStorage,key)).find(Boolean)
+ const source=stored||legacy||{}
+ const content={text:text(source.text,defaultTtsContent.text),refText:text(source.refText,defaultTtsContent.refText)}
+ write(sessionStorage,ttsContentKey,content);legacyTtsKeys.forEach(key=>remove(sessionStorage,key));return content
+}
+export function saveTtsContent(value:TtsContent){write(sessionStorage,ttsContentKey,value)}

@@ -24,7 +24,7 @@ test('TTS draft and clone mode survive background polling',async({page})=>{
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  await page.goto('/#tts')
- await page.evaluate(()=>sessionStorage.removeItem('audio-intel:tts-draft-v1'))
+ await page.evaluate(()=>{sessionStorage.removeItem('audio-intel:tts-content:v1');sessionStorage.removeItem('audio-intel:tts-draft-v2');localStorage.removeItem('audio-intel:tts-preferences:v1')})
  await page.reload()
  const text=page.locator('.text-editor textarea')
  await text.fill('')
@@ -82,37 +82,236 @@ test('navigation and mobile layout render without overflow',async({page})=>{
  await page.screenshot({path:'/tmp/audio-intel-after-mobile.png',fullPage:false})
 })
 
-test('ASR and TTS compute device defaults and selections survive polling',async({page})=>{
+test('ASR and TTS preferences persist independently and reset per page',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  await page.goto('/#asr')
- await page.evaluate(()=>sessionStorage.removeItem('audio-intel:asr-device-v1'))
- await page.evaluate(()=>sessionStorage.removeItem('audio-intel:asr-single-task-acceleration-v1'))
+ await page.evaluate(()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('audio-intel:asr-preferences:v1','{broken');localStorage.setItem('audio-intel:tts-preferences:v1','{broken')})
  await page.reload()
  const asrDevice=page.getByLabel('ASR 计算设备')
  const asrAcceleration=page.getByRole('checkbox',{name:'单任务加速',exact:true})
  await expect(asrDevice).toHaveValue('gpu')
- await expect(asrAcceleration).not.toBeChecked()
+ await expect(asrAcceleration).toBeChecked()
  await page.getByRole('button',{name:'查看单任务加速说明'}).hover()
  await expect(page.getByRole('tooltip')).toContainText('不改变模型、精度、分块或说话人算法')
- await asrAcceleration.check()
+ await page.getByLabel('识别语言').selectOption('English')
+ await page.getByLabel('说话人数').selectOption('2')
+ await page.getByLabel('时间戳').selectOption('segment')
+ await page.getByRole('checkbox',{name:'允许使用声纹库识别人员'}).uncheck()
+ await asrAcceleration.uncheck()
  await asrDevice.selectOption('cpu')
- await page.waitForTimeout(2500)
- await expect(asrDevice).toHaveValue('cpu')
- await expect(asrAcceleration).toBeChecked()
- await page.goto('/#tts')
- await page.evaluate(()=>sessionStorage.removeItem('audio-intel:tts-draft-v2'))
- await page.reload()
+ await page.locator('nav').getByRole('button',{name:/语音合成/}).click()
  const ttsDevice=page.getByLabel('TTS 计算设备')
  const ttsAcceleration=page.getByRole('checkbox',{name:'单任务加速',exact:true})
  await expect(ttsDevice).toHaveValue('cpu')
- await expect(ttsAcceleration).not.toBeChecked()
- await expect(page.getByText('CPU · FP32 · SDPA · BATCH 1')).toBeVisible()
- await ttsAcceleration.check()
- await expect(page.getByText('CPU · FP32 · SDPA · AUTO BATCH')).toBeVisible()
- await ttsDevice.selectOption('gpu')
- await expect(page.getByText('GPU · BF16 · SDPA · AUTO BATCH')).toBeVisible()
- await page.waitForTimeout(2500)
- await expect(ttsDevice).toHaveValue('gpu')
  await expect(ttsAcceleration).toBeChecked()
+ await expect(page.getByText('CPU · FP32 · SDPA · AUTO BATCH')).toBeVisible()
+ await page.getByLabel('语言').selectOption('English')
+ await page.getByLabel('音色').selectOption('Serena')
+ await page.locator('.text-editor textarea').fill('这段文本只应保留在当前会话。')
+ await ttsAcceleration.uncheck()
+ await ttsDevice.selectOption('gpu')
+ await expect(page.getByText('GPU · BF16 · SDPA · ADAPTIVE BATCH 1–2')).toBeVisible()
+ await page.locator('nav').getByRole('button',{name:/转写工作台/}).click()
+ await expect(asrDevice).toHaveValue('cpu')
+ await expect(asrAcceleration).not.toBeChecked()
+ await expect(page.getByLabel('识别语言')).toHaveValue('English')
+ await page.reload()
+ await expect(page.getByLabel('ASR 计算设备')).toHaveValue('cpu')
+ await expect(page.getByRole('checkbox',{name:'单任务加速',exact:true})).not.toBeChecked()
+ await page.getByRole('button',{name:'恢复默认配置'}).click()
+ await expect(page.getByLabel('ASR 计算设备')).toHaveValue('gpu')
+ await expect(page.getByRole('checkbox',{name:'单任务加速',exact:true})).toBeChecked()
+ await expect(page.locator('.control-panel .notice')).toContainText('已恢复 ASR 默认配置')
+ await page.locator('nav').getByRole('button',{name:/语音合成/}).click()
+ await expect(ttsDevice).toHaveValue('gpu')
+ await expect(ttsAcceleration).not.toBeChecked()
+ await expect(page.locator('.text-editor textarea')).toHaveValue('这段文本只应保留在当前会话。')
+ await page.getByRole('button',{name:'恢复默认配置'}).click()
+ await expect(ttsDevice).toHaveValue('cpu')
+ await expect(ttsAcceleration).toBeChecked()
+ await expect(page.getByLabel('语言')).toHaveValue('Chinese')
+ await expect(page.getByLabel('音色')).toHaveValue('Vivian')
+ await expect(page.locator('.text-editor textarea')).toHaveValue('这段文本只应保留在当前会话。')
+ const stored=await page.evaluate(()=>({asr:JSON.parse(localStorage.getItem('audio-intel:asr-preferences:v1')||'{}'),tts:JSON.parse(localStorage.getItem('audio-intel:tts-preferences:v1')||'{}'),localContent:localStorage.getItem('audio-intel:tts-content:v1'),sessionContent:sessionStorage.getItem('audio-intel:tts-content:v1')}))
+ expect(stored.asr).toMatchObject({computeDevice:'gpu',accelerateSingleTask:true})
+ expect(stored.tts).toMatchObject({computeDevice:'cpu',accelerateSingleTask:true})
+ expect(stored.localContent).toBeNull()
+ expect(stored.sessionContent).toContain('这段文本只应保留在当前会话')
+ await page.screenshot({path:'/tmp/audio-intel-preferences-desktop.png',fullPage:false})
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await expect(page.getByRole('button',{name:'恢复默认配置'})).toBeVisible()
+ await page.screenshot({path:'/tmp/audio-intel-preferences-mobile.png',fullPage:false})
+ expect(errors).toEqual([])
+})
+
+test('shell status reflects system checks, bind changes and recovery',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ let state:'pending'|'ready'|'warning'|'failed'='pending'
+ let release:()=>void=()=>{}
+ const gate=new Promise<void>(resolve=>{release=resolve})
+ await page.route('**/api/v1/system',async route=>{
+  if(state==='pending')await gate
+  if(state==='failed')return route.fulfill({status:503,json:{detail:'system unavailable'}})
+  const offline=state!=='warning'
+  return route.fulfill({json:{status:'ok',offline,bind:'localhost:21999',services:['asr','tts'],workers:[],hardware:{},models:[],storage:offline?{data:'/srv/audio-intel/data'}:{}}})
+ })
+ await page.goto('/#system')
+ await expect(page.locator('.local-mode')).toContainText('OFFLINE_MODE // CHECKING')
+ state='ready';release()
+ await expect(page.locator('.local-mode')).toContainText('OFFLINE_MODE // ACTIVE')
+ await expect(page.locator('footer .local-copy')).toContainText('DATA_LOCAL')
+ await expect(page.locator('footer .local-copy')).toContainText('READY')
+ await expect(page.locator('footer .local-copy')).toContainText('数据本地存储')
+ await expect(page.locator('footer .bind')).toContainText('localhost:21999')
+ await expect(page.locator('footer .shell-status').filter({hasText:'ASR_ENGINE'})).toContainText('READY')
+ await expect(page.locator('.system-health')).toContainText('离线模式已启用')
+ state='warning'
+ await expect(page.locator('.local-mode')).toContainText('OFFLINE_MODE // INACTIVE',{timeout:5000})
+ await expect(page.locator('footer .local-copy')).toContainText('UNVERIFIED')
+ state='failed'
+ await expect(page.locator('.local-mode')).toContainText('LOCAL_CORE // DISCONNECTED',{timeout:5000})
+ await expect(page.locator('footer .bind')).toContainText('UNKNOWN')
+ await expect(page.locator('footer .local-copy')).toContainText('UNKNOWN')
+ await expect(page.locator('footer .shell-status').filter({hasText:'ASR_ENGINE'})).toContainText('UNKNOWN')
+ state='ready'
+ await expect(page.locator('.local-mode')).toContainText('OFFLINE_MODE // ACTIVE',{timeout:5000})
+ await page.screenshot({path:'/tmp/audio-intel-status-desktop.png',fullPage:false})
+ await page.setViewportSize({width:390,height:844})
+ await expect(page.locator('.local-mode .compact-label')).toHaveText('LOCAL ACTIVE')
+ await expect(page.locator('footer')).not.toBeVisible()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/audio-intel-status-mobile.png',fullPage:false})
+ expect(errors.filter(message=>!message.includes('503 (Service Unavailable)'))).toEqual([])
+})
+
+test('voiceprint samples support upload and previewed microphone recording',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.clock.install()
+ await page.addInitScript(()=>{
+  const scope=window as typeof window&{__micStops:number}
+  scope.__micStops=0
+  const makeStream=()=>({getTracks:()=>[{stop:()=>{scope.__micStops+=1}}]})
+  Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>makeStream()}})
+  class FakeMediaRecorder{
+   static isTypeSupported(type:string){return type==='audio/webm;codecs=opus'}
+   state:RecordingState='inactive'
+   mimeType='audio/webm;codecs=opus'
+   ondataavailable:((event:BlobEvent)=>void)|null=null
+   onstop:((event:Event)=>void)|null=null
+   onerror:((event:Event)=>void)|null=null
+   constructor(_stream:MediaStream,_options?:MediaRecorderOptions){}
+   start(){this.state='recording'}
+   stop(){
+    if(this.state==='inactive')return
+    this.state='inactive'
+    queueMicrotask(()=>{
+     this.ondataavailable?.({data:new Blob(['browser-microphone-sample'],{type:this.mimeType})} as BlobEvent)
+     this.onstop?.(new Event('stop'))
+    })
+   }
+   pause(){this.state='paused'}
+   resume(){this.state='recording'}
+   requestData(){}
+   addEventListener(){}
+   removeEventListener(){}
+   dispatchEvent(){return true}
+   stream={} as MediaStream
+   audioBitsPerSecond=0
+   videoBitsPerSecond=0
+  }
+  Object.defineProperty(window,'MediaRecorder',{configurable:true,value:FakeMediaRecorder})
+ })
+ const now='2026-08-26T12:00:00+00:00'
+ const people=[
+  {id:'voice_recording',name:'录音测试人员',sample_count:0,created_at:now,updated_at:now,samples:[]},
+  {id:'voice_other',name:'另一个人',sample_count:0,created_at:now,updated_at:now,samples:[]},
+ ]
+ const submitted:string[]=[]
+ let submission=0
+ await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[]}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{data:'/tmp/data'}}}))
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
+ await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:people}}))
+ await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
+ await page.route('**/api/v1/voiceprints/people/voice_recording/samples/upload',async route=>{
+  submitted.push((await route.request().postDataBuffer())?.toString()||'')
+  submission+=1
+  await route.fulfill({status:202,json:{sample:{id:`sample_${submission}`,person_id:'voice_recording',state:'pending',language:'Chinese',words:[],created_at:now,updated_at:now,tts_eligible:false,embedding_status:'pending'},job:{id:`voiceprint-job-${submission}`,kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'声纹样本入库 · 录音测试人员',created_at:now,request:{compute_device:'cpu'}}}})
+ })
+ await page.goto('/#voiceprints')
+ await expect(page.getByRole('heading',{name:'声纹库'})).toBeVisible()
+ await page.getByLabel('声纹样本语言').selectOption('Chinese')
+ await page.getByLabel('声纹入库计算设备').selectOption('cpu')
+ const fileInput=page.locator('.sample-input-panel input[type="file"]')
+ await fileInput.setInputFiles({name:'uploaded-sample.wav',mimeType:'audio/wav',buffer:Buffer.from('RIFF-upload')})
+ await page.getByRole('button',{name:'自动转写并入库'}).click()
+ await expect(page.getByRole('status')).toContainText('已创建“声纹样本入库”ASR 任务')
+ expect(submitted[0]).toContain('uploaded-sample.wav')
+ await page.getByRole('tab',{name:'麦克风录音'}).click()
+ await page.getByRole('button',{name:'开始录音'}).click()
+ await expect(page.getByText('正在录音',{exact:true})).toBeVisible()
+ await page.clock.fastForward(4500)
+ await page.getByRole('button',{name:'停止并试听'}).click()
+ await expect(page.getByText('录音完成')).toBeVisible()
+ await expect(page.locator('.recording-preview audio')).toBeVisible()
+ await expect(page.getByText(/录音不足 5 秒/)).toBeVisible()
+ await expect(page.getByRole('button',{name:'确认转写并入库'})).toBeEnabled()
+ await page.getByRole('button',{name:'重新录制'}).click()
+ await page.clock.fastForward(30_000)
+ await expect(page.getByText('录音完成')).toBeVisible()
+ await expect(page.getByText(/录音不足 5 秒/)).toHaveCount(0)
+ await expect(page.locator('.recording-preview')).toContainText('00:00:30')
+ await page.screenshot({path:'/tmp/audio-intel-voiceprint-recorder-desktop.png',fullPage:false})
+ await page.getByRole('button',{name:'确认转写并入库'}).click()
+ await expect(page.getByRole('status')).toContainText('已创建“声纹样本入库”ASR 任务')
+ expect(submitted[1]).toContain('voiceprint-recording-')
+ expect(submitted[1]).toContain('.webm')
+ expect(submitted[1]).toContain('audio/webm;codecs=opus')
+ expect(submitted[1]).toContain('Chinese')
+ expect(submitted[1]).toContain('cpu')
+ await page.evaluate(()=>Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>{throw new DOMException('denied','NotAllowedError')}}}))
+ await page.getByRole('button',{name:'开始录音'}).click()
+ await expect(page.getByRole('alert')).toContainText('麦克风权限被拒绝')
+ await page.getByRole('tab',{name:'上传文件'}).click()
+ await expect(page.getByRole('button',{name:'选择单人语音样本'})).toBeVisible()
+ await page.evaluate(()=>{
+  const scope=window as typeof window&{__micStops:number}
+  Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>({getTracks:()=>[{stop:()=>{scope.__micStops+=1}}]})}})
+ })
+ await page.getByRole('tab',{name:'麦克风录音'}).click()
+ await page.getByRole('button',{name:'开始录音'}).click()
+ await page.clock.fastForward(1000)
+ await page.getByRole('button',{name:'停止并试听'}).click()
+ await expect(page.getByText('录音完成')).toBeVisible()
+ await page.getByRole('button',{name:/另一个人/}).click()
+ await expect(page.getByText('录音完成')).toHaveCount(0)
+ await expect(page.getByRole('button',{name:'确认转写并入库'})).toBeDisabled()
+ await page.getByRole('button',{name:/录音测试人员/}).click()
+ await page.getByRole('button',{name:'开始录音'}).click()
+ await page.locator('nav').getByRole('button',{name:/任务记录/}).click()
+ expect(await page.evaluate(()=>(window as typeof window&{__micStops:number}).__micStops)).toBeGreaterThan(0)
+ await page.setViewportSize({width:390,height:844})
+ await page.goto('/#voiceprints')
+ await page.getByRole('tab',{name:'麦克风录音'}).click()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/audio-intel-voiceprint-recorder-mobile.png',fullPage:false})
+ await page.evaluate(()=>{
+  Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:undefined})
+  Object.defineProperty(window,'MediaRecorder',{configurable:true,value:undefined})
+ })
+ await page.locator('nav').getByRole('button',{name:/任务记录/}).click()
+ await page.locator('nav').getByRole('button',{name:/声纹库/}).click()
+ await page.getByRole('tab',{name:'麦克风录音'}).click()
+ await expect(page.getByRole('note')).toContainText('当前浏览器不支持麦克风录音')
+ await expect(page.getByRole('tab',{name:'上传文件'})).toBeEnabled()
+ expect(errors).toEqual([])
 })
 
 test('API key login and logout use an ephemeral browser session',async({page})=>{
@@ -232,7 +431,7 @@ test('first TTS submission appears immediately and survives a stale poll',async(
  })
  await page.route('**/api/v1/tts/jobs',route=>{submitted=true;return route.fulfill({status:202,json:queued})})
  await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
- await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{gpu:{name:'Test GPU',memory_used_mib:0,memory_total_mib:4096,utilization:0}},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{gpu:{name:'Test GPU',memory_used_mib:0,memory_total_mib:4096,utilization:0}},models:[],storage:{data:'/tmp/data'}}}))
  await page.goto('/#tts')
  await expect(page).toHaveTitle('Sandevistan-Audio')
  await expect(page.getByRole('heading',{name:'语音合成'})).toBeVisible()
@@ -264,7 +463,7 @@ test('first ASR submission appears immediately from the accepted job response',a
  const listGate=new Promise<void>(resolve=>{releaseList=resolve})
  await page.route('**/api/v1/jobs',async route=>{if(submitted)await listGate;return route.fulfill({json:{items:submitted?[queued]:[]}})})
  await page.route('**/api/v1/asr/jobs',route=>{submitted=true;return route.fulfill({status:202,json:queued})})
- await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{gpu:{name:'Test GPU',memory_used_mib:0,memory_total_mib:4096,utilization:0}},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{gpu:{name:'Test GPU',memory_used_mib:0,memory_total_mib:4096,utilization:0}},models:[],storage:{data:'/tmp/data'}}}))
  await page.goto('/#asr')
  await page.locator('input[type="file"]').setInputFiles({name:'first-submit.wav',mimeType:'audio/wav',buffer:Buffer.from('RIFF-test')})
  await page.getByRole('button',{name:'开始转写'}).click()
@@ -287,7 +486,7 @@ test('task history labels shortened IDs and copies the complete ID over HTTP fal
   Object.defineProperty(document,'execCommand',{configurable:true,value:(command:string)=>{if(command!=='copy')return false;const active=document.activeElement as HTMLTextAreaElement|null;(window as typeof window&{__copiedJobId?:string}).__copiedJobId=active?.value;return true}})
  })
  await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[job]}}))
- await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{data:'/tmp/data'}}}))
  await page.goto('/#jobs')
  const shortId=page.locator('.job-id')
  await expect(shortId).toHaveText('任务 ID：fedcba098765…')
@@ -314,7 +513,7 @@ test('ASR speaker limit, filter, rename and voiceprint segment enrollment are in
  const people=[{id:'voice_nick',name:'尼克杨',sample_count:1,created_at:now,updated_at:now,samples:[{id:'sample_nick',person_id:'voice_nick',state:'ready',language:'Chinese',transcript:'已有样本',words:[],duration:5,created_at:now,updated_at:now,tts_eligible:true,embedding_status:'ready',audio_url:'/sample.wav'}]}]
  let enrollment:{job_id:string;segment_ids:number[]}|undefined
  await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[job]}}))
- await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{data:'/tmp/data'}}}))
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
  await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:people}}))
  await page.route('**/api/v1/jobs/asr-speaker-tools/source',route=>route.fulfill({contentType:'audio/wav',body:Buffer.from('RIFF-test')}))
@@ -356,7 +555,7 @@ test('voiceprint library sample can be explicitly selected for TTS clone',async(
  const people=[{id:'voice_nick',name:'尼克杨',sample_count:1,created_at:now,updated_at:now,samples:[{id:'sample_long',person_id:'voice_nick',state:'ready',language:'Chinese',transcript:'这是一条超过十五秒的准确参考文本。',words:[],duration:20,created_at:now,updated_at:now,tts_eligible:true,embedding_status:'ready',audio_url:'/sample.wav'}]}]
  let submitted:Record<string,string>={}
  await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[]}}))
- await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{data:'/tmp/data'}}}))
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
  await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:people}}))
  await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
@@ -399,7 +598,7 @@ test('view result reveals ASR and TTS result panels on mobile',async({page})=>{
   {id:'mobile-tts',kind:'tts',state:'succeeded',stage:'completed',progress:1,display_name:'移动端合成',created_at:now,updated_at:now,request:{compute_device:'cpu'},result:{duration:2,speaker:'Vivian',format:'wav',compute_device:'cpu',waveform:[.2,.4],artifacts:[]}},
  ]
  await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:jobs}}))
- await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{data:'/tmp/data'}}}))
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
  await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[]}}))
  await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
@@ -424,7 +623,7 @@ test('long mobile transcripts scroll inside the bounded result panel',async({pag
  const result={text:segments.map(item=>item.text).join(''),language:'Chinese',duration:440,timestamp_precision:'segment',speakers:Array.from({length:3},(_,id)=>({id:`Speaker_${id}`,label:`Speaker ${id}`})),segments,waveform:[.2,.5,.3],artifacts:[]}
  const job={id:'long-mobile-asr',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'超长会议记录',created_at:now,updated_at:now,request:{compute_device:'cpu'},result}
  await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[job]}}))
- await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{data:'/tmp/data'}}}))
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
  await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[]}}))
  await page.setViewportSize({width:390,height:844})

@@ -57,6 +57,7 @@ from starlette.concurrency import run_in_threadpool
 
 
 PRESET_SPEAKERS = ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee"]
+SINGLE_TASK_ACCELERATION_DEFAULT = True
 ALIGNER_LANGUAGES = [
     "Chinese", "English", "Cantonese", "French", "German", "Italian",
     "Japanese", "Korean", "Portuguese", "Russian", "Spanish",
@@ -302,7 +303,7 @@ def create_app() -> FastAPI:
                 "aligner_languages": ALIGNER_LANGUAGES,
                 "exports": ["json", "srt", "vtt", "txt"],
                 "compute_devices": compute_capabilities("gpu"),
-                "single_task_acceleration": {"supported": True, "default": False},
+                "single_task_acceleration": {"supported": True, "default": SINGLE_TASK_ACCELERATION_DEFAULT},
             },
             "tts": {
                 "models": ["Qwen3-TTS-12Hz-0.6B-Base", "Qwen3-TTS-12Hz-0.6B-CustomVoice"],
@@ -310,7 +311,7 @@ def create_app() -> FastAPI:
                 "preset_speakers": PRESET_SPEAKERS,
                 "formats": ["wav", "flac", "mp3"],
                 "compute_devices": compute_capabilities("cpu"),
-                "single_task_acceleration": {"supported": True, "default": False},
+                "single_task_acceleration": {"supported": True, "default": SINGLE_TASK_ACCELERATION_DEFAULT},
             },
             "limits": {
                 "max_upload_bytes": settings.max_upload_bytes,
@@ -330,7 +331,7 @@ def create_app() -> FastAPI:
         export_formats: str = Form("json,srt,vtt,txt"),
         compute_device: str = Form("gpu"),
         use_voiceprint_library: bool = Form(True),
-        accelerate_single_task: bool = Form(False),
+        accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT),
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         ensure_service("asr")
@@ -373,7 +374,7 @@ def create_app() -> FastAPI:
         response_format: str = Form("wav"),
         display_name: str = Form("语音合成"),
         compute_device: str = Form("cpu"),
-        accelerate_single_task: bool = Form(False),
+        accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT),
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         ensure_service("tts")
@@ -897,7 +898,7 @@ def add_openai_routes(app: FastAPI) -> None:
         diarize: bool = Form(True), speaker_count: str = Form("auto"),
         compute_device: str = Form("gpu"),
         use_voiceprint_library: bool = Form(True),
-        accelerate_single_task: bool = Form(False),
+        accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT),
         _: None = Depends(require_api_key),
     ) -> Response:
         ensure_service("asr")
@@ -941,7 +942,7 @@ def add_openai_routes(app: FastAPI) -> None:
         ensure_service("tts")
         compute_device, compute_device_name = validate_compute_device(str(payload.get("compute_device", "cpu")))
         accelerate_single_task = validate_boolean(
-            payload.get("accelerate_single_task", False), "accelerate_single_task",
+            payload.get("accelerate_single_task", SINGLE_TASK_ACCELERATION_DEFAULT), "accelerate_single_task",
         )
         if payload.get("model", "qwen3-tts-0.6b") not in {"qwen3-tts-0.6b", "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"}:
             raise HTTPException(status_code=404, detail="Unknown speech model")
