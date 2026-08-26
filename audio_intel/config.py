@@ -31,8 +31,8 @@ class Settings:
     )
     max_upload_bytes: int = int(os.getenv("AUDIO_INTEL_MAX_UPLOAD_BYTES", str(4 * 1024**3)))
     max_tts_chars: int = int(os.getenv("AUDIO_INTEL_MAX_TTS_CHARS", "50000"))
-    max_queued_asr: int = int(os.getenv("AUDIO_INTEL_MAX_QUEUED_ASR", "20"))
-    max_queued_tts: int = int(os.getenv("AUDIO_INTEL_MAX_QUEUED_TTS", "20"))
+    max_queued_asr: int = int(os.getenv("AUDIO_INTEL_MAX_QUEUED_ASR", "5"))
+    max_queued_tts: int = int(os.getenv("AUDIO_INTEL_MAX_QUEUED_TTS", "5"))
     max_concurrent_submissions: int = int(
         os.getenv("AUDIO_INTEL_MAX_CONCURRENT_SUBMISSIONS", "2")
     )

@@ -485,7 +485,7 @@ test('first TTS submission appears immediately and survives a stale poll',async(
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  const now='2026-08-25T12:00:00+00:00'
- const queued={id:'1234567890abcdef1234567890abcdef',kind:'tts',state:'queued',stage:'queued',progress:0,display_name:'首次合成即时入列',created_at:now,updated_at:now,processing_seconds:0,processing_as_of:now,attempts:0,compute_device:'cpu',compute_device_name:'CPU',request:{compute_device:'cpu',compute_device_name:'CPU'},queue:{scope:'tts',position:2,depth:4,capacity:20,waiting_for:'worker'},estimate:{state:'ready',confidence:'low',sample_count:8,remaining_seconds:{lower:30,upper:90}}}
+ const queued={id:'1234567890abcdef1234567890abcdef',kind:'tts',state:'queued',stage:'queued',progress:0,display_name:'首次合成即时入列',created_at:now,updated_at:now,processing_seconds:0,processing_as_of:now,attempts:0,compute_device:'cpu',compute_device_name:'CPU',request:{compute_device:'cpu',compute_device_name:'CPU'},queue:{scope:'tts',position:2,depth:4,capacity:5,waiting_for:'worker'},estimate:{state:'ready',confidence:'low',sample_count:8,remaining_seconds:{lower:30,upper:90}}}
  const running={...queued,state:'running',stage:'synthesizing',progress:.25,started_at:now,attempts:1}
  let jobsRequests=0
  let submitted=false

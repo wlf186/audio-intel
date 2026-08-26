@@ -74,11 +74,11 @@ $env:AUDIO_INTEL_API_KEY = 'replace-with-a-long-random-value'
 .\service.cmd start all
 ```
 
-ASR 与 TTS 默认都选择 GPU 并开启单任务加速；无可用 NVIDIA GPU 时，应在页面选择 CPU，或由 API 显式传入 `compute_device=cpu`。默认准入限制为每类 20 个排队任务、2 个并行提交持久化和至少 5 GiB 数据卷空闲空间，可按需设置：
+ASR 与 TTS 默认都选择 GPU 并开启单任务加速；无可用 NVIDIA GPU 时，应在页面选择 CPU，或由 API 显式传入 `compute_device=cpu`。默认准入限制为每类 5 个排队任务、2 个并行提交持久化和至少 5 GiB 数据卷空闲空间，可按需设置：
 
 ```powershell
-$env:AUDIO_INTEL_MAX_QUEUED_ASR = '20'
-$env:AUDIO_INTEL_MAX_QUEUED_TTS = '20'
+$env:AUDIO_INTEL_MAX_QUEUED_ASR = '5'
+$env:AUDIO_INTEL_MAX_QUEUED_TTS = '5'
 $env:AUDIO_INTEL_MAX_CONCURRENT_SUBMISSIONS = '2'
 $env:AUDIO_INTEL_MIN_FREE_DISK_BYTES = '5368709120'
 ```

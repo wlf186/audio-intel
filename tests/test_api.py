@@ -178,6 +178,8 @@ def test_api_queues_asr_and_validates_tts(tmp_path, monkeypatch) -> None:
         assert capabilities["tts"]["default_language"] == "Auto"
         assert capabilities["tts"]["languages"] == api_module.TTS_LANGUAGES
         assert capabilities["tts"]["preset_speaker_native_languages"]["Ryan"] == "English"
+        assert capabilities["limits"]["max_queued_asr"] == 5
+        assert capabilities["limits"]["max_queued_tts"] == 5
         assert capabilities["asr"]["single_task_acceleration"] == {"supported": True, "default": True}
         assert capabilities["tts"]["single_task_acceleration"] == {"supported": True, "default": True}
 
@@ -186,6 +188,7 @@ def test_asr_public_languages_are_normalized_and_rejected_before_job_creation(tm
     local = replace(
         settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
         enabled_services=frozenset({"asr"}),
+        max_queued_asr=len(api_module.ASR_LANGUAGES) + 1,
     )
     monkeypatch.setattr(api_module, "settings", local)
     monkeypatch.setattr(db_module, "settings", local)
