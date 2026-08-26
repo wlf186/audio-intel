@@ -24,7 +24,14 @@ qwen-tts 0.1.1 与 qwen-asr 0.0.6 精确要求不同 Transformers 版本，严�
 .runtime/api/bin/python scripts/lock_dependencies.py --check
 ```
 
-提交直接清单和两个平台的全部生成锁。CI 会重建锁并拒绝差异。uv 本身固定为 0.12.5，Linux 和 Windows 下载均验证上游 SHA256。
+默认生成会优先保留现有锁中的兼容版本，只更新因直接依赖变化而必须调整的包。计划刷新全部间接依赖时显式执行：
+
+```bash
+.runtime/api/bin/python scripts/lock_dependencies.py --upgrade
+.runtime/api/bin/python scripts/lock_dependencies.py --check
+```
+
+`--check` 以已提交锁为解析基线，验证它们仍与直接依赖一致；不能与 `--upgrade` 同时使用。提交直接清单和两个平台的全部生成锁。CI 会以已提交锁为基线重新编译并拒绝差异。uv 本身固定为 0.12.5，Linux 和 Windows 下载均验证上游 SHA256。
 
 ## 安全公告与 VEX
 

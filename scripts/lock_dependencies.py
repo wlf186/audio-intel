@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import filecmp
 import platform
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -22,7 +23,9 @@ PLATFORMS = {
 }
 
 
-def compile_lock(name: str, source: str, platform: str, output: Path) -> None:
+def compile_lock(
+    name: str, source: str, platform: str, output: Path, *, upgrade: bool = False,
+) -> None:
     command = [
         str(UV), "pip", "compile", "--python-version", "3.12",
         "--python-platform", platform, "--generate-hashes", "--no-header",
@@ -30,13 +33,21 @@ def compile_lock(name: str, source: str, platform: str, output: Path) -> None:
     ]
     if name != "api":
         command[3:3] = ["--torch-backend", "cu130"]
+    if upgrade:
+        command.insert(3, "--upgrade")
     subprocess.run(command, cwd=ROOT, check=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Regenerate or verify pinned Python dependency locks.")
     parser.add_argument("--check", action="store_true", help="Fail if generated locks differ from the repository")
+    parser.add_argument(
+        "--upgrade", action="store_true",
+        help="Upgrade all compatible dependencies instead of preserving versions from existing locks",
+    )
     arguments = parser.parse_args()
+    if arguments.check and arguments.upgrade:
+        parser.error("--check and --upgrade cannot be used together")
     if not UV.is_file():
         raise SystemExit("Run ./service.sh setup api first so .runtime/bin/uv is available")
     failures: list[str] = []
@@ -47,7 +58,9 @@ def main() -> None:
                 destination = ROOT / "requirements-lock" / os_name / f"{name}.txt"
                 output = temporary_root / os_name / f"{name}.txt" if arguments.check else destination
                 output.parent.mkdir(parents=True, exist_ok=True)
-                compile_lock(name, source, platform, output)
+                if arguments.check and destination.is_file():
+                    shutil.copyfile(destination, output)
+                compile_lock(name, source, platform, output, upgrade=arguments.upgrade)
                 if arguments.check and (not destination.is_file() or not filecmp.cmp(output, destination, shallow=False)):
                     failures.append(str(destination.relative_to(ROOT)))
     if failures:
