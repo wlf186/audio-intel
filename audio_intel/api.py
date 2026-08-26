@@ -15,10 +15,12 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 from urllib.parse import urlsplit
 
-from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Security, UploadFile
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, TypeAdapter
 
 from . import __version__
 from .config import settings
@@ -54,6 +56,18 @@ from .db import (
 from .utils import safe_filename
 from .purge import purge_jobs
 from starlette.concurrency import run_in_threadpool
+from .api_docs import (
+    API_DESCRIPTION, AUTH_RESPONSES, BINARY_SCHEMA, CONFLICT_RESPONSE,
+    NOT_FOUND_RESPONSE, OPENAPI_TAGS, SERVICE_RESPONSE, TOO_LARGE_RESPONSE,
+    VALIDATION_RESPONSE, bilingual, problem_response,
+)
+from .api_models import (
+    AuthSessionResponse, BatchDeleteResponse, CapabilitiesResponse, EventSnapshot,
+    HealthResponse, JobListResponse, JobResponse, JobResultResponse, OpenAIModelList,
+    OpenAITranscription, OpenAIVerboseTranscription, ProblemDetail, SystemResponse,
+    VoiceListResponse, VoiceProfileResponse, VoiceprintPeopleResponse,
+    VoiceprintPersonResponse, VoiceprintSamplesResponse, VoiceprintUploadResponse,
+)
 
 
 PRESET_SPEAKERS = ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee"]
@@ -62,24 +76,43 @@ ALIGNER_LANGUAGES = [
     "Chinese", "English", "Cantonese", "French", "German", "Italian",
     "Japanese", "Korean", "Portuguese", "Russian", "Spanish",
 ]
+SERVICE_TAG = "Service / 服务"
+AUTH_TAG = "Authentication / 鉴权"
+ASR_TAG = "ASR / 语音识别"
+TTS_TAG = "TTS / 语音合成"
+VOICEPRINT_TAG = "Voiceprints / 声纹库"
+JOB_TAG = "Jobs / 任务"
+OPENAI_TAG = "OpenAI compatibility / OpenAI 兼容"
 
 
 class BatchDeleteRequest(BaseModel):
-    job_ids: list[str]
-    purge: bool = False
+    job_ids: list[str] = Field(description="待删除任务 ID；自动去重，最多 100 个 / Job IDs; deduplicated, maximum 100")
+    purge: bool = Field(False, description="必须明确为 true，删除不可恢复 / Must be true; deletion is irreversible")
 
 
 class PersonNameRequest(BaseModel):
-    name: str
+    name: str = Field(description="人员显示名称，规范化后必须唯一 / Display name, unique after normalization")
 
 
 class AddAsrSamplesRequest(BaseModel):
-    job_id: str
-    segment_ids: list[int]
+    job_id: str = Field(description="已成功完成的 ASR 任务 ID / Successfully completed ASR job ID")
+    segment_ids: list[int] = Field(description="同一说话人的一个或多个段落 ID / One or more segment IDs from one speaker")
+
+
+class SpeakerNameRequest(BaseModel):
+    name: str = Field(description="任务历史中的说话人显示名称 / Speaker display name in this historical job")
 
 
 SESSION_COOKIE = "audio_intel_session"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+bearer_auth = HTTPBearer(
+    auto_error=False, scheme_name="BearerAuth",
+    description="配置 AUDIO_INTEL_API_KEY 后输入密钥本身；客户端发送 Bearer token。 / Enter the API key itself when configured.",
+)
+session_cookie_auth = APIKeyCookie(
+    name=SESSION_COOKIE, auto_error=False, scheme_name="SessionCookie",
+    description="由 /api/v1/auth/session 创建的同源 HttpOnly 浏览器会话。 / Same-origin HttpOnly browser session.",
+)
 
 
 def _valid_bearer(authorization: str | None) -> bool:
@@ -101,10 +134,18 @@ def _session_authenticated(request: Request) -> bool:
     return bool(token and token in request.app.state.auth_sessions)
 
 
-def require_api_key(request: Request, authorization: str | None = Header(default=None)) -> None:
-    if not settings.api_key or _valid_bearer(authorization):
+def require_api_key(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Security(bearer_auth),
+    session_token: str | None = Security(session_cookie_auth),
+) -> None:
+    bearer_valid = bool(
+        credentials and credentials.scheme.lower() == "bearer"
+        and hmac.compare_digest(credentials.credentials, settings.api_key)
+    )
+    if not settings.api_key or bearer_valid:
         return
-    if _session_authenticated(request):
+    if session_token and _session_authenticated(request):
         if request.method in SAFE_METHODS or _same_origin(request):
             return
         raise HTTPException(status_code=403, detail="Cookie-authenticated writes must be same-origin")
@@ -225,12 +266,48 @@ def create_app() -> FastAPI:
     init_db()
     app = FastAPI(
         title="Sandevistan-Audio",
-        description="Completely local ASR, speaker diarization, forced alignment and TTS service.",
+        description=API_DESCRIPTION,
         version=__version__,
-        docs_url="/docs",
+        docs_url=None,
         redoc_url=None,
+        openapi_tags=OPENAPI_TAGS,
     )
     app.state.auth_sessions = set()
+    docs_assets = settings.frontend_dir / "docs-assets"
+    app.mount("/docs-assets", StaticFiles(directory=docs_assets, check_dir=False), name="docs-assets")
+
+    @app.get("/docs", include_in_schema=False)
+    def local_api_docs() -> Response:
+        required = [docs_assets / "swagger-ui.css", docs_assets / "swagger-ui-bundle.js"]
+        if not all(path.is_file() for path in required):
+            return HTMLResponse(
+                "<h1>API documentation assets are not built</h1>"
+                "<p>Run <code>./service.sh setup api</code> or <code>service.cmd setup api</code>.</p>",
+                status_code=503,
+                headers={"Cache-Control": "no-store"},
+            )
+        response = get_swagger_ui_html(
+            openapi_url=app.openapi_url or "/openapi.json",
+            title="Sandevistan-Audio · API Docs",
+            swagger_js_url="/docs-assets/swagger-ui-bundle.js",
+            swagger_css_url="/docs-assets/swagger-ui.css",
+            swagger_favicon_url="/sandevistan-audio.svg",
+            swagger_ui_parameters={
+                "deepLinking": True, "displayRequestDuration": True, "filter": True,
+                "persistAuthorization": False, "showExtensions": True,
+                "showCommonExtensions": True, "validatorUrl": None,
+            },
+        )
+        response.headers.update({
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": (
+                "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                "font-src 'self'; connect-src 'self'; object-src 'none'; "
+                "base-uri 'self'; frame-ancestors 'none'"
+            ),
+        })
+        return response
 
     @app.exception_handler(HTTPException)
     async def http_problem(_: Request, exc: HTTPException) -> JSONResponse:
@@ -248,21 +325,47 @@ def create_app() -> FastAPI:
             media_type="application/problem+json",
         )
 
-    @app.get("/api/v1/health")
-    def health() -> dict[str, Any]:
+    @app.get(
+        "/api/v1/health", response_model=HealthResponse, response_model_exclude_unset=True,
+        tags=[SERVICE_TAG], summary="公开健康检查 / Public health probe",
+        description=bilingual(
+            "唯一公开且不返回详细系统信息的运行探针。",
+            "The only public operational probe; it exposes no detailed system data.",
+        ),
+        operation_id="getHealth",
+    )
+    def health() -> HealthResponse:
         return {"status": "ok", "version": __version__, "offline": True}
 
-    @app.get("/api/v1/auth/session")
-    def auth_session(request: Request, authorization: str | None = Header(default=None)) -> dict[str, bool]:
+    @app.get(
+        "/api/v1/auth/session", response_model=AuthSessionResponse, response_model_exclude_unset=True,
+        tags=[AUTH_TAG], summary="检查鉴权会话 / Inspect authentication session",
+        description=bilingual("检查是否需要密钥以及当前请求是否已认证。", "Check whether a key is required and whether this client is authenticated."),
+        operation_id="getAuthSession",
+    )
+    def auth_session(request: Request, authorization: str | None = Header(default=None, description="可选 Bearer 密钥 / Optional Bearer key")) -> AuthSessionResponse:
         required = bool(settings.api_key)
         authenticated = not required or _valid_bearer(authorization) or _session_authenticated(request)
         return {"required": required, "authenticated": authenticated}
 
-    @app.post("/api/v1/auth/session", status_code=204)
-    def create_auth_session(request: Request, authorization: str | None = Header(default=None)) -> Response:
+    @app.post(
+        "/api/v1/auth/session", status_code=204, tags=[AUTH_TAG],
+        summary="创建浏览器会话 / Create browser session",
+        description=bilingual(
+            "用 Bearer 密钥换取内存中的 HttpOnly 同源 Cookie；服务重启后失效。API 客户端通常应直接使用 Bearer。",
+            "Exchange a Bearer key for an in-memory same-origin HttpOnly cookie. It expires on restart; API clients should normally keep using Bearer.",
+        ),
+        operation_id="createAuthSession", responses={**AUTH_RESPONSES},
+    )
+    def create_auth_session(
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None = Security(bearer_auth),
+    ) -> Response:
         if not settings.api_key:
             return Response(status_code=204)
-        if not _valid_bearer(authorization):
+        if not credentials or credentials.scheme.lower() != "bearer" or not hmac.compare_digest(
+            credentials.credentials, settings.api_key
+        ):
             raise HTTPException(status_code=401, detail="Invalid or missing API key", headers={"WWW-Authenticate": "Bearer"})
         previous = request.cookies.get(SESSION_COOKIE)
         if previous:
@@ -276,8 +379,15 @@ def create_app() -> FastAPI:
         )
         return response
 
-    @app.delete("/api/v1/auth/session", status_code=204)
-    def delete_auth_session(request: Request) -> Response:
+    @app.delete(
+        "/api/v1/auth/session", status_code=204, tags=[AUTH_TAG],
+        summary="注销浏览器会话 / Delete browser session",
+        description=bilingual("删除当前同源会话 Cookie。", "Delete the current same-origin session cookie."),
+        operation_id="deleteAuthSession",
+    )
+    def delete_auth_session(
+        request: Request, _session_token: str | None = Security(session_cookie_auth),
+    ) -> Response:
         token = request.cookies.get(SESSION_COOKIE)
         if token:
             request.app.state.auth_sessions.discard(token)
@@ -285,12 +395,22 @@ def create_app() -> FastAPI:
         response.delete_cookie(SESSION_COOKIE, path="/", samesite="strict")
         return response
 
-    @app.get("/api/v1/system")
-    def system(_: None = Depends(require_api_key)) -> dict[str, Any]:
+    @app.get(
+        "/api/v1/system", response_model=SystemResponse, response_model_exclude_unset=True,
+        tags=[SERVICE_TAG], summary="读取详细系统状态 / Get detailed system status",
+        description=bilingual("返回 worker、硬件、模型 revision 和本地存储路径；始终受保护。", "Return workers, hardware, model revisions, and local storage paths; always protected."),
+        operation_id="getSystem", responses={**AUTH_RESPONSES},
+    )
+    def system(_: None = Depends(require_api_key)) -> SystemResponse:
         return system_snapshot()
 
-    @app.get("/api/v1/capabilities")
-    def capabilities(_: None = Depends(require_api_key)) -> dict[str, Any]:
+    @app.get(
+        "/api/v1/capabilities", response_model=CapabilitiesResponse, response_model_exclude_unset=True,
+        tags=[SERVICE_TAG], summary="读取服务能力 / Get service capabilities",
+        description=bilingual("消费方应从这里读取设备可用性、格式、上限和默认值，不要硬编码部署能力。", "Read live device availability, formats, limits, and defaults here instead of hard-coding deployment capabilities."),
+        operation_id="getCapabilities", responses={**AUTH_RESPONSES},
+    )
+    def capabilities(_: None = Depends(require_api_key)) -> CapabilitiesResponse:
         return {
             "services": sorted(settings.enabled_services),
             "offline": True,
@@ -320,18 +440,28 @@ def create_app() -> FastAPI:
             },
         }
 
-    @app.post("/api/v1/asr/jobs", status_code=202)
+    @app.post(
+        "/api/v1/asr/jobs", status_code=202, response_model=JobResponse,
+        response_model_exclude_unset=True, tags=[ASR_TAG],
+        summary="提交异步 ASR 任务 / Submit asynchronous ASR job",
+        description=bilingual(
+            "上传音频并立即返回排队任务。通过 `status_url` 轮询；成功后读取 `result_url`。GPU 不可用时返回 503，不回退 CPU。",
+            "Upload audio and immediately receive a queued job. Poll `status_url`, then read `result_url`. An unavailable GPU returns 503 and never falls back silently.",
+        ),
+        operation_id="submitAsrJob",
+        responses={**AUTH_RESPONSES, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+    )
     async def submit_asr(
-        file: UploadFile = File(...),
-        language: str = Form("Auto"),
-        speaker_count: str = Form("auto"),
-        diarize: bool = Form(True),
-        align: bool = Form(True),
-        context: str = Form(""),
-        export_formats: str = Form("json,srt,vtt,txt"),
-        compute_device: str = Form("gpu"),
-        use_voiceprint_library: bool = Form(True),
-        accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT),
+        file: UploadFile = File(..., description="待转写音频或视频 / Audio or video to transcribe"),
+        language: str = Form("Auto", description="识别语言；Auto 自动检测 / Recognition language; Auto detects"),
+        speaker_count: str = Form("auto", description="auto 或 1–15 / auto or an integer from 1 to 15"),
+        diarize: bool = Form(True, description="启用说话人分离 / Enable speaker diarization"),
+        align: bool = Form(True, description="返回支持语言的精确时间戳 / Produce precise timestamps for supported languages"),
+        context: str = Form("", description="识别上下文提示 / Recognition context hint"),
+        export_formats: str = Form("json,srt,vtt,txt", description="逗号分隔：json,srt,vtt,txt / Comma-separated export formats"),
+        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
+        use_voiceprint_library: bool = Form(True, description="用声纹库匹配并命名说话人 / Match and label speakers from the voiceprint library"),
+        accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="启用质量中性的单任务自动批处理 / Enable quality-neutral single-job auto-batching"),
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         ensure_service("asr")
@@ -360,21 +490,31 @@ def create_app() -> FastAPI:
         }
         return public_job(create_job("asr", original_name, request_data, job_id))
 
-    @app.post("/api/v1/tts/jobs", status_code=202)
+    @app.post(
+        "/api/v1/tts/jobs", status_code=202, response_model=JobResponse,
+        response_model_exclude_unset=True, tags=[TTS_TAG],
+        summary="提交异步 TTS 任务 / Submit asynchronous TTS job",
+        description=bilingual(
+            "四种模式：`preset` 传 `speaker`；`profile` 传 `voice_profile_id`；`inline_clone` 上传 `reference_audio` 并传逐字准确的 `reference_text`；`voiceprint` 传具体且可用于 TTS 的 `voiceprint_sample_id`。",
+            "Four modes: `preset` uses `speaker`; `profile` uses `voice_profile_id`; `inline_clone` requires `reference_audio` plus an exact `reference_text`; `voiceprint` requires a concrete TTS-eligible `voiceprint_sample_id`.",
+        ),
+        operation_id="submitTtsJob",
+        responses={**AUTH_RESPONSES, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+    )
     async def submit_tts(
-        text: str = Form(...),
-        language: str = Form("Chinese"),
-        voice_mode: str = Form("preset"),
-        speaker: str | None = Form(None),
-        voice_profile_id: str | None = Form(None),
-        voiceprint_sample_id: str | None = Form(None),
-        reference_audio: UploadFile | None = File(None),
-        reference_text: str | None = Form(None),
-        instruct: str = Form(""),
-        response_format: str = Form("wav"),
-        display_name: str = Form("语音合成"),
-        compute_device: str = Form("cpu"),
-        accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT),
+        text: str = Form(..., description="需要合成的文本 / Text to synthesize"),
+        language: str = Form("Chinese", description="生成语言 / Synthesis language"),
+        voice_mode: str = Form("preset", description="preset、profile、inline_clone 或 voiceprint"),
+        speaker: str | None = Form(None, description="preset 模式的官方音色 / Official speaker for preset mode"),
+        voice_profile_id: str | None = Form(None, description="profile 模式的声音档案 ID / Voice profile ID for profile mode"),
+        voiceprint_sample_id: str | None = Form(None, description="voiceprint 模式的具体可用样本 ID / Concrete eligible sample ID for voiceprint mode"),
+        reference_audio: UploadFile | None = File(None, description="inline_clone 模式参考音频 / Reference audio for inline_clone"),
+        reference_text: str | None = Form(None, description="必须与参考音频逐字一致 / Must exactly match the reference audio"),
+        instruct: str = Form("", description="预置音色风格指令 / Style instruction for preset voice"),
+        response_format: str = Form("wav", description="wav、flac 或 mp3"),
+        display_name: str = Form("语音合成", description="任务显示名称 / Job display name"),
+        compute_device: str = Form("cpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
+        accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="启用质量中性的单任务自动批处理 / Enable quality-neutral single-job auto-batching"),
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         ensure_service("tts")
@@ -440,15 +580,30 @@ def create_app() -> FastAPI:
             request_data["reference_audio_path"] = str(target)
         return public_job(create_job("tts", safe_filename(display_name, "tts"), request_data, job_id))
 
-    @app.get("/api/v1/tts/voices")
-    def voices(_: None = Depends(require_api_key)) -> dict[str, Any]:
+    @app.get(
+        "/api/v1/tts/voices", response_model=VoiceListResponse, response_model_exclude_unset=True,
+        tags=[TTS_TAG], summary="列出声音档案与预置音色 / List voice profiles and presets",
+        description=bilingual("返回可用于 `profile` 模式的档案，以及 `preset` 模式官方音色。", "Return profiles usable by `profile` mode and official speakers for `preset` mode."),
+        operation_id="listTtsVoices", responses={**AUTH_RESPONSES},
+    )
+    def voices(_: None = Depends(require_api_key)) -> VoiceListResponse:
         return {"items": list_voices(), "preset_speakers": PRESET_SPEAKERS}
 
-    @app.post("/api/v1/tts/voices", status_code=201)
+    @app.post(
+        "/api/v1/tts/voices", status_code=201, response_model=VoiceProfileResponse,
+        response_model_exclude_unset=True, tags=[TTS_TAG],
+        summary="创建声音档案 / Create voice profile",
+        description=bilingual("保存本地参考音频和逐字准确文本，同时建立可复用声音档案。", "Store local reference audio and its exact transcript as a reusable voice profile."),
+        operation_id="createTtsVoice",
+        responses={**AUTH_RESPONSES, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+    )
     async def save_voice(
-        name: str = Form(...), language: str = Form("Chinese"), ref_text: str = Form(...),
-        ref_audio: UploadFile = File(...), _: None = Depends(require_api_key),
-    ) -> dict[str, Any]:
+        name: str = Form(..., description="声音档案名称 / Voice profile name"),
+        language: str = Form("Chinese", description="参考音频语言 / Reference language"),
+        ref_text: str = Form(..., description="与参考音频逐字一致的文本 / Transcript exactly matching the reference audio"),
+        ref_audio: UploadFile = File(..., description="本地参考音频 / Local reference audio"),
+        _: None = Depends(require_api_key),
+    ) -> VoiceProfileResponse:
         ensure_service("tts")
         if not name.strip() or not ref_text.strip():
             raise HTTPException(status_code=422, detail="Voice name and accurate reference text are required")
@@ -457,8 +612,18 @@ def create_app() -> FastAPI:
         await save_upload(ref_audio, target, 100 * 1024 * 1024)
         return create_voice(name.strip(), language, str(target), ref_text.strip())
 
-    @app.delete("/api/v1/tts/voices/{voice_id}", status_code=204)
-    def remove_voice(voice_id: str, purge: bool = Query(False), _: None = Depends(require_api_key)) -> Response:
+    @app.delete(
+        "/api/v1/tts/voices/{voice_id}", status_code=204, tags=[TTS_TAG],
+        summary="永久删除声音档案 / Permanently delete voice profile",
+        description=bilingual("必须传 `purge=true`；同时删除其本地样本，不可恢复。", "Requires `purge=true`; local samples are also deleted and cannot be recovered."),
+        operation_id="deleteTtsVoice",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
+    )
+    def remove_voice(
+        voice_id: str,
+        purge: bool = Query(False, description="必须为 true / Must be true"),
+        _: None = Depends(require_api_key),
+    ) -> Response:
         person = get_voiceprint_person(voice_id)
         if person is None:
             raise HTTPException(status_code=404, detail="Voice profile not found")
@@ -471,11 +636,24 @@ def create_app() -> FastAPI:
         delete_voice_record(person["id"])
         return Response(status_code=204)
 
-    @app.get("/api/v1/voiceprints/people")
-    def voiceprint_people(_: None = Depends(require_api_key)) -> dict[str, Any]:
+    @app.get(
+        "/api/v1/voiceprints/people", response_model=VoiceprintPeopleResponse,
+        response_model_exclude_unset=True, tags=[VOICEPRINT_TAG],
+        summary="列出声纹人员和样本 / List voiceprint people and samples",
+        description=bilingual("人员响应内嵌全部样本；TTS 只应选择 `state=ready` 且 `tts_eligible=true` 的样本。", "Each person embeds all samples; TTS clients must select a sample with `state=ready` and `tts_eligible=true`."),
+        operation_id="listVoiceprintPeople", responses={**AUTH_RESPONSES},
+    )
+    def voiceprint_people(_: None = Depends(require_api_key)) -> VoiceprintPeopleResponse:
         return {"items": [public_voiceprint_person(item) for item in list_voiceprint_people()]}
 
-    @app.post("/api/v1/voiceprints/people", status_code=201)
+    @app.post(
+        "/api/v1/voiceprints/people", status_code=201, response_model=VoiceprintPersonResponse,
+        response_model_exclude_unset=True, tags=[VOICEPRINT_TAG],
+        summary="创建声纹人员 / Create voiceprint person",
+        description=bilingual("名称经过 Unicode 和空白规范化后必须唯一。", "The name must be unique after Unicode and whitespace normalization."),
+        operation_id="createVoiceprintPerson",
+        responses={**AUTH_RESPONSES, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
+    )
     def add_voiceprint_person(
         payload: PersonNameRequest, _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
@@ -486,7 +664,14 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    @app.patch("/api/v1/voiceprints/people/{person_id}")
+    @app.patch(
+        "/api/v1/voiceprints/people/{person_id}", response_model=VoiceprintPersonResponse,
+        response_model_exclude_unset=True, tags=[VOICEPRINT_TAG],
+        summary="重命名声纹人员 / Rename voiceprint person",
+        description=bilingual("只更新声纹库名称；已完成任务中的说话人名称是历史快照，不会被改写。", "Only the library name changes; speaker names in completed jobs are historical snapshots and are not rewritten."),
+        operation_id="updateVoiceprintPerson",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
+    )
     def edit_voiceprint_person(
         person_id: str, payload: PersonNameRequest, _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
@@ -516,9 +701,15 @@ def create_app() -> FastAPI:
         if any(root in path.parents for root in roots):
             path.unlink(missing_ok=True)
 
-    @app.delete("/api/v1/voiceprints/people/{person_id}", status_code=204)
+    @app.delete(
+        "/api/v1/voiceprints/people/{person_id}", status_code=204, tags=[VOICEPRINT_TAG],
+        summary="永久删除声纹人员 / Permanently delete voiceprint person",
+        description=bilingual("要求 `purge=true`。若样本入库任务仍在排队或运行，先取消任务。", "Requires `purge=true`. Cancel any queued or running sample-import job first."),
+        operation_id="deleteVoiceprintPerson",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
+    )
     def remove_voiceprint_person(
-        person_id: str, purge: bool = Query(False), _: None = Depends(require_api_key),
+        person_id: str, purge: bool = Query(False, description="必须为 true / Must be true"), _: None = Depends(require_api_key),
     ) -> Response:
         person = get_voiceprint_person(person_id)
         if person is None:
@@ -533,7 +724,17 @@ def create_app() -> FastAPI:
         shutil.rmtree(settings.voiceprints_dir / person["id"], ignore_errors=True)
         return Response(status_code=204)
 
-    @app.post("/api/v1/voiceprints/people/{person_id}/samples/from-asr", status_code=201)
+    @app.post(
+        "/api/v1/voiceprints/people/{person_id}/samples/from-asr", status_code=201,
+        response_model=VoiceprintSamplesResponse, response_model_exclude_unset=True,
+        tags=[VOICEPRINT_TAG], summary="从 ASR 段落创建声纹样本 / Create samples from ASR segments",
+        description=bilingual(
+            "来源任务必须成功，所选段落必须属于同一说话人且未曾入库。每个段落独立保存为本地 WAV 样本。",
+            "The source job must have succeeded; selected segments must belong to one speaker and not already be imported. Each segment becomes a separate local WAV sample.",
+        ),
+        operation_id="createVoiceprintSamplesFromAsr",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
+    )
     async def add_voiceprint_samples_from_asr(
         person_id: str, payload: AddAsrSamplesRequest, _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
@@ -600,12 +801,22 @@ def create_app() -> FastAPI:
             raise
         return {"items": [public_voiceprint_sample(item) for item in created]}
 
-    @app.post("/api/v1/voiceprints/people/{person_id}/samples/upload", status_code=202)
+    @app.post(
+        "/api/v1/voiceprints/people/{person_id}/samples/upload", status_code=202,
+        response_model=VoiceprintUploadResponse, response_model_exclude_unset=True,
+        tags=[VOICEPRINT_TAG], summary="上传并转写声纹样本 / Upload and transcribe voiceprint sample",
+        description=bilingual(
+            "立即返回 `pending` 样本和可见 ASR 入库任务。任务成功后重新查询人员列表，样本才可能用于 TTS。",
+            "Immediately return a pending sample and a visible ASR import job. Refresh the people list after success before using the sample for TTS.",
+        ),
+        operation_id="uploadVoiceprintSample",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+    )
     async def upload_voiceprint_sample(
         person_id: str,
-        file: UploadFile = File(...),
-        language: str = Form("Auto"),
-        compute_device: str = Form("gpu"),
+        file: UploadFile = File(..., description="单人干净音频或浏览器录音容器 / Clean single-speaker audio or browser recording container"),
+        language: str = Form("Auto", description="转写语言 / Transcription language"),
+        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         ensure_service("asr")
@@ -637,9 +848,15 @@ def create_app() -> FastAPI:
             raise
         return {"sample": public_voiceprint_sample(sample), "job": public_job(job)}
 
-    @app.delete("/api/v1/voiceprints/people/{person_id}/samples/{sample_id}", status_code=204)
+    @app.delete(
+        "/api/v1/voiceprints/people/{person_id}/samples/{sample_id}", status_code=204,
+        tags=[VOICEPRINT_TAG], summary="永久删除声纹样本 / Permanently delete voiceprint sample",
+        description=bilingual("要求 `purge=true`；活动入库任务必须先取消并结束。", "Requires `purge=true`; an active import job must be cancelled and reach a terminal state first."),
+        operation_id="deleteVoiceprintSample",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
+    )
     def remove_voiceprint_sample(
-        person_id: str, sample_id: str, purge: bool = Query(False),
+        person_id: str, sample_id: str, purge: bool = Query(False, description="必须为 true / Must be true"),
         _: None = Depends(require_api_key),
     ) -> Response:
         sample = get_voiceprint_sample(sample_id)
@@ -652,7 +869,16 @@ def create_app() -> FastAPI:
         delete_voiceprint_sample_record(sample_id)
         return Response(status_code=204)
 
-    @app.get("/api/v1/voiceprints/samples/{sample_id}/audio")
+    @app.get(
+        "/api/v1/voiceprints/samples/{sample_id}/audio", response_class=FileResponse,
+        tags=[VOICEPRINT_TAG], summary="读取声纹样本音频 / Get voiceprint sample audio",
+        description=bilingual("返回受保护的本地 WAV；不会暴露任意文件路径。", "Return protected local WAV audio without exposing arbitrary filesystem paths."),
+        operation_id="getVoiceprintSampleAudio",
+        responses={
+            200: {"description": "WAV 音频 / WAV audio", "content": {"audio/wav": {"schema": BINARY_SCHEMA}}},
+            **AUTH_RESPONSES, **NOT_FOUND_RESPONSE,
+        },
+    )
     def voiceprint_sample_audio(sample_id: str, _: None = Depends(require_api_key)) -> FileResponse:
         sample = get_voiceprint_sample(sample_id)
         if sample is None or not sample.get("audio_path"):
@@ -663,19 +889,45 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Voiceprint sample audio is unavailable")
         return FileResponse(path, media_type="audio/wav")
 
-    @app.get("/api/v1/jobs")
+    @app.get(
+        "/api/v1/jobs", response_model=JobListResponse, response_model_exclude_unset=True,
+        tags=[JOB_TAG], summary="列出任务 / List jobs",
+        description=bilingual(
+            "按创建时间倒序分页。`count` 仅是本页数量；队列实际消费按任务类型分别以创建时间 FIFO。",
+            "Paginated newest-first. `count` is only the page size; ASR and TTS workers consume their separate queues FIFO by creation time.",
+        ),
+        operation_id="listJobs", responses={**AUTH_RESPONSES, **VALIDATION_RESPONSE},
+    )
     def jobs(
-        kind: str | None = Query(None), state: str | None = Query(None), limit: int = Query(100),
-        offset: int = Query(0), _: None = Depends(require_api_key),
-    ) -> dict[str, Any]:
+        kind: str | None = Query(None, description="可选 asr 或 tts / Optional asr or tts"),
+        state: str | None = Query(None, description="queued、running、succeeded、failed 或 cancelled"),
+        limit: int = Query(100, ge=1, le=500, description="每页 1–500 / Page size from 1 to 500"),
+        offset: int = Query(0, ge=0, description="分页偏移 / Page offset"),
+        _: None = Depends(require_api_key),
+    ) -> JobListResponse:
         items = [public_job(item) for item in list_jobs(kind, state, limit, offset)]
         return {"items": items, "count": len(items), "limit": limit, "offset": offset}
 
-    @app.get("/api/v1/jobs/{job_id}")
-    def job_status(job_id: str, _: None = Depends(require_api_key)) -> dict[str, Any]:
+    @app.get(
+        "/api/v1/jobs/{job_id}", response_model=JobResponse, response_model_exclude_unset=True,
+        tags=[JOB_TAG], summary="查询任务状态与进度 / Get job status and progress",
+        description=bilingual(
+            "可靠轮询入口。`progress` 为 0–1 阶段检查点，`stage` 是当前阶段；成功后出现 `result_url`。不返回排队序号。",
+            "Canonical polling endpoint. `progress` is a 0–1 stage checkpoint and `stage` names the current phase. `result_url` appears after success. Queue position is not returned.",
+        ),
+        operation_id="getJob", responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE},
+    )
+    def job_status(job_id: str, _: None = Depends(require_api_key)) -> JobResponse:
         return public_job(job_or_404(job_id))
 
-    @app.post("/api/v1/jobs/batch-delete")
+    @app.post(
+        "/api/v1/jobs/batch-delete", response_model=BatchDeleteResponse,
+        response_model_exclude_unset=True, tags=[JOB_TAG],
+        summary="批量永久删除任务 / Permanently delete jobs in a batch",
+        description=bilingual("最多 100 个 ID。逐项返回删除或失败结果；运行中任务不会被删除。", "Accepts up to 100 IDs and returns per-item outcomes. Running jobs are never deleted."),
+        operation_id="batchDeleteJobs",
+        responses={**AUTH_RESPONSES, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
+    )
     def batch_delete_jobs(payload: BatchDeleteRequest, _: None = Depends(require_api_key)) -> dict[str, Any]:
         if not payload.purge:
             raise HTTPException(status_code=409, detail="Set purge=true to permanently delete input, output and history")
@@ -686,8 +938,14 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail="A maximum of 100 task IDs can be deleted at once")
         return purge_jobs(job_ids)
 
-    @app.post("/api/v1/jobs/{job_id}/cancel")
-    def cancel_job(job_id: str, _: None = Depends(require_api_key)) -> dict[str, Any]:
+    @app.post(
+        "/api/v1/jobs/{job_id}/cancel", response_model=JobResponse,
+        response_model_exclude_unset=True, tags=[JOB_TAG],
+        summary="取消任务 / Cancel job",
+        description=bilingual("排队任务原子取消；运行任务先进入 `cancelling`，完整进程树退出后才进入 `cancelled`。", "Queued jobs cancel atomically. Running jobs enter `cancelling` and become `cancelled` only after the complete process tree exits."),
+        operation_id="cancelJob", responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE},
+    )
+    def cancel_job(job_id: str, _: None = Depends(require_api_key)) -> JobResponse:
         job = request_cancel(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -699,8 +957,15 @@ def create_app() -> FastAPI:
             )
         return public_job(job)
 
-    @app.post("/api/v1/jobs/{job_id}/retry")
-    def retry(job_id: str, _: None = Depends(require_api_key)) -> dict[str, Any]:
+    @app.post(
+        "/api/v1/jobs/{job_id}/retry", response_model=JobResponse,
+        response_model_exclude_unset=True, tags=[JOB_TAG],
+        summary="重试终态任务 / Retry terminal job",
+        description=bilingual("仅失败或取消任务可重新排队；累计处理耗时会保留。", "Only failed or cancelled jobs can be queued again; accumulated processing time is retained."),
+        operation_id="retryJob",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE},
+    )
+    def retry(job_id: str, _: None = Depends(require_api_key)) -> JobResponse:
         try:
             job = retry_job(job_id)
         except ValueError as exc:
@@ -715,8 +980,17 @@ def create_app() -> FastAPI:
             )
         return public_job(job)
 
-    @app.delete("/api/v1/jobs/{job_id}", status_code=204)
-    def purge_job(job_id: str, purge: bool = Query(False), _: None = Depends(require_api_key)) -> Response:
+    @app.delete(
+        "/api/v1/jobs/{job_id}", status_code=204, tags=[JOB_TAG],
+        summary="永久删除单个任务 / Permanently delete one job",
+        description=bilingual("要求 `purge=true`，同时清理输入、输出、临时文件和数据库记录。运行中任务会被拒绝。", "Requires `purge=true` and removes input, output, temporary files, and the database row. Running jobs are rejected."),
+        operation_id="deleteJob",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
+    )
+    def purge_job(
+        job_id: str, purge: bool = Query(False, description="必须为 true / Must be true"),
+        _: None = Depends(require_api_key),
+    ) -> Response:
         if not purge:
             raise HTTPException(status_code=409, detail="Set purge=true to permanently delete input, output and history")
         result = purge_jobs([job_id])
@@ -728,16 +1002,34 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=result["maintenance_error"] or "Database compaction failed")
         return Response(status_code=204)
 
-    @app.get("/api/v1/jobs/{job_id}/result")
-    def job_result(job_id: str, _: None = Depends(require_api_key)) -> dict[str, Any]:
+    @app.get(
+        "/api/v1/jobs/{job_id}/result", response_model=JobResultResponse,
+        response_model_exclude_unset=True, tags=[JOB_TAG],
+        summary="读取成功任务结果 / Get successful job result",
+        description=bilingual("只在任务 `succeeded` 后可用；此前返回 409。结果中的 artifact URL 用于受保护下载。", "Available only after `succeeded`; earlier calls return 409. Use artifact URLs for protected downloads."),
+        operation_id="getJobResult",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE},
+    )
+    def job_result(job_id: str, _: None = Depends(require_api_key)) -> JobResultResponse:
         job = job_or_404(job_id)
         if job["state"] != "succeeded":
             raise HTTPException(status_code=409, detail="Job has not completed successfully")
         return job.get("result") or {}
 
-    @app.get("/api/v1/jobs/{job_id}/source")
+    @app.get(
+        "/api/v1/jobs/{job_id}/source", response_class=FileResponse, tags=[JOB_TAG],
+        summary="读取 ASR 原始音源 / Get original ASR source",
+        description=bilingual("仅 ASR 任务可用，支持 `Range` 和 `206 Partial Content`；`download=true` 强制附件下载。", "ASR only. Supports Range and `206 Partial Content`; `download=true` forces attachment download."),
+        operation_id="getJobSource",
+        responses={
+            200: {"description": "完整媒体 / Full media", "content": {"audio/*": {"schema": BINARY_SCHEMA}, "video/*": {"schema": BINARY_SCHEMA}}},
+            206: {"description": "部分媒体 / Partial media", "headers": {"Content-Range": {"schema": {"type": "string"}}}, "content": {"application/octet-stream": {"schema": BINARY_SCHEMA}}},
+            416: problem_response("Range 超出文件范围 / Requested range is not satisfiable", 416),
+            **AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE,
+        },
+    )
     def job_source(
-        job_id: str, download: bool = Query(False), _: None = Depends(require_api_key),
+        job_id: str, download: bool = Query(False, description="作为附件下载 / Download as an attachment"), _: None = Depends(require_api_key),
     ) -> FileResponse:
         job = job_or_404(job_id)
         if job["kind"] != "asr":
@@ -752,7 +1044,16 @@ def create_app() -> FastAPI:
         mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         return FileResponse(path, media_type=mime, filename=path.name if download else None)
 
-    @app.get("/api/v1/jobs/{job_id}/artifacts/{name}")
+    @app.get(
+        "/api/v1/jobs/{job_id}/artifacts/{name}", response_class=FileResponse,
+        tags=[JOB_TAG], summary="下载任务产物 / Download job artifact",
+        description=bilingual("名称必须来自成功任务结果的 `artifacts`，文件始终受鉴权和路径包含检查保护。", "The name must come from a successful result's `artifacts`; authentication and path-containment checks always apply."),
+        operation_id="getJobArtifact",
+        responses={
+            200: {"description": "音频、JSON 或字幕文件 / Audio, JSON, or subtitle file", "content": {"application/octet-stream": {"schema": BINARY_SCHEMA}}},
+            **AUTH_RESPONSES, **NOT_FOUND_RESPONSE,
+        },
+    )
     def artifact(job_id: str, name: str, _: None = Depends(require_api_key)) -> FileResponse:
         job = job_or_404(job_id)
         artifacts = {item["name"]: item for item in (job.get("result") or {}).get("artifacts", [])}
@@ -764,14 +1065,21 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Artifact file is missing")
         return FileResponse(path, media_type=item.get("mime_type") or mimetypes.guess_type(path.name)[0], filename=path.name)
 
-    @app.patch("/api/v1/jobs/{job_id}/speakers/{speaker_id}")
+    @app.patch(
+        "/api/v1/jobs/{job_id}/speakers/{speaker_id}", response_model=JobResultResponse,
+        response_model_exclude_unset=True, tags=[JOB_TAG],
+        summary="重命名 ASR 说话人 / Rename ASR speaker",
+        description=bilingual("只修改已成功 ASR 任务的历史结果和导出文件，不修改声纹库。请求 JSON 为 `{\"name\": \"显示名称\"}`。", "Update a completed ASR result and its exports only; the voiceprint library is unchanged. JSON body: `{\"name\": \"Display name\"}`."),
+        operation_id="updateJobSpeaker",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
+    )
     def rename_speaker(
-        job_id: str, speaker_id: str, payload: dict[str, str] = Body(...), _: None = Depends(require_api_key),
+        job_id: str, speaker_id: str, payload: SpeakerNameRequest, _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         job = job_or_404(job_id)
         if job["kind"] != "asr" or job["state"] != "succeeded":
             raise HTTPException(status_code=409, detail="Only completed ASR speakers can be renamed")
-        name = payload.get("name", "").strip()[:80]
+        name = payload.name.strip()[:80]
         if not name:
             raise HTTPException(status_code=422, detail="Speaker name is required")
         result = job.get("result") or {}
@@ -792,7 +1100,23 @@ def create_app() -> FastAPI:
         update_job(job_id, result_json=result)
         return result
 
-    @app.get("/api/v1/events")
+    @app.get(
+        "/api/v1/events", response_class=StreamingResponse, tags=[JOB_TAG],
+        summary="订阅任务和 worker 快照 / Stream job and worker snapshots",
+        description=bilingual("SSE 在最近 25 个任务或 worker 发生变化时发送 `snapshot`；约每 2 秒检查，空闲时发送注释保活。无事件 ID、断点续传或历史重放。", "SSE emits `snapshot` when the latest 25 jobs or workers change, checks about every two seconds, and sends comment keepalives while idle. There are no event IDs, resume tokens, or replay."),
+        operation_id="streamEvents",
+        responses={
+            200: {
+                "description": "Server-Sent Events",
+                "content": {"text/event-stream": {
+                    "schema": {"type": "string"},
+                    "example": "event: snapshot\\ndata: {\"jobs\":[],\"workers\":[]}\\n\\n",
+                }},
+                "x-event-data-schema": {"$ref": "#/components/schemas/EventSnapshot"},
+            },
+            **AUTH_RESPONSES,
+        },
+    )
     async def events(_: None = Depends(require_api_key)) -> StreamingResponse:
         async def stream() -> AsyncIterator[str]:
             last = ""
@@ -827,6 +1151,22 @@ def create_app() -> FastAPI:
         if index.is_file():
             return FileResponse(index)
         return HTMLResponse("<h1>Sandevistan-Audio</h1><p>Frontend is not built. Run service.sh or service.cmd setup api.</p>", status_code=503)
+
+    default_openapi = app.openapi
+
+    def local_openapi() -> dict[str, Any]:
+        if app.openapi_schema is not None:
+            return app.openapi_schema
+        schema = default_openapi()
+        extra = TypeAdapter(
+            ProblemDetail | EventSnapshot | OpenAITranscription | OpenAIVerboseTranscription
+        ).json_schema(ref_template="#/components/schemas/{model}")
+        schema.setdefault("components", {}).setdefault("schemas", {}).update(extra.get("$defs", {}))
+        schema["servers"] = [{"url": "/", "description": "当前本地服务 / Current local service"}]
+        app.openapi_schema = schema
+        return schema
+
+    app.openapi = local_openapi  # type: ignore[method-assign]
 
     return app
 
@@ -882,8 +1222,13 @@ async def wait_for_job(job_id: str, timeout: float = 24 * 3600) -> dict[str, Any
 
 
 def add_openai_routes(app: FastAPI) -> None:
-    @app.get("/v1/models")
-    def openai_models(_: None = Depends(require_api_key)) -> dict[str, Any]:
+    @app.get(
+        "/v1/models", response_model=OpenAIModelList, response_model_exclude_unset=True,
+        tags=[OPENAI_TAG], summary="列出兼容模型 / List compatible models",
+        description=bilingual("只列出当前启用服务对应的本地模型别名。", "List local model aliases for currently enabled services only."),
+        operation_id="listOpenAIModels", responses={**AUTH_RESPONSES},
+    )
+    def openai_models(_: None = Depends(require_api_key)) -> OpenAIModelList:
         data = []
         if "asr" in settings.enabled_services:
             data.append({"id": "qwen3-asr-0.6b", "object": "model", "owned_by": "local"})
@@ -891,14 +1236,43 @@ def add_openai_routes(app: FastAPI) -> None:
             data.append({"id": "qwen3-tts-0.6b", "object": "model", "owned_by": "local"})
         return {"object": "list", "data": data}
 
-    @app.post("/v1/audio/transcriptions")
+    @app.post(
+        "/v1/audio/transcriptions", response_class=Response, tags=[OPENAI_TAG],
+        summary="同步兼容转写 / Create synchronous compatible transcription",
+        description=bilingual(
+            "兼容式同步入口，会等待内部任务完成。长音频、进度查询、取消和可靠恢复应使用 `/api/v1/asr/jobs`。响应头 `X-Job-ID` 可关联历史任务。",
+            "Synchronous compatibility endpoint that waits for the internal job. Use `/api/v1/asr/jobs` for long audio, progress, cancellation, and recovery. `X-Job-ID` links the response to job history.",
+        ),
+        operation_id="createOpenAITranscription",
+        responses={
+            200: {
+                "description": "由 response_format 决定 / Selected by response_format",
+                "headers": {"X-Job-ID": {"schema": {"type": "string"}}},
+                "content": {
+                    "application/json": {"schema": {"oneOf": [
+                        {"$ref": "#/components/schemas/OpenAITranscription"},
+                        {"$ref": "#/components/schemas/OpenAIVerboseTranscription"},
+                    ]}},
+                    "text/plain": {"schema": {"type": "string"}},
+                    "application/x-subrip": {"schema": {"type": "string"}},
+                    "text/vtt": {"schema": {"type": "string"}},
+                },
+            },
+            500: problem_response("内部转写任务失败 / Internal transcription job failed", 500),
+            504: problem_response("兼容接口等待超时 / Compatibility wait timed out", 504),
+            **AUTH_RESPONSES, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE,
+        },
+    )
     async def openai_transcription(
-        file: UploadFile = File(...), model: str = Form("qwen3-asr-0.6b"),
-        language: str = Form("Auto"), response_format: str = Form("json"),
-        diarize: bool = Form(True), speaker_count: str = Form("auto"),
-        compute_device: str = Form("gpu"),
-        use_voiceprint_library: bool = Form(True),
-        accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT),
+        file: UploadFile = File(..., description="待转写音频或视频 / Audio or video to transcribe"),
+        model: str = Form("qwen3-asr-0.6b", description="qwen3-asr-0.6b"),
+        language: str = Form("Auto", description="识别语言 / Recognition language"),
+        response_format: str = Form("json", description="json、verbose_json、text、srt 或 vtt"),
+        diarize: bool = Form(True, description="启用说话人分离 / Enable diarization"),
+        speaker_count: str = Form("auto", description="auto 或 1–15 / auto or 1–15"),
+        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
+        use_voiceprint_library: bool = Form(True, description="匹配声纹库 / Match voiceprint library"),
+        accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
         _: None = Depends(require_api_key),
     ) -> Response:
         ensure_service("asr")
@@ -927,17 +1301,40 @@ def add_openai_routes(app: FastAPI) -> None:
         if job["state"] != "succeeded":
             raise HTTPException(status_code=500, detail=job.get("error_message") or "Transcription failed")
         result = job.get("result") or {}
+        response_headers = {"X-Job-ID": job_id}
         if response_format == "text":
-            return PlainTextResponse(result.get("text", ""))
+            return PlainTextResponse(result.get("text", ""), headers=response_headers)
         if response_format in {"srt", "vtt"}:
             artifact = next((item for item in result.get("artifacts", []) if item["name"].endswith(f".{response_format}")), None)
             if artifact:
-                return FileResponse(artifact["path"], media_type=artifact["mime_type"])
+                return FileResponse(artifact["path"], media_type=artifact["mime_type"], headers=response_headers)
         if response_format == "verbose_json":
-            return JSONResponse({"task": "transcribe", "language": result.get("language"), "duration": result.get("duration"), "text": result.get("text", ""), "segments": result.get("segments", [])})
-        return JSONResponse({"text": result.get("text", "")}, headers={"X-Job-ID": job_id})
+            return JSONResponse({"task": "transcribe", "language": result.get("language"), "duration": result.get("duration"), "text": result.get("text", ""), "segments": result.get("segments", [])}, headers=response_headers)
+        return JSONResponse({"text": result.get("text", "")}, headers=response_headers)
 
-    @app.post("/v1/audio/speech")
+    @app.post(
+        "/v1/audio/speech", response_class=FileResponse, tags=[OPENAI_TAG],
+        summary="同步兼容语音合成 / Create synchronous compatible speech",
+        description=bilingual(
+            "等待内部 TTS 任务完成并直接返回音频。`voice` 支持官方预置音色或 `voice_` 声音档案，不支持直接传声纹样本 ID。需要进度、取消或精确声纹样本时使用 `/api/v1/tts/jobs`。",
+            "Wait for an internal TTS job and return audio. `voice` accepts an official preset or a `voice_` profile, not a voiceprint sample ID. Use `/api/v1/tts/jobs` for progress, cancellation, or an exact voiceprint sample.",
+        ),
+        operation_id="createOpenAISpeech",
+        responses={
+            200: {
+                "description": "生成音频 / Generated audio",
+                "headers": {"X-Job-ID": {"schema": {"type": "string"}}},
+                "content": {
+                    "audio/wav": {"schema": BINARY_SCHEMA},
+                    "audio/flac": {"schema": BINARY_SCHEMA},
+                    "audio/mpeg": {"schema": BINARY_SCHEMA},
+                },
+            },
+            500: problem_response("内部合成任务失败 / Internal speech job failed", 500),
+            504: problem_response("兼容接口等待超时 / Compatibility wait timed out", 504),
+            **AUTH_RESPONSES, **VALIDATION_RESPONSE, **SERVICE_RESPONSE,
+        },
+    )
     async def openai_speech(payload: dict[str, Any] = Body(...), _: None = Depends(require_api_key)) -> FileResponse:
         ensure_service("tts")
         compute_device, compute_device_name = validate_compute_device(str(payload.get("compute_device", "cpu")))

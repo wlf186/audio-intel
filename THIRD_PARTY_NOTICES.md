@@ -16,6 +16,7 @@ Sandevistan-Audio source code is licensed under Apache-2.0. That license applies
 | Transformers / Hugging Face Hub | <https://github.com/huggingface/transformers>, <https://github.com/huggingface/huggingface_hub> | Apache-2.0 |
 | FastAPI / Starlette / Uvicorn | <https://fastapi.tiangolo.com/>, <https://www.starlette.io/>, <https://www.uvicorn.org/> | MIT / BSD-3-Clause |
 | React / Vite | <https://react.dev/>, <https://vite.dev/> | MIT |
+| Swagger UI Dist | <https://github.com/swagger-api/swagger-ui> | Apache-2.0 |
 
 Users must review the current upstream model cards and licenses before use or redistribution. Upstream terms control if this notice and an upstream source disagree.
 

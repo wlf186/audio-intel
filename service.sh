@@ -40,7 +40,7 @@ ensure_ready() {
   if [[ ! -x "$ROOT_DIR/.runtime/$component/bin/python" ]]; then
     "$ROOT_DIR/scripts/bootstrap.sh" "$component"
   fi
-  if [[ "$component" == "api" && ! -f "$ROOT_DIR/frontend/dist/index.html" ]]; then
+  if [[ "$component" == "api" ]] && { [[ ! -f "$ROOT_DIR/frontend/dist/index.html" ]] || [[ ! -f "$ROOT_DIR/frontend/dist/docs-assets/swagger-ui-bundle.js" ]] || [[ ! -f "$ROOT_DIR/frontend/dist/docs-assets/swagger-ui.css" ]]; }; then
     "$ROOT_DIR/scripts/bootstrap.sh" api
   fi
   if [[ "$component" == "asr" && "$AUDIO_INTEL_MOCK_MODE" != "1" ]] && ! models_ready asr; then

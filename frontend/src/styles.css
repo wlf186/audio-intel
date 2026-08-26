@@ -115,6 +115,7 @@ select:focus{border-color:var(--cyan)}
 .job-mini.succeeded::after{background:var(--green)}
 .job-mini.failed::after{background:var(--red)}
 .job-mini:hover{border-color:var(--yellow);background:#12160c}
+.job-mini.selected{border-color:var(--yellow);background:linear-gradient(90deg,#f4ed001b,#0a1112 74%);box-shadow:inset 4px 0 var(--yellow),0 0 14px #f4ed0012}
 .job-mini>div{display:flex;align-items:center;gap:3px}
 .job-mini b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
 .job-mini em{font-style:normal;color:var(--cyan);margin-left:auto;font:10px ui-monospace,monospace}

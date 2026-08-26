@@ -8,6 +8,7 @@ import {JobsPage} from './pages/JobsPage'
 import {SystemPage} from './pages/SystemPage'
 import {VoiceprintsPage} from './pages/VoiceprintsPage'
 import {AuthGate} from './components/AuthGate'
+import {newestJobsFirst} from './lib/jobs'
 
 const pages=new Set<Page>(['asr','tts','voiceprints','jobs','system'])
 const jobLimit=100
@@ -30,7 +31,7 @@ export default function App(){
  const revealSequence=useRef(0)
  const refreshVoiceprints=useCallback(async()=>{const response=await api.voiceprints();setVoiceprints(response.items)},[])
  const authenticated=auth?.authenticated===true
- const refresh=useCallback(async()=>{if(!authenticated)return;const sequence=++refreshSequence.current;const [jobsResult,healthResult]=await Promise.allSettled([api.jobs(),api.system()]);if(sequence!==refreshSequence.current)return;if(jobsResult.status==='fulfilled')setJobs(current=>{const previous=new Map(current.map(job=>[job.id,job]));const merged=jobsResult.value.items.map(job=>{const existing=previous.get(job.id);return existing&&sameJobSnapshot(existing,job)?existing:job});return merged.length===current.length&&merged.every((job,index)=>job===current[index])?current:merged});if(healthResult.status==='fulfilled'){setHealth(healthResult.value);setSystemError('')}else setSystemError((healthResult.reason as Error).message);const failure=jobsResult.status==='rejected'?jobsResult.reason:healthResult.status==='rejected'?healthResult.reason:undefined;setConnectionError(failure?(failure as Error).message:'')},[authenticated])
+ const refresh=useCallback(async()=>{if(!authenticated)return;const sequence=++refreshSequence.current;const [jobsResult,healthResult]=await Promise.allSettled([api.jobs(),api.system()]);if(sequence!==refreshSequence.current)return;if(jobsResult.status==='fulfilled')setJobs(current=>{const previous=new Map(current.map(job=>[job.id,job]));const merged=newestJobsFirst(jobsResult.value.items).map(job=>{const existing=previous.get(job.id);return existing&&sameJobSnapshot(existing,job)?existing:job});return merged.length===current.length&&merged.every((job,index)=>job===current[index])?current:merged});if(healthResult.status==='fulfilled'){setHealth(healthResult.value);setSystemError('')}else setSystemError((healthResult.reason as Error).message);const failure=jobsResult.status==='rejected'?jobsResult.reason:healthResult.status==='rejected'?healthResult.reason:undefined;setConnectionError(failure?(failure as Error).message:'')},[authenticated])
  useEffect(()=>{let active=true;void (async()=>{try{const status=await api.auth();const legacy=sessionStorage.getItem('audio-intel:key');if(status.required&&!status.authenticated&&legacy){try{await api.login(legacy);status.authenticated=true}finally{sessionStorage.removeItem('audio-intel:key')}}if(active)setAuth(status)}catch(error){if(active)setAuthError((error as Error).message)}})();const unauthorized=()=>setAuth(current=>current?{...current,authenticated:false}:{required:true,authenticated:false});addEventListener('audio-intel:unauthorized',unauthorized);return()=>{active=false;removeEventListener('audio-intel:unauthorized',unauthorized)}},[])
  useEffect(()=>{if(!authenticated)return;void refresh();const timer=setInterval(()=>void refresh(),2000);return()=>clearInterval(timer)},[authenticated,refresh])
  useEffect(()=>{if(!authenticated)return;void Promise.all([api.capabilities().then(setCapabilities),refreshVoiceprints()]).catch(error=>setConnectionError((error as Error).message))},[authenticated,refreshVoiceprints])
@@ -40,7 +41,7 @@ export default function App(){
  const navigate=(next:Page)=>{setPage(next);if(location.hash!==`#${next}`)location.hash=next}
  const openJob=(job:Job)=>{if(job.state==='succeeded'){setSelected(current=>({...current,[job.kind]:job.id}));setReveal({kind:job.kind,jobId:job.id,token:++revealSequence.current});navigate(job.kind)}else navigate('jobs')}
  const onRevealHandled=useCallback((token:number)=>setReveal(current=>current?.token===token?undefined:current),[])
- const onJobSubmitted=useCallback((job:Job)=>{refreshSequence.current+=1;setJobs(current=>[job,...current.filter(item=>item.id!==job.id)].slice(0,jobLimit));setConnectionError('')},[])
+ const onJobSubmitted=useCallback((job:Job)=>{refreshSequence.current+=1;setJobs(current=>newestJobsFirst([job,...current.filter(item=>item.id!==job.id)]).slice(0,jobLimit));setConnectionError('')},[])
  const onJobUpdated=useCallback((snapshot:Job)=>setJobs(current=>current.map(job=>job.id===snapshot.id?snapshot:job)),[])
  const onJobResultUpdated=useCallback((jobId:string,result:JobResult)=>setJobs(current=>current.map(job=>job.id===jobId?{...job,result,updated_at:new Date().toISOString()}:job)),[])
  const gpuAvailable=health?Boolean(health.hardware.gpu):undefined

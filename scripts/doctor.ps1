@@ -95,6 +95,7 @@ $report = [ordered]@{
     cuda_13_minimum_driver = "580"
     runtime_environments = $runtimeStatus
     frontend = Test-Path (Join-Path $RootDir "frontend\dist\index.html")
+    api_docs_local_assets = (Test-Path (Join-Path $RootDir "frontend\dist\docs-assets\swagger-ui-bundle.js")) -and (Test-Path (Join-Path $RootDir "frontend\dist\docs-assets\swagger-ui.css"))
     models = $modelStatus
 }
 

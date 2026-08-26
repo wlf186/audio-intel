@@ -1,5 +1,28 @@
 import {expect,test} from '@playwright/test'
 
+test('local API docs load offline and execute the health probe',async({page})=>{
+ const errors:string[]=[]
+ const external:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ page.on('request',request=>{if(new URL(request.url()).origin!=='http://127.0.0.1:20810')external.push(request.url())})
+ await page.goto('/docs')
+ await expect(page.locator('.swagger-ui')).toBeVisible()
+ await expect(page.getByText('快速开始 / Quick start')).toBeVisible()
+ const health=page.locator('.opblock').filter({hasText:'/api/v1/health'}).first()
+ await health.locator('.opblock-summary').click()
+ await health.getByRole('button',{name:'Try it out'}).click()
+ await health.getByRole('button',{name:'Execute'}).click()
+ await expect(health.locator('.response-col_status').filter({hasText:'200'}).first()).toBeVisible()
+ await page.screenshot({path:'/tmp/audio-intel-docs-desktop.png',fullPage:false})
+ await page.setViewportSize({width:390,height:844})
+ const width=await page.evaluate(()=>document.documentElement.scrollWidth)
+ expect(width).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/audio-intel-docs-mobile.png',fullPage:false})
+ expect(external).toEqual([])
+ expect(errors).toEqual([])
+})
+
 test('Sandevistan-Audio branding and TTS transport render as local assets',async({page})=>{
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
@@ -12,9 +35,9 @@ test('Sandevistan-Audio branding and TTS transport render as local assets',async
  await expect.poll(()=>mark.evaluate((image:HTMLImageElement)=>image.naturalWidth)).toBeGreaterThan(0)
  const player=page.locator('.audio-transport audio')
  await expect(player).toHaveCount(1)
- await page.getByRole('button',{name:'播放最近生成'}).click()
+ await page.getByRole('button',{name:'播放当前合成结果'}).click()
  await expect.poll(()=>player.evaluate((audio:HTMLAudioElement)=>audio.currentTime)).toBeGreaterThan(.1)
- await page.getByRole('button',{name:'暂停最近生成'}).click()
+ await page.getByRole('button',{name:'暂停当前合成结果'}).click()
  await expect.poll(()=>player.evaluate((audio:HTMLAudioElement)=>audio.paused)).toBe(true)
  expect(errors).toEqual([])
 })
@@ -614,6 +637,75 @@ test('view result reveals ASR and TTS result panels on mobile',async({page})=>{
  await expect(page).toHaveURL(/#tts$/)
  await assertRevealed('.tts-preview')
  await page.screenshot({path:'/tmp/audio-intel-mobile-result-reveal.png',fullPage:false})
+ expect(errors).toEqual([])
+})
+
+test('task lists stay newest-first and retain an older selected task',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ const base=Date.parse('2026-08-25T12:00:00+00:00')
+ const asrJobs=Array.from({length:7},(_,index)=>({
+  id:`sorted-asr-${index+1}`,kind:'asr',state:'succeeded',stage:'completed',progress:1,
+  display_name:`ASR 任务 ${index+1}`,created_at:new Date(base+index*2000).toISOString(),
+  updated_at:new Date(base+index*2000).toISOString(),request:{compute_device:'cpu'},
+  result:{text:`ASR 结果 ${index+1}`,language:'Chinese',duration:2,timestamp_precision:'segment',speakers:[],segments:[],waveform:[.2,.4],artifacts:[]},
+ }))
+ const ttsJobs=Array.from({length:7},(_,index)=>({
+  id:`sorted-tts-${index+1}`,kind:'tts',state:'succeeded',stage:'completed',progress:1,
+  display_name:`TTS 任务 ${index+1}`,created_at:new Date(base+index*2000+1000).toISOString(),
+  updated_at:new Date(base+index*2000+1000).toISOString(),request:{compute_device:'cpu'},
+  result:{duration:2,speaker:'Vivian',format:'wav',compute_device:'cpu',waveform:[.2,.4],artifacts:[]},
+ }))
+ const jobs=[asrJobs[2],ttsJobs[0],asrJobs[6],ttsJobs[4],asrJobs[0],ttsJobs[6],asrJobs[4],ttsJobs[2],asrJobs[1],ttsJobs[5],asrJobs[5],ttsJobs[1],asrJobs[3],ttsJobs[3]]
+ await page.route('**/api/v1/auth/session',route=>route.fulfill({json:{required:false,authenticated:true}}))
+ await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:jobs}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{data:'/tmp/data'}}}))
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15}}}))
+ await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[]}}))
+ await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
+ await page.route('**/api/v1/jobs/*/source',route=>route.fulfill({contentType:'audio/wav',body:Buffer.from('RIFF-test')}))
+ await page.goto('/#jobs')
+ await expect(page).toHaveTitle('Sandevistan-Audio')
+ await expect(page.getByRole('heading',{name:'任务记录'})).toBeVisible()
+ const expectedHistory=[...jobs].sort((left,right)=>Date.parse(right.created_at)-Date.parse(left.created_at)).map(job=>job.display_name)
+ await expect(page.locator('.table-row .job-name>b')).toHaveText(expectedHistory)
+
+ await page.locator('nav').getByRole('button',{name:/转写工作台/}).click()
+ await expect(page.locator('.aside-jobs .job-mini')).toHaveCount(5)
+ await expect(page.locator('.aside-jobs .job-mini[aria-current="true"]')).toContainText('ASR 任务 7')
+ await page.locator('nav').getByRole('button',{name:/任务记录/}).click()
+
+ await page.locator('.table-row').filter({hasText:'ASR 任务 1'}).getByTitle('查看结果').click()
+ await expect(page).toHaveURL(/#asr$/)
+ await expect(page.getByRole('heading',{name:'任务列表'})).toBeVisible()
+ await expect(page.locator('.aside-jobs .job-mini')).toHaveText([/ASR 任务 7/,/ASR 任务 6/,/ASR 任务 5/,/ASR 任务 4/,/ASR 任务 3/,/ASR 任务 1/])
+ const selectedAsr=page.locator('.aside-jobs .job-mini[aria-current="true"]')
+ await expect(selectedAsr).toHaveCount(1)
+ await expect(selectedAsr).toContainText('ASR 任务 1')
+ await expect(selectedAsr).toHaveClass(/selected/)
+ await expect(page.locator('.result-head')).toContainText('ASR 任务 1')
+ await selectedAsr.scrollIntoViewIfNeeded()
+ await page.screenshot({path:'/tmp/audio-intel-selected-asr-desktop.png',fullPage:false})
+
+ await page.locator('nav').getByRole('button',{name:/任务记录/}).click()
+ await page.locator('.table-row').filter({hasText:'TTS 任务 1'}).getByTitle('查看结果').click()
+ await expect(page).toHaveURL(/#tts$/)
+ await expect(page.locator('.tts-preview>h2')).toHaveText(['当前合成结果','任务列表'])
+ await expect(page.locator('.audio-card')).toContainText('TTS 任务 1')
+ await expect(page.locator('.tts-preview .job-mini')).toHaveText([/TTS 任务 7/,/TTS 任务 6/,/TTS 任务 5/,/TTS 任务 4/,/TTS 任务 3/,/TTS 任务 1/])
+ const selectedTts=page.locator('.tts-preview .job-mini[aria-current="true"]')
+ await expect(selectedTts).toHaveCount(1)
+ await expect(selectedTts).toContainText('TTS 任务 1')
+ await expect(selectedTts).toHaveClass(/selected/)
+ await expect(page.locator('vite-error-overlay')).toHaveCount(0)
+ await page.screenshot({path:'/tmp/audio-intel-selected-tts-desktop.png',fullPage:false})
+
+ await page.setViewportSize({width:390,height:844})
+ await selectedTts.scrollIntoViewIfNeeded()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await expect(selectedTts).toBeInViewport()
+ await page.screenshot({path:'/tmp/audio-intel-selected-tts-mobile.png',fullPage:false})
  expect(errors).toEqual([])
 })
 

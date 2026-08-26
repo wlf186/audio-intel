@@ -35,7 +35,7 @@ Set-Location C:\ai\audio-intel
 Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 ```
 
-浏览器访问 `http://127.0.0.1:20810`，API 文档位于 `http://127.0.0.1:20810/docs`。只需要部分能力时可减少模型下载：
+浏览器访问 `http://127.0.0.1:20810`，完整中英双语 API 消费指南与可交互契约位于 `http://127.0.0.1:20810/docs`，机器可读定义位于 `/openapi.json`。Swagger 代码、样式、图标和校验器均随服务本地托管，运行期不访问 CDN。只需要部分能力时可减少模型下载：
 
 ```bash
 ./service.sh setup asr   # 或 tts / api

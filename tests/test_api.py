@@ -158,6 +158,8 @@ def test_openai_compatible_acceleration_defaults_and_explicit_opt_out(tmp_path, 
         )
 
     assert [response.status_code for response in (omitted_asr, disabled_asr, omitted_tts, disabled_tts)] == [200, 200, 200, 200]
+    assert omitted_asr.headers["x-job-id"]
+    assert omitted_tts.headers["x-job-id"]
     assert [request["accelerate_single_task"] for _, request in captured] == [True, False, True, False]
 
 

@@ -1,0 +1,17 @@
+html,body{max-width:100%;overflow-x:hidden}
+.swagger-ui .wrapper{max-width:1460px;padding:0 16px}
+.swagger-ui .info pre,.swagger-ui .markdown code{max-width:100%;overflow-x:auto;white-space:pre}
+.swagger-ui .opblock .opblock-summary-path{overflow-wrap:anywhere;word-break:break-word}
+.swagger-ui .renderedMarkdown table{display:block;max-width:100%;overflow-x:auto}
+@media(max-width:600px){
+ .swagger-ui .wrapper{padding:0 8px}
+ .swagger-ui .info{margin:24px 0}
+ .swagger-ui .info .title{font-size:26px;overflow-wrap:anywhere}
+ .swagger-ui .scheme-container{padding:16px 0}
+ .swagger-ui .opblock .opblock-summary{align-items:flex-start;padding:8px}
+ .swagger-ui .opblock .opblock-summary-method{min-width:64px}
+ .swagger-ui .opblock .opblock-summary-path-description-wrapper{min-width:0;flex:1}
+ .swagger-ui .opblock-description-wrapper,.swagger-ui .opblock-external-docs-wrapper,.swagger-ui .opblock-title_normal{padding:12px}
+ .swagger-ui table{display:block;max-width:100%;overflow-x:auto}
+ .swagger-ui .parameters-col_description{width:auto}
+}

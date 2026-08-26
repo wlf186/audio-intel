@@ -92,7 +92,10 @@ function Ensure-Ready {
     if (-not (Test-Path $python)) {
         & (Join-Path $RootDir "scripts\bootstrap.ps1") $Component
     }
-    if ($Component -eq "api" -and -not (Test-Path (Join-Path $RootDir "frontend\dist\index.html"))) {
+    $frontendReady = (Test-Path (Join-Path $RootDir "frontend\dist\index.html")) -and
+        (Test-Path (Join-Path $RootDir "frontend\dist\docs-assets\swagger-ui-bundle.js")) -and
+        (Test-Path (Join-Path $RootDir "frontend\dist\docs-assets\swagger-ui.css"))
+    if ($Component -eq "api" -and -not $frontendReady) {
         & (Join-Path $RootDir "scripts\bootstrap.ps1") "api"
     }
     if ($env:AUDIO_INTEL_MOCK_MODE -ne "1" -and ($Component -eq "asr" -or $Component -eq "tts")) {

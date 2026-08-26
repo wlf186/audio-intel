@@ -67,6 +67,10 @@ report = {
     "nvidia_smi": shutil.which("nvidia-smi") is not None,
     "runtime_environments": {name: runtime_python(name).is_file() for name in ("api", "asr", "tts", "aligner")},
     "frontend": (ROOT / "frontend/dist/index.html").is_file(),
+    "api_docs_local_assets": all(
+        (ROOT / "frontend/dist/docs-assets" / name).is_file()
+        for name in ("swagger-ui-bundle.js", "swagger-ui.css")
+    ),
     "models": {
         model["name"]: {
             key: value for key, value in model_installation(ROOT / "models", model).items()
