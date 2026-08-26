@@ -16,14 +16,19 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 
 ## 自动迁移与兼容性
 
-- API 启动时自动将 SQLite 迁移到当前 schema v4；迁移是就地操作，因此备份必须在启动新版本前完成。
+- API 启动时自动将 SQLite 迁移到当前 schema v5，新增持久化排队序号、稳定阶段、阶段耗时和幂等键记录；迁移是就地操作，因此备份必须在启动新版本前完成。
 - 历史 ASR/TTS 任务、旧声音档案和既有声纹样本保持可读；人员重命名不会回写历史任务中的说话人快照。
 - 浏览器鉴权改用进程内会话 Cookie，升级或重启后需要重新输入 API Key。
 - `/api/v1/health` 现在是公开最小探针；原详细结构迁移到受保护的 `/api/v1/system`。监控脚本如依赖硬件、worker、模型或路径字段必须切换端点并增加 Bearer Header。
 - `.complete` 必须包含固定模型 revision。旧的空 marker 会在 setup 时被判定为无效并修复。
 - TTS 安装现在同时创建独立 aligner 环境；不要复用旧 TTS 环境中的 qwen-asr。
-- ASR/TTS worker 现在由监督器管理可重启执行器，`setup all` 会将进程树管理所需的 `psutil` 同步到两个模型环境。启动时会校验并清理可信的遗留执行器元数据，再恢复中断任务；无需新增数据库迁移，schema 仍为 v4。
+- ASR/TTS worker 现在由监督器管理可重启执行器，`setup all` 会将进程树管理所需的 `psutil` 同步到两个模型环境。启动时会校验并清理可信的遗留执行器元数据，再恢复中断任务。
 - 原生 ASR/TTS API、OpenAI 兼容音频端点和提交页现在默认启用 `accelerate_single_task`。依赖旧版 batch 1 默认行为的客户端必须显式传入 `false`；模型、精度、ASR 分块与说话人语义不变。
+- ASR/TTS 新提交默认都使用 GPU；TTS 输出语种默认由 `Chinese` 改为 `Auto`。已有浏览器偏好保持不变，无 GPU 的 API 消费方需显式传 `compute_device=cpu`，依赖固定中文默认值的消费方需显式传 `language=Chinese`。
+- 一次性 TTS 克隆参考新增 `/api/v1/tts/clone-references` 分析端点和 `reference_job_id` 提交方式。分析任务会保留在 ASR 任务记录中，旧的 `reference_audio` + `reference_text` 请求继续兼容。
+- ASR 页面、声纹样本入库和 Capabilities 现在统一公开 `Auto + 11` 种支持字词级对齐的语言。原生 ASR、OpenAI 转写和声纹入库显式传入清单外语言时由运行期失败或透传改为同步 `422`；`Auto` 检测到其他模型语种时仍成功返回句段级时间戳。
+- **不兼容变更：** 原生异步 ASR、TTS、TTS 克隆参考分析和声纹样本上传现在强制要求 `Idempotency-Key`。现有客户端必须为每次逻辑提交生成 8–128 字符的键，并在超时、断线或 `429` 后复用；相同键改变请求会返回 `409`。`429` 的分类和恢复步骤见 [故障排查](TROUBLESHOOTING.md#api-提交返回-429)。
+- 新增同类队列位置、稳定阶段/批次进度、本机历史 ETA 区间、`GET /api/v1/queue`、单任务 SSE 和 ETag 条件轮询。ETA 是热身后才出现的建议区间，不是 SLA。
 - ASR/TTS 页面参数现在分别保存在浏览器 localStorage，并提供页面级“恢复默认配置”；清除站点数据后会恢复默认。TTS 文本仅保留在 sessionStorage，文件和未确认的麦克风录音不会持久化。
 - 声纹库新增浏览器麦克风录音入口，继续复用现有样本上传 API，不新增数据库字段或迁移。远程普通 HTTP 访问仍可能被浏览器拒绝麦克风权限，可继续使用文件上传。
 

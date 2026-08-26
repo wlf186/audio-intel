@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import statistics
 import time
+import uuid
 from typing import Any
 
 import httpx
@@ -41,17 +42,20 @@ def submit(
         "compute_device": device,
         "accelerate_single_task": str(accelerated).lower(),
     }
+    headers = {"Idempotency-Key": str(uuid.uuid4())}
     if kind == "asr":
         assert audio is not None
         with audio.open("rb") as stream:
             response = client.post(
                 "/api/v1/asr/jobs",
+                headers=headers,
                 data={**common, "language": "Auto", "speaker_count": "auto", "diarize": "true", "align": "true"},
                 files={"file": (audio.name, stream, "application/octet-stream")},
             )
     else:
         response = client.post(
             "/api/v1/tts/jobs",
+            headers=headers,
             data={**common, "text": text, "language": "Chinese", "voice_mode": "preset", "speaker": "Vivian"},
         )
     response.raise_for_status()

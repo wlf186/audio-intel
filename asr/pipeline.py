@@ -5,6 +5,7 @@ import logging
 import math
 import os
 import subprocess
+import time
 import sys
 import wave
 import shutil
@@ -476,12 +477,63 @@ def _refine_auto_speaker_labels(
     return refined
 
 
-def run_stage(operation: str, payload: dict[str, Any], directory: Path) -> dict[str, Any]:
+def _stop_stage_process(process: subprocess.Popen[Any]) -> None:
+    try:
+        import psutil
+        root = psutil.Process(process.pid)
+        targets = list(reversed(root.children(recursive=True))) + [root]
+        for target in targets:
+            try:
+                target.terminate()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        _, alive = psutil.wait_procs(targets, timeout=0.75)
+        for target in alive:
+            try:
+                target.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        psutil.wait_procs(alive, timeout=0.5)
+    except Exception:
+        process.kill()
+    process.wait(timeout=2)
+
+
+def run_stage(
+    operation: str,
+    payload: dict[str, Any],
+    directory: Path,
+    progress_callback: Any | None = None,
+) -> dict[str, Any]:
     input_path, output_path = directory / f"{operation}-input.json", directory / f"{operation}-output.json"
+    progress_path = directory / f"{operation}-progress.json"
+    payload["progress_path"] = str(progress_path)
     atomic_json(input_path, payload)
     environment = os.environ.copy()
     environment.update({"PYTHONPATH": str(settings.root), "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
-    subprocess.run([sys.executable, "-m", "asr.stage", operation, str(input_path), str(output_path)], check=True, env=environment)
+    process = subprocess.Popen(
+        [sys.executable, "-m", "asr.stage", operation, str(input_path), str(output_path)],
+        env=environment,
+    )
+    last_progress: tuple[int, int] | None = None
+    try:
+        while process.poll() is None:
+            if progress_callback is not None and progress_path.is_file():
+                try:
+                    snapshot = json.loads(progress_path.read_text(encoding="utf-8"))
+                    current = (int(snapshot["completed"]), int(snapshot["total"]))
+                    if current != last_progress:
+                        progress_callback(*current)
+                        last_progress = current
+                except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                    pass
+            time.sleep(0.2)
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, process.args)
+    except BaseException:
+        if process.poll() is None:
+            _stop_stage_process(process)
+        raise
     return json.loads(output_path.read_text(encoding="utf-8"))
 
 
@@ -494,10 +546,18 @@ def run_model_stage(
     progress: float,
 ) -> dict[str, Any]:
     payload["compute_device"] = compute_device
+    end_progress = 0.68 if operation == "transcribe" else 0.88
+    def report(completed: int, total: int) -> None:
+        ratio = completed / total if total else 1.0
+        context.progress(
+            progress + (end_progress - progress) * ratio,
+            f"qwen3_{'asr' if operation == 'transcribe' else 'forced_alignment'}_{compute_device}",
+            completed, total,
+        )
     if compute_device == "cpu":
-        return run_stage(operation, payload, directory)
+        return run_stage(operation, payload, directory, report)
     with gpu_lease(lambda: context.progress(progress, "waiting_for_gpu")):
-        return run_stage(operation, payload, directory)
+        return run_stage(operation, payload, directory, report)
 
 
 def _parallel_diarization_enabled(compute_device: str) -> bool:
@@ -703,6 +763,7 @@ def process_job(context: JobContext) -> dict[str, Any]:
     context.progress(0.04, "decoding_audio")
     audio, rate = _mock_audio(source, normalized) if settings.mock_mode else decode_audio(source, normalized)
     duration = len(audio) / rate
+    context.set_input_duration(duration)
     context.progress(0.10, "voice_activity_detection")
     if settings.mock_mode:
         vad = [{"start": 0.0, "end": duration}]
@@ -876,6 +937,13 @@ def process_job(context: JobContext) -> dict[str, Any]:
     result = write_asr_exports(context.job_id, result, request.get("export_formats", ["json", "srt", "vtt", "txt"]))
     if request.get("purpose") == "voiceprint_import":
         _finalize_voiceprint_import(request, normalized, result)
+    elif request.get("purpose") == "tts_clone_reference":
+        target = context.output_dir / "reference.wav"
+        shutil.copy2(normalized, target)
+        result.setdefault("artifacts", []).append({
+            "name": target.name, "path": str(target), "mime_type": "audio/wav",
+            "size_bytes": target.stat().st_size,
+        })
     return result
 
 

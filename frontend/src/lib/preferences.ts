@@ -2,17 +2,19 @@ import type {ComputeDevice} from './types'
 
 export type AsrPreferences={language:string;speakerCount:string;align:boolean;useVoiceprints:boolean;computeDevice:ComputeDevice;accelerateSingleTask:boolean}
 export type TtsPreferences={mode:'preset'|'inline_clone';cloneSource:'upload'|'voiceprint';speaker:string;language:string;computeDevice:ComputeDevice;personId:string;sampleId:string;accelerateSingleTask:boolean}
-export type TtsContent={text:string;refText:string}
+export type TtsContent={text:string;refText:string;refLanguage:string;refJobId:string}
 
 export const asrPreferencesKey='audio-intel:asr-preferences:v1'
 export const ttsPreferencesKey='audio-intel:tts-preferences:v1'
 export const ttsContentKey='audio-intel:tts-content:v1'
 export const defaultAsrPreferences:AsrPreferences={language:'Auto',speakerCount:'auto',align:true,useVoiceprints:true,computeDevice:'gpu',accelerateSingleTask:true}
-export const defaultTtsPreferences:TtsPreferences={mode:'preset',cloneSource:'upload',speaker:'Vivian',language:'Chinese',computeDevice:'cpu',personId:'',sampleId:'',accelerateSingleTask:true}
-export const defaultTtsContent:TtsContent={text:'欢迎使用 Sandevistan-Audio。这是一套完全本地运行的语音智能服务。',refText:''}
+export const defaultTtsPreferences:TtsPreferences={mode:'preset',cloneSource:'upload',speaker:'Vivian',language:'Auto',computeDevice:'gpu',personId:'',sampleId:'',accelerateSingleTask:true}
+export const defaultTtsContent:TtsContent={text:'欢迎使用 Sandevistan-Audio。这是一套完全本地运行的语音智能服务。',refText:'',refLanguage:'Auto',refJobId:''}
+export const publicAlignerLanguages=['Chinese','English','Cantonese','French','German','Italian','Japanese','Korean','Portuguese','Russian','Spanish']
+export const publicAsrLanguages=['Auto',...publicAlignerLanguages]
 
-const asrLanguages=new Set(['Auto','Chinese','English','Cantonese','Japanese','Korean'])
-const ttsLanguages=new Set(['Chinese','English','Auto','Japanese','Korean'])
+const asrLanguages=new Set(publicAsrLanguages)
+const ttsLanguages=new Set(['Auto','Chinese','English','Japanese','Korean','German','French','Russian','Portuguese','Spanish','Italian'])
 const legacyAsrKeys=['audio-intel:asr-device-v1','audio-intel:asr-voiceprints-v1','audio-intel:asr-acceleration-v1','audio-intel:asr-single-task-acceleration-v1']
 const legacyTtsKeys=['audio-intel:tts-draft-v2','audio-intel:tts-draft-v1']
 
@@ -71,7 +73,10 @@ export function loadTtsContent():TtsContent{
  const stored=parsed(sessionStorage,ttsContentKey)
  const legacy=stored?undefined:legacyTtsKeys.map(key=>parsed(sessionStorage,key)).find(Boolean)
  const source=stored||legacy||{}
- const content={text:text(source.text,defaultTtsContent.text),refText:text(source.refText,defaultTtsContent.refText)}
+ const content={
+  text:text(source.text,defaultTtsContent.text),refText:text(source.refText,defaultTtsContent.refText),
+  refLanguage:text(source.refLanguage,defaultTtsContent.refLanguage),refJobId:text(source.refJobId,defaultTtsContent.refJobId),
+ }
  write(sessionStorage,ttsContentKey,content);legacyTtsKeys.forEach(key=>remove(sessionStorage,key));return content
 }
 export function saveTtsContent(value:TtsContent){write(sessionStorage,ttsContentKey,value)}

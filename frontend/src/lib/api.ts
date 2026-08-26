@@ -1,10 +1,23 @@
 import type {AuthSession,BatchDeleteResult,Capabilities,Health,Job,JobResult,Probe,VoiceprintPerson,VoiceprintSample} from './types'
 
-export class HttpError extends Error{status:number;constructor(status:number,message:string){super(message);this.status=status}}
+export class HttpError extends Error{status:number;retryAfter?:number;constructor(status:number,message:string,retryAfter?:number){super(message);this.status=status;this.retryAfter=retryAfter}}
 export async function request<T>(path:string,init:RequestInit={}):Promise<T>{
   const headers=new Headers(init.headers)
-  const response=await fetch(path,{...init,headers,credentials:'same-origin'}); if(!response.ok){const body=await response.json().catch(()=>({detail:response.statusText}));if(response.status===401)window.dispatchEvent(new Event('audio-intel:unauthorized'));throw new HttpError(response.status,body.detail||body.title||`HTTP ${response.status}`)}
+  const response=await fetch(path,{...init,headers,credentials:'same-origin'}); if(!response.ok){const body=await response.json().catch(()=>({detail:response.statusText,retry_after_seconds:undefined}));if(response.status===401)window.dispatchEvent(new Event('audio-intel:unauthorized'));const retryAfter=Number(response.headers.get('Retry-After')||body.retry_after_seconds)||undefined;const detail=body.detail||body.title||`HTTP ${response.status}`;throw new HttpError(response.status,retryAfter?`${detail}；请在 ${retryAfter} 秒后重试。`:detail,retryAfter)}
   if(response.status===204)return undefined as T; return response.json()
+}
+const pendingSubmissionKeys=new Map<string,string>()
+function formSignature(path:string,data:FormData){
+  const values=[...data.entries()].map(([name,value])=>[name,typeof value==='string'?value:{name:value.name,size:value.size,type:value.type,lastModified:value.lastModified}] as const)
+  values.sort(([left],[right])=>left.localeCompare(right))
+  return `${path}:${JSON.stringify(values)}`
+}
+async function submitForm<T>(path:string,data:FormData,idempotencyKey?:string){
+  if(idempotencyKey)return request<T>(path,{method:'POST',headers:{'Idempotency-Key':idempotencyKey},body:data})
+  const signature=formSignature(path,data)
+  const key=pendingSubmissionKeys.get(signature)||crypto.randomUUID()
+  pendingSubmissionKeys.set(signature,key)
+  try{const result=await request<T>(path,{method:'POST',headers:{'Idempotency-Key':key},body:data});pendingSubmissionKeys.delete(signature);return result}catch(error){throw error}
 }
 export const api={
   probe:()=>request<Probe>('/api/v1/health'),
@@ -15,8 +28,9 @@ export const api={
   job:(id:string)=>request<Job>(`/api/v1/jobs/${id}`),
   system:()=>request<Health>('/api/v1/system'),
   capabilities:()=>request<Capabilities>('/api/v1/capabilities'),
-  submitAsr:(data:FormData)=>request<Job>('/api/v1/asr/jobs',{method:'POST',body:data}),
-  submitTts:(data:FormData)=>request<Job>('/api/v1/tts/jobs',{method:'POST',body:data}),
+  submitAsr:(data:FormData,idempotencyKey?:string)=>submitForm<Job>('/api/v1/asr/jobs',data,idempotencyKey),
+  analyzeCloneReference:(data:FormData,idempotencyKey?:string)=>submitForm<Job>('/api/v1/tts/clone-references',data,idempotencyKey),
+  submitTts:(data:FormData,idempotencyKey?:string)=>submitForm<Job>('/api/v1/tts/jobs',data,idempotencyKey),
   cancel:(id:string)=>request<Job>(`/api/v1/jobs/${id}/cancel`,{method:'POST'}),
   retry:(id:string)=>request<Job>(`/api/v1/jobs/${id}/retry`,{method:'POST'}),
   remove:(id:string)=>request<void>(`/api/v1/jobs/${id}?purge=true`,{method:'DELETE'}),
@@ -29,7 +43,7 @@ export const api={
   renameVoiceprintPerson:(id:string,name:string)=>request<VoiceprintPerson>(`/api/v1/voiceprints/people/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}),
   removeVoiceprintPerson:(id:string)=>request<void>(`/api/v1/voiceprints/people/${id}?purge=true`,{method:'DELETE'}),
   addAsrSamples:(personId:string,jobId:string,segmentIds:number[])=>request<{items:VoiceprintSample[]}>(`/api/v1/voiceprints/people/${personId}/samples/from-asr`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:jobId,segment_ids:segmentIds})}),
-  uploadVoiceprintSample:(personId:string,data:FormData)=>request<{sample:VoiceprintSample;job:Job}>(`/api/v1/voiceprints/people/${personId}/samples/upload`,{method:'POST',body:data}),
+  uploadVoiceprintSample:(personId:string,data:FormData,idempotencyKey?:string)=>submitForm<{sample:VoiceprintSample;job:Job}>(`/api/v1/voiceprints/people/${personId}/samples/upload`,data,idempotencyKey),
   removeVoiceprintSample:(personId:string,sampleId:string)=>request<void>(`/api/v1/voiceprints/people/${personId}/samples/${sampleId}?purge=true`,{method:'DELETE'}),
 }
 export function artifactUrl(jobId:string,name:string){return `/api/v1/jobs/${jobId}/artifacts/${encodeURIComponent(name)}`}

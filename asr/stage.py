@@ -7,6 +7,15 @@ from pathlib import Path
 from typing import Any
 
 from audio_intel.performance import lower_batch_size
+from audio_intel.utils import atomic_json
+
+
+def _progress(payload: dict[str, Any], stage: str, completed: int, total: int) -> None:
+    path = payload.get("progress_path")
+    if path:
+        atomic_json(Path(path), {
+            "stage": stage, "completed": completed, "total": total,
+        })
 
 
 def _clear_cuda(torch_module: Any) -> None:
@@ -48,6 +57,7 @@ def transcribe(payload: dict[str, Any]) -> dict[str, Any]:
     fallbacks: list[dict[str, int]] = []
     index = 0
     batch_size = target_batch_size
+    _progress(payload, "transcription", 0, len(chunks))
     while index < len(chunks):
         current = chunks[index:index + batch_size]
         try:
@@ -75,6 +85,7 @@ def transcribe(payload: dict[str, Any]) -> dict[str, Any]:
             for item, result in zip(current, results)
         )
         index += len(current)
+        _progress(payload, "transcription", index, len(chunks))
     return {
         "chunks": output,
         "acceleration": _stage_acceleration("transcription", target_batch_size, actual_sizes, fallbacks),
@@ -103,6 +114,7 @@ def align(payload: dict[str, Any]) -> dict[str, Any]:
     fallbacks: list[dict[str, int]] = []
     offset = 0
     batch_size = target_batch_size
+    _progress(payload, "alignment", 0, len(pending))
     while offset < len(pending):
         current = pending[offset:offset + batch_size]
         try:
@@ -132,6 +144,7 @@ def align(payload: dict[str, Any]) -> dict[str, Any]:
             ]
             output[index] = {**item, "words": words}
         offset += len(current)
+        _progress(payload, "alignment", offset, len(pending))
     return {
         "chunks": [item for item in output if item is not None],
         "acceleration": _stage_acceleration("alignment", target_batch_size, actual_sizes, fallbacks),

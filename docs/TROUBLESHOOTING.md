@@ -45,6 +45,21 @@ curl -I https://modelscope.cn
 .runtime/api/bin/python scripts/benchmark_single_task_acceleration.py tts --device gpu --repeat 3
 ```
 
+## API 提交返回 429
+
+- `submission_concurrency_limited` 表示同时落盘的提交过多，通常按 `Retry-After` 等待约 1 秒即可。
+- `queue_capacity_reached` 表示对应 ASR 或 TTS 队列已达到配置上限；等待前方任务完成，或在评估机器容量后调整 `AUDIO_INTEL_MAX_QUEUED_ASR` / `AUDIO_INTEL_MAX_QUEUED_TTS`。
+- `insufficient_queue_storage` 表示接收本次输入后会低于 `AUDIO_INTEL_MIN_FREE_DISK_BYTES`；清理磁盘或调整保留值前先确认不会挤占模型、数据库和结果空间。
+- 查看受保护的 `GET /api/v1/queue` 可获得当前排队数、准入预留、并行提交和磁盘余量，但它只是预检；最终以提交接口的原子准入结果为准。
+- 超时、断线或 `429` 后必须复用原 `Idempotency-Key`；不要为同一次逻辑提交生成新键，否则可能创建重复任务。
+
+## ETA 尚未出现或 SSE 断线
+
+- ETA 只使用本机同类历史任务。少于 5 个有效样本时 `estimate.state` 为 `warming_up`，没有剩余时间属于预期行为；可用后的区间也只是建议，不是 SLA。
+- 单任务 SSE 使用 `/api/v1/jobs/{job_id}/events`，全局快照使用 `/api/v1/events`。两者都没有历史重放；断线后重新连接，并用收到的首个快照或任务状态接口校准。
+- 无法使用 SSE 时按响应中的 `poll_after_seconds` 轮询 `status_url`，保存响应 `ETag` 并在后续请求发送 `If-None-Match`；`304` 表示任务和同类队列上下文未变化。
+- 浏览器原生 `EventSource` 不能附加自定义 Authorization Header。项目同源页面使用 HttpOnly 会话 Cookie；外部浏览器应用应通过同源后端代理，服务端客户端可直接发送 Bearer Header。
+
 ## 执行中任务取消后仍显示正在停止
 
 - worker 会先给当前阶段 1 秒协作退出时间，必要时终止该任务的执行进程及其 ASR、Aligner 等后代进程；确认进程全部退出后才把任务标记为“已取消”并开放删除。

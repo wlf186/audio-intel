@@ -17,8 +17,9 @@ import psutil
 from .config import settings
 from .db import (
     claim_job, finish_job, get_job, init_db, recover_stale, update_job,
-    update_voiceprint_sample, upsert_worker, utcnow,
+    update_job_progress, update_voiceprint_sample, upsert_worker, utcnow,
 )
+from .observability import stage_details
 from .utils import atomic_json, read_json
 
 
@@ -56,20 +57,27 @@ class JobContext:
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def progress(self, value: float, stage: str) -> None:
-        current = get_job(self.job_id)
-        if current and current.get("cancel_requested"):
+    def progress(
+        self, value: float, stage: str,
+        completed: int | None = None, total: int | None = None,
+    ) -> None:
+        snapshot = get_job(self.job_id)
+        if snapshot and snapshot.get("cancel_requested"):
             raise JobCancelled("Job cancellation requested")
-        update_job(
-            self.job_id,
-            progress=max(0.01, min(float(value), 0.99)),
-            stage=stage,
-            heartbeat_at=utcnow(),
+        detail = stage_details({
+            "stage": stage, "stage_current": completed, "stage_total": total,
+        })
+        update_job_progress(
+            self.job_id, max(0.01, min(float(value), 0.99)), stage,
+            detail["stage_code"], completed, total,
         )
         upsert_worker(
             self.worker_id, self.job["kind"], self.worker_pid, "busy", self.job_id,
             {"stage": stage, "executor_pid": os.getpid()},
         )
+
+    def set_input_duration(self, seconds: float) -> None:
+        update_job(self.job_id, input_duration_seconds=max(0.0, float(seconds)))
 
 
 def _processor(kind: str) -> Callable[[JobContext], dict[str, Any]]:

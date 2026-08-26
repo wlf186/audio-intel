@@ -16,8 +16,12 @@ JOB_STATES = {"queued", "running", "succeeded", "failed", "cancelled"}
 VOICEPRINT_SAMPLE_STATES = {"pending", "ready", "failed"}
 
 
+class IdempotencyConflict(ValueError):
+    pass
+
+
 def utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
 @contextmanager
@@ -183,6 +187,59 @@ def init_db() -> None:
                     ),
                 )
             db.execute("UPDATE schema_meta SET version=4 WHERE version<4")
+        version = db.execute("SELECT MIN(version) FROM schema_meta").fetchone()[0]
+        if version < 5:
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)").fetchall()}
+            additions = {
+                "queue_seq": "INTEGER NOT NULL DEFAULT 0",
+                "stage_code": "TEXT",
+                "stage_current": "INTEGER",
+                "stage_total": "INTEGER",
+                "input_duration_seconds": "REAL",
+            }
+            for name, declaration in additions.items():
+                if name not in columns:
+                    db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {declaration}")
+            db.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS job_idempotency (
+                    operation TEXT NOT NULL,
+                    key_hash TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(operation,key_hash)
+                );
+                CREATE TABLE IF NOT EXISTS job_stage_timings (
+                    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                    attempt INTEGER NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    stage_code TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    duration_seconds REAL,
+                    PRIMARY KEY(job_id,attempt,sequence)
+                );
+                CREATE TABLE IF NOT EXISTS queue_sequence (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    value INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_jobs_queue_v5
+                    ON jobs(kind,state,queue_seq);
+                CREATE INDEX IF NOT EXISTS idx_stage_timings_cohort
+                    ON job_stage_timings(stage_code,finished_at);
+                """
+            )
+            db.execute("UPDATE jobs SET queue_seq=rowid WHERE queue_seq=0")
+            db.execute("UPDATE schema_meta SET version=5 WHERE version<5")
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS queue_sequence (
+               singleton INTEGER PRIMARY KEY CHECK(singleton=1),value INTEGER NOT NULL)"""
+        )
+        db.execute(
+            """INSERT OR IGNORE INTO queue_sequence(singleton,value)
+               VALUES(1,(SELECT COALESCE(MAX(queue_seq),0) FROM jobs))"""
+        )
 
 
 def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -202,16 +259,88 @@ def person_name_key(name: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", name).strip().split()).casefold()
 
 
+def _next_queue_seq(db: sqlite3.Connection) -> int:
+    row = db.execute("SELECT value FROM queue_sequence WHERE singleton=1").fetchone()
+    if row is None:
+        current = int(db.execute("SELECT COALESCE(MAX(queue_seq),0) FROM jobs").fetchone()[0])
+        db.execute("INSERT INTO queue_sequence(singleton,value) VALUES(1,?)", (current,))
+    else:
+        current = int(row["value"])
+    next_value = current + 1
+    db.execute("UPDATE queue_sequence SET value=? WHERE singleton=1", (next_value,))
+    return next_value
+
+
+def create_job_idempotent(
+    kind: str,
+    display_name: str,
+    request: dict[str, Any],
+    job_id: str | None,
+    operation: str,
+    key_hash: str,
+    request_hash: str,
+) -> tuple[dict[str, Any], bool]:
+    if kind not in {"asr", "tts"}:
+        raise ValueError("Unsupported job kind")
+    job_id = job_id or uuid.uuid4().hex
+    now = utcnow()
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        existing = db.execute(
+            "SELECT request_hash,job_id FROM job_idempotency WHERE operation=? AND key_hash=?",
+            (operation, key_hash),
+        ).fetchone()
+        if existing is not None:
+            if existing["request_hash"] != request_hash:
+                db.execute("ROLLBACK")
+                raise IdempotencyConflict("Idempotency-Key was already used with a different request")
+            row = db.execute("SELECT * FROM jobs WHERE id=?", (existing["job_id"],)).fetchone()
+            db.execute("COMMIT")
+            if row is None:  # pragma: no cover - protected by the foreign key
+                raise RuntimeError("Idempotency record refers to a missing job")
+            return _decode(row), True  # type: ignore[return-value]
+        db.execute(
+            """INSERT INTO jobs(
+               id,kind,display_name,request_json,queue_seq,stage_code,created_at,updated_at
+               ) VALUES(?,?,?,?,?,'queued',?,?)""",
+            (
+                job_id, kind, display_name, json.dumps(request, ensure_ascii=False),
+                _next_queue_seq(db), now, now,
+            ),
+        )
+        db.execute(
+            "INSERT INTO job_idempotency(operation,key_hash,request_hash,job_id,created_at) VALUES(?,?,?,?,?)",
+            (operation, key_hash, request_hash, job_id, now),
+        )
+        db.execute("COMMIT")
+    return get_job(job_id), False  # type: ignore[return-value]
+
+
+def find_idempotent_job(operation: str, key_hash: str) -> dict[str, Any] | None:
+    with connect() as db:
+        row = db.execute(
+            """SELECT jobs.* FROM job_idempotency
+               JOIN jobs ON jobs.id=job_id
+               WHERE operation=? AND key_hash=?""",
+            (operation, key_hash),
+        ).fetchone()
+    return _decode(row)
+
+
 def create_job(kind: str, display_name: str, request: dict[str, Any], job_id: str | None = None) -> dict[str, Any]:
     if kind not in {"asr", "tts"}:
         raise ValueError("Unsupported job kind")
     job_id = job_id or uuid.uuid4().hex
     now = utcnow()
     with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
         db.execute(
-            "INSERT INTO jobs(id,kind,display_name,request_json,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-            (job_id, kind, display_name, json.dumps(request, ensure_ascii=False), now, now),
+            """INSERT INTO jobs(
+               id,kind,display_name,request_json,queue_seq,stage_code,created_at,updated_at
+               ) VALUES(?,?,?,?,?,'queued',?,?)""",
+            (job_id, kind, display_name, json.dumps(request, ensure_ascii=False), _next_queue_seq(db), now, now),
         )
+        db.execute("COMMIT")
     return get_job(job_id)  # type: ignore[return-value]
 
 
@@ -242,6 +371,7 @@ def update_job(job_id: str, **values: Any) -> dict[str, Any] | None:
     allowed = {
         "state", "progress", "stage", "result_json", "error_code", "error_message",
         "cancel_requested", "worker_id", "heartbeat_at", "started_at", "finished_at", "attempts",
+        "queue_seq", "stage_code", "stage_current", "stage_total", "input_duration_seconds",
     }
     changes: dict[str, Any] = {key: value for key, value in values.items() if key in allowed}
     if "state" in changes and changes["state"] not in JOB_STATES:
@@ -252,6 +382,60 @@ def update_job(job_id: str, **values: Any) -> dict[str, Any] | None:
     assignment = ",".join(f"{key}=?" for key in changes)
     with connect() as db:
         db.execute(f"UPDATE jobs SET {assignment} WHERE id=?", (*changes.values(), job_id))
+    return get_job(job_id)
+
+
+def update_job_progress(
+    job_id: str,
+    progress: float,
+    stage: str,
+    stage_code: str,
+    stage_current: int | None = None,
+    stage_total: int | None = None,
+) -> dict[str, Any] | None:
+    now = utcnow()
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            "SELECT attempts,stage_code FROM jobs WHERE id=?", (job_id,)
+        ).fetchone()
+        if row is None:
+            db.execute("ROLLBACK")
+            return None
+        attempt = max(1, int(row["attempts"] or 1))
+        if row["stage_code"] != stage_code:
+            previous = db.execute(
+                """SELECT sequence,started_at FROM job_stage_timings
+                   WHERE job_id=? AND attempt=? AND finished_at IS NULL
+                   ORDER BY sequence DESC LIMIT 1""",
+                (job_id, attempt),
+            ).fetchone()
+            if previous is not None:
+                duration = max(
+                    0.0,
+                    (datetime.fromisoformat(now) - datetime.fromisoformat(previous["started_at"])).total_seconds(),
+                )
+                db.execute(
+                    """UPDATE job_stage_timings SET finished_at=?,duration_seconds=?
+                       WHERE job_id=? AND attempt=? AND sequence=?""",
+                    (now, duration, job_id, attempt, previous["sequence"]),
+                )
+            sequence = int(db.execute(
+                "SELECT COALESCE(MAX(sequence),0)+1 FROM job_stage_timings WHERE job_id=? AND attempt=?",
+                (job_id, attempt),
+            ).fetchone()[0])
+            db.execute(
+                """INSERT INTO job_stage_timings(
+                   job_id,attempt,sequence,stage_code,started_at
+                   ) VALUES(?,?,?,?,?)""",
+                (job_id, attempt, sequence, stage_code, now),
+            )
+        db.execute(
+            """UPDATE jobs SET progress=?,stage=?,stage_code=?,stage_current=?,stage_total=?,
+               heartbeat_at=?,updated_at=? WHERE id=?""",
+            (progress, stage, stage_code, stage_current, stage_total, now, now, job_id),
+        )
+        db.execute("COMMIT")
     return get_job(job_id)
 
 
@@ -273,6 +457,7 @@ def finish_job(job_id: str, state: str, **values: Any) -> dict[str, Any] | None:
             db.execute("ROLLBACK")
             return None
         changes.update({"state": state, "finished_at": now, "updated_at": now})
+        changes["stage_code"] = state
         assignment = ",".join(f"{key}=?" for key in changes)
         db.execute(
             f"""UPDATE jobs SET {assignment}, processing_seconds=processing_seconds+
@@ -280,6 +465,21 @@ def finish_job(job_id: str, state: str, **values: Any) -> dict[str, Any] | None:
                 MAX(0,(julianday(?) - julianday(started_at))*86400) END WHERE id=?""",
             (*changes.values(), now, job_id),
         )
+        timing = db.execute(
+            """SELECT attempt,sequence,started_at FROM job_stage_timings
+               WHERE job_id=? AND finished_at IS NULL ORDER BY attempt DESC,sequence DESC LIMIT 1""",
+            (job_id,),
+        ).fetchone()
+        if timing is not None:
+            duration = max(
+                0.0,
+                (datetime.fromisoformat(now) - datetime.fromisoformat(timing["started_at"])).total_seconds(),
+            )
+            db.execute(
+                """UPDATE job_stage_timings SET finished_at=?,duration_seconds=?
+                   WHERE job_id=? AND attempt=? AND sequence=?""",
+                (now, duration, job_id, timing["attempt"], timing["sequence"]),
+            )
         db.execute("COMMIT")
     return get_job(job_id)
 
@@ -289,13 +489,14 @@ def claim_job(kind: str, worker_id: str) -> dict[str, Any] | None:
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
         row = db.execute(
-            "SELECT id FROM jobs WHERE kind=? AND state='queued' ORDER BY created_at LIMIT 1", (kind,)
+            "SELECT id FROM jobs WHERE kind=? AND state='queued' ORDER BY queue_seq LIMIT 1", (kind,)
         ).fetchone()
         if row is None:
             db.execute("COMMIT")
             return None
         db.execute(
-            "UPDATE jobs SET state='running',stage='starting',progress=0.01,worker_id=?,heartbeat_at=?,"
+            "UPDATE jobs SET state='running',stage='starting',stage_code='starting',progress=0.01,"
+            "stage_current=NULL,stage_total=NULL,worker_id=?,heartbeat_at=?,"
             "started_at=?,finished_at=NULL,attempts=attempts+1,updated_at=? WHERE id=?",
             (worker_id, now, now, now, row["id"]),
         )
@@ -314,13 +515,13 @@ def request_cancel(job_id: str) -> dict[str, Any] | None:
         if row["state"] == "queued":
             db.execute(
                 """UPDATE jobs SET state='cancelled',stage='cancelled',cancel_requested=1,
-                   finished_at=?,updated_at=? WHERE id=? AND state='queued'""",
+                   stage_code='cancelled',finished_at=?,updated_at=? WHERE id=? AND state='queued'""",
                 (now, now, job_id),
             )
         elif row["state"] == "running":
             db.execute(
                 """UPDATE jobs SET cancel_requested=1,stage='cancelling',updated_at=?
-                   WHERE id=? AND state='running'""",
+                   ,stage_code='cancelling' WHERE id=? AND state='running'""",
                 (now, job_id),
             )
         db.execute("COMMIT")
@@ -333,11 +534,43 @@ def retry_job(job_id: str) -> dict[str, Any] | None:
         return None
     if job["state"] not in {"failed", "cancelled"}:
         raise ValueError("Only failed or cancelled jobs can be retried")
-    return update_job(
-        job_id, state="queued", stage="queued", progress=0, result_json=None,
-        error_code=None, error_message=None, cancel_requested=0, worker_id=None,
-        heartbeat_at=None, started_at=None, finished_at=None,
-    )
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        db.execute(
+            """UPDATE jobs SET state='queued',stage='queued',stage_code='queued',progress=0,
+               stage_current=NULL,stage_total=NULL,result_json=NULL,error_code=NULL,error_message=NULL,
+               cancel_requested=0,worker_id=NULL,heartbeat_at=NULL,started_at=NULL,finished_at=NULL,
+               queue_seq=?,updated_at=? WHERE id=?""",
+            (_next_queue_seq(db), utcnow(), job_id),
+        )
+        db.execute("COMMIT")
+    return get_job(job_id)
+
+
+def queued_count(kind: str) -> int:
+    with connect() as db:
+        return int(db.execute(
+            "SELECT COUNT(*) FROM jobs WHERE kind=? AND state='queued'", (kind,)
+        ).fetchone()[0])
+
+
+def active_jobs() -> list[dict[str, Any]]:
+    with connect() as db:
+        rows = db.execute(
+            """SELECT * FROM jobs WHERE state IN ('queued','running')
+               ORDER BY kind,CASE state WHEN 'running' THEN 0 ELSE 1 END,queue_seq"""
+        ).fetchall()
+    return [_decode(row) for row in rows]  # type: ignore[misc]
+
+
+def successful_jobs(kind: str, limit: int = 200) -> list[dict[str, Any]]:
+    with connect() as db:
+        rows = db.execute(
+            """SELECT * FROM jobs WHERE kind=? AND state='succeeded'
+               ORDER BY finished_at DESC LIMIT ?""",
+            (kind, min(max(limit, 1), 500)),
+        ).fetchall()
+    return [_decode(row) for row in rows]  # type: ignore[misc]
 
 
 def prepare_job_for_purge(job_id: str) -> dict[str, Any] | None:
@@ -353,7 +586,8 @@ def prepare_job_for_purge(job_id: str) -> dict[str, Any] | None:
             return _decode(row)
         if row["state"] == "queued":
             db.execute(
-                "UPDATE jobs SET state='cancelled',stage='cancelled',cancel_requested=1,finished_at=?,updated_at=? WHERE id=?",
+                """UPDATE jobs SET state='cancelled',stage='cancelled',stage_code='cancelled',
+                   cancel_requested=1,finished_at=?,updated_at=? WHERE id=?""",
                 (now, now, job_id),
             )
         db.execute("COMMIT")
@@ -379,7 +613,8 @@ def recover_stale(kind: str) -> int:
             """UPDATE jobs SET processing_seconds=processing_seconds+
                CASE WHEN started_at IS NULL THEN 0 ELSE MAX(0,
                (julianday(COALESCE(heartbeat_at,updated_at))-julianday(started_at))*86400) END,
-               state='queued',stage='recovered',worker_id=NULL,heartbeat_at=NULL,started_at=NULL,updated_at=? """
+               state='queued',stage='recovered',stage_code='queued',stage_current=NULL,stage_total=NULL,
+               worker_id=NULL,heartbeat_at=NULL,started_at=NULL,updated_at=? """
             "WHERE kind=? AND state='running'",
             (now, kind),
         )

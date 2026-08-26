@@ -43,12 +43,45 @@ class VoiceprintSampleState(str, Enum):
     failed = "failed"
 
 
+class QueueWaitReason(str, Enum):
+    worker = "worker"
+    gpu = "gpu"
+
+
+class EstimateState(str, Enum):
+    warming_up = "warming_up"
+    ready = "ready"
+
+
+class EstimateConfidence(str, Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
 class ProblemDetail(PublicModel):
     type: str = Field("about:blank", description="问题类型 URI / Problem type URI")
     title: str = Field(description="简短错误标题 / Short error title")
     status: int = Field(description="HTTP 状态码 / HTTP status code")
     code: str = Field(description="稳定错误代码 / Stable error code")
     detail: str = Field(description="可供开发者阅读的详情 / Developer-readable detail")
+
+
+class AdmissionQueueDetail(PublicModel):
+    kind: JobKind = Field(description="被拒绝的任务类型 / Rejected job kind")
+    depth: int = Field(description="当前持久化排队数 / Current durable queued count")
+    capacity: int = Field(description="该任务类型的排队上限 / Queue capacity for this job kind")
+
+
+class AdmissionStorageDetail(PublicModel):
+    free_bytes: int = Field(description="数据卷当前可用字节 / Current free bytes on the data volume")
+    minimum_free_bytes: int = Field(description="提交后必须保留的最小可用字节 / Minimum free bytes reserved after submission")
+
+
+class AdmissionProblemDetail(ProblemDetail):
+    retry_after_seconds: int = Field(description="建议等待秒数，与 Retry-After 一致 / Suggested delay matching Retry-After")
+    queue: AdmissionQueueDetail
+    storage: AdmissionStorageDetail
 
 
 class AuthSessionResponse(PublicModel):
@@ -86,6 +119,8 @@ class AsrCapability(PublicModel):
     diarization: str
     speaker_count: SpeakerCountCapability
     voiceprint_library: bool
+    languages: list[str]
+    default_language: str
     timestamp_precisions: list[str]
     aligner_languages: list[str]
     exports: list[str]
@@ -97,6 +132,9 @@ class TtsCapability(PublicModel):
     models: list[str]
     voice_modes: list[VoiceMode]
     preset_speakers: list[str]
+    preset_speaker_native_languages: dict[str, str]
+    languages: list[str]
+    default_language: str
     formats: list[str]
     compute_devices: list[ComputeCapability]
     single_task_acceleration: AccelerationCapability
@@ -106,6 +144,10 @@ class ApiLimits(PublicModel):
     max_upload_bytes: int
     max_tts_chars: int
     max_clone_reference_seconds: int
+    max_queued_asr: int
+    max_queued_tts: int
+    max_concurrent_submissions: int
+    min_free_disk_bytes: int
 
 
 class CapabilitiesResponse(PublicModel):
@@ -114,6 +156,7 @@ class CapabilitiesResponse(PublicModel):
     asr: AsrCapability
     tts: TtsCapability
     limits: ApiLimits
+    events: dict[str, Any]
 
 
 class WorkerResponse(PublicModel):
@@ -236,10 +279,48 @@ class JobResultResponse(PublicModel):
     quantized: bool | None = None
     voiceprint_person_id: str | None = None
     voiceprint_sample_id: str | None = None
+    reference_job_id: str | None = None
+    reference_language: str | None = None
     reference_duration_original: float | None = None
     reference_duration_used: float | None = None
     reference_truncated: bool | None = None
     acceleration: AccelerationResponse | None = None
+
+
+class QueueRange(PublicModel):
+    lower: int | float
+    upper: int | float
+
+
+class CompletionRange(PublicModel):
+    earliest: str
+    latest: str
+
+
+class JobQueueStatus(PublicModel):
+    scope: JobKind = Field(description="独立排队范围：asr 或 tts / Independent queue scope: asr or tts")
+    position: int | None = Field(default=None, description="排队任务从 1 开始的位置；运行中为 null / One-based queued position; null while running")
+    depth: int = Field(description="同类持久化排队任务数 / Durable queued jobs of the same kind")
+    capacity: int = Field(description="同类任务排队上限 / Queue capacity for this job kind")
+    waiting_for: QueueWaitReason | None = Field(default=None, description="当前等待 worker 或全局 GPU 锁 / Currently waiting for a worker or the global GPU lock")
+
+
+class JobProgressDetail(PublicModel):
+    stage_code: str = Field(description="稳定但可扩展的阶段代码 / Stable but extensible stage code")
+    stage_progress: float | None = Field(default=None, ge=0, le=1)
+    current: int | None = Field(default=None, description="可计数阶段的当前批次 / Current item in a countable stage")
+    total: int | None = Field(default=None, description="可计数阶段的总批次 / Total items in a countable stage")
+    unit: str | None = Field(default=None, description="当前计数单位，现为 batch / Counting unit, currently batch")
+
+
+class JobEstimate(PublicModel):
+    state: EstimateState = Field(description="warming_up 表示历史样本不足；ready 表示区间可用 / warming_up means insufficient history; ready means ranges are available")
+    confidence: EstimateConfidence | None = Field(default=None, description="本机历史估计置信度；不是 SLA / Local-history confidence; never an SLA")
+    sample_count: int = Field(description="参与估计或热身统计的本机历史样本数 / Local historical sample count")
+    start_after_seconds: QueueRange | None = Field(default=None, description="预计开始处理前的秒数区间 / Estimated seconds before processing starts")
+    remaining_seconds: QueueRange | None = Field(default=None, description="预计完成前的总剩余秒数区间 / Estimated total seconds until completion")
+    completes_at: CompletionRange | None = Field(default=None, description="预计完成时间区间 / Estimated completion-time range")
+    updated_at: str = Field(description="估计基准时间 / Estimate reference time")
 
 
 class JobResponse(PublicModel):
@@ -268,6 +349,32 @@ class JobResponse(PublicModel):
     status_url: str | None = None
     source_url: str | None = None
     result_url: str | None = None
+    queue: JobQueueStatus | None = None
+    progress_detail: JobProgressDetail | None = None
+    estimate: JobEstimate | None = None
+    poll_after_seconds: int | None = None
+
+
+class QueueKindResponse(PublicModel):
+    kind: JobKind
+    queued: int = Field(description="持久化排队任务数 / Durable queued jobs")
+    running: int = Field(description="当前运行任务数 / Currently running jobs")
+    reserved: int = Field(description="正在接收但尚未持久化的提交数 / Submissions admitted but not yet persisted")
+    capacity: int = Field(description="持久化排队上限 / Durable queue capacity")
+    accepting: bool = Field(description="当前预检是否允许提交；最终仍以 POST 原子准入为准 / Advisory acceptance; POST admission remains authoritative")
+    retry_after_seconds: int | None = Field(default=None, description="不接受时的建议等待秒数 / Suggested delay while not accepting")
+
+
+class QueueStorageResponse(PublicModel):
+    free_bytes: int
+    minimum_free_bytes: int
+
+
+class QueueResponse(PublicModel):
+    items: list[QueueKindResponse]
+    active_submissions: int
+    max_concurrent_submissions: int
+    storage: QueueStorageResponse
 
 
 class JobListResponse(PublicModel):
@@ -278,7 +385,7 @@ class JobListResponse(PublicModel):
 
 
 class EventJobResponse(JobResponse):
-    """SSE emits database snapshots rather than the computed public polling view."""
+    """SSE uses the same public job shape while allowing legacy device fields to be absent."""
 
     compute_device: ComputeDevice | None = None
     compute_device_name: str | None = None
@@ -392,3 +499,37 @@ class OpenAIVerboseTranscription(PublicModel):
     duration: float | None = None
     text: str
     segments: list[SegmentResponse]
+
+
+class OpenAISpeechRequest(PublicModel):
+    model: str = Field(
+        "qwen3-tts-0.6b",
+        description="本地兼容模型别名 / Local compatible model alias",
+    )
+    input: str = Field(description="需要合成的文本 / Text to synthesize")
+    voice: str = Field(
+        "Vivian",
+        description="官方预置音色或 voice_ 声音档案 ID / Official preset or voice_ profile ID",
+    )
+    response_format: str = Field(
+        "wav", description="输出格式 / Output format",
+        json_schema_extra={"enum": ["wav", "flac", "mp3"]},
+    )
+    language: str = Field(
+        "Auto",
+        description="输出文本语种；已知时应显式指定 / Target text language; specify it when known",
+        json_schema_extra={
+            "enum": [
+                "Auto", "Chinese", "English", "Japanese", "Korean", "German",
+                "French", "Russian", "Portuguese", "Spanish", "Italian",
+            ]
+        },
+    )
+    instructions: str = Field("", description="预置音色风格指令 / Preset voice style instruction")
+    compute_device: str = Field(
+        "gpu", description="计算设备；GPU 不可用时返回 503 / Compute device; unavailable GPU returns 503",
+        json_schema_extra={"enum": ["gpu", "cpu"]},
+    )
+    accelerate_single_task: bool = Field(
+        True, description="启用质量中性的单任务自动批处理 / Enable quality-neutral single-job auto-batching",
+    )

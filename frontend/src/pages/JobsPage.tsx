@@ -28,6 +28,17 @@ function deviceName(job:Job){
  return device==='cpu'?'CPU':'GPU'
 }
 
+function compactSeconds(value:number){if(value<60)return `${Math.max(1,Math.round(value))}秒`;if(value<3600)return `${Math.max(1,Math.round(value/60))}分钟`;return `${(value/3600).toFixed(1)}小时`}
+function queueEstimate(job:Job){
+ const parts:string[]=[]
+ if(job.state==='queued'&&job.queue?.position)parts.push(`队列 ${job.queue.position}/${job.queue.depth}`)
+ if(job.queue?.waiting_for==='gpu')parts.push('等待 GPU')
+ const range=job.estimate?.remaining_seconds
+ if(range)parts.push(`预计 ${compactSeconds(range.lower)}–${compactSeconds(range.upper)} · ${job.estimate?.confidence==='high'?'高':job.estimate?.confidence==='medium'?'中':'低'}置信度`)
+ else if(job.estimate?.state==='warming_up'&&['queued','running'].includes(job.state))parts.push(`ETA 学习中 ${job.estimate.sample_count}/5`)
+ return parts.join(' · ')
+}
+
 async function copyText(value:string){
  try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(value);return}}catch{}
  const textarea=document.createElement('textarea')
@@ -111,7 +122,18 @@ export function JobsPage({jobs,refresh,openJob,onJobUpdated}:{jobs:Job[];refresh
    const canDelete=job.state!=='running'
    const stopping=job.state==='running'&&(job.stage==='cancelling'||cancellingIds.has(job.id))
    const device=deviceName(job)
-   return <div className={`table-row ${selected.has(job.id)?'selected':''}`} key={job.id}><span className="select-cell"><input type="checkbox" aria-label={`选择任务 ${job.display_name}`} checked={selected.has(job.id)} disabled={!canDelete||busy} title={canDelete?'选择任务':'运行中的任务需先取消'} onChange={()=>toggle(job.id)}/></span><span className="job-name"><b>{job.display_name}</b><small className="job-meta"><span className="job-id" title={`完整任务 ID：${job.id}`}>任务 ID：{job.id.slice(0,12)}…</span><button type="button" className={`copy-job-id ${copiedId===job.id?'copied':''}`} aria-label={`${copiedId===job.id?'已复制':'复制'}完整任务 ID ${job.id}`} title={copiedId===job.id?'已复制完整任务 ID':'复制完整任务 ID'} onClick={()=>void copyJobId(job.id)}>{copiedId===job.id?<Check/>:<Copy/>}</button><span aria-hidden="true">·</span><span>{device}</span><span aria-hidden="true">·</span><i>{elapsed(job,now)}</i></small></span><span className="kind">{job.kind.toUpperCase()}</span><span className={`status ${job.state}`}>{stopping?'正在安全停止':stateLabels[job.state]}</span><span>{new Date(job.created_at).toLocaleString()}</span><span className="elapsed">{elapsed(job,now)}<small>{(job.attempts||0)>1?`${job.attempts} 次尝试`:'实际处理'}</small></span><span>{Math.round(job.progress*100)}% · {stopping?'正在释放计算资源':job.stage.replaceAll('_',' ')}</span><span className="actions">{job.state==='succeeded'?<button title="查看结果" onClick={()=>openJob(job)}><Eye/></button>:null}{['queued','running'].includes(job.state)?<button title={stopping?'正在安全停止':'取消任务'} aria-label={stopping?`正在安全停止 ${job.display_name}`:undefined} disabled={stopping} onClick={()=>void cancelJob(job)}>{stopping?<LoaderCircle className="spin"/>:<XCircle/>}</button>:null}{['failed','cancelled'].includes(job.state)?<button title="重试" onClick={()=>void act(()=>api.retry(job.id))}><RotateCcw/></button>:null}{canDelete?<button title="永久删除" disabled={busy} onClick={()=>void remove([job.id])}><Trash2/></button>:null}</span></div>
+   const estimate=queueEstimate(job)
+   const stageLabel=stopping?'正在释放计算资源':(job.progress_detail?.stage_code||job.stage.replaceAll('_',' '))
+   return <div className={`table-row ${selected.has(job.id)?'selected':''}`} key={job.id}>
+    <span className="select-cell"><input type="checkbox" aria-label={`选择任务 ${job.display_name}`} checked={selected.has(job.id)} disabled={!canDelete||busy} title={canDelete?'选择任务':'运行中的任务需先取消'} onChange={()=>toggle(job.id)}/></span>
+    <span className="job-name"><b>{job.display_name}</b><small className="job-meta"><span className="job-id" title={`完整任务 ID：${job.id}`}>任务 ID：{job.id.slice(0,12)}…</span><button type="button" className={`copy-job-id ${copiedId===job.id?'copied':''}`} aria-label={`${copiedId===job.id?'已复制':'复制'}完整任务 ID ${job.id}`} title={copiedId===job.id?'已复制完整任务 ID':'复制完整任务 ID'} onClick={()=>void copyJobId(job.id)}>{copiedId===job.id?<Check/>:<Copy/>}</button><span aria-hidden="true">·</span><span>{device}</span><span aria-hidden="true">·</span><i>{elapsed(job,now)}</i></small></span>
+    <span className="kind">{job.kind.toUpperCase()}</span>
+    <span className={`status ${job.state}`}>{stopping?'正在安全停止':stateLabels[job.state]}</span>
+    <span>{new Date(job.created_at).toLocaleString()}</span>
+    <span className="elapsed">{elapsed(job,now)}<small>{(job.attempts||0)>1?`${job.attempts} 次尝试`:'实际处理'}</small></span>
+    <span>{Math.round(job.progress*100)}% · {stageLabel}{estimate?<small className="queue-estimate">{estimate}</small>:null}</span>
+    <span className="actions">{job.state==='succeeded'?<button title="查看结果" onClick={()=>openJob(job)}><Eye/></button>:null}{['queued','running'].includes(job.state)?<button title={stopping?'正在安全停止':'取消任务'} aria-label={stopping?`正在安全停止 ${job.display_name}`:undefined} disabled={stopping} onClick={()=>void cancelJob(job)}>{stopping?<LoaderCircle className="spin"/>:<XCircle/>}</button>:null}{['failed','cancelled'].includes(job.state)?<button title="重试" onClick={()=>void act(()=>api.retry(job.id))}><RotateCcw/></button>:null}{canDelete?<button title="永久删除" disabled={busy} onClick={()=>void remove([job.id])}><Trash2/></button>:null}</span>
+   </div>
   })}</div>
  </section>
 }

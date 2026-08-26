@@ -258,6 +258,7 @@ def test_asr_gpu_overlaps_batched_diarization(tmp_path, monkeypatch) -> None:
         job_id="test",
         work_dir=tmp_path / "work",
         progress=lambda *_: None,
+        set_input_duration=lambda *_: None,
     )
     context.work_dir.mkdir()
 
@@ -310,6 +311,7 @@ def test_asr_segment_mode_aligns_multi_speaker_text_internally(tmp_path, monkeyp
         job_id="test",
         work_dir=tmp_path / "work",
         progress=lambda *_: None,
+        set_input_duration=lambda *_: None,
     )
     context.work_dir.mkdir()
 
@@ -320,6 +322,43 @@ def test_asr_segment_mode_aligns_multi_speaker_text_internally(tmp_path, monkeyp
     assert [item["speaker"] for item in result["segments"]] == ["Speaker_0", "Speaker_1"]
     assert [item["text"] for item in result["segments"]] == ["甲说。", "乙答。"]
     assert all(item["words"] == [] for item in result["segments"])
+
+
+def test_asr_auto_detection_outside_aligner_languages_returns_segments(tmp_path, monkeypatch) -> None:
+    local = replace(settings, temp_dir=tmp_path / "tmp", data_dir=tmp_path / "data", mock_mode=False)
+    local.ensure_directories()
+    monkeypatch.setattr(asr_pipeline, "settings", local)
+    monkeypatch.setattr(asr_pipeline, "decode_audio", lambda *_: ([0.0] * 32000, 16000))
+    monkeypatch.setattr(asr_pipeline, "run_vad", lambda *_: [{"start": 0.0, "end": 2.0}])
+    chunks = [{"index": 0, "path": "chunk.wav", "start": 0.0, "end": 2.0}]
+    monkeypatch.setattr(asr_pipeline, "write_chunks", lambda *_: chunks)
+    monkeypatch.setattr(asr_pipeline, "compute_device_name", lambda *_: "CPU")
+    monkeypatch.setattr(asr_pipeline, "write_asr_exports", lambda _job_id, result, _formats: result)
+    operations = []
+
+    def fake_model_stage(_context, operation, _payload, _directory, _device, _progress):
+        operations.append(operation)
+        return {"chunks": [{**chunks[0], "text": "مرحبا بالعالم", "language": "Arabic"}]}
+
+    monkeypatch.setattr(asr_pipeline, "run_model_stage", fake_model_stage)
+    context = SimpleNamespace(
+        job={"request": {
+            "input_path": "input.wav", "compute_device": "cpu", "language": "Auto",
+            "diarize": False, "align": True, "use_voiceprint_library": False,
+        }},
+        job_id="test-auto-arabic",
+        work_dir=tmp_path / "work",
+        progress=lambda *_: None,
+        set_input_duration=lambda *_: None,
+    )
+    context.work_dir.mkdir()
+
+    result = asr_pipeline.process_job(context)
+
+    assert operations == ["transcribe"]
+    assert result["language"] == "Arabic"
+    assert result["timestamp_precision"] == "segment"
+    assert result["segments"][0]["words"] == []
 
 
 def test_tts_gpu_memory_gate_counts_reclaimable_cache() -> None:

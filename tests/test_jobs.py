@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -60,6 +61,61 @@ def test_processing_time_accumulates_across_retries(tmp_path, monkeypatch) -> No
     assert first_total + 2 <= finished["processing_seconds"] <= first_total + 5
 
 
+def test_queue_is_fifo_and_retry_moves_job_to_tail(tmp_path, monkeypatch) -> None:
+    local = local_settings(tmp_path)
+    install_settings(local, monkeypatch)
+    db_module.init_db()
+    first = db_module.create_job("asr", "first", {"input_path": "one"})
+    second = db_module.create_job("asr", "second", {"input_path": "two"})
+    assert db_module.claim_job("asr", "worker")["id"] == first["id"]
+    db_module.finish_job(first["id"], "failed", stage="failed", progress=.2)
+    retried = db_module.retry_job(first["id"])
+    assert retried["queue_seq"] > second["queue_seq"]
+    assert db_module.claim_job("asr", "worker")["id"] == second["id"]
+    db_module.request_cancel(retried["id"])
+    assert db_module.delete_job_record(retried["id"])
+    later = db_module.create_job("asr", "later", {"input_path": "three"})
+    assert later["queue_seq"] > retried["queue_seq"]
+
+
+def test_concurrent_idempotent_creates_return_one_job(tmp_path, monkeypatch) -> None:
+    local = local_settings(tmp_path)
+    install_settings(local, monkeypatch)
+    db_module.init_db()
+
+    def create(index: int):
+        return db_module.create_job_idempotent(
+            "tts", "same", {"text": "same"}, f"job-{index}",
+            "submit_tts", "key-hash", "request-hash",
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(create, range(8)))
+    assert len({job["id"] for job, _ in results}) == 1
+    assert sum(not replayed for _, replayed in results) == 1
+    assert len(db_module.list_jobs()) == 1
+
+
+def test_stage_progress_persists_stable_codes_and_timings(tmp_path, monkeypatch) -> None:
+    local = local_settings(tmp_path)
+    install_settings(local, monkeypatch)
+    db_module.init_db()
+    job = db_module.create_job("tts", "progress", {"text": "one two"})
+    db_module.claim_job("tts", "worker")
+    updated = db_module.update_job_progress(job["id"], .4, "synthesizing_1_of_2", "synthesis", 1, 2)
+    assert updated["stage_code"] == "synthesis"
+    assert updated["stage_current"] == 1 and updated["stage_total"] == 2
+    db_module.update_job_progress(job["id"], .9, "writing_audio", "writing_output")
+    db_module.finish_job(job["id"], "succeeded", stage="completed", progress=1)
+    with sqlite3.connect(local.database_path) as database:
+        rows = database.execute(
+            "SELECT stage_code,finished_at FROM job_stage_timings WHERE job_id=? ORDER BY sequence",
+            (job["id"],),
+        ).fetchall()
+    assert [row[0] for row in rows] == ["synthesis", "writing_output"]
+    assert all(row[1] is not None for row in rows)
+
+
 def test_cancel_request_is_immediate_and_idempotent(tmp_path, monkeypatch) -> None:
     local = local_settings(tmp_path)
     install_settings(local, monkeypatch)
@@ -98,7 +154,7 @@ def test_historical_jobs_backfill_compute_device_names(tmp_path, monkeypatch) ->
     assert db_module.get_job(old_tts["id"])["request"]["compute_device_name"] == "CPU"
     assert db_module.get_job(named["id"])["request"]["compute_device_name"] == "Original GPU"
     with sqlite3.connect(local.database_path) as database:
-        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 4
+        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 5
 
 
 def test_schema_upgrade_reaches_voiceprints_without_a_gpu(tmp_path, monkeypatch) -> None:
@@ -113,7 +169,7 @@ def test_schema_upgrade_reaches_voiceprints_without_a_gpu(tmp_path, monkeypatch)
     db_module.init_db()
 
     with sqlite3.connect(local.database_path) as database:
-        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 4
+        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 5
         assert database.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='voiceprint_people'"
         ).fetchone()[0] == 1

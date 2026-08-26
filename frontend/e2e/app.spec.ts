@@ -1,5 +1,9 @@
 import {expect,test} from '@playwright/test'
 
+function testWave(){const dataBytes=16000*2*5;const wav=Buffer.alloc(44+dataBytes);wav.write('RIFF',0);wav.writeUInt32LE(wav.length-8,4);wav.write('WAVE',8);wav.write('fmt ',12);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(dataBytes,40);for(let index=44;index<wav.length;index+=2)wav.writeInt16LE(Math.round(Math.sin(index/20)*1200),index);return wav}
+
+test.beforeEach(async({page})=>{await page.route('**/api/v1/capabilities',async route=>{const response=await route.fetch();const body=await response.json();body.events={...body.events,sse:false};await route.fulfill({response,json:body})})})
+
 test('local API docs load offline and execute the health probe',async({page})=>{
  const errors:string[]=[]
  const external:string[]=[]
@@ -27,6 +31,10 @@ test('Sandevistan-Audio branding and TTS transport render as local assets',async
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ const now=new Date().toISOString()
+ const job={id:'local-tts-preview',kind:'tts',state:'succeeded',stage:'completed',progress:1,display_name:'本地合成预览',created_at:now,updated_at:now,request:{compute_device:'cpu'},result:{duration:5,format:'wav',speaker:'Vivian',artifacts:[{name:'speech.wav',mime_type:'audio/wav',size_bytes:160044}]}}
+ await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[job]}}))
+ await page.route('**/api/v1/jobs/local-tts-preview/artifacts/speech.wav',route=>route.fulfill({contentType:'audio/wav',body:testWave()}))
  await page.goto('/#tts')
  await expect(page).toHaveTitle('Sandevistan-Audio')
  await expect(page.locator('.brand-type b')).toHaveText('SANDEVISTAN-AUDIO')
@@ -54,9 +62,10 @@ test('TTS draft and clone mode survive background polling',async({page})=>{
  await page.waitForTimeout(4500)
  await expect(text).toHaveValue('')
  await page.getByRole('button',{name:'声音克隆'}).click()
- await expect(page.getByPlaceholder(/必须与参考音频逐字一致/)).toBeVisible()
+ await expect(page.getByRole('region',{name:'一次性克隆参考'})).toBeVisible()
+ await expect(page.getByText('克隆参考自动识别')).toBeVisible()
  await page.waitForTimeout(4500)
- await expect(page.getByPlaceholder(/必须与参考音频逐字一致/)).toBeVisible()
+ await expect(page.getByRole('region',{name:'一次性克隆参考'})).toBeVisible()
  await expect(page.getByRole('button',{name:/生成语音/})).toBeDisabled()
  expect(errors).toEqual([])
 })
@@ -65,6 +74,10 @@ test('ASR playback, seek and transcript search are interactive',async({page})=>{
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ const now=new Date().toISOString()
+ const result={text:'欢迎使用本地转写。',language:'Chinese',duration:5,timestamp_precision:'word_or_character',speakers:[{id:'Speaker_0',label:'Speaker 0'}],segments:[{id:0,start:0,end:5,speaker:'Speaker_0',speaker_label:'Speaker 0',text:'欢迎使用本地转写。',words:[{text:'欢迎',start:0,end:2},{text:'使用',start:2,end:3.5},{text:'本地转写',start:3.5,end:5}]}],waveform:[.2,.6,.3],artifacts:[]}
+ const job={id:'local-asr-preview',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'本地转写预览.wav',created_at:now,updated_at:now,source_url:`data:audio/wav;base64,${testWave().toString('base64')}`,request:{compute_device:'cpu',language:'Chinese',align:true},result}
+ await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[job]}}))
  await page.goto('/#asr')
  await expect(page.getByRole('heading',{name:'音频转写'})).toBeVisible()
  await expect(page.locator('audio')).toHaveCount(1)
@@ -82,6 +95,36 @@ test('ASR playback, seek and transcript search are interactive',async({page})=>{
  await page.locator('.transcript-tools input').fill('不存在的内容')
  await expect(page.locator('.segments article')).toHaveCount(0)
  await expect(page.getByText('没有匹配的转写片段')).toBeVisible()
+ expect(errors).toEqual([])
+})
+
+test('Auto-detected languages outside the aligner list explain segment-only timestamps',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ const now='2026-08-26T12:00:00+00:00'
+ const result={text:'مرحبا بالعالم',language:'Arabic',duration:3,timestamp_precision:'segment',speakers:[{id:'Speaker_0',label:'Speaker 0'}],segments:[{id:0,start:0,end:3,speaker:'Speaker_0',speaker_label:'Speaker 0',text:'مرحبا بالعالم',words:[]}],waveform:[.2,.5,.3],artifacts:[{name:'transcript.srt',path:'/tmp/transcript.srt',mime_type:'application/x-subrip',size_bytes:64}]}
+ const job={id:'asr-auto-arabic',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'auto-arabic.wav',created_at:now,updated_at:now,request:{language:'Auto',align:true,compute_device:'cpu'},result}
+ const languages=['Auto','Chinese','English','Cantonese','French','German','Italian','Japanese','Korean','Portuguese','Russian','Spanish']
+ const wav=Buffer.alloc(44+16000);wav.write('RIFF',0);wav.writeUInt32LE(wav.length-8,4);wav.write('WAVE',8);wav.write('fmt ',12);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(8000,24);wav.writeUInt32LE(16000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(16000,40)
+ await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[job]}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{data:'/tmp/data'}}}))
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,languages,default_language:'Auto',aligner_languages:languages.slice(1)},limits:{max_clone_reference_seconds:15}}}))
+ await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[]}}))
+ await page.route('**/api/v1/jobs/asr-auto-arabic/source',route=>route.fulfill({contentType:'audio/wav',body:wav}))
+ await page.goto('/#asr')
+ await expect(page.getByRole('note')).toContainText('自动检测为 Arabic')
+ await expect(page.getByRole('note')).toContainText('已返回句段级时间戳')
+ await expect(page.getByLabel('时间戳')).toHaveValue('word')
+ await expect(page.getByText('Arabic · 句级时间戳')).toBeVisible()
+ await expect(page.getByRole('button',{name:/查看 .*字词时间戳/})).toHaveCount(0)
+ await expect(page.getByTitle('下载 transcript.srt')).toBeVisible()
+ await page.getByPlaceholder('搜索转写内容').fill('مرحبا')
+ await expect(page.locator('.segments article')).toHaveCount(1)
+ await page.screenshot({path:'/tmp/audio-intel-asr-auto-segment-desktop.png',fullPage:false})
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/audio-intel-asr-auto-segment-mobile.png',fullPage:false})
  expect(errors).toEqual([])
 })
 
@@ -118,7 +161,8 @@ test('ASR and TTS preferences persist independently and reset per page',async({p
  await expect(asrAcceleration).toBeChecked()
  await page.getByRole('button',{name:'查看单任务加速说明'}).hover()
  await expect(page.getByRole('tooltip')).toContainText('不改变模型、精度、分块或说话人算法')
- await page.getByLabel('识别语言').selectOption('English')
+ await expect(page.getByLabel('识别语言').locator('option')).toHaveCount(12)
+ await page.getByLabel('识别语言').selectOption('French')
  await page.getByLabel('说话人数').selectOption('2')
  await page.getByLabel('时间戳').selectOption('segment')
  await page.getByRole('checkbox',{name:'允许使用声纹库识别人员'}).uncheck()
@@ -127,19 +171,20 @@ test('ASR and TTS preferences persist independently and reset per page',async({p
  await page.locator('nav').getByRole('button',{name:/语音合成/}).click()
  const ttsDevice=page.getByLabel('TTS 计算设备')
  const ttsAcceleration=page.getByRole('checkbox',{name:'单任务加速',exact:true})
- await expect(ttsDevice).toHaveValue('cpu')
+ await expect(ttsDevice).toHaveValue('gpu')
  await expect(ttsAcceleration).toBeChecked()
- await expect(page.getByText('CPU · FP32 · SDPA · AUTO BATCH')).toBeVisible()
- await page.getByLabel('语言').selectOption('English')
+ await expect(page.getByText('GPU · BF16 · SDPA · AUTO BATCH')).toBeVisible()
+ await expect(page.getByLabel('输出语种')).toHaveValue('Auto')
+ await page.getByLabel('输出语种').selectOption('English')
  await page.getByLabel('音色').selectOption('Serena')
  await page.locator('.text-editor textarea').fill('这段文本只应保留在当前会话。')
  await ttsAcceleration.uncheck()
- await ttsDevice.selectOption('gpu')
- await expect(page.getByText('GPU · BF16 · SDPA · ADAPTIVE BATCH 1–2')).toBeVisible()
+ await ttsDevice.selectOption('cpu')
+ await expect(page.getByText('CPU · FP32 · SDPA · BATCH 1')).toBeVisible()
  await page.locator('nav').getByRole('button',{name:/转写工作台/}).click()
  await expect(asrDevice).toHaveValue('cpu')
  await expect(asrAcceleration).not.toBeChecked()
- await expect(page.getByLabel('识别语言')).toHaveValue('English')
+ await expect(page.getByLabel('识别语言')).toHaveValue('French')
  await page.reload()
  await expect(page.getByLabel('ASR 计算设备')).toHaveValue('cpu')
  await expect(page.getByRole('checkbox',{name:'单任务加速',exact:true})).not.toBeChecked()
@@ -148,18 +193,18 @@ test('ASR and TTS preferences persist independently and reset per page',async({p
  await expect(page.getByRole('checkbox',{name:'单任务加速',exact:true})).toBeChecked()
  await expect(page.locator('.control-panel .notice')).toContainText('已恢复 ASR 默认配置')
  await page.locator('nav').getByRole('button',{name:/语音合成/}).click()
- await expect(ttsDevice).toHaveValue('gpu')
+ await expect(ttsDevice).toHaveValue('cpu')
  await expect(ttsAcceleration).not.toBeChecked()
  await expect(page.locator('.text-editor textarea')).toHaveValue('这段文本只应保留在当前会话。')
  await page.getByRole('button',{name:'恢复默认配置'}).click()
- await expect(ttsDevice).toHaveValue('cpu')
+ await expect(ttsDevice).toHaveValue('gpu')
  await expect(ttsAcceleration).toBeChecked()
- await expect(page.getByLabel('语言')).toHaveValue('Chinese')
+ await expect(page.getByLabel('输出语种')).toHaveValue('Auto')
  await expect(page.getByLabel('音色')).toHaveValue('Vivian')
  await expect(page.locator('.text-editor textarea')).toHaveValue('这段文本只应保留在当前会话。')
  const stored=await page.evaluate(()=>({asr:JSON.parse(localStorage.getItem('audio-intel:asr-preferences:v1')||'{}'),tts:JSON.parse(localStorage.getItem('audio-intel:tts-preferences:v1')||'{}'),localContent:localStorage.getItem('audio-intel:tts-content:v1'),sessionContent:sessionStorage.getItem('audio-intel:tts-content:v1')}))
  expect(stored.asr).toMatchObject({computeDevice:'gpu',accelerateSingleTask:true})
- expect(stored.tts).toMatchObject({computeDevice:'cpu',accelerateSingleTask:true})
+ expect(stored.tts).toMatchObject({computeDevice:'gpu',accelerateSingleTask:true})
  expect(stored.localContent).toBeNull()
  expect(stored.sessionContent).toContain('这段文本只应保留在当前会话')
  await page.screenshot({path:'/tmp/audio-intel-preferences-desktop.png',fullPage:false})
@@ -264,13 +309,15 @@ test('voiceprint samples support upload and previewed microphone recording',asyn
  await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:people}}))
  await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
  await page.route('**/api/v1/voiceprints/people/voice_recording/samples/upload',async route=>{
+  expect(route.request().headers()['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/)
   submitted.push((await route.request().postDataBuffer())?.toString()||'')
   submission+=1
   await route.fulfill({status:202,json:{sample:{id:`sample_${submission}`,person_id:'voice_recording',state:'pending',language:'Chinese',words:[],created_at:now,updated_at:now,tts_eligible:false,embedding_status:'pending'},job:{id:`voiceprint-job-${submission}`,kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'声纹样本入库 · 录音测试人员',created_at:now,request:{compute_device:'cpu'}}}})
  })
  await page.goto('/#voiceprints')
  await expect(page.getByRole('heading',{name:'声纹库'})).toBeVisible()
- await page.getByLabel('声纹样本语言').selectOption('Chinese')
+ await expect(page.getByLabel('声纹样本语言').locator('option')).toHaveCount(12)
+ await page.getByLabel('声纹样本语言').selectOption('Spanish')
  await page.getByLabel('声纹入库计算设备').selectOption('cpu')
  const fileInput=page.locator('.sample-input-panel input[type="file"]')
  await fileInput.setInputFiles({name:'uploaded-sample.wav',mimeType:'audio/wav',buffer:Buffer.from('RIFF-upload')})
@@ -297,7 +344,7 @@ test('voiceprint samples support upload and previewed microphone recording',asyn
  expect(submitted[1]).toContain('voiceprint-recording-')
  expect(submitted[1]).toContain('.webm')
  expect(submitted[1]).toContain('audio/webm;codecs=opus')
- expect(submitted[1]).toContain('Chinese')
+ expect(submitted[1]).toContain('Spanish')
  expect(submitted[1]).toContain('cpu')
  await page.evaluate(()=>Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>{throw new DOMException('denied','NotAllowedError')}}}))
  await page.getByRole('button',{name:'开始录音'}).click()
@@ -438,7 +485,7 @@ test('first TTS submission appears immediately and survives a stale poll',async(
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  const now='2026-08-25T12:00:00+00:00'
- const queued={id:'1234567890abcdef1234567890abcdef',kind:'tts',state:'queued',stage:'queued',progress:0,display_name:'首次合成即时入列',created_at:now,updated_at:now,processing_seconds:0,processing_as_of:now,attempts:0,compute_device:'cpu',compute_device_name:'CPU',request:{compute_device:'cpu',compute_device_name:'CPU'}}
+ const queued={id:'1234567890abcdef1234567890abcdef',kind:'tts',state:'queued',stage:'queued',progress:0,display_name:'首次合成即时入列',created_at:now,updated_at:now,processing_seconds:0,processing_as_of:now,attempts:0,compute_device:'cpu',compute_device_name:'CPU',request:{compute_device:'cpu',compute_device_name:'CPU'},queue:{scope:'tts',position:2,depth:4,capacity:20,waiting_for:'worker'},estimate:{state:'ready',confidence:'low',sample_count:8,remaining_seconds:{lower:30,upper:90}}}
  const running={...queued,state:'running',stage:'synthesizing',progress:.25,started_at:now,attempts:1}
  let jobsRequests=0
  let submitted=false
@@ -452,7 +499,7 @@ test('first TTS submission appears immediately and survives a stale poll',async(
   if(!submitted){markStaleStarted();await staleGate;return route.fulfill({json:{items:[]}})}
   return route.fulfill({json:{items:[running]}})
  })
- await page.route('**/api/v1/tts/jobs',route=>{submitted=true;return route.fulfill({status:202,json:queued})})
+ await page.route('**/api/v1/tts/jobs',route=>{expect(route.request().headers()['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);submitted=true;return route.fulfill({status:202,json:queued})})
  await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
  await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{gpu:{name:'Test GPU',memory_used_mib:0,memory_total_mib:4096,utilization:0}},models:[],storage:{data:'/tmp/data'}}}))
  await page.goto('/#tts')
@@ -464,6 +511,8 @@ test('first TTS submission appears immediately and survives a stale poll',async(
  await expect(queueItem).toBeVisible({timeout:1000})
  await expect(queueItem).toBeInViewport()
  await expect(queueItem).toContainText('等待处理')
+ await expect(queueItem).toContainText('队列第 2 / 4')
+ await expect(queueItem).toContainText('预计剩余 30 秒–2 分钟')
  releaseStale()
  await page.waitForTimeout(150)
  await expect(queueItem).toBeVisible()
@@ -485,7 +534,7 @@ test('first ASR submission appears immediately from the accepted job response',a
  let releaseList:()=>void=()=>{}
  const listGate=new Promise<void>(resolve=>{releaseList=resolve})
  await page.route('**/api/v1/jobs',async route=>{if(submitted)await listGate;return route.fulfill({json:{items:submitted?[queued]:[]}})})
- await page.route('**/api/v1/asr/jobs',route=>{submitted=true;return route.fulfill({status:202,json:queued})})
+ await page.route('**/api/v1/asr/jobs',route=>{expect(route.request().headers()['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);submitted=true;return route.fulfill({status:202,json:queued})})
  await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{gpu:{name:'Test GPU',memory_used_mib:0,memory_total_mib:4096,utilization:0}},models:[],storage:{data:'/tmp/data'}}}))
  await page.goto('/#asr')
  await page.locator('input[type="file"]').setInputFiles({name:'first-submit.wav',mimeType:'audio/wav',buffer:Buffer.from('RIFF-test')})
@@ -573,6 +622,80 @@ test('ASR speaker limit, filter, rename and voiceprint segment enrollment are in
  expect(errors).toEqual([])
 })
 
+test('one-off TTS clone references are auto-analyzed, editable and recoverable',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.addInitScript(()=>{
+  Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>({getTracks:()=>[{stop:()=>undefined}]})}})
+  class FakeMediaRecorder{
+   static isTypeSupported(type:string){return type==='audio/webm;codecs=opus'}
+   state:RecordingState='inactive';mimeType='audio/webm;codecs=opus'
+   ondataavailable:((event:BlobEvent)=>void)|null=null;onstop:((event:Event)=>void)|null=null;onerror:((event:Event)=>void)|null=null
+   constructor(_stream:MediaStream,_options?:MediaRecorderOptions){}
+   start(){this.state='recording'}
+   stop(){this.state='inactive';queueMicrotask(()=>{this.ondataavailable?.({data:new Blob(['tts-clone-recording'],{type:this.mimeType})} as BlobEvent);this.onstop?.(new Event('stop'))})}
+   pause(){};resume(){};requestData(){};addEventListener(){};removeEventListener(){};dispatchEvent(){return true}
+   stream={} as MediaStream;audioBitsPerSecond=0;videoBitsPerSecond=0
+  }
+  Object.defineProperty(window,'MediaRecorder',{configurable:true,value:FakeMediaRecorder})
+ })
+ const now='2026-08-26T12:00:00+00:00'
+ let analysisCount=0
+ let analysisJob:Record<string,unknown>|null=null
+ let analysisBodies:string[]=[]
+ let ttsBody=''
+ await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:analysisJob?[analysisJob]:[]}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{gpu:{available:true}},models:[],storage:{data:'/tmp/data'}}}))
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,aligner_languages:['Chinese','English']},tts:{languages:['Auto','Chinese','English'],default_language:'Auto',preset_speaker_native_languages:{Vivian:'Chinese'}},limits:{max_clone_reference_seconds:15}}}))
+ await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[]}}))
+ await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
+ await page.route('**/api/v1/jobs/*/artifacts/reference.wav',route=>route.fulfill({contentType:'audio/wav',body:Buffer.from('RIFF-reference')}))
+ await page.route('**/api/v1/tts/clone-references',async route=>{
+  expect(route.request().headers()['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/)
+  analysisCount+=1
+  analysisBodies.push((await route.request().postDataBuffer())?.toString()||'')
+  const id=`reference-analysis-${analysisCount}`
+  const queued={id,kind:'asr',state:'queued',stage:'queued',progress:0,display_name:`TTS 克隆参考分析 · reference-${analysisCount}.wav`,created_at:now,updated_at:now,request:{purpose:'tts_clone_reference',compute_device:'gpu',accelerate_single_task:true}}
+  await route.fulfill({status:202,json:queued})
+  analysisJob={...queued,state:'succeeded',stage:'completed',progress:1,result:{text:analysisCount===1?'自动识别的上传文本。':'自动识别的录音文本。',language:'Chinese',duration:6,artifacts:[{name:'reference.wav',media_type:'audio/wav',size:1200}]}}
+ })
+ await page.route('**/api/v1/tts/jobs',async route=>{expect(route.request().headers()['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);ttsBody=(await route.request().postDataBuffer())?.toString()||'';await route.fulfill({status:202,json:{id:'tts-inline',kind:'tts',state:'queued',stage:'queued',progress:0,display_name:'一次性克隆',created_at:now,updated_at:now,request:{compute_device:'gpu'}}})})
+ await page.goto('/#tts')
+ await page.evaluate(()=>{localStorage.removeItem('audio-intel:tts-preferences:v1');sessionStorage.removeItem('audio-intel:tts-content:v1')})
+ await page.reload()
+ await page.getByRole('button',{name:'声音克隆'}).click()
+ await page.locator('.clone-reference-panel input[type="file"]').setInputFiles({name:'reference-upload.wav',mimeType:'audio/wav',buffer:Buffer.from('RIFF-reference')})
+ await expect(page.getByText('参考识别完成')).toBeVisible({timeout:8000})
+ await expect(page.getByLabel('自动识别文本（可修正）')).toHaveValue('自动识别的上传文本。')
+ expect(analysisBodies[0]).toContain('reference-upload.wav')
+ expect(analysisBodies[0]).toContain('gpu')
+ expect(analysisBodies[0]).toContain('true')
+ await page.getByRole('tab',{name:'麦克风录音'}).click()
+ await page.getByRole('button',{name:'开始录音'}).click()
+ await page.getByRole('button',{name:'停止并试听'}).click()
+ await expect(page.getByText('参考录音完成')).toBeVisible()
+ await page.getByRole('button',{name:'使用并自动分析'}).click()
+ await expect(page.getByLabel('自动识别文本（可修正）')).toHaveValue('自动识别的录音文本。',{timeout:8000})
+ expect(analysisBodies[1]).toContain('voiceprint-recording-')
+ expect(analysisBodies[1]).toContain('.webm')
+ await page.getByLabel('自动识别文本（可修正）').fill('人工核对后的准确文本。')
+ await page.getByLabel('参考音频语种').selectOption('Chinese')
+ await page.locator('.text-editor textarea').fill('这是需要生成的内容。')
+ await page.getByRole('button',{name:'生成语音'}).click()
+ expect(ttsBody).toContain('reference_job_id')
+ expect(ttsBody).toContain('reference-analysis-2')
+ expect(ttsBody).toContain('人工核对后的准确文本。')
+ expect(ttsBody).toContain('reference_language')
+ expect(ttsBody).not.toContain('reference_audio')
+ const saved=await page.evaluate(()=>sessionStorage.getItem('audio-intel:tts-content:v1'))
+ expect(saved).toContain('reference-analysis-2')
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/audio-intel-clone-reference-mobile.png',fullPage:false})
+ expect(errors).toEqual([])
+})
+
 test('voiceprint library sample can be explicitly selected for TTS clone',async({page})=>{
  const now='2026-08-25T12:00:00+00:00'
  const people=[{id:'voice_nick',name:'尼克杨',sample_count:1,created_at:now,updated_at:now,samples:[{id:'sample_long',person_id:'voice_nick',state:'ready',language:'Chinese',transcript:'这是一条超过十五秒的准确参考文本。',words:[],duration:20,created_at:now,updated_at:now,tts_eligible:true,embedding_status:'ready',audio_url:'/sample.wav'}]}]
@@ -588,6 +711,7 @@ test('voiceprint library sample can be explicitly selected for TTS clone',async(
  await page.getByRole('button',{name:'声纹库',exact:true}).click()
  await expect(page.getByLabel('TTS 声纹样本')).toHaveValue('sample_long')
  await expect(page.getByText(/精确截断至 15 秒以内/)).toBeVisible()
+ await page.getByLabel('TTS 计算设备').selectOption('cpu')
  await page.getByRole('button',{name:'生成语音'}).click()
  expect(submitted.body).toContain('voiceprint')
  expect(submitted.body).toContain('sample_long')

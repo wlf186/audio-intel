@@ -222,7 +222,10 @@ def _process_loaded(
     fallbacks: list[dict[str, int]] = []
     index = 0
     while index < len(chunks):
-        context.progress(0.15 + 0.72 * index / max(len(chunks), 1), f"synthesizing_{index + 1}_of_{len(chunks)}")
+        context.progress(
+            0.15 + 0.72 * index / max(len(chunks), 1),
+            f"synthesizing_{index + 1}_of_{len(chunks)}", index, len(chunks),
+        )
         batch_size = min(configured_batch_size, len(chunks) - index)
         if (
             not acceleration["requested"] and compute_device == "gpu" and batch_size > 1
@@ -276,10 +279,13 @@ def _process_loaded(
     mime = {"wav": "audio/wav", "flac": "audio/flac", "mp3": "audio/mpeg"}[output_format]
     return {
         "duration": round(len(merged) / rate, 3), "sample_rate": rate, "format": output_format,
+        "language": request.get("language") or "Auto",
         "voice_mode": request["voice_mode"],
         "speaker": request.get("speaker") or request.get("voiceprint_person_name") or request.get("voice_profile_id"),
         "voiceprint_person_id": request.get("voiceprint_person_id"),
         "voiceprint_sample_id": request.get("voiceprint_sample_id"),
+        "reference_job_id": request.get("reference_job_id"),
+        "reference_language": request.get("reference_language"),
         "reference_duration_original": request.get("reference_duration_original"),
         "reference_duration_used": request.get("reference_duration_used"),
         "reference_truncated": bool(request.get("reference_truncated")),

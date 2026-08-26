@@ -4,6 +4,7 @@ import math
 import os
 import tempfile
 import time
+import uuid
 import wave
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,7 @@ def main() -> None:
         with source.open("rb") as audio:
             asr_response = client.post(
                 "/api/v1/asr/jobs",
+                headers={"Idempotency-Key": str(uuid.uuid4())},
                 files={"file": (source.name, audio, "audio/wav")},
                 data={
                     "language": "Chinese", "speaker_count": "2", "diarize": "true",
@@ -65,6 +67,7 @@ def main() -> None:
         asr_response.raise_for_status()
         tts_response = client.post(
             "/api/v1/tts/jobs",
+            headers={"Idempotency-Key": str(uuid.uuid4())},
             data={
                 "text": "本地语音合成冒烟测试。", "language": "Chinese", "voice_mode": "preset",
                 "speaker": "Vivian", "response_format": "wav", "compute_device": "cpu",

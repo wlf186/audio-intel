@@ -31,6 +31,14 @@ class Settings:
     )
     max_upload_bytes: int = int(os.getenv("AUDIO_INTEL_MAX_UPLOAD_BYTES", str(4 * 1024**3)))
     max_tts_chars: int = int(os.getenv("AUDIO_INTEL_MAX_TTS_CHARS", "50000"))
+    max_queued_asr: int = int(os.getenv("AUDIO_INTEL_MAX_QUEUED_ASR", "20"))
+    max_queued_tts: int = int(os.getenv("AUDIO_INTEL_MAX_QUEUED_TTS", "20"))
+    max_concurrent_submissions: int = int(
+        os.getenv("AUDIO_INTEL_MAX_CONCURRENT_SUBMISSIONS", "2")
+    )
+    min_free_disk_bytes: int = int(
+        os.getenv("AUDIO_INTEL_MIN_FREE_DISK_BYTES", str(5 * 1024**3))
+    )
     worker_poll_seconds: float = float(os.getenv("AUDIO_INTEL_WORKER_POLL_SECONDS", "1"))
     cancel_grace_seconds: float = float(os.getenv("AUDIO_INTEL_CANCEL_GRACE_SECONDS", "1"))
     mock_mode: bool = os.getenv("AUDIO_INTEL_MOCK_MODE", "0").lower() in {"1", "true", "yes"}

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import mimetypes
 import os
+import re
 import secrets
 import shutil
 import sqlite3
@@ -24,9 +26,10 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from . import __version__
 from .config import settings
-from .gpu import COMPUTE_DEVICES, gpu_snapshot
+from .gpu import COMPUTE_DEVICES, cached_gpu_snapshot, gpu_snapshot
 from .db import (
     create_job,
+    create_job_idempotent,
     create_voice,
     create_voiceprint_person,
     create_voiceprint_sample,
@@ -35,6 +38,7 @@ from .db import (
     delete_voiceprint_person_record,
     delete_voiceprint_sample_record,
     find_voiceprint_person,
+    find_idempotent_job,
     get_job,
     get_voice,
     get_voiceprint_person,
@@ -52,30 +56,51 @@ from .db import (
     update_job,
     update_voiceprint_sample,
     utcnow,
+    IdempotencyConflict,
 )
+from .admission import AdmissionController
+from .events import SnapshotHub
+from .observability import estimate_for_job, queue_context, queue_for_job, stage_details
 from .utils import safe_filename
 from .purge import purge_jobs
 from starlette.concurrency import run_in_threadpool
 from .api_docs import (
-    API_DESCRIPTION, AUTH_RESPONSES, BINARY_SCHEMA, CONFLICT_RESPONSE,
-    NOT_FOUND_RESPONSE, OPENAPI_TAGS, SERVICE_RESPONSE, TOO_LARGE_RESPONSE,
-    VALIDATION_RESPONSE, bilingual, problem_response,
+    ADMISSION_RESPONSE, API_DESCRIPTION, AUTH_RESPONSES, BINARY_SCHEMA, CONFLICT_RESPONSE,
+    IDEMPOTENCY_RESPONSES, conditional_job_responses, idempotency_replay_response,
+    NOT_FOUND_RESPONSE, OPENAPI_TAGS, OPTIONAL_IDEMPOTENCY_RESPONSES, SERVICE_RESPONSE, TOO_LARGE_RESPONSE,
+    VALIDATION_RESPONSE, bilingual, problem_response, sse_response,
 )
 from .api_models import (
-    AuthSessionResponse, BatchDeleteResponse, CapabilitiesResponse, EventSnapshot,
-    HealthResponse, JobListResponse, JobResponse, JobResultResponse, OpenAIModelList,
-    OpenAITranscription, OpenAIVerboseTranscription, ProblemDetail, SystemResponse,
+    AdmissionProblemDetail, AuthSessionResponse, BatchDeleteResponse, CapabilitiesResponse,
+    EventJobResponse, EventSnapshot,
+    HealthResponse, JobListResponse, JobResponse, JobResultResponse, OpenAIModelList, QueueResponse,
+    OpenAISpeechRequest, OpenAITranscription, OpenAIVerboseTranscription, ProblemDetail, SystemResponse,
     VoiceListResponse, VoiceProfileResponse, VoiceprintPeopleResponse,
     VoiceprintPersonResponse, VoiceprintSamplesResponse, VoiceprintUploadResponse,
 )
 
 
 PRESET_SPEAKERS = ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee"]
+PRESET_SPEAKER_NATIVE_LANGUAGES = {
+    "Vivian": "Chinese", "Serena": "Chinese", "Uncle_Fu": "Chinese",
+    "Dylan": "Chinese", "Eric": "Chinese", "Ryan": "English", "Aiden": "English",
+    "Ono_Anna": "Japanese", "Sohee": "Korean",
+}
+TTS_LANGUAGES = [
+    "Auto", "Chinese", "English", "Japanese", "Korean", "German",
+    "French", "Russian", "Portuguese", "Spanish", "Italian",
+]
+TTS_LANGUAGE_BY_KEY = {language.lower(): language for language in TTS_LANGUAGES}
 SINGLE_TASK_ACCELERATION_DEFAULT = True
 ALIGNER_LANGUAGES = [
     "Chinese", "English", "Cantonese", "French", "German", "Italian",
     "Japanese", "Korean", "Portuguese", "Russian", "Spanish",
 ]
+ASR_LANGUAGES = ["Auto", *ALIGNER_LANGUAGES]
+ASR_LANGUAGE_BY_KEY = {language.lower(): language for language in ASR_LANGUAGES}
+REFERENCE_LANGUAGE_BY_KEY = {
+    language.lower(): language for language in ASR_LANGUAGES
+}
 SERVICE_TAG = "Service / 服务"
 AUTH_TAG = "Authentication / 鉴权"
 ASR_TAG = "ASR / 语音识别"
@@ -83,6 +108,39 @@ TTS_TAG = "TTS / 语音合成"
 VOICEPRINT_TAG = "Voiceprints / 声纹库"
 JOB_TAG = "Jobs / 任务"
 OPENAI_TAG = "OpenAI compatibility / OpenAI 兼容"
+IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._~:+-]{8,128}$")
+IDEMPOTENCY_KEY_DESCRIPTION = (
+    "必填；8–128 个 A–Z、a–z、0–9 或 ._~:+- 字符；同一次逻辑提交重试必须复用 / "
+    "Required; 8–128 A–Z, a–z, 0–9, or ._~:+- characters; reuse for retries of the same logical submission"
+)
+OPTIONAL_IDEMPOTENCY_KEY_DESCRIPTION = (
+    "可选；若发送，须为 8–128 个 A–Z、a–z、0–9 或 ._~:+- 字符且同一次重试复用 / "
+    "Optional; when sent, use 8–128 A–Z, a–z, 0–9, or ._~:+- characters and reuse it for retries"
+)
+IDEMPOTENCY_KEY_SCHEMA = {
+    "minLength": 8, "maxLength": 128,
+    "pattern": r"^[A-Za-z0-9._~:+-]{8,128}$",
+}
+EVENT_SNAPSHOT_JOB_LIMIT = 100
+EVENT_SNAPSHOT_POLL_SECONDS = 0.5
+EVENT_HEARTBEAT_SECONDS = 15
+ASYNC_SUBMISSION_ROUTES = {
+    "/api/v1/asr/jobs": ("asr", "submit_asr", True, True),
+    "/api/v1/tts/clone-references": ("asr", "analyze_tts_clone_reference", True, True),
+    "/api/v1/tts/jobs": ("tts", "submit_tts", False, True),
+    "/v1/audio/transcriptions": ("asr", "openai_transcription", True, False),
+    "/v1/audio/speech": ("tts", "openai_speech", False, False),
+}
+
+
+class ApiProblem(HTTPException):
+    def __init__(
+        self, status_code: int, code: str, detail: str,
+        headers: dict[str, str] | None = None, extras: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(status_code=status_code, detail=detail, headers=headers)
+        self.code = code
+        self.extras = extras or {}
 
 
 class BatchDeleteRequest(BaseModel):
@@ -134,6 +192,37 @@ def _session_authenticated(request: Request) -> bool:
     return bool(token and token in request.app.state.auth_sessions)
 
 
+def _admission_authenticated(request: Request) -> bool:
+    if not settings.api_key:
+        return True
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() == "bearer" and token and hmac.compare_digest(token, settings.api_key):
+        return True
+    return _session_authenticated(request) and _same_origin(request)
+
+
+def _submission_route(path: str) -> tuple[str, str, bool, bool] | None:
+    route = ASYNC_SUBMISSION_ROUTES.get(path)
+    if route is not None:
+        return route
+    if re.fullmatch(r"/api/v1/voiceprints/people/[^/]+/samples/upload", path):
+        return "asr", "upload_voiceprint_sample", True, True
+    return None
+
+
+def _problem_response(exc: ApiProblem) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "type": "about:blank", "title": exc.detail, "status": exc.status_code,
+            "code": exc.code, "detail": exc.detail, **exc.extras,
+        },
+        headers=exc.headers,
+        media_type="application/problem+json",
+    )
+
+
 def require_api_key(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Security(bearer_auth),
@@ -152,26 +241,84 @@ def require_api_key(
     raise HTTPException(status_code=401, detail="Invalid or missing API key", headers={"WWW-Authenticate": "Bearer"})
 
 
-async def save_upload(upload: UploadFile, target: Path, limit: int | None = None) -> int:
+async def save_upload(upload: UploadFile, target: Path, limit: int | None = None) -> tuple[int, str]:
     target.parent.mkdir(parents=True, exist_ok=True)
     partial = target.with_suffix(target.suffix + ".partial")
-    size = 0
-    try:
+    def persist() -> tuple[int, str]:
+        size = 0
+        digest = hashlib.sha256()
+        upload.file.seek(0)
         with partial.open("wb") as output:
-            while chunk := await upload.read(1024 * 1024):
+            while chunk := upload.file.read(4 * 1024 * 1024):
                 size += len(chunk)
                 if limit is not None and size > limit:
-                    raise HTTPException(status_code=413, detail="Uploaded file is too large")
+                    raise ApiProblem(413, "upload_too_large", "Uploaded file is too large")
+                digest.update(chunk)
                 output.write(chunk)
         os.replace(partial, target)
+        return size, digest.hexdigest()
+    try:
+        return await run_in_threadpool(persist)
     finally:
         partial.unlink(missing_ok=True)
         await upload.close()
-    return size
 
 
-def public_job(job: dict[str, Any]) -> dict[str, Any]:
-    result = {key: value for key, value in job.items() if key not in {"request"}}
+def validate_idempotency_key(value: str | None) -> str:
+    if value is None:
+        raise ApiProblem(400, "idempotency_key_required", "Idempotency-Key is required")
+    key = value.strip()
+    if not IDEMPOTENCY_KEY_PATTERN.fullmatch(key):
+        raise ApiProblem(
+            400, "invalid_idempotency_key",
+            "Idempotency-Key must contain 8-128 HTTP token characters",
+        )
+    return key
+
+
+def idempotency_key_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def request_fingerprint(
+    request_data: dict[str, Any], file_digest: str | None = None,
+    ignored_fields: set[str] | None = None,
+) -> str:
+    ignored = {"input_path", "reference_audio_path", *(ignored_fields or set())}
+    canonical = {key: value for key, value in request_data.items() if key not in ignored}
+    canonical["file_sha256"] = file_digest
+    encoded = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def idempotent_job(
+    kind: str,
+    display_name: str,
+    request_data: dict[str, Any],
+    job_id: str,
+    operation: str,
+    idempotency_key: str,
+    file_digest: str | None = None,
+) -> tuple[dict[str, Any], bool]:
+    try:
+        return create_job_idempotent(
+            kind, display_name, request_data, job_id, operation,
+            idempotency_key_hash(idempotency_key), request_fingerprint(
+                request_data, file_digest,
+                {"voiceprint_sample_id"} if operation == "upload_voiceprint_sample" else None,
+            ),
+        )
+    except IdempotencyConflict as exc:
+        shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
+        raise ApiProblem(409, "idempotency_key_conflict", str(exc)) from exc
+
+
+def public_job(job: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
+    internal = {
+        "request", "queue_seq", "stage_code", "stage_current", "stage_total",
+        "input_duration_seconds",
+    }
+    result = {key: value for key, value in job.items() if key not in internal}
     as_of = utcnow()
     processing_seconds = float(job.get("processing_seconds") or 0)
     if job.get("state") == "running" and job.get("started_at"):
@@ -197,7 +344,18 @@ def public_job(job: dict[str, Any]) -> dict[str, Any]:
         result["source_url"] = f"/api/v1/jobs/{job['id']}/source"
     if job.get("state") == "succeeded":
         result["result_url"] = f"/api/v1/jobs/{job['id']}/result"
+    context = context or queue_context(include_history=job.get("state") in {"queued", "running"})
+    capacities = {"asr": settings.max_queued_asr, "tts": settings.max_queued_tts}
+    result["queue"] = queue_for_job(job, context, capacities)
+    result["progress_detail"] = stage_details(job)
+    result["estimate"] = estimate_for_job(job, context)
+    result["poll_after_seconds"] = 3 if job.get("state") == "queued" else 1 if job.get("state") == "running" else None
     return result
+
+
+def public_jobs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    context = queue_context(include_history=any(item.get("state") in {"queued", "running"} for item in items))
+    return [public_job(item, context) for item in items]
 
 
 def public_voiceprint_sample(sample: dict[str, Any]) -> dict[str, Any]:
@@ -242,10 +400,43 @@ def validate_compute_device(value: str) -> tuple[str, str]:
         raise HTTPException(status_code=422, detail="compute_device must be cpu or gpu")
     if normalized == "cpu":
         return normalized, "CPU"
-    snapshot = gpu_snapshot(0)
+    snapshot = cached_gpu_snapshot(0, probe=gpu_snapshot)
     if snapshot is None:
         raise HTTPException(status_code=503, detail="GPU compute is unavailable; select CPU or check NVIDIA runtime")
     return normalized, str(snapshot["name"])
+
+
+def validate_tts_language(value: Any, field: str = "language") -> str:
+    normalized = str(value or "").strip().lower()
+    language = TTS_LANGUAGE_BY_KEY.get(normalized)
+    if language is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{field} must be one of {', '.join(TTS_LANGUAGES)}",
+        )
+    return language
+
+
+def validate_asr_language(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    language = ASR_LANGUAGE_BY_KEY.get(normalized)
+    if language is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"language must be one of {', '.join(ASR_LANGUAGES)}",
+        )
+    return language
+
+
+def validate_reference_language(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    language = REFERENCE_LANGUAGE_BY_KEY.get(normalized)
+    if language is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"reference_language must be one of {', '.join(REFERENCE_LANGUAGE_BY_KEY.values())}",
+        )
+    return language
 
 
 def compute_capabilities(default: str) -> list[dict[str, Any]]:
@@ -273,6 +464,67 @@ def create_app() -> FastAPI:
         openapi_tags=OPENAPI_TAGS,
     )
     app.state.auth_sessions = set()
+    app.state.admission = AdmissionController(
+        settings.data_dir,
+        {"asr": settings.max_queued_asr, "tts": settings.max_queued_tts},
+        settings.max_concurrent_submissions,
+        settings.min_free_disk_bytes,
+    )
+    app.state.event_hub = SnapshotHub(lambda: {
+        "jobs": public_jobs(list_jobs(limit=EVENT_SNAPSHOT_JOB_LIMIT)),
+        "workers": list_workers(),
+    }, poll_seconds=EVENT_SNAPSHOT_POLL_SECONDS)
+
+    @app.middleware("http")
+    async def submission_admission(request: Request, call_next: Any) -> Response:
+        route = _submission_route(request.url.path) if request.method == "POST" else None
+        if route is None or not _admission_authenticated(request):
+            return await call_next(request)
+        kind, operation, has_large_upload, key_required = route
+        raw_key = request.headers.get("idempotency-key")
+        try:
+            key = validate_idempotency_key(raw_key) if key_required or raw_key is not None else None
+        except ApiProblem as exc:
+            return _problem_response(exc)
+        replay = await run_in_threadpool(
+            find_idempotent_job, operation, idempotency_key_hash(key),
+        ) if key is not None else None
+        reserved = False
+        started = time.monotonic()
+        if replay is None:
+            raw_length = request.headers.get("content-length")
+            try:
+                expected_bytes = max(0, int(raw_length)) if raw_length is not None else (
+                    settings.max_upload_bytes if has_large_upload else 0
+                )
+            except ValueError:
+                expected_bytes = settings.max_upload_bytes if has_large_upload else 0
+            decision = await app.state.admission.reserve(kind, expected_bytes)
+            if not decision.accepted:
+                return _problem_response(ApiProblem(
+                    429, decision.code or "queue_capacity_reached",
+                    decision.detail or "Submission capacity is unavailable",
+                    headers={"Retry-After": str(decision.retry_after_seconds)},
+                    extras={
+                        "retry_after_seconds": decision.retry_after_seconds,
+                        "queue": {
+                            "kind": kind, "depth": decision.queue_depth,
+                            "capacity": decision.queue_capacity,
+                        },
+                        "storage": {
+                            "free_bytes": decision.free_bytes,
+                            "minimum_free_bytes": decision.minimum_free_bytes,
+                        },
+                    },
+                ))
+            reserved = True
+        try:
+            response = await call_next(request)
+        finally:
+            if reserved:
+                await app.state.admission.release(kind)
+        response.headers["Server-Timing"] = f"total;dur={(time.monotonic() - started) * 1000:.1f}"
+        return response
     docs_assets = settings.frontend_dir / "docs-assets"
     app.mount("/docs-assets", StaticFiles(directory=docs_assets, check_dir=False), name="docs-assets")
 
@@ -311,6 +563,8 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(HTTPException)
     async def http_problem(_: Request, exc: HTTPException) -> JSONResponse:
+        if isinstance(exc, ApiProblem):
+            return _problem_response(exc)
         detail = exc.detail if isinstance(exc.detail, str) else json.dumps(exc.detail, ensure_ascii=False)
         return JSONResponse(
             status_code=exc.status_code,
@@ -419,6 +673,8 @@ def create_app() -> FastAPI:
                 "diarization": "CAM++ single-active-speaker",
                 "speaker_count": {"min": 1, "max": 15, "default": "auto"},
                 "voiceprint_library": True,
+                "languages": ASR_LANGUAGES,
+                "default_language": "Auto",
                 "timestamp_precisions": ["segment", "word_or_character"],
                 "aligner_languages": ALIGNER_LANGUAGES,
                 "exports": ["json", "srt", "vtt", "txt"],
@@ -429,14 +685,67 @@ def create_app() -> FastAPI:
                 "models": ["Qwen3-TTS-12Hz-0.6B-Base", "Qwen3-TTS-12Hz-0.6B-CustomVoice"],
                 "voice_modes": ["preset", "profile", "inline_clone", "voiceprint"],
                 "preset_speakers": PRESET_SPEAKERS,
+                "preset_speaker_native_languages": PRESET_SPEAKER_NATIVE_LANGUAGES,
+                "languages": TTS_LANGUAGES,
+                "default_language": "Auto",
                 "formats": ["wav", "flac", "mp3"],
-                "compute_devices": compute_capabilities("cpu"),
+                "compute_devices": compute_capabilities("gpu"),
                 "single_task_acceleration": {"supported": True, "default": SINGLE_TASK_ACCELERATION_DEFAULT},
             },
             "limits": {
                 "max_upload_bytes": settings.max_upload_bytes,
                 "max_tts_chars": settings.max_tts_chars,
                 "max_clone_reference_seconds": 15,
+                "max_queued_asr": settings.max_queued_asr,
+                "max_queued_tts": settings.max_queued_tts,
+                "max_concurrent_submissions": settings.max_concurrent_submissions,
+                "min_free_disk_bytes": settings.min_free_disk_bytes,
+            },
+            "events": {
+                "sse": True, "global_url": "/api/v1/events",
+                "per_job_url_template": "/api/v1/jobs/{job_id}/events",
+                "heartbeat_seconds": EVENT_HEARTBEAT_SECONDS, "history_replay": False,
+            },
+        }
+
+    @app.get(
+        "/api/v1/queue", response_model=QueueResponse, response_model_exclude_unset=True,
+        tags=[JOB_TAG], summary="读取队列容量 / Get queue capacity",
+        description=bilingual(
+            "返回本机 ASR/TTS 排队、准入预留和磁盘余量。结果仅用于预检，提交接口的原子准入结果具有最终效力。",
+            "Return local ASR/TTS queue, admission reservations, and disk headroom. This is advisory; POST admission remains authoritative.",
+        ),
+        operation_id="getQueue", responses={**AUTH_RESPONSES},
+    )
+    async def queue_status(_: None = Depends(require_api_key)) -> QueueResponse:
+        snapshot = await app.state.admission.snapshot()
+        context = await run_in_threadpool(queue_context, snapshot["reserved"], False)
+        items = []
+        for kind in ("asr", "tts"):
+            depth = snapshot["counts"][kind]
+            reserved = snapshot["reserved"][kind]
+            capacity = snapshot["capacities"][kind]
+            accepting = (
+                depth + reserved < capacity
+                and snapshot["active"] < snapshot["max_concurrent"]
+                and snapshot["free_bytes"] >= snapshot["minimum_free_bytes"]
+            )
+            items.append({
+                "kind": kind, "queued": depth,
+                "running": sum(
+                    1 for job in context["jobs"]
+                    if job["kind"] == kind and job["state"] == "running"
+                ),
+                "reserved": reserved, "capacity": capacity, "accepting": accepting,
+                "retry_after_seconds": None if accepting else 30,
+            })
+        return {
+            "items": items,
+            "active_submissions": snapshot["active"],
+            "max_concurrent_submissions": snapshot["max_concurrent"],
+            "storage": {
+                "free_bytes": snapshot["free_bytes"],
+                "minimum_free_bytes": snapshot["minimum_free_bytes"],
             },
         }
 
@@ -449,11 +758,12 @@ def create_app() -> FastAPI:
             "Upload audio and immediately receive a queued job. Poll `status_url`, then read `result_url`. An unavailable GPU returns 503 and never falls back silently.",
         ),
         operation_id="submitAsrJob",
-        responses={**AUTH_RESPONSES, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
     )
     async def submit_asr(
+        response: Response,
         file: UploadFile = File(..., description="待转写音频或视频 / Audio or video to transcribe"),
-        language: str = Form("Auto", description="识别语言；Auto 自动检测 / Recognition language; Auto detects"),
+        language: str = Form("Auto", description="识别语言；Auto 可检测其他语种，但只有公开清单支持字词对齐 / Recognition language; Auto may detect other languages, while only the public list supports word alignment", json_schema_extra={"enum": ASR_LANGUAGES}),
         speaker_count: str = Form("auto", description="auto 或 1–15 / auto or an integer from 1 to 15"),
         diarize: bool = Form(True, description="启用说话人分离 / Enable speaker diarization"),
         align: bool = Form(True, description="返回支持语言的精确时间戳 / Produce precise timestamps for supported languages"),
@@ -462,14 +772,17 @@ def create_app() -> FastAPI:
         compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
         use_voiceprint_library: bool = Form(True, description="用声纹库匹配并命名说话人 / Match and label speakers from the voiceprint library"),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="启用质量中性的单任务自动批处理 / Enable quality-neutral single-job auto-batching"),
+        idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         ensure_service("asr")
-        compute_device, compute_device_name = validate_compute_device(compute_device)
+        idempotency_key = validate_idempotency_key(idempotency_key)
+        language = validate_asr_language(language)
+        compute_device, compute_device_name = await run_in_threadpool(validate_compute_device, compute_device)
         job_id = uuid.uuid4().hex
         original_name = safe_filename(file.filename or "audio.bin")
         input_path = settings.jobs_dir / job_id / "input" / original_name
-        size = await save_upload(file, input_path, settings.max_upload_bytes)
+        size, file_digest = await save_upload(file, input_path, settings.max_upload_bytes)
         try:
             speaker_value: int | None = None if speaker_count == "auto" else int(speaker_count)
         except ValueError as exc:
@@ -488,37 +801,96 @@ def create_app() -> FastAPI:
             "compute_device_name": compute_device_name, "use_voiceprint_library": use_voiceprint_library,
             "accelerate_single_task": accelerate_single_task,
         }
-        return public_job(create_job("asr", original_name, request_data, job_id))
+        job, replayed = idempotent_job(
+            "asr", original_name, request_data, job_id, "submit_asr",
+            idempotency_key, file_digest,
+        )
+        if replayed:
+            shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
+            response.status_code = 200
+            response.headers["Idempotency-Replayed"] = "true"
+        return public_job(job)
+
+    @app.post(
+        "/api/v1/tts/clone-references", status_code=202, response_model=JobResponse,
+        response_model_exclude_unset=True, tags=[TTS_TAG],
+        summary="自动分析 TTS 克隆参考 / Analyze a TTS clone reference",
+        description=bilingual(
+            "上传单人参考音频并创建可见的 ASR 任务，自动识别参考语种、逐字文本和时间戳。成功后把任务 ID 作为 `reference_job_id` 提交给 TTS。",
+            "Upload clean single-speaker reference audio and create a visible ASR job that detects its language, exact transcript, and timestamps. Pass the successful job ID to TTS as `reference_job_id`.",
+        ),
+        operation_id="analyzeTtsCloneReference",
+        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+    )
+    async def analyze_tts_clone_reference(
+        response: Response,
+        file: UploadFile = File(..., description="单人干净参考音频或录音容器 / Clean single-speaker audio or recording container"),
+        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
+        accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
+        idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
+        _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        ensure_service("tts")
+        ensure_service("asr")
+        idempotency_key = validate_idempotency_key(idempotency_key)
+        compute_device, compute_device_name = await run_in_threadpool(validate_compute_device, compute_device)
+        job_id = uuid.uuid4().hex
+        original_name = safe_filename(file.filename or "clone-reference.bin")
+        input_path = settings.jobs_dir / job_id / "input" / original_name
+        size, file_digest = await save_upload(file, input_path, settings.max_upload_bytes)
+        request_data = {
+            "purpose": "tts_clone_reference", "input_path": str(input_path),
+            "original_name": original_name, "size_bytes": size, "language": "Auto",
+            "speaker_count": 1, "diarize": False, "align": True, "context": "",
+            "export_formats": ["json", "txt"], "compute_device": compute_device,
+            "compute_device_name": compute_device_name, "use_voiceprint_library": False,
+            "accelerate_single_task": accelerate_single_task,
+        }
+        job, replayed = idempotent_job(
+            "asr", f"TTS 克隆参考分析 · {original_name}", request_data, job_id,
+            "analyze_tts_clone_reference", idempotency_key, file_digest,
+        )
+        if replayed:
+            shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
+            response.status_code = 200
+            response.headers["Idempotency-Replayed"] = "true"
+        return public_job(job)
 
     @app.post(
         "/api/v1/tts/jobs", status_code=202, response_model=JobResponse,
         response_model_exclude_unset=True, tags=[TTS_TAG],
         summary="提交异步 TTS 任务 / Submit asynchronous TTS job",
         description=bilingual(
-            "四种模式：`preset` 传 `speaker`；`profile` 传 `voice_profile_id`；`inline_clone` 上传 `reference_audio` 并传逐字准确的 `reference_text`；`voiceprint` 传具体且可用于 TTS 的 `voiceprint_sample_id`。",
-            "Four modes: `preset` uses `speaker`; `profile` uses `voice_profile_id`; `inline_clone` requires `reference_audio` plus an exact `reference_text`; `voiceprint` requires a concrete TTS-eligible `voiceprint_sample_id`.",
+            "四种模式：`preset` 传 `speaker`；`profile` 传 `voice_profile_id`；`inline_clone` 优先传已成功的 `reference_job_id`，也兼容 `reference_audio` 加逐字准确的 `reference_text`；`voiceprint` 传具体且可用于 TTS 的 `voiceprint_sample_id`。`language` 始终表示输出文本语种。",
+            "Four modes: `preset` uses `speaker`; `profile` uses `voice_profile_id`; `inline_clone` preferably uses a successful `reference_job_id`, while `reference_audio` plus exact `reference_text` remains supported; `voiceprint` requires a concrete eligible sample ID. `language` always means the target text language.",
         ),
         operation_id="submitTtsJob",
-        responses={**AUTH_RESPONSES, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
     )
     async def submit_tts(
+        response: Response,
         text: str = Form(..., description="需要合成的文本 / Text to synthesize"),
-        language: str = Form("Chinese", description="生成语言 / Synthesis language"),
+        language: str = Form("Auto", description="输出文本语种；已知时应显式指定 / Target text language; specify it when known"),
         voice_mode: str = Form("preset", description="preset、profile、inline_clone 或 voiceprint"),
         speaker: str | None = Form(None, description="preset 模式的官方音色 / Official speaker for preset mode"),
         voice_profile_id: str | None = Form(None, description="profile 模式的声音档案 ID / Voice profile ID for profile mode"),
         voiceprint_sample_id: str | None = Form(None, description="voiceprint 模式的具体可用样本 ID / Concrete eligible sample ID for voiceprint mode"),
         reference_audio: UploadFile | None = File(None, description="inline_clone 模式参考音频 / Reference audio for inline_clone"),
         reference_text: str | None = Form(None, description="必须与参考音频逐字一致 / Must exactly match the reference audio"),
+        reference_job_id: str | None = Form(None, description="自动参考分析成功后的 ASR 任务 ID / Successful automatic reference-analysis ASR job ID"),
+        reference_language: str | None = Form(None, description="参考音频语种；省略时使用分析结果 / Reference audio language; defaults to the analysis result"),
         instruct: str = Form("", description="预置音色风格指令 / Style instruction for preset voice"),
         response_format: str = Form("wav", description="wav、flac 或 mp3"),
         display_name: str = Form("语音合成", description="任务显示名称 / Job display name"),
-        compute_device: str = Form("cpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
+        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="启用质量中性的单任务自动批处理 / Enable quality-neutral single-job auto-batching"),
+        idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         ensure_service("tts")
-        compute_device, compute_device_name = validate_compute_device(compute_device)
+        idempotency_key = validate_idempotency_key(idempotency_key)
+        compute_device, compute_device_name = await run_in_threadpool(validate_compute_device, compute_device)
+        language = validate_tts_language(language)
         clean_text = text.strip()
         if not clean_text or len(clean_text) > settings.max_tts_chars:
             raise HTTPException(status_code=422, detail=f"Text must contain 1-{settings.max_tts_chars} characters")
@@ -534,6 +906,7 @@ def create_app() -> FastAPI:
             "accelerate_single_task": accelerate_single_task,
         }
         job_id = uuid.uuid4().hex
+        reference_digest: str | None = None
         if voice_mode == "preset":
             if speaker not in PRESET_SPEAKERS:
                 raise HTTPException(status_code=422, detail="Unknown preset speaker")
@@ -572,13 +945,71 @@ def create_app() -> FastAPI:
                 "reference_duration": sample.get("duration"),
             })
         else:
-            if reference_audio is None or not (reference_text or "").strip():
-                raise HTTPException(status_code=422, detail="Inline cloning requires reference_audio and reference_text")
-            filename = safe_filename(reference_audio.filename or "reference.wav")
-            target = settings.jobs_dir / job_id / "input" / filename
-            await save_upload(reference_audio, target, 100 * 1024 * 1024)
-            request_data["reference_audio_path"] = str(target)
-        return public_job(create_job("tts", safe_filename(display_name, "tts"), request_data, job_id))
+            if reference_job_id and reference_audio is not None:
+                raise HTTPException(status_code=422, detail="Use reference_job_id or reference_audio, not both")
+            if reference_job_id:
+                reference_job = get_job(reference_job_id)
+                if reference_job is None:
+                    raise HTTPException(status_code=422, detail="Clone reference analysis job not found")
+                if (
+                    reference_job.get("kind") != "asr"
+                    or (reference_job.get("request") or {}).get("purpose") != "tts_clone_reference"
+                    or reference_job.get("state") != "succeeded"
+                ):
+                    raise HTTPException(status_code=422, detail="reference_job_id must identify a successful clone reference analysis")
+                reference_result = reference_job.get("result") or {}
+                artifact = next(
+                    (item for item in reference_result.get("artifacts", []) if item.get("name") == "reference.wav"),
+                    None,
+                )
+                source = Path(str((artifact or {}).get("path", ""))).resolve()
+                source_root = (settings.jobs_dir / reference_job_id).resolve()
+                if source_root not in source.parents or not source.is_file():
+                    raise HTTPException(status_code=422, detail="Clone reference audio is unavailable")
+                detected_text = str(reference_result.get("text") or "").strip()
+                resolved_text = str(reference_text or detected_text).strip()
+                if not resolved_text:
+                    raise HTTPException(status_code=422, detail="Clone reference analysis returned no transcript")
+                detected_language = REFERENCE_LANGUAGE_BY_KEY.get(
+                    str(reference_result.get("language") or "Auto").strip().lower(), "Auto",
+                )
+                resolved_reference_language = (
+                    validate_reference_language(reference_language)
+                    if reference_language is not None else detected_language
+                )
+                target = settings.jobs_dir / job_id / "input" / "analyzed-reference.wav"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+                words = [
+                    {"text": word.get("text", ""), "start": word["start"], "end": word["end"]}
+                    for segment in reference_result.get("segments", [])
+                    for word in segment.get("words", [])
+                ] if resolved_text == detected_text else []
+                request_data.update({
+                    "reference_job_id": reference_job_id, "reference_audio_path": str(target),
+                    "reference_text": resolved_text, "reference_language": resolved_reference_language,
+                    "reference_words": words, "reference_duration": reference_result.get("duration"),
+                })
+            else:
+                if reference_audio is None or not (reference_text or "").strip():
+                    raise HTTPException(status_code=422, detail="Inline cloning requires reference_job_id or reference_audio with reference_text")
+                filename = safe_filename(reference_audio.filename or "reference.wav")
+                target = settings.jobs_dir / job_id / "input" / filename
+                _, reference_digest = await save_upload(reference_audio, target, 100 * 1024 * 1024)
+                request_data.update({
+                    "reference_audio_path": str(target), "reference_text": reference_text.strip(),
+                    "reference_language": validate_reference_language(reference_language)
+                    if reference_language is not None else language,
+                })
+        job, replayed = idempotent_job(
+            "tts", safe_filename(display_name, "tts"), request_data, job_id,
+            "submit_tts", idempotency_key, reference_digest,
+        )
+        if replayed:
+            shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
+            response.status_code = 200
+            response.headers["Idempotency-Replayed"] = "true"
+        return public_job(job)
 
     @app.get(
         "/api/v1/tts/voices", response_model=VoiceListResponse, response_model_exclude_unset=True,
@@ -810,33 +1241,53 @@ def create_app() -> FastAPI:
             "Immediately return a pending sample and a visible ASR import job. Refresh the people list after success before using the sample for TTS.",
         ),
         operation_id="uploadVoiceprintSample",
-        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+        responses={**idempotency_replay_response("VoiceprintUploadResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **NOT_FOUND_RESPONSE, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
     )
     async def upload_voiceprint_sample(
+        response: Response,
         person_id: str,
         file: UploadFile = File(..., description="单人干净音频或浏览器录音容器 / Clean single-speaker audio or browser recording container"),
-        language: str = Form("Auto", description="转写语言 / Transcription language"),
+        language: str = Form("Auto", description="转写语言；显式值限公开对齐语种 / Transcription language; explicit values are limited to public alignment languages", json_schema_extra={"enum": ASR_LANGUAGES}),
         compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
+        accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
+        idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         ensure_service("asr")
         person = get_voiceprint_person(person_id)
         if person is None:
             raise HTTPException(status_code=404, detail="Voiceprint person not found")
-        compute_device, compute_device_name = validate_compute_device(compute_device)
+        idempotency_key = validate_idempotency_key(idempotency_key)
+        language = validate_asr_language(language)
+        compute_device, compute_device_name = await run_in_threadpool(validate_compute_device, compute_device)
         job_id = uuid.uuid4().hex
         sample_id = "sample_" + uuid.uuid4().hex[:16]
         original_name = safe_filename(file.filename or "voiceprint-audio.bin")
         input_path = settings.jobs_dir / job_id / "input" / original_name
-        size = await save_upload(file, input_path, settings.max_upload_bytes)
+        size, file_digest = await save_upload(file, input_path, settings.max_upload_bytes)
         request_data = {
             "purpose": "voiceprint_import", "voiceprint_sample_id": sample_id,
+            "voiceprint_person_id": person["id"],
             "input_path": str(input_path), "original_name": original_name, "size_bytes": size,
             "language": language, "speaker_count": 1, "diarize": False, "align": True,
             "context": "", "export_formats": ["json", "txt"], "compute_device": compute_device,
             "compute_device_name": compute_device_name, "use_voiceprint_library": False,
+            "accelerate_single_task": accelerate_single_task,
         }
-        job = create_job("asr", f"声纹样本入库 · {person['name']}", request_data, job_id)
+        job, replayed = idempotent_job(
+            "asr", f"声纹样本入库 · {person['name']}", request_data, job_id,
+            "upload_voiceprint_sample", idempotency_key, file_digest,
+        )
+        if replayed:
+            shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
+            existing_sample = get_voiceprint_sample(
+                str((job.get("request") or {}).get("voiceprint_sample_id") or "")
+            )
+            if existing_sample is None:
+                raise ApiProblem(409, "idempotency_replay_unavailable", "The original voiceprint sample is unavailable")
+            response.status_code = 200
+            response.headers["Idempotency-Replayed"] = "true"
+            return {"sample": public_voiceprint_sample(existing_sample), "job": public_job(job)}
         try:
             sample = create_voiceprint_sample(
                 person["id"], sample_id=sample_id, state="pending", language=language,
@@ -905,20 +1356,36 @@ def create_app() -> FastAPI:
         offset: int = Query(0, ge=0, description="分页偏移 / Page offset"),
         _: None = Depends(require_api_key),
     ) -> JobListResponse:
-        items = [public_job(item) for item in list_jobs(kind, state, limit, offset)]
+        items = public_jobs(list_jobs(kind, state, limit, offset))
         return {"items": items, "count": len(items), "limit": limit, "offset": offset}
 
     @app.get(
         "/api/v1/jobs/{job_id}", response_model=JobResponse, response_model_exclude_unset=True,
         tags=[JOB_TAG], summary="查询任务状态与进度 / Get job status and progress",
         description=bilingual(
-            "可靠轮询入口。`progress` 为 0–1 阶段检查点，`stage` 是当前阶段；成功后出现 `result_url`。不返回排队序号。",
-            "Canonical polling endpoint. `progress` is a 0–1 stage checkpoint and `stage` names the current phase. `result_url` appears after success. Queue position is not returned.",
+            "可靠轮询入口。`queue.position` 返回同类任务中的排队位置，`progress_detail` 提供稳定阶段代码和批次进度，`estimate` 是基于本机历史样本的区间估计；成功后出现 `result_url`。支持 `If-None-Match`。",
+            "Canonical polling endpoint. `queue.position` is the position within the same job kind, `progress_detail` supplies stable stage and batch progress, and `estimate` is a range learned from local history. `result_url` appears after success. Supports `If-None-Match`.",
         ),
-        operation_id="getJob", responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE},
+        operation_id="getJob", responses={**conditional_job_responses(), **AUTH_RESPONSES, **NOT_FOUND_RESPONSE},
     )
-    def job_status(job_id: str, _: None = Depends(require_api_key)) -> JobResponse:
-        return public_job(job_or_404(job_id))
+    def job_status(
+        job_id: str, request: Request, response: Response,
+        _: None = Depends(require_api_key),
+    ) -> Any:
+        job = job_or_404(job_id)
+        context = queue_context(include_history=job.get("state") in {"queued", "running"})
+        marker = "|".join(str(job.get(key) or "") for key in (
+            "updated_at", "state", "stage", "progress", "attempts",
+        ))
+        marker += "|" + json.dumps([
+            (item["id"], item["state"], item.get("updated_at"), item.get("progress"))
+            for item in context["jobs"] if item["kind"] == job["kind"]
+        ], separators=(",", ":"))
+        etag = f'"{hashlib.sha256(marker.encode()).hexdigest()[:24]}"'
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
+        response.headers.update({"ETag": etag, "Cache-Control": "no-cache"})
+        return public_job(job, context)
 
     @app.post(
         "/api/v1/jobs/batch-delete", response_model=BatchDeleteResponse,
@@ -942,7 +1409,7 @@ def create_app() -> FastAPI:
         "/api/v1/jobs/{job_id}/cancel", response_model=JobResponse,
         response_model_exclude_unset=True, tags=[JOB_TAG],
         summary="取消任务 / Cancel job",
-        description=bilingual("排队任务原子取消；运行任务先进入 `cancelling`，完整进程树退出后才进入 `cancelled`。", "Queued jobs cancel atomically. Running jobs enter `cancelling` and become `cancelled` only after the complete process tree exits."),
+        description=bilingual("排队任务原子取消；运行任务保持 `state=running` 并进入 `stage=cancelling`，完整进程树退出后才进入终态 `state=cancelled`。", "Queued jobs cancel atomically. A running job keeps `state=running` with `stage=cancelling`, and reaches terminal `state=cancelled` only after the complete process tree exits."),
         operation_id="cancelJob", responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE},
     )
     def cancel_job(job_id: str, _: None = Depends(require_api_key)) -> JobResponse:
@@ -1103,32 +1570,74 @@ def create_app() -> FastAPI:
     @app.get(
         "/api/v1/events", response_class=StreamingResponse, tags=[JOB_TAG],
         summary="订阅任务和 worker 快照 / Stream job and worker snapshots",
-        description=bilingual("SSE 在最近 25 个任务或 worker 发生变化时发送 `snapshot`；约每 2 秒检查，空闲时发送注释保活。无事件 ID、断点续传或历史重放。", "SSE emits `snapshot` when the latest 25 jobs or workers change, checks about every two seconds, and sends comment keepalives while idle. There are no event IDs, resume tokens, or replay."),
+        description=bilingual(
+            f"SSE 在最近最多 {EVENT_SNAPSHOT_JOB_LIMIT} 个任务或 worker 发生变化时发送 `snapshot`；约每 {EVENT_SNAPSHOT_POLL_SECONDS:g} 秒检查，空闲 {EVENT_HEARTBEAT_SECONDS} 秒后发送 `heartbeat`。无事件 ID、断点续传或历史重放。",
+            f"SSE emits `snapshot` when the latest {EVENT_SNAPSHOT_JOB_LIMIT} jobs or workers change, checks about every {EVENT_SNAPSHOT_POLL_SECONDS:g} seconds, and emits `heartbeat` after {EVENT_HEARTBEAT_SECONDS} idle seconds. There are no event IDs, resume tokens, or replay.",
+        ),
         operation_id="streamEvents",
         responses={
-            200: {
-                "description": "Server-Sent Events",
-                "content": {"text/event-stream": {
-                    "schema": {"type": "string"},
-                    "example": "event: snapshot\\ndata: {\"jobs\":[],\"workers\":[]}\\n\\n",
-                }},
-                "x-event-data-schema": {"$ref": "#/components/schemas/EventSnapshot"},
-            },
+            200: sse_response("snapshot", "EventSnapshot", '{"jobs":[],"workers":[]}'),
             **AUTH_RESPONSES,
         },
     )
     async def events(_: None = Depends(require_api_key)) -> StreamingResponse:
         async def stream() -> AsyncIterator[str]:
+            queue = await app.state.event_hub.subscribe()
+            try:
+                while True:
+                    try:
+                        snapshot = await asyncio.wait_for(queue.get(), timeout=EVENT_HEARTBEAT_SECONDS)
+                        payload = json.dumps(snapshot, ensure_ascii=False)
+                        yield f"event: snapshot\ndata: {payload}\n\n"
+                    except asyncio.TimeoutError:
+                        yield "event: heartbeat\ndata: {}\n\n"
+            finally:
+                await app.state.event_hub.unsubscribe(queue)
+        return StreamingResponse(
+            stream(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get(
+        "/api/v1/jobs/{job_id}/events", response_class=StreamingResponse, tags=[JOB_TAG],
+        summary="订阅单个任务 / Stream one job",
+        description=bilingual(
+            "立即发送当前任务快照，变化时继续发送；终态后关闭。断线重连后以首个快照校准，不提供历史重放。",
+            "Emit the current job immediately, then changes; close after a terminal state. Reconnect using the first snapshot; history is not replayed.",
+        ),
+        operation_id="streamJobEvents",
+        responses={
+            200: sse_response("job", "EventJobResponse", '{"id":"JOB_ID","kind":"asr","state":"running","progress":0.5}'),
+            **AUTH_RESPONSES, **NOT_FOUND_RESPONSE,
+        },
+    )
+    async def job_events(job_id: str, _: None = Depends(require_api_key)) -> StreamingResponse:
+        job_or_404(job_id)
+        async def stream() -> AsyncIterator[str]:
+            queue = await app.state.event_hub.subscribe()
             last = ""
-            while True:
-                payload = json.dumps({"jobs": list_jobs(limit=25), "workers": list_workers()}, ensure_ascii=False)
-                if payload != last:
-                    yield f"event: snapshot\ndata: {payload}\n\n"
-                    last = payload
-                else:
-                    yield ": keepalive\n\n"
-                await asyncio.sleep(2)
-        return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+            try:
+                while True:
+                    current = get_job(job_id)
+                    if current is None:
+                        return
+                    item = public_job(current)
+                    encoded = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+                    if encoded != last:
+                        yield f"event: job\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
+                        last = encoded
+                    if current["state"] in {"succeeded", "failed", "cancelled"}:
+                        return
+                    try:
+                        await asyncio.wait_for(queue.get(), timeout=EVENT_HEARTBEAT_SECONDS)
+                    except asyncio.TimeoutError:
+                        yield "event: heartbeat\ndata: {}\n\n"
+            finally:
+                await app.state.event_hub.unsubscribe(queue)
+        return StreamingResponse(
+            stream(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     add_openai_routes(app)
 
@@ -1159,7 +1668,8 @@ def create_app() -> FastAPI:
             return app.openapi_schema
         schema = default_openapi()
         extra = TypeAdapter(
-            ProblemDetail | EventSnapshot | OpenAITranscription | OpenAIVerboseTranscription
+            AdmissionProblemDetail | ProblemDetail | EventJobResponse | EventSnapshot
+            | OpenAITranscription | OpenAIVerboseTranscription
         ).json_schema(ref_template="#/components/schemas/{model}")
         schema.setdefault("components", {}).setdefault("schemas", {}).update(extra.get("$defs", {}))
         schema["servers"] = [{"url": "/", "description": "当前本地服务 / Current local service"}]
@@ -1188,7 +1698,7 @@ def system_snapshot() -> dict[str, Any]:
         }
     except ImportError:
         hardware = {}
-    hardware["gpu"] = gpu_snapshot()
+    hardware["gpu"] = cached_gpu_snapshot(0, probe=gpu_snapshot)
     from .model_registry import model_installation, model_manifest
     models = []
     for model in model_manifest():
@@ -1247,7 +1757,13 @@ def add_openai_routes(app: FastAPI) -> None:
         responses={
             200: {
                 "description": "由 response_format 决定 / Selected by response_format",
-                "headers": {"X-Job-ID": {"schema": {"type": "string"}}},
+                "headers": {
+                    "X-Job-ID": {"schema": {"type": "string"}},
+                    "Idempotency-Replayed": {
+                        "description": "仅在可选幂等键重放时为 true / Present as true only for an optional-key replay",
+                        "schema": {"type": "string", "enum": ["true"]},
+                    },
+                },
                 "content": {
                     "application/json": {"schema": {"oneOf": [
                         {"$ref": "#/components/schemas/OpenAITranscription"},
@@ -1260,23 +1776,26 @@ def add_openai_routes(app: FastAPI) -> None:
             },
             500: problem_response("内部转写任务失败 / Internal transcription job failed", 500),
             504: problem_response("兼容接口等待超时 / Compatibility wait timed out", 504),
-            **AUTH_RESPONSES, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE,
+            **AUTH_RESPONSES, **OPTIONAL_IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE,
+            **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE,
         },
     )
     async def openai_transcription(
         file: UploadFile = File(..., description="待转写音频或视频 / Audio or video to transcribe"),
         model: str = Form("qwen3-asr-0.6b", description="qwen3-asr-0.6b"),
-        language: str = Form("Auto", description="识别语言 / Recognition language"),
+        language: str = Form("Auto", description="识别语言；显式值限公开对齐语种 / Recognition language; explicit values are limited to public alignment languages", json_schema_extra={"enum": ASR_LANGUAGES}),
         response_format: str = Form("json", description="json、verbose_json、text、srt 或 vtt"),
         diarize: bool = Form(True, description="启用说话人分离 / Enable diarization"),
         speaker_count: str = Form("auto", description="auto 或 1–15 / auto or 1–15"),
         compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
         use_voiceprint_library: bool = Form(True, description="匹配声纹库 / Match voiceprint library"),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
+        idempotency_key: str | None = Header(None, alias="Idempotency-Key", description=OPTIONAL_IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
     ) -> Response:
         ensure_service("asr")
-        compute_device, compute_device_name = validate_compute_device(compute_device)
+        language = validate_asr_language(language)
+        compute_device, compute_device_name = await run_in_threadpool(validate_compute_device, compute_device)
         if model not in {"qwen3-asr-0.6b", "Qwen/Qwen3-ASR-0.6B"}:
             raise HTTPException(status_code=404, detail="Unknown transcription model")
         try:
@@ -1288,7 +1807,7 @@ def add_openai_routes(app: FastAPI) -> None:
         job_id = uuid.uuid4().hex
         name = safe_filename(file.filename or "audio.bin")
         target = settings.jobs_dir / job_id / "input" / name
-        size = await save_upload(file, target, settings.max_upload_bytes)
+        size, file_digest = await save_upload(file, target, settings.max_upload_bytes)
         request_data = {
             "input_path": str(target), "original_name": name, "size_bytes": size, "language": language,
             "speaker_count": speakers, "diarize": diarize, "align": True, "context": "",
@@ -1296,12 +1815,25 @@ def add_openai_routes(app: FastAPI) -> None:
             "compute_device_name": compute_device_name, "use_voiceprint_library": use_voiceprint_library,
             "accelerate_single_task": accelerate_single_task,
         }
-        create_job("asr", name, request_data, job_id)
-        job = await wait_for_job(job_id)
+        replayed = False
+        if idempotency_key is not None:
+            idempotency_key = validate_idempotency_key(idempotency_key)
+            job, replayed = idempotent_job(
+                "asr", name, request_data, job_id, "openai_transcription",
+                idempotency_key, file_digest,
+            )
+            if replayed:
+                shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
+        else:
+            job = create_job("asr", name, request_data, job_id)
+        submitted_job_id = job["id"]
+        job = await wait_for_job(submitted_job_id)
         if job["state"] != "succeeded":
             raise HTTPException(status_code=500, detail=job.get("error_message") or "Transcription failed")
         result = job.get("result") or {}
-        response_headers = {"X-Job-ID": job_id}
+        response_headers = {"X-Job-ID": submitted_job_id}
+        if replayed:
+            response_headers["Idempotency-Replayed"] = "true"
         if response_format == "text":
             return PlainTextResponse(result.get("text", ""), headers=response_headers)
         if response_format in {"srt", "vtt"}:
@@ -1323,7 +1855,13 @@ def add_openai_routes(app: FastAPI) -> None:
         responses={
             200: {
                 "description": "生成音频 / Generated audio",
-                "headers": {"X-Job-ID": {"schema": {"type": "string"}}},
+                "headers": {
+                    "X-Job-ID": {"schema": {"type": "string"}},
+                    "Idempotency-Replayed": {
+                        "description": "仅在可选幂等键重放时为 true / Present as true only for an optional-key replay",
+                        "schema": {"type": "string", "enum": ["true"]},
+                    },
+                },
                 "content": {
                     "audio/wav": {"schema": BINARY_SCHEMA},
                     "audio/flac": {"schema": BINARY_SCHEMA},
@@ -1332,24 +1870,30 @@ def add_openai_routes(app: FastAPI) -> None:
             },
             500: problem_response("内部合成任务失败 / Internal speech job failed", 500),
             504: problem_response("兼容接口等待超时 / Compatibility wait timed out", 504),
-            **AUTH_RESPONSES, **VALIDATION_RESPONSE, **SERVICE_RESPONSE,
+            **AUTH_RESPONSES, **OPTIONAL_IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE,
+            **VALIDATION_RESPONSE, **SERVICE_RESPONSE,
         },
     )
-    async def openai_speech(payload: dict[str, Any] = Body(...), _: None = Depends(require_api_key)) -> FileResponse:
+    async def openai_speech(
+        payload: OpenAISpeechRequest = Body(...),
+        idempotency_key: str | None = Header(None, alias="Idempotency-Key", description=OPTIONAL_IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
+        _: None = Depends(require_api_key),
+    ) -> FileResponse:
         ensure_service("tts")
-        compute_device, compute_device_name = validate_compute_device(str(payload.get("compute_device", "cpu")))
-        accelerate_single_task = validate_boolean(
-            payload.get("accelerate_single_task", SINGLE_TASK_ACCELERATION_DEFAULT), "accelerate_single_task",
-        )
-        if payload.get("model", "qwen3-tts-0.6b") not in {"qwen3-tts-0.6b", "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"}:
+        compute_device, compute_device_name = await run_in_threadpool(validate_compute_device, payload.compute_device)
+        accelerate_single_task = payload.accelerate_single_task
+        if payload.model not in {"qwen3-tts-0.6b", "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"}:
             raise HTTPException(status_code=404, detail="Unknown speech model")
-        text = str(payload.get("input", "")).strip()
+        text = payload.input.strip()
         if not text:
             raise HTTPException(status_code=422, detail="input is required")
-        voice = str(payload.get("voice", "Vivian"))
+        if payload.response_format not in {"wav", "flac", "mp3"}:
+            raise HTTPException(status_code=422, detail="response_format must be wav, flac or mp3")
+        language = validate_tts_language(payload.language)
+        voice = payload.voice
         request_data: dict[str, Any] = {
-            "text": text, "language": payload.get("language", "Auto"), "instruct": payload.get("instructions", ""),
-            "response_format": payload.get("response_format", "wav"), "compute_device": compute_device,
+            "text": text, "language": language, "instruct": payload.instructions,
+            "response_format": payload.response_format, "compute_device": compute_device,
             "compute_device_name": compute_device_name,
             "accelerate_single_task": accelerate_single_task,
         }
@@ -1357,17 +1901,33 @@ def add_openai_routes(app: FastAPI) -> None:
             profile = get_voice(voice)
             if profile is None:
                 raise HTTPException(status_code=422, detail="Voice profile not found")
-            request_data.update({"voice_mode": "profile", "voice_profile_id": voice, "reference_audio_path": profile["ref_audio_path"], "reference_text": profile["ref_text"]})
+            request_data.update({
+                "voice_mode": "profile", "voice_profile_id": voice,
+                "reference_audio_path": profile["ref_audio_path"], "reference_text": profile["ref_text"],
+                "reference_language": profile.get("language") or language,
+                "reference_words": profile.get("words") or [], "reference_duration": profile.get("duration"),
+            })
         else:
             if voice not in PRESET_SPEAKERS:
                 raise HTTPException(status_code=422, detail="Unknown voice")
             request_data.update({"voice_mode": "preset", "speaker": voice})
-        job = create_job("tts", "speech", request_data)
+        replayed = False
+        if idempotency_key is not None:
+            idempotency_key = validate_idempotency_key(idempotency_key)
+            job, replayed = idempotent_job(
+                "tts", "speech", request_data, uuid.uuid4().hex, "openai_speech",
+                idempotency_key,
+            )
+        else:
+            job = create_job("tts", "speech", request_data)
         finished = await wait_for_job(job["id"])
         if finished["state"] != "succeeded":
             raise HTTPException(status_code=500, detail=finished.get("error_message") or "Speech synthesis failed")
         artifact = (finished.get("result") or {}).get("artifacts", [])[0]
-        return FileResponse(artifact["path"], media_type=artifact["mime_type"], headers={"X-Job-ID": job["id"]})
+        headers = {"X-Job-ID": job["id"]}
+        if replayed:
+            headers["Idempotency-Replayed"] = "true"
+        return FileResponse(artifact["path"], media_type=artifact["mime_type"], headers=headers)
 
 
 app = create_app()

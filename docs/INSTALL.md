@@ -2,7 +2,7 @@
 
 ## 1. 支持范围
 
-本文命令针对 Ubuntu 22.04/24.04 x86_64。原生 Windows 11 x64 使用独立的 [Windows 部署指南](WINDOWS.md)；macOS、ARM 和容器部署尚未验证。CPU 可运行全部能力，但 ASR 默认选择 GPU、TTS 默认选择 CPU；无 GPU 时请在页面或 API 中选择 `cpu`。
+本文命令针对 Ubuntu 22.04/24.04 x86_64。原生 Windows 11 x64 使用独立的 [Windows 部署指南](WINDOWS.md)；macOS、ARM 和容器部署尚未验证。CPU 可运行全部能力，但 ASR 与 TTS 默认都选择 GPU；无 GPU 时请在页面或 API 中选择 `cpu`。
 
 建议资源：16 GB RAM 起步、32 GB RAM 推荐、完整安装预留 30 GB 磁盘。已验证 GPU 为 4 GB RTX A1000。安装脚本固定 Python 3.12、PyTorch 2.11.0 CUDA 13.0 和受控的模型 revision。
 
@@ -59,6 +59,8 @@ set -a; source .env; set +a
 ./service.sh start all
 ```
 
+默认最多分别保留 20 个排队中的 ASR/TTS 任务、同时持久化 2 个提交，并为数据卷保留至少 5 GiB 空闲空间。通过 `AUDIO_INTEL_MAX_QUEUED_ASR`、`AUDIO_INTEL_MAX_QUEUED_TTS`、`AUDIO_INTEL_MAX_CONCURRENT_SUBMISSIONS` 和 `AUDIO_INTEL_MIN_FREE_DISK_BYTES` 调整；完整默认值见 `.env.example`。达到限制时提交返回 `429`，不会丢弃既有任务。
+
 对不可信网络开放前，至少设置强随机 `AUDIO_INTEL_API_KEY`，并在外层反向代理配置 TLS。普通 HTTP 下远程浏览器可能拒绝麦克风权限。
 
 ## 5. 数据与升级
@@ -73,4 +75,4 @@ git pull --ff-only
 
 不要复制 `.runtime/` 到另一台机器；在目标机器重新运行 setup。任务数据可按需要单独迁移。
 
-数据库会在启动时自动迁移到 schema v4，既有任务与旧声音档案保持可读。完整兼容性说明见 [升级指南](UPGRADE.md)。
+数据库会在启动时自动迁移到 schema v5，既有任务与旧声音档案保持可读。完整兼容性说明见 [升级指南](UPGRADE.md)。

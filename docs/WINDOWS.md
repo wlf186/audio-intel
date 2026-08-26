@@ -31,7 +31,7 @@ Set-Location audio-intel
 Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 ```
 
-浏览器访问 `http://127.0.0.1:20810`，API 文档位于 `http://127.0.0.1:20810/docs`。
+浏览器访问 `http://127.0.0.1:20810`，API 文档位于 `http://127.0.0.1:20810/docs`。Swagger 的 JavaScript、CSS、图标和接口定义全部由本机服务提供，运行期不依赖 CDN 或在线校验器。
 
 只安装或启动部分能力：
 
@@ -72,6 +72,15 @@ $env:REQUESTS_CA_BUNDLE = 'C:\certs\company-ca.pem'
 $env:AUDIO_INTEL_PORT = '20810'
 $env:AUDIO_INTEL_API_KEY = 'replace-with-a-long-random-value'
 .\service.cmd start all
+```
+
+ASR 与 TTS 默认都选择 GPU 并开启单任务加速；无可用 NVIDIA GPU 时，应在页面选择 CPU，或由 API 显式传入 `compute_device=cpu`。默认准入限制为每类 20 个排队任务、2 个并行提交持久化和至少 5 GiB 数据卷空闲空间，可按需设置：
+
+```powershell
+$env:AUDIO_INTEL_MAX_QUEUED_ASR = '20'
+$env:AUDIO_INTEL_MAX_QUEUED_TTS = '20'
+$env:AUDIO_INTEL_MAX_CONCURRENT_SUBMISSIONS = '2'
+$env:AUDIO_INTEL_MIN_FREE_DISK_BYTES = '5368709120'
 ```
 
 ## 4. GPU 验证
@@ -141,6 +150,6 @@ git pull --ff-only
 .\.runtime\api\Scripts\python.exe scripts\smoke_test.py
 ```
 
-升级前备份 `data\`。不要从其他机器复制 `.runtime\`；在目标机器重新 setup。模型目录可以复制，但每个模型的 `.complete` 内容必须与项目固定的 revision 一致。
+升级前备份 `data\`。API 启动时会把数据库自动迁移到 schema v5；完整的不兼容 API 变更和迁移说明见 [升级指南](UPGRADE.md)。不要从其他机器复制 `.runtime\`；在目标机器重新 setup。模型目录可以复制，但每个模型的 `.complete` 内容必须与项目固定的 revision 一致。
 
 `setup tts` 同时维护独立的 `.runtime\aligner`，这是超长克隆样本按词边界截断所需的内部运行时，不是额外服务。更多版本与锁文件说明见 [依赖维护](DEPENDENCIES.md)。

@@ -8,6 +8,7 @@ import random
 import re
 import sys
 import time
+import uuid
 import wave
 from datetime import datetime, timezone
 from pathlib import Path
@@ -219,7 +220,9 @@ class MatrixRunner:
         return self.wait(name, phase["job_id"])
 
     def submit_tts(self, text: str, device: str, display_name: str) -> str:
-        response = self.request("POST", "/api/v1/tts/jobs", data={
+        response = self.request("POST", "/api/v1/tts/jobs", headers={
+            "Idempotency-Key": str(uuid.uuid4()),
+        }, data={
             "text": text,
             "language": "Chinese",
             "voice_mode": "preset",
@@ -232,7 +235,9 @@ class MatrixRunner:
 
     def submit_asr(self, audio: Path, device: str) -> str:
         with audio.open("rb") as source:
-            response = self.request("POST", "/api/v1/asr/jobs", data={
+            response = self.request("POST", "/api/v1/asr/jobs", headers={
+                "Idempotency-Key": str(uuid.uuid4()),
+            }, data={
                 "language": "Chinese",
                 "speaker_count": "1",
                 "diarize": "true",

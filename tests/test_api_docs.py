@@ -73,7 +73,7 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         for method, operation in methods.items()
         if method in HTTP_METHODS
     ]
-    assert len(operations) == 33
+    assert len(operations) == 36
     assert len({operation["operationId"] for operation in operations}) == len(operations)
     assert all(operation.get("tags") for operation in operations)
     assert all("**English:**" in operation.get("description", "") for operation in operations)
@@ -99,9 +99,68 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     progress = schema["components"]["schemas"]["JobResponse"]["properties"]["progress"]
     assert progress["minimum"] == 0 and progress["maximum"] == 1
     assert "EventSnapshot" in schema["components"]["schemas"]
+    assert "EventJobResponse" in schema["components"]["schemas"]
+    assert "AdmissionProblemDetail" in schema["components"]["schemas"]
     assert "OpenAIVerboseTranscription" in schema["components"]["schemas"]
     assert "text/event-stream" in schema["paths"]["/api/v1/events"]["get"]["responses"]["200"]["content"]
+    global_events = schema["paths"]["/api/v1/events"]["get"]
+    assert "latest 100 jobs" in global_events["description"]
+    assert "every 0.5 seconds" in global_events["description"]
+    job_events = schema["paths"]["/api/v1/jobs/{job_id}/events"]["get"]["responses"]["200"]
+    assert "text/event-stream" in job_events["content"]
+    assert job_events["x-event-data-schema"]["$ref"].endswith("/EventJobResponse")
     assert "audio/wav" in schema["paths"]["/v1/audio/speech"]["post"]["responses"]["200"]["content"]
+    assert "/api/v1/tts/clone-references" in schema["paths"]
+    speech_schema = schema["components"]["schemas"]["OpenAISpeechRequest"]["properties"]
+    assert speech_schema["language"]["default"] == "Auto"
+    assert speech_schema["compute_device"]["default"] == "gpu"
+    assert speech_schema["accelerate_single_task"]["default"] is True
+    assert schema["components"]["schemas"]["AsrCapability"]["properties"]["default_language"]["type"] == "string"
+    for path in (
+        "/api/v1/asr/jobs",
+        "/api/v1/tts/clone-references",
+        "/api/v1/tts/jobs",
+        "/api/v1/voiceprints/people/{person_id}/samples/upload",
+    ):
+        parameters = schema["paths"][path]["post"]["parameters"]
+        key = next(parameter for parameter in parameters if parameter["name"] == "Idempotency-Key")
+        assert key["in"] == "header" and key["required"] is True
+        key_schema = key["schema"]
+        assert key_schema["minLength"] == 8 and key_schema["maxLength"] == 128
+        assert key_schema["pattern"] == r"^[A-Za-z0-9._~:+-]{8,128}$"
+        responses = schema["paths"][path]["post"]["responses"]
+        assert {"200", "202", "400", "409", "429"} <= set(responses)
+        assert responses["200"]["headers"]["Idempotency-Replayed"]["schema"]["enum"] == ["true"]
+        assert responses["429"]["headers"]["Retry-After"]["schema"]["type"] == "integer"
+        assert responses["429"]["content"]["application/problem+json"]["schema"]["$ref"].endswith("/AdmissionProblemDetail")
+        assert set(responses["429"]["content"]["application/problem+json"]["examples"]) == {
+            "submission_concurrency_limited", "queue_capacity_reached", "insufficient_queue_storage",
+        }
+
+    job_status = schema["paths"]["/api/v1/jobs/{job_id}"]["get"]["responses"]
+    assert "304" in job_status
+    assert {"ETag", "Cache-Control"} <= set(job_status["200"]["headers"])
+    assert {"ETag", "Cache-Control"} <= set(job_status["304"]["headers"])
+    assert schema["components"]["schemas"]["EstimateState"]["enum"] == ["warming_up", "ready"]
+    assert schema["components"]["schemas"]["EstimateConfidence"]["enum"] == ["low", "medium", "high"]
+    assert schema["components"]["schemas"]["QueueWaitReason"]["enum"] == ["worker", "gpu"]
+    assert "voice_mode=inline_clone" in schema["info"]["description"]
+    assert "voice_mode=inline " not in schema["info"]["description"]
+    for path in ("/v1/audio/transcriptions", "/v1/audio/speech"):
+        responses = schema["paths"][path]["post"]["responses"]
+        assert {"200", "400", "409", "429"} <= set(responses)
+        assert "Idempotency-Replayed" in responses["200"]["headers"]
+        assert "Retry-After" in responses["429"]["headers"]
+    for operation_id, path in (
+        ("submitAsrJob", "/api/v1/asr/jobs"),
+        ("uploadVoiceprintSample", "/api/v1/voiceprints/people/{person_id}/samples/upload"),
+        ("createOpenAITranscription", "/v1/audio/transcriptions"),
+    ):
+        operation = schema["paths"][path]["post"]
+        assert operation["operationId"] == operation_id
+        body_ref = operation["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"]
+        body = schema["components"]["schemas"][body_ref.rsplit("/", 1)[-1]]
+        assert body["properties"]["language"]["enum"] == api_module.ASR_LANGUAGES
 
     for methods in schema["paths"].values():
         for method, operation in methods.items():
@@ -111,6 +170,8 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
                 problem = response.get("content", {}).get("application/problem+json", {})
                 if "example" in problem:
                     assert problem["example"]["status"] == int(status)
+                for example in problem.get("examples", {}).values():
+                    assert example["value"]["status"] == int(status)
 
     refs: list[str] = []
 

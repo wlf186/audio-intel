@@ -3,6 +3,7 @@ from __future__ import annotations
 import errno
 import os
 import subprocess
+import threading
 import time
 from contextlib import contextmanager
 from typing import BinaryIO, Callable, Iterator
@@ -21,6 +22,10 @@ from .config import settings
 
 
 COMPUTE_DEVICES = {"cpu", "gpu"}
+_SNAPSHOT_LOCK = threading.Lock()
+_SNAPSHOT_AT = 0.0
+_SNAPSHOT_VALUE: dict[str, int | str] | None = None
+_SNAPSHOT_PROBE: object | None = None
 
 
 def _try_lock(handle: BinaryIO) -> bool:
@@ -85,6 +90,25 @@ def gpu_snapshot(index: int = 0) -> dict[str, int | str] | None:
         }
     except (OSError, subprocess.SubprocessError, ValueError, IndexError):
         return None
+
+
+def cached_gpu_snapshot(
+    index: int = 0,
+    ttl_seconds: float = 2.0,
+    probe: Callable[[int], dict[str, int | str] | None] | None = None,
+) -> dict[str, int | str] | None:
+    global _SNAPSHOT_AT, _SNAPSHOT_VALUE, _SNAPSHOT_PROBE
+    probe = probe or gpu_snapshot
+    now = time.monotonic()
+    with _SNAPSHOT_LOCK:
+        if index == 0 and probe is _SNAPSHOT_PROBE and now - _SNAPSHOT_AT < ttl_seconds:
+            return dict(_SNAPSHOT_VALUE) if _SNAPSHOT_VALUE is not None else None
+        value = probe(index)
+        if index == 0:
+            _SNAPSHOT_VALUE = dict(value) if value is not None else None
+            _SNAPSHOT_AT = time.monotonic()
+            _SNAPSHOT_PROBE = probe
+        return value
 
 
 def compute_device_name(compute_device: str, fallback: str | None = None) -> str:
