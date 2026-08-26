@@ -3,13 +3,16 @@ from __future__ import annotations
 from dataclasses import replace
 from threading import Event
 from types import SimpleNamespace
+import sys
 import wave
 
 import numpy as np
 
 from audio_intel.config import settings
+from audio_intel.performance import cpu_batch_size, gpu_batch_size, lower_batch_size
 from audio_intel.utils import safe_filename, timecode, waveform_peaks
 from asr import pipeline as asr_pipeline
+from asr import stage as asr_stage
 from tts import pipeline as tts_pipeline
 from tts.pipeline import split_text
 
@@ -18,6 +21,68 @@ def test_utilities() -> None:
     assert safe_filename("../访谈 录音?.wav") == "访谈_录音_.wav"
     assert timecode(3723.456) == "01:02:03.456"
     assert waveform_peaks([0, -0.5, 0.2, 1], 2) == [0.5, 1.0]
+
+
+def test_single_task_acceleration_hardware_tiers() -> None:
+    gib = 1024**3
+    assert [gpu_batch_size(value * 1024) for value in (4, 8, 12, 16, 24, 32)] == [2, 4, 6, 8, 12, 16]
+    assert gpu_batch_size(8 * 1024 - 1) == 2
+    assert cpu_batch_size(7, 64 * gib) == 1
+    assert cpu_batch_size(8, 12 * gib) == 2
+    assert cpu_batch_size(16, 24 * gib) == 4
+    assert cpu_batch_size(32, 48 * gib) == 6
+    assert cpu_batch_size(48, 64 * gib) == 8
+    assert [lower_batch_size(value) for value in (16, 12, 8, 6, 4, 2, 1)] == [12, 8, 6, 4, 2, 1, 1]
+
+
+def test_asr_stage_batches_in_order_and_falls_back_after_oom(monkeypatch) -> None:
+    class OutOfMemoryError(RuntimeError):
+        pass
+
+    class FakeCuda:
+        cleared = 0
+
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+        @classmethod
+        def empty_cache(cls) -> None:
+            cls.cleared += 1
+
+    class FakeModel:
+        max_inference_batch_size = 4
+
+        def transcribe(self, *, audio, **_kwargs):
+            if len(audio) > 2:
+                raise OutOfMemoryError("simulated")
+            return [SimpleNamespace(text=f" text-{path} ", language="Chinese") for path in audio]
+
+    class FakeFactory:
+        @staticmethod
+        def from_pretrained(*_args, **_kwargs):
+            return FakeModel()
+
+    fake_torch = SimpleNamespace(
+        float32="float32", bfloat16="bfloat16", cuda=FakeCuda,
+        OutOfMemoryError=OutOfMemoryError,
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "qwen_asr", SimpleNamespace(Qwen3ASRModel=FakeFactory))
+    chunks = [{"path": str(index), "index": index} for index in range(5)]
+
+    result = asr_stage.transcribe({
+        "model_path": "unused", "compute_device": "gpu", "chunks": chunks,
+        "language": "Chinese", "batch_size": 4,
+    })
+
+    assert [item["index"] for item in result["chunks"]] == list(range(5))
+    assert [item["text"] for item in result["chunks"]] == [f"text-{index}" for index in range(5)]
+    assert result["acceleration"] == {
+        "stage": "transcription", "target_batch_size": 4,
+        "effective_batch_size": 2, "fallbacks": [{"from": 4, "to": 2}],
+    }
+    assert FakeCuda.cleared == 1
 
 
 def test_tts_sentence_chunking_preserves_text() -> None:
@@ -298,6 +363,44 @@ def test_tts_batch_uses_sequential_decoder_and_restores_it() -> None:
     assert model.tokenizer.batch_sizes == [1, 1]
     assert model.tokenizer.decode == original_decode
     assert model.arguments["language"] == ["Chinese", "Chinese"]
+
+
+def test_tts_acceleration_retries_current_batch_after_oom(tmp_path, monkeypatch) -> None:
+    class OutOfMemoryError(RuntimeError):
+        pass
+
+    fake_torch = SimpleNamespace(
+        OutOfMemoryError=OutOfMemoryError,
+        cuda=SimpleNamespace(is_available=lambda: False, empty_cache=lambda: None),
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setattr(tts_pipeline, "settings", replace(settings, mock_mode=False))
+    calls: list[int] = []
+
+    def generate(_model, _request, texts, _prompt):
+        calls.append(len(texts))
+        if len(texts) > 2:
+            raise OutOfMemoryError("simulated")
+        return [np.zeros(240, dtype=np.float32) for _ in texts], 24000
+
+    def encode(path, _audio, _rate, _format):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"audio")
+        return path
+
+    monkeypatch.setattr(tts_pipeline, "_generate_tts_batch", generate)
+    monkeypatch.setattr(tts_pipeline, "encode", encode)
+    context = SimpleNamespace(output_dir=tmp_path / "output", progress=lambda *_: None)
+    request = {"voice_mode": "preset", "response_format": "wav", "compute_device_name": "CPU"}
+
+    result = tts_pipeline._process_loaded(
+        context, request, ["一", "二", "三", "四"], object(), "cpu",
+        {"requested": True, "device": "cpu", "target_batch_size": 4},
+    )
+
+    assert calls == [4, 2, 2]
+    assert result["acceleration"]["stage_batch_sizes"] == {"generation": 2, "decoder": 1}
+    assert result["acceleration"]["oom_fallbacks"] == [{"stage": "generation", "from": 4, "to": 2}]
 
 
 def test_tts_overlong_reference_is_clipped_with_matching_text(tmp_path) -> None:

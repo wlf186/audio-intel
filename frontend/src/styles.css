@@ -182,6 +182,14 @@ select:focus{border-color:var(--cyan)}
 .two-cols{display:grid;grid-template-columns:1fr 1fr;gap:20px}
 .clone-source{display:flex;gap:8px;margin:-8px 0 8px}.clone-source button{height:36px;border:1px solid #364445;background:#080d0e;color:#8e9a97;padding:0 13px;display:flex;align-items:center;gap:7px}.clone-source button.active{border-color:var(--cyan);color:var(--cyan);background:#071719}.sample-summary{display:block;margin-top:7px;padding:9px 11px;border-left:3px solid var(--cyan);background:#071315;color:#91a09d;font-size:11px;line-height:1.5;max-height:72px;overflow:auto}
 .device-control{display:block;margin-top:16px}
+.acceleration-control{position:relative;display:flex;align-items:center;gap:7px;margin-top:12px}
+.acceleration-control>label{display:inline-flex;align-items:center;gap:8px;margin:0;color:var(--text);font-size:13px;cursor:pointer}
+.acceleration-control input{width:16px;height:16px;margin:0;accent-color:var(--cyan)}
+.info-tooltip{position:static;display:inline-flex;align-items:center}
+.info-tooltip>button{display:inline-grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--muted);cursor:help}
+.info-tooltip>button:hover,.info-tooltip>button:focus-visible{background:#132022;color:var(--cyan)}
+.info-tooltip>[role="tooltip"]{position:absolute;z-index:20;left:0;top:calc(100% + 7px);width:min(280px,calc(100vw - 32px));padding:9px 11px;border:1px solid var(--line);border-radius:3px;background:#101718;box-shadow:0 10px 28px rgba(0,0,0,.4);color:var(--text);font-size:12px;line-height:1.55;opacity:0;pointer-events:none;transform:translateY(-3px);transition:opacity .15s ease,transform .15s ease}
+.info-tooltip:hover>[role="tooltip"],.info-tooltip:focus-within>[role="tooltip"]{opacity:1;transform:translateY(0)}
 .select-like.upload{display:flex;align-items:center;gap:8px;text-align:left}
 .synth{height:54px;width:100%;margin:17px 0 14px;background:var(--yellow);color:var(--ink);font-size:17px;position:relative}
 .synth::after{content:"»";position:absolute;right:16px;font-size:28px}

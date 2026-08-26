@@ -34,8 +34,16 @@ curl -I https://modelscope.cn
 
 - `nvidia-smi` 必须成功，驱动需兼容安装的 PyTorch CUDA 13.0 wheel。
 - API 返回 503 时选择 CPU，服务不会静默回退。
-- 4 GB 显存下 ASR、Aligner 与 TTS GPU 任务仍由全局锁串行运行。TTS 仅在单个任务内对相邻文本块尝试 batch 2，并逐块执行声码器解码；显存门控失败或 OOM 时会自动恢复为 batch 1。
+- 4 GB 显存下 ASR、Aligner 与 TTS GPU 任务仍由全局锁串行运行。TTS 默认仅在单个任务内对相邻文本块尝试 batch 2，并逐块执行声码器解码。
+- 开启“单任务加速”后，ASR/TTS 会按硬件自动扩大内部批次；OOM 时按 `16→12→8→6→4→2→1` 回退并重试当前批次。完成任务可在结果 JSON 的 `acceleration.target_batch_size`、`stage_batch_sizes` 和 `oom_fallbacks` 查看实际选择。
 - OOM 后先确认没有其他 GPU 程序，再重试任务；不要同时启动另一套模型服务。
+
+若要判断开关在当前机器和素材上的实际收益，至少执行三组交替基准；短音频或单句文本只有一个块时通常没有明显收益：
+
+```bash
+.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py asr --device gpu --audio meeting.wav --repeat 3
+.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py tts --device gpu --repeat 3
+```
 
 ## 执行中任务取消后仍显示正在停止
 

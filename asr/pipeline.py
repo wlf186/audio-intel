@@ -20,6 +20,7 @@ from audio_intel.db import (
     update_voiceprint_sample,
 )
 from audio_intel.gpu import compute_device_name, gpu_lease
+from audio_intel.performance import resolve_acceleration
 from audio_intel.utils import atomic_json, timecode, waveform_peaks
 from audio_intel.worker import JobContext
 
@@ -708,6 +709,15 @@ def process_job(context: JobContext) -> dict[str, Any]:
     else:
         vad = run_vad(audio, rate)
     chunks = write_chunks(audio, rate, combine_vad(vad, duration), context.work_dir / "chunks")
+    acceleration = resolve_acceleration(bool(request.get("accelerate_single_task", False)), compute_device)
+    target_batch_size = int(acceleration["target_batch_size"])
+    diarization_batch_size = (
+        GPU_DIARIZATION_BATCH_SIZE
+        if _parallel_diarization_enabled(compute_device)
+        else min(GPU_DIARIZATION_BATCH_SIZE, target_batch_size * 4)
+        if acceleration["requested"]
+        else 1
+    )
     context.progress(0.20, "speaker_diarization")
     voiceprint_matches: dict[str, dict[str, Any]] = {}
     use_voiceprints = bool(request.get("use_voiceprint_library", True) and request.get("diarize"))
@@ -727,23 +737,25 @@ def process_job(context: JobContext) -> dict[str, Any]:
         diarization_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="asr-diarization")
         if voiceprint_people:
             diarization_future = diarization_executor.submit(
-                diarize, audio, vad, request.get("speaker_count"), GPU_DIARIZATION_BATCH_SIZE,
+                diarize, audio, vad, request.get("speaker_count"), diarization_batch_size,
                 voiceprint_people, True,
             )
         else:
             diarization_future = diarization_executor.submit(
-                diarize, audio, vad, request.get("speaker_count"), GPU_DIARIZATION_BATCH_SIZE,
+                diarize, audio, vad, request.get("speaker_count"), diarization_batch_size,
             )
         diarization = []
     elif request.get("diarize") and not settings.mock_mode:
         if voiceprint_people:
             diarization, voiceprint_matches, match_status = diarize(
-                audio, vad, request.get("speaker_count"), batch_size=1,
+                audio, vad, request.get("speaker_count"), batch_size=diarization_batch_size,
                 voiceprint_people=voiceprint_people, return_metadata=True,
             )
             voiceprint_status.update(match_status)
         else:
-            diarization = diarize(audio, vad, request.get("speaker_count"), batch_size=1)
+            diarization = diarize(
+                audio, vad, request.get("speaker_count"), batch_size=diarization_batch_size,
+            )
     elif settings.mock_mode:
         midpoint = duration * 0.52
         diarization = [{"start": 0, "end": midpoint, "speaker": "Speaker_0"}, {"start": midpoint, "end": duration, "speaker": "Speaker_1"}]
@@ -755,7 +767,17 @@ def process_job(context: JobContext) -> dict[str, Any]:
             examples = ["欢迎使用完全本地化的语音智能工作台。", "识别、说话人和时间戳都会保存在当前项目中。"]
             transcribed = {"chunks": [{**item, "text": examples[i % len(examples)], "language": "Chinese"} for i, item in enumerate(chunks)]}
         else:
-            transcribed = run_model_stage(context, "transcribe", {"model_path": str(settings.models_dir / "Qwen3-ASR-0.6B"), "chunks": chunks, "language": request.get("language"), "context": request.get("context", "")}, context.work_dir, compute_device, 0.32)
+            transcribed = run_model_stage(context, "transcribe", {
+                "model_path": str(settings.models_dir / "Qwen3-ASR-0.6B"),
+                "chunks": chunks,
+                "language": request.get("language"),
+                "context": request.get("context", ""),
+                "batch_size": target_batch_size,
+            }, context.work_dir, compute_device, 0.32)
+        transcription_acceleration = transcribed.get("acceleration", {
+            "stage": "transcription", "target_batch_size": target_batch_size,
+            "effective_batch_size": 1, "fallbacks": [],
+        })
         items = transcribed["chunks"]
         language = next((item.get("language") for item in items if item.get("language")), request.get("language", "Unknown"))
         requested_alignment = bool(request.get("align"))
@@ -776,6 +798,7 @@ def process_job(context: JobContext) -> dict[str, Any]:
                     diarization_future = None
                 internal_speaker_alignment = len({item["speaker"] for item in diarization}) > 1
         should_align = can_align and (requested_alignment or internal_speaker_alignment)
+        alignment_acceleration = None
         context.progress(0.68, f"qwen3_forced_alignment_{compute_device}" if should_align else "building_segment_timestamps")
         if should_align and settings.mock_mode:
             for item in items:
@@ -784,7 +807,18 @@ def process_job(context: JobContext) -> dict[str, Any]:
                 step = (item["end"] - item["start"]) / max(len(units), 1)
                 item["words"] = [{"text": unit, "start": round(item["start"] + i * step, 3), "end": round(item["start"] + (i + 1) * step, 3)} for i, unit in enumerate(units)]
         elif should_align:
-            items = run_model_stage(context, "align", {"model_path": str(settings.models_dir / "Qwen3-ForcedAligner-0.6B"), "chunks": items}, context.work_dir, compute_device, 0.68)["chunks"]
+            aligned = run_model_stage(context, "align", {
+                "model_path": str(settings.models_dir / "Qwen3-ForcedAligner-0.6B"),
+                "chunks": items,
+                "batch_size": target_batch_size,
+            }, context.work_dir, compute_device, 0.68)
+            items = aligned["chunks"]
+            alignment_acceleration = aligned.get("acceleration", {
+                "stage": "alignment", "target_batch_size": target_batch_size,
+                "effective_batch_size": 1, "fallbacks": [],
+            })
+        else:
+            alignment_acceleration = None
         if diarization_future is not None:
             future_result = diarization_future.result()
             if voiceprint_people:
@@ -810,6 +844,29 @@ def process_job(context: JobContext) -> dict[str, Any]:
         "precision": "FP32" if compute_device == "cpu" else "BF16",
         "quantized": False,
         "voiceprint_library": voiceprint_status,
+        "acceleration": {
+            **acceleration,
+            "active": bool(
+                acceleration["requested"]
+                and (
+                    transcription_acceleration["effective_batch_size"] > 1
+                    or alignment_acceleration is not None
+                    and alignment_acceleration["effective_batch_size"] > 1
+                    or diarization_batch_size > 1 and bool(request.get("diarize"))
+                )
+            ),
+            "stage_batch_sizes": {
+                "transcription": transcription_acceleration["effective_batch_size"],
+                "alignment": alignment_acceleration["effective_batch_size"] if alignment_acceleration else 1,
+                "diarization": diarization_batch_size if request.get("diarize") else 1,
+            },
+            "oom_fallbacks": [
+                {"stage": stage["stage"], **fallback}
+                for stage in (transcription_acceleration, alignment_acceleration)
+                if stage is not None
+                for fallback in stage.get("fallbacks", [])
+            ],
+        },
     })
     try:
         result["waveform"] = waveform_peaks(audio, 240)

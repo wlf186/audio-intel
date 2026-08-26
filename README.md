@@ -75,12 +75,14 @@ Linux 详细步骤见 [安装与复原](docs/INSTALL.md)，Windows 原生部署�
                 └── 可重启任务执行器
                     Qwen3-TTS CustomVoice 或 Base（二选一）
                     └── 超长克隆参考 → 独立 aligner 环境（按需启动后退出）
-                    CPU FP32 / GPU BF16 + SDPA + 自适应单任务微批处理 → WAV / FLAC / MP3
+                    CPU FP32 / GPU BF16 + SDPA + 可选单任务自动批处理 → WAV / FLAC / MP3
 ```
 
 ASR 按 FSMN-VAD 的语音区间合并为约 20–60 秒的块。11 种对齐器支持语言返回字/词级时间戳，并利用这些时间戳把 ASR 大块重新切成连续的说话人轮次；即使选择“仅句级时间戳”，多人任务也会在内部对齐后隐藏字词明细。短录音会绕过 FunASR 少于 20 个声纹窗口时的单人回退，已知人数使用 KMeans，自动人数使用短音频余弦聚类。其他语言仍返回语音段时间戳。CAM++ 采用 single-active-speaker 模式，真正重叠语音仍只会归属给一位说话人。
 
-ASR 默认使用 GPU，TTS 默认使用 CPU。两者均可按任务选择 `cpu` 或 `gpu`：CPU 使用 FP32，GPU 使用 BF16，不使用量化；GPU 任务通过项目内的全局锁串行执行，避免 4 GB 显存同时装载多个大模型。ASR 的 FSMN-VAD 和 CAM++ 始终在 CPU 上运行，设备选项会同时切换 ASR 主模型和 ForcedAligner；GPU 模式下 CAM++ 会在 CPU 内部批处理，并与 GPU 识别和对齐重叠执行。自动说话人数会对低支持度的疑似拆分簇执行一次保守的整段声纹复核，只有滑窗和整段两个视角均有充分区分度时才合并；手动指定人数不受该复核影响。TTS GPU 模式会在显存充足时对同一任务的相邻文本块执行 batch 2，声码器仍逐块解码；显存不足或发生 OOM 时自动在当前任务内恢复为串行处理。GPU 不可用时会明确返回 `503`，不会静默回退到 CPU。可通过 `GET /api/v1/capabilities` 查询当前设备能力、说话人数上限与默认值。
+ASR 默认使用 GPU，TTS 默认使用 CPU。两者均可按任务选择 `cpu` 或 `gpu`：CPU 使用 FP32，GPU 使用 BF16，不使用量化；GPU 任务通过项目内的全局锁串行执行，避免 4 GB 显存同时装载多个大模型。ASR 的 FSMN-VAD 和 CAM++ 始终在 CPU 上运行，设备选项会同时切换 ASR 主模型和 ForcedAligner；GPU 模式下 CAM++ 会在 CPU 内部批处理，并与 GPU 识别和对齐重叠执行。自动说话人数会对低支持度的疑似拆分簇执行一次保守的整段声纹复核，只有滑窗和整段两个视角均有充分区分度时才合并；手动指定人数不受该复核影响。TTS GPU 模式默认会在显存充足时对同一任务的相邻文本块执行 batch 2，声码器仍逐块解码。
+
+ASR/TTS 提交页另有默认关闭的“单任务加速”开关；原生 API 与 OpenAI 兼容端点对应布尔参数 `accelerate_single_task`。开启后只按当前 CPU 核心/可用内存或 GPU 总显存自动扩大任务内部批次，不增加任务并发，也不改变模型、精度、分块、说话人算法或 TTS 声码器的逐块解码。GPU 分档为 `<8/8/12/16/24/32+ GB → 2/4/6/8/12/16`；CPU 在物理核心与可用内存同时达到 `8+12/16+24/32+48/48+64` 时使用 `2/4/6/8`。发生 OOM 会按 `16→12→8→6→4→2→1` 在当前任务内重试。任务结果的 `acceleration` 会记录目标/实际批次和回退。GPU 不可用时仍明确返回 `503`，不会静默回退到 CPU。可通过 `GET /api/v1/capabilities` 查询当前设备能力、说话人数上限与开关默认值。
 
 “声纹库”可为同一人员保存多个独立样本。样本既可从同一 ASR 说话人的选中段落加入，也可上传音频并创建一个可见的 ASR 入库任务来自动生成转写和字词时间戳。ASR 的 `use_voiceprint_library` 默认开启，只在普通说话人分离结束后用 CAM++ 匹配并命名，不会改变聚类、说话人 ID 或分段；任务中的名称是历史快照，之后修改库中人员名称不会回写历史任务。
 
@@ -108,14 +110,14 @@ curl -F file=@meeting.wav \
   -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -F language=Auto -F speaker_count=auto \
   -F diarize=true -F align=true -F use_voiceprint_library=true \
-  -F compute_device=gpu \
+  -F compute_device=gpu -F accelerate_single_task=true \
   http://127.0.0.1:20810/api/v1/asr/jobs
 
 # TTS 预置音色
 curl -F text='你好，这是本地语音。' \
   -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -F language=Chinese -F voice_mode=preset -F speaker=Vivian \
-  -F response_format=wav -F compute_device=cpu \
+  -F response_format=wav -F compute_device=cpu -F accelerate_single_task=true \
   http://127.0.0.1:20810/api/v1/tts/jobs
 
 # 查询任务及结果
@@ -191,6 +193,13 @@ corepack pnpm@10.15.1 --dir frontend typecheck
 corepack pnpm@10.15.1 --dir frontend test:e2e
 AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all  # 仅供快速管线验收，不是生产默认值
 ./scripts/smoke_test.sh
+```
+
+服务启动后，可用相同输入交替执行关闭/开启任务并输出中位耗时、加速倍数及每次实际批次：
+
+```bash
+.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py asr --device gpu --audio meeting.wav
+.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py tts --device cpu
 ```
 
 Windows mock 全链路验证：

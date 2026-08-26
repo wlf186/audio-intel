@@ -32,6 +32,8 @@ Name backend tests `test_*.py` and Playwright files `*.spec.ts`. Cover queue sta
 
 Worker cancellation changes must verify that the complete executor process tree has exited before the job reaches a terminal state, task temporary files are removed, and the next queued job proceeds without restarting the supervisor. Keep Linux and native Windows process behavior compatible; run real ASR and TTS GPU cancellation smoke tests when process supervision or device cleanup changes.
 
+Single-task acceleration must remain opt-in and quality-neutral: keep model identity, precision, ASR chunking, diarization semantics, and TTS sequential decoder unchanged. Test hardware-tier resolution, ordered batched outputs, OOM fallback to batch 1, and the default-off API/UI path. Run `scripts/benchmark_single_task_acceleration.py` with real models when changing batch sizing or inference calls.
+
 Model identity comes only from `audio_intel/model_manifest.json`. Download, doctor, readiness, and health checks must require `.complete` contents to match the expected revision; existence alone is never sufficient. Keep all model loading offline at runtime and never accept user-supplied model repositories, configs, or checkpoints.
 
 SQLite schema v4 data, historical jobs, voices, and voiceprint samples are persistent compatibility surfaces. Back up `data/` before migration work. Speaker names in completed jobs are snapshots; voiceprint renames must not rewrite history. Purges must keep path-containment checks, reject active imports, and clean both files and database records.

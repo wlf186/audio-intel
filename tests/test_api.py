@@ -25,6 +25,7 @@ def test_api_queues_asr_and_validates_tts(tmp_path, monkeypatch) -> None:
         assert response.json()["state"] == "queued"
         assert response.json()["request"]["compute_device"] == "gpu"
         assert response.json()["request"]["compute_device_name"] == "Test GPU"
+        assert response.json()["request"]["accelerate_single_task"] is False
         assert response.json()["compute_device_name"] == "Test GPU"
         assert response.json()["source_url"].endswith("/source")
         source = client.get(response.json()["source_url"])
@@ -49,14 +50,26 @@ def test_api_queues_asr_and_validates_tts(tmp_path, monkeypatch) -> None:
         assert tts.status_code == 202
         assert tts.json()["request"]["compute_device"] == "cpu"
         assert tts.json()["compute_device_name"] == "CPU"
+        assert tts.json()["request"]["accelerate_single_task"] is False
         explicit = client.post("/api/v1/asr/jobs", files={"file": ("cpu.wav", b"RIFF-cpu", "audio/wav")}, data={"compute_device": "cpu"})
         assert explicit.status_code == 202
         assert explicit.json()["request"]["compute_device"] == "cpu"
+        accelerated = client.post(
+            "/api/v1/tts/jobs",
+            data={
+                "text": "test", "voice_mode": "preset", "speaker": "Vivian",
+                "accelerate_single_task": "true",
+            },
+        )
+        assert accelerated.status_code == 202
+        assert accelerated.json()["request"]["accelerate_single_task"] is True
         bad_device = client.post("/api/v1/tts/jobs", data={"text": "test", "voice_mode": "preset", "speaker": "Vivian", "compute_device": "tpu"})
         assert bad_device.status_code == 422
         capabilities = client.get("/api/v1/capabilities").json()
         assert next(item for item in capabilities["asr"]["compute_devices"] if item["id"] == "gpu")["default"] is True
         assert next(item for item in capabilities["tts"]["compute_devices"] if item["id"] == "cpu")["default"] is True
+        assert capabilities["asr"]["single_task_acceleration"] == {"supported": True, "default": False}
+        assert capabilities["tts"]["single_task_acceleration"] == {"supported": True, "default": False}
 
 
 def test_gpu_request_fails_cleanly_when_unavailable(tmp_path, monkeypatch) -> None:

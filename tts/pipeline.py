@@ -12,6 +12,7 @@ from typing import Any, Iterator
 
 from audio_intel.config import settings
 from audio_intel.gpu import compute_device_name, gpu_lease
+from audio_intel.performance import lower_batch_size, resolve_acceleration
 from audio_intel.utils import waveform_peaks
 from audio_intel.worker import JobContext
 
@@ -170,6 +171,7 @@ def process_job(context: JobContext) -> dict[str, Any]:
     request = context.job["request"]
     compute_device = request.get("compute_device", "cpu")
     chunks = split_text(request["text"])
+    acceleration = resolve_acceleration(bool(request.get("accelerate_single_task", False)), compute_device)
     context.progress(0.05, "loading_tts_model")
     lease = gpu_lease(lambda: context.progress(0.05, "waiting_for_gpu")) if compute_device == "gpu" and not settings.mock_mode else None
     if lease is not None:
@@ -179,7 +181,7 @@ def process_job(context: JobContext) -> dict[str, Any]:
         if request["voice_mode"] != "preset":
             _prepare_clone_reference(context, request, compute_device)
         model = None if settings.mock_mode else load_model(request["voice_mode"], compute_device)
-        return _process_loaded(context, request, chunks, model, compute_device)
+        return _process_loaded(context, request, chunks, model, compute_device, acceleration)
     finally:
         if compute_device == "gpu" and model is not None:
             import gc
@@ -197,6 +199,7 @@ def _process_loaded(
     chunks: list[str],
     model: Any,
     compute_device: str,
+    acceleration: dict[str, Any],
 ) -> dict[str, Any]:
     waveforms, rate = [], 24000
     clone_prompt = None
@@ -207,17 +210,25 @@ def _process_loaded(
             x_vector_only_mode=False,
         )
     torch_module = None
-    batching_enabled = False
-    if compute_device == "gpu" and model is not None:
+    if model is not None:
         import torch
         torch_module = torch
-        batching_enabled = _gpu_can_microbatch(torch_module)
+    configured_batch_size = 1
+    if acceleration["requested"]:
+        configured_batch_size = int(acceleration["target_batch_size"])
+    elif compute_device == "gpu" and model is not None and _gpu_can_microbatch(torch_module):
+        configured_batch_size = GPU_TTS_BATCH_SIZE
+    actual_batch_sizes: list[int] = []
+    fallbacks: list[dict[str, int]] = []
     index = 0
     while index < len(chunks):
         context.progress(0.15 + 0.72 * index / max(len(chunks), 1), f"synthesizing_{index + 1}_of_{len(chunks)}")
-        batch_size = 1
-        if batching_enabled and index + 1 < len(chunks) and _gpu_can_microbatch(torch_module):
-            batch_size = GPU_TTS_BATCH_SIZE
+        batch_size = min(configured_batch_size, len(chunks) - index)
+        if (
+            not acceleration["requested"] and compute_device == "gpu" and batch_size > 1
+            and not _gpu_can_microbatch(torch_module)
+        ):
+            batch_size = 1
         texts = chunks[index:index + batch_size]
         if settings.mock_mode:
             generated = []
@@ -227,20 +238,19 @@ def _process_loaded(
         else:
             try:
                 generated, rate = _generate_tts_batch(model, request, texts, clone_prompt)
-            except torch_module.OutOfMemoryError:
-                if len(texts) == 1:
+            except Exception as exc:
+                if torch_module is None or not isinstance(exc, torch_module.OutOfMemoryError):
                     raise
-                batching_enabled = False
+                if batch_size <= 1:
+                    raise
+                reduced = lower_batch_size(batch_size)
+                fallbacks.append({"from": batch_size, "to": reduced})
+                configured_batch_size = reduced
                 import gc
                 gc.collect()
-                torch_module.cuda.empty_cache()
-                generated = []
-                for text in texts:
-                    item_generated, item_rate = _generate_tts_batch(model, request, [text], clone_prompt)
-                    if generated and item_rate != rate:
-                        raise RuntimeError("TTS model returned inconsistent sample rates")
-                    rate = item_rate
-                    generated.extend(item_generated)
+                if compute_device == "gpu" and torch_module.cuda.is_available():
+                    torch_module.cuda.empty_cache()
+                continue
         if len(generated) != len(texts):
             raise RuntimeError(f"TTS model returned {len(generated)} waveforms for {len(texts)} texts")
         if settings.mock_mode:
@@ -248,6 +258,7 @@ def _process_loaded(
         else:
             import numpy as np
             waveforms.extend(np.asarray(audio, dtype=np.float32) for audio in generated)
+        actual_batch_sizes.append(len(texts))
         index += len(texts)
     if settings.mock_mode:
         silence = [0.0] * int(rate * 0.18)
@@ -276,6 +287,12 @@ def _process_loaded(
         "compute_device_name": compute_device_name(compute_device, request.get("compute_device_name")),
         "precision": "FP32" if compute_device == "cpu" else "BF16",
         "quantized": False,
+        "acceleration": {
+            **acceleration,
+            "active": bool(acceleration["requested"] and max(actual_batch_sizes, default=1) > 1),
+            "stage_batch_sizes": {"generation": max(actual_batch_sizes, default=1), "decoder": 1},
+            "oom_fallbacks": [{"stage": "generation", **fallback} for fallback in fallbacks],
+        },
         "waveform": waveform_peaks(merged, 240),
         "artifacts": [{"name": path.name, "path": str(path), "mime_type": mime, "size_bytes": path.stat().st_size}],
     }

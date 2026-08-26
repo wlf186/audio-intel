@@ -213,6 +213,12 @@ def compute_capabilities(default: str) -> list[dict[str, Any]]:
     ]
 
 
+def validate_boolean(value: Any, field: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise HTTPException(status_code=422, detail=f"{field} must be a boolean")
+
+
 def create_app() -> FastAPI:
     settings.ensure_directories()
     init_db()
@@ -296,6 +302,7 @@ def create_app() -> FastAPI:
                 "aligner_languages": ALIGNER_LANGUAGES,
                 "exports": ["json", "srt", "vtt", "txt"],
                 "compute_devices": compute_capabilities("gpu"),
+                "single_task_acceleration": {"supported": True, "default": False},
             },
             "tts": {
                 "models": ["Qwen3-TTS-12Hz-0.6B-Base", "Qwen3-TTS-12Hz-0.6B-CustomVoice"],
@@ -303,6 +310,7 @@ def create_app() -> FastAPI:
                 "preset_speakers": PRESET_SPEAKERS,
                 "formats": ["wav", "flac", "mp3"],
                 "compute_devices": compute_capabilities("cpu"),
+                "single_task_acceleration": {"supported": True, "default": False},
             },
             "limits": {
                 "max_upload_bytes": settings.max_upload_bytes,
@@ -322,6 +330,7 @@ def create_app() -> FastAPI:
         export_formats: str = Form("json,srt,vtt,txt"),
         compute_device: str = Form("gpu"),
         use_voiceprint_library: bool = Form(True),
+        accelerate_single_task: bool = Form(False),
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         ensure_service("asr")
@@ -346,6 +355,7 @@ def create_app() -> FastAPI:
             "language": language, "speaker_count": speaker_value, "diarize": diarize,
             "align": align, "context": context, "export_formats": formats, "compute_device": compute_device,
             "compute_device_name": compute_device_name, "use_voiceprint_library": use_voiceprint_library,
+            "accelerate_single_task": accelerate_single_task,
         }
         return public_job(create_job("asr", original_name, request_data, job_id))
 
@@ -363,6 +373,7 @@ def create_app() -> FastAPI:
         response_format: str = Form("wav"),
         display_name: str = Form("语音合成"),
         compute_device: str = Form("cpu"),
+        accelerate_single_task: bool = Form(False),
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         ensure_service("tts")
@@ -379,6 +390,7 @@ def create_app() -> FastAPI:
             "speaker": speaker, "voice_profile_id": voice_profile_id, "reference_text": reference_text,
             "instruct": instruct, "response_format": response_format, "compute_device": compute_device,
             "compute_device_name": compute_device_name,
+            "accelerate_single_task": accelerate_single_task,
         }
         job_id = uuid.uuid4().hex
         if voice_mode == "preset":
@@ -885,6 +897,7 @@ def add_openai_routes(app: FastAPI) -> None:
         diarize: bool = Form(True), speaker_count: str = Form("auto"),
         compute_device: str = Form("gpu"),
         use_voiceprint_library: bool = Form(True),
+        accelerate_single_task: bool = Form(False),
         _: None = Depends(require_api_key),
     ) -> Response:
         ensure_service("asr")
@@ -906,6 +919,7 @@ def add_openai_routes(app: FastAPI) -> None:
             "speaker_count": speakers, "diarize": diarize, "align": True, "context": "",
             "export_formats": ["json", "srt", "vtt", "txt"], "compute_device": compute_device,
             "compute_device_name": compute_device_name, "use_voiceprint_library": use_voiceprint_library,
+            "accelerate_single_task": accelerate_single_task,
         }
         create_job("asr", name, request_data, job_id)
         job = await wait_for_job(job_id)
@@ -926,6 +940,9 @@ def add_openai_routes(app: FastAPI) -> None:
     async def openai_speech(payload: dict[str, Any] = Body(...), _: None = Depends(require_api_key)) -> FileResponse:
         ensure_service("tts")
         compute_device, compute_device_name = validate_compute_device(str(payload.get("compute_device", "cpu")))
+        accelerate_single_task = validate_boolean(
+            payload.get("accelerate_single_task", False), "accelerate_single_task",
+        )
         if payload.get("model", "qwen3-tts-0.6b") not in {"qwen3-tts-0.6b", "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"}:
             raise HTTPException(status_code=404, detail="Unknown speech model")
         text = str(payload.get("input", "")).strip()
@@ -936,6 +953,7 @@ def add_openai_routes(app: FastAPI) -> None:
             "text": text, "language": payload.get("language", "Auto"), "instruct": payload.get("instructions", ""),
             "response_format": payload.get("response_format", "wav"), "compute_device": compute_device,
             "compute_device_name": compute_device_name,
+            "accelerate_single_task": accelerate_single_task,
         }
         if voice.startswith("voice_"):
             profile = get_voice(voice)
