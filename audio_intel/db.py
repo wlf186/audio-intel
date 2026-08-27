@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .config import settings
+from .hotwords import MAX_HOTWORD_LISTS, hotword_name_key, normalize_hotword_name, normalize_hotword_terms
 
 
 JOB_STATES = {"queued", "running", "succeeded", "failed", "cancelled"}
@@ -245,6 +246,23 @@ def init_db() -> None:
                 if name not in columns:
                     db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {declaration}")
             db.execute("UPDATE schema_meta SET version=6 WHERE version<6")
+        version = db.execute("SELECT MIN(version) FROM schema_meta").fetchone()[0]
+        if version < 7:
+            db.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS asr_hotword_lists (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    name_key TEXT NOT NULL UNIQUE,
+                    terms_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_asr_hotword_lists_name
+                    ON asr_hotword_lists(name_key,id);
+                """
+            )
+            db.execute("UPDATE schema_meta SET version=7 WHERE version<7")
         db.execute(
             """CREATE TABLE IF NOT EXISTS queue_sequence (
                singleton INTEGER PRIMARY KEY CHECK(singleton=1),value INTEGER NOT NULL)"""
@@ -270,6 +288,79 @@ def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
 
 def person_name_key(name: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", name).strip().split()).casefold()
+
+
+def _decode_hotword_list(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    item = dict(row)
+    item["terms"] = json.loads(item.pop("terms_json"))
+    return item
+
+
+def create_hotword_list(name: str, terms: list[Any]) -> dict[str, Any]:
+    clean_name = normalize_hotword_name(name)
+    clean_terms = normalize_hotword_terms(terms)
+    now = utcnow()
+    item_id = "hotwords_" + uuid.uuid4().hex[:16]
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        count = int(db.execute("SELECT COUNT(*) FROM asr_hotword_lists").fetchone()[0])
+        if count >= MAX_HOTWORD_LISTS:
+            db.execute("ROLLBACK")
+            raise OverflowError(f"No more than {MAX_HOTWORD_LISTS} hotword lists may be created")
+        db.execute(
+            """INSERT INTO asr_hotword_lists(id,name,name_key,terms_json,created_at,updated_at)
+               VALUES(?,?,?,?,?,?)""",
+            (
+                item_id, clean_name, hotword_name_key(clean_name),
+                json.dumps(clean_terms, ensure_ascii=False), now, now,
+            ),
+        )
+        db.execute("COMMIT")
+    return get_hotword_list(item_id)  # type: ignore[return-value]
+
+
+def get_hotword_list(item_id: str) -> dict[str, Any] | None:
+    with connect() as db:
+        row = db.execute("SELECT * FROM asr_hotword_lists WHERE id=?", (item_id,)).fetchone()
+    return _decode_hotword_list(row)
+
+
+def list_hotword_lists() -> list[dict[str, Any]]:
+    with connect() as db:
+        rows = db.execute("SELECT * FROM asr_hotword_lists ORDER BY name_key,id").fetchall()
+    return [_decode_hotword_list(row) for row in rows]  # type: ignore[misc]
+
+
+def update_hotword_list(
+    item_id: str,
+    *,
+    name: str | None = None,
+    terms: list[Any] | None = None,
+) -> dict[str, Any] | None:
+    changes: dict[str, Any] = {}
+    if name is not None:
+        clean_name = normalize_hotword_name(name)
+        changes.update({"name": clean_name, "name_key": hotword_name_key(clean_name)})
+    if terms is not None:
+        changes["terms_json"] = json.dumps(normalize_hotword_terms(terms), ensure_ascii=False)
+    if not changes:
+        raise ValueError("At least one of name or terms must be provided")
+    changes["updated_at"] = utcnow()
+    assignment = ",".join(f"{key}=?" for key in changes)
+    with connect() as db:
+        cursor = db.execute(
+            f"UPDATE asr_hotword_lists SET {assignment} WHERE id=?",
+            (*changes.values(), item_id),
+        )
+    return get_hotword_list(item_id) if cursor.rowcount else None
+
+
+def delete_hotword_list(item_id: str) -> bool:
+    with connect() as db:
+        cursor = db.execute("DELETE FROM asr_hotword_lists WHERE id=?", (item_id,))
+    return cursor.rowcount == 1
 
 
 def _next_queue_seq(db: sqlite3.Connection) -> int:

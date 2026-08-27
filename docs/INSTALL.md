@@ -4,18 +4,20 @@
 
 本文命令针对 Ubuntu 22.04/24.04 x86_64。原生 Windows 11 x64 使用独立的 [Windows 部署指南](WINDOWS.md)；macOS、ARM 和容器部署尚未验证。CPU 可运行全部能力，但 ASR 与 TTS 默认都选择 GPU；无 GPU 时请在页面或 API 中选择 `cpu`。
 
-建议资源：16 GB RAM 起步、32 GB RAM 推荐、完整安装预留 30 GB 磁盘。已验证 GPU 为 4 GB RTX A1000。安装脚本固定 Python 3.12、PyTorch 2.11.0 CUDA 13.0 和受控的模型 revision。
+建议资源：16 GB RAM 起步、32 GB RAM 推荐。0.6B/1.7B 全部模型、隔离运行时和安装缓存约占 43 GiB，因此至少预留 55 GiB、建议 70 GiB 可用磁盘，为任务数据、升级和默认 5 GiB 准入保护留出空间。已验证的 4 GiB RTX A1000 可运行 0.6B GPU 路径；1.7B GPU 路径需要 8 GiB 档设备并另行实机验收。安装脚本固定 Python 3.12、PyTorch 2.11.0 CUDA 13.0 和受控的模型 revision。
 
 ## 2. 系统前提
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y git curl tar coreutils python3
+sudo apt-get install -y git curl jq tar coreutils python3
 
 node --version       # 需要 22.20 或更高，推荐 24 LTS
 corepack --version
 nvidia-smi           # 仅 GPU 模式需要
 ```
+
+`jq` 仅供 `/docs` 中可复制的 Bash API 示例解析 JSON；服务安装和运行本身不依赖它。
 
 如果发行版没有合适的 Node.js，请从 <https://nodejs.org/> 安装 Node 24 LTS 并启用 Corepack。Node 20 已结束维护，不再属于本项目支持基线。
 
@@ -30,7 +32,9 @@ cd audio-intel
 curl -fsS http://127.0.0.1:20810/api/v1/health
 ```
 
-`setup all` 创建 `.runtime/api`、`.runtime/asr`、`.runtime/tts` 和 `.runtime/aligner`，构建 `frontend/dist`，并将模型下载到 `models/`。TTS 与 Qwen ASR 要求互斥的 Transformers 版本，因此长参考音频的对齐使用独立 aligner 环境；不要把两个 Qwen 包装进同一环境。所有缓存和临时文件也留在仓库目录中。下载完成后，`service.sh start` 默认设置 Hugging Face 与 Transformers 离线模式。
+`setup all` 创建 `.runtime/api`、`.runtime/asr`、`.runtime/tts` 和 `.runtime/aligner`，构建 `frontend/dist`，并将模型下载到 `models/`。`setup asr/all` 下载固定 revision 的 Qwen3-ASR 0.6B 与 1.7B；`setup tts/all` 下载 Qwen3-TTS 0.6B/1.7B 的 Base、CustomVoice，以及 1.7B VoiceDesign。TTS 与 Qwen ASR 要求互斥的 Transformers 版本，因此长参考音频的对齐使用独立 aligner 环境；不要把两个 Qwen 包装进同一环境。所有缓存和临时文件也留在仓库目录中。下载完成后，`service.sh start` 默认设置 Hugging Face 与 Transformers 离线模式。
+
+ASR 与 TTS GPU 能力均按所选模型判断：0.6B/1.7B 使用 `nvidia-smi` 报告的总显存门槛 3840/7936 MiB，而不是当前空闲显存。可从受保护的 `GET /api/v1/capabilities` 读取 `asr.models[].compute_devices` 和 `tts.model_capabilities[].compute_devices`；例如报告 8151 MiB 的 8 GiB 显卡可通过 1.7B 准入。准入门槛不排除其他 GPU 程序导致运行期 OOM，无 GPU 或显存不足时 API 消费方应显式选择 `compute_device=cpu`。
 
 安装使用 `requirements-lock/linux/` 中带哈希的锁文件。uv 固定为 0.12.5，安装器会在解压前校验官方 SHA256。模型 `.complete` 不是布尔标记，其内容必须等于清单中的固定 revision；空文件或错误 revision 会触发修复下载。
 
@@ -75,4 +79,4 @@ git pull --ff-only
 
 不要复制 `.runtime/` 到另一台机器；在目标机器重新运行 setup。任务数据可按需要单独迁移。
 
-数据库会在启动时自动迁移到 schema v6，既有任务与旧声音档案保持可读。完整兼容性说明见 [升级指南](UPGRADE.md)。
+数据库会在启动时自动迁移到 schema v7，既有任务、旧声音档案与声纹样本保持可读。v7 新增热词库；完整兼容性说明见 [升级指南](UPGRADE.md)。

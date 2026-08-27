@@ -1,11 +1,11 @@
 import type {ReactNode} from 'react'
-import {AudioLines,CircleHelp,Fingerprint,ListMusic,LogOut,Mic2,MonitorCog} from 'lucide-react'
+import {AudioLines,BookA,CircleHelp,Fingerprint,ListMusic,LogOut,Mic2,MonitorCog} from 'lucide-react'
 import type {Health} from '../lib/types'
 import {systemPhase} from '../lib/systemStatus'
 import {BrandMark} from './BrandMark'
 
-export type Page='asr'|'tts'|'voiceprints'|'jobs'|'system'
-const items:[Page,string,string,typeof AudioLines][]=[['asr','01','转写工作台',AudioLines],['tts','02','语音合成',Mic2],['voiceprints','03','声纹库',Fingerprint],['jobs','04','任务记录',ListMusic],['system','05','系统状态',MonitorCog]]
+export type Page='asr'|'tts'|'hotwords'|'voiceprints'|'jobs'|'system'
+const items:[Page,string,string,typeof AudioLines][]=[['asr','01','转写工作台',AudioLines],['tts','02','语音合成',Mic2],['hotwords','03','热词库',BookA],['voiceprints','04','声纹库',Fingerprint],['jobs','05','任务记录',ListMusic],['system','06','系统状态',MonitorCog]]
 type Tone='checking'|'ready'|'warning'|'error'|'offline'
 function FooterStatus({label,value,tone,className='',detail,title}:{label:string;value:string;tone:Tone;className?:string;detail?:string;title?:string}){
  return <span className={`shell-status ${className}`} data-state={tone} title={title} aria-label={`${label} ${value}`}><i aria-hidden="true"/><span>{label}</span><b>{value}</b>{detail?<span className="status-detail">{detail}</span>:null}</span>

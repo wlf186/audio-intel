@@ -6,6 +6,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .db import active_jobs, successful_jobs
+from .model_registry import (
+    default_asr_model, default_tts_model, resolve_asr_model, resolve_tts_model,
+)
 
 
 _SYNTHESIS_STAGE = re.compile(r"^synthesizing_(\d+)_of_(\d+)$")
@@ -105,8 +108,12 @@ def _cohort(job: dict[str, Any]) -> tuple[Any, ...]:
         bool(request.get("accelerate_single_task")),
     )
     if job.get("kind") == "asr":
-        return common + (bool(request.get("diarize")), bool(request.get("align")))
-    return common + (request.get("voice_mode", "preset"),)
+        model = resolve_asr_model(request.get("model")) or default_asr_model()
+        return common + (
+            model["public_id"], bool(request.get("diarize")), bool(request.get("align")),
+        )
+    model = resolve_tts_model(request.get("model")) or default_tts_model()
+    return common + (model["public_id"], request.get("voice_mode", "preset"))
 
 
 def _input_units(job: dict[str, Any]) -> float | None:
@@ -134,11 +141,28 @@ def _duration_range(job: dict[str, Any], context: dict[str, Any]) -> tuple[float
     kind_history = _history(context, str(job["kind"]))
     history = [item for item in kind_history if _cohort(item) == _cohort(job)]
     if len(history) < 5:
-        history = [
-            item for item in kind_history
-            if (item.get("request") or {}).get("compute_device")
-            == (job.get("request") or {}).get("compute_device")
-        ]
+        request = job.get("request") or {}
+        if job.get("kind") == "asr":
+            model = resolve_asr_model(request.get("model")) or default_asr_model()
+            history = [
+                item for item in kind_history
+                if (item.get("request") or {}).get("compute_device") == request.get("compute_device")
+                and (
+                    resolve_asr_model((item.get("request") or {}).get("model"))
+                    or default_asr_model()
+                )["public_id"] == model["public_id"]
+            ]
+        else:
+            model = resolve_tts_model(request.get("model")) or default_tts_model()
+            history = [
+                item for item in kind_history
+                if (item.get("request") or {}).get("compute_device")
+                == request.get("compute_device")
+                and (
+                    resolve_tts_model((item.get("request") or {}).get("model"))
+                    or default_tts_model()
+                )["public_id"] == model["public_id"]
+            ]
     values: list[float] = []
     units = _input_units(job)
     for item in history:
@@ -168,7 +192,30 @@ def estimate_for_job(job: dict[str, Any], context: dict[str, Any]) -> dict[str, 
         as_of = as_of.replace(tzinfo=timezone.utc)
     duration = _duration_range(job, context)
     if duration is None:
-        samples = len(_history(context, str(job["kind"])))
+        history = _history(context, str(job["kind"]))
+        if job.get("kind") == "asr":
+            request = job.get("request") or {}
+            model = resolve_asr_model(request.get("model")) or default_asr_model()
+            history = [
+                item for item in history
+                if (item.get("request") or {}).get("compute_device") == request.get("compute_device")
+                and (
+                    resolve_asr_model((item.get("request") or {}).get("model"))
+                    or default_asr_model()
+                )["public_id"] == model["public_id"]
+            ]
+        else:
+            request = job.get("request") or {}
+            model = resolve_tts_model(request.get("model")) or default_tts_model()
+            history = [
+                item for item in history
+                if (item.get("request") or {}).get("compute_device") == request.get("compute_device")
+                and (
+                    resolve_tts_model((item.get("request") or {}).get("model"))
+                    or default_tts_model()
+                )["public_id"] == model["public_id"]
+            ]
+        samples = len(history)
         return {
             "state": "warming_up", "confidence": None, "sample_count": samples,
             "start_after_seconds": None, "remaining_seconds": None,

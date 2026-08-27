@@ -5,8 +5,10 @@ Sandevistan-Audio source code is licensed under Apache-2.0. That license applies
 | Component | Upstream | License / terms |
 |---|---|---|
 | Qwen3-ASR-0.6B | <https://huggingface.co/Qwen/Qwen3-ASR-0.6B> | Apache-2.0 |
+| Qwen3-ASR-1.7B | <https://huggingface.co/Qwen/Qwen3-ASR-1.7B> | Apache-2.0 |
 | Qwen3-ForcedAligner-0.6B | <https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B> | Apache-2.0 |
-| Qwen3-TTS Base / CustomVoice | <https://github.com/QwenLM/Qwen3-TTS> | Apache-2.0 |
+| Qwen3-TTS 12Hz 0.6B Base / CustomVoice | <https://huggingface.co/collections/Qwen/qwen3-tts> | Apache-2.0 |
+| Qwen3-TTS 12Hz 1.7B Base / CustomVoice / VoiceDesign | <https://huggingface.co/collections/Qwen/qwen3-tts> | Apache-2.0 |
 | FSMN-VAD | <https://modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch> | Apache-2.0 model card |
 | CAM++ | <https://www.modelscope.cn/models/iic/speech_campplus_sv_zh-cn_16k-common> | Apache-2.0 model card |
 | FunASR toolkit | <https://github.com/modelscope/FunASR> | MIT; model weights have separate terms |

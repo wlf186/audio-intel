@@ -7,7 +7,7 @@ Windows 自动化会在 GitHub 的 Windows runner 上验证依赖解析、后端
 ## 1. 机器与软件要求
 
 - Windows 11 x64，建议完成 Windows Update。
-- 16 GB 内存起步，32 GB 推荐；完整安装至少预留 30 GB。
+- 16 GB 内存起步，32 GB 推荐；0.6B/1.7B 全部模型、隔离运行时和安装缓存约占 43 GiB，至少预留 55 GiB、建议 70 GiB。Windows 无法使用符号链接时缓存还可能额外占用空间。
 - 本地 NTFS 磁盘，建议克隆到短路径，例如 `C:\ai\audio-intel`。避免 OneDrive、网络盘和移动盘。
 - Git for Windows、Node.js 24 LTS（最低 22.20，自带 npm）。Python 3.12 和 uv 由项目安装到 `.runtime\`。
 - GPU 可选。GPU 模式需要 NVIDIA 显卡、可用的 `nvidia-smi` 和 **580 或更高版本驱动**。安装器使用官方 PyTorch 2.11 CUDA 13.0 wheel，通常不需要另装完整 CUDA Toolkit。
@@ -90,9 +90,13 @@ nvidia-smi
 .\.runtime\asr\Scripts\python.exe -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU only')"
 ```
 
-驱动低于 580 时先从 NVIDIA 官方渠道更新。RTX 笔记本通常使用 WDDM，桌面和浏览器会占用一部分显存；4 GB 显卡出现 OOM 时关闭其他 GPU 程序后重试，或为任务选择 CPU。服务不会把 GPU 任务静默回退到 CPU。
+驱动低于 580 时先从 NVIDIA 官方渠道更新。ASR 与 TTS 0.6B/1.7B 都按 `nvidia-smi` 报告的总显存使用 3840/7936 MiB 门槛，而不是当前空闲显存；因此报告 8151 MiB 的 8 GiB 显卡可选择 1.7B。可查询受保护的 `GET /api/v1/capabilities`，以 `asr.models[].compute_devices` 和 `tts.model_capabilities[].compute_devices` 判断具体模型。门槛只是准入条件，RTX 笔记本的 WDDM、桌面和浏览器仍可能占用显存并造成运行期 OOM；此时关闭其他 GPU 程序后重试，或为任务选择 CPU。服务不会把显式 API GPU 任务静默回退到 CPU，前端则会在所选模型不满足门槛时提示原因并按 CPU 创建本次任务。当前 Windows NVIDIA 真实推理仍未实机验收。
 
 ## 5. 常见问题
+
+### ASR 推理出现 `PermissionError: [WinError 5]`
+
+旧版本的 ASR 子进程会反复替换父进程正在轮询的同一个进度 JSON；Windows 上的文件占用规则可能使 `os.replace` 失败，并连带中止本来正常的推理。升级后进度改为一次性发布、读取后清理的不可变编号快照，不再覆盖父进程可能正在读取的文件。该修复不改变识别结果、进度更新频率或任务 API，也不会让 TTS 进度改用文件通信。
 
 ### PowerShell 拒绝运行脚本
 
@@ -150,6 +154,6 @@ git pull --ff-only
 .\.runtime\api\Scripts\python.exe scripts\smoke_test.py
 ```
 
-升级前备份 `data\`。API 启动时会把数据库自动迁移到 schema v6；完整的不兼容 API 变更和迁移说明见 [升级指南](UPGRADE.md)。不要从其他机器复制 `.runtime\`；在目标机器重新 setup。模型目录可以复制，但每个模型的 `.complete` 内容必须与项目固定的 revision 一致。
+升级前备份 `data\`。API 启动时会把数据库自动迁移到 schema v7；完整的不兼容 API 变更和迁移说明见 [升级指南](UPGRADE.md)。不要从其他机器复制 `.runtime\`；在目标机器重新 setup。模型目录可以复制，但每个模型的 `.complete` 内容必须与项目固定的 revision 一致。
 
 `setup tts` 同时维护独立的 `.runtime\aligner`，这是超长克隆样本按词边界截断所需的内部运行时，不是额外服务。更多版本与锁文件说明见 [依赖维护](DEPENDENCIES.md)。

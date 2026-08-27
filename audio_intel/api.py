@@ -28,17 +28,20 @@ from . import __version__
 from .config import settings
 from .gpu import COMPUTE_DEVICES, cached_gpu_snapshot, gpu_snapshot
 from .db import (
+    create_hotword_list,
     create_job,
     create_job_idempotent,
     create_voice,
     create_voiceprint_person,
     create_voiceprint_sample,
+    delete_hotword_list,
     delete_job_record,
     delete_voice_record,
     delete_voiceprint_person_record,
     delete_voiceprint_sample_record,
     find_voiceprint_person,
     find_idempotent_job,
+    get_hotword_list,
     get_job,
     get_voice,
     get_voiceprint_person,
@@ -46,6 +49,7 @@ from .db import (
     init_db,
     list_jobs,
     list_jobs_page,
+    list_hotword_lists,
     list_voices,
     list_voiceprint_people,
     list_voiceprint_samples,
@@ -55,6 +59,7 @@ from .db import (
     request_cancel,
     retry_job,
     update_job,
+    update_hotword_list,
     update_voiceprint_sample,
     utcnow,
     IdempotencyConflict,
@@ -62,14 +67,24 @@ from .db import (
 from .admission import AdmissionController
 from .events import SnapshotHub
 from .observability import estimate_for_job, queue_context, queue_for_job, stage_details
+from .hotwords import (
+    MAX_HOTWORD_LISTS, MAX_HOTWORD_NAME_CHARS, MAX_HOTWORD_PROMPT_CHARS,
+    MAX_HOTWORD_TERM_CHARS, MAX_SELECTED_LISTS, MAX_SELECTED_TERMS,
+    MAX_TERMS_PER_LIST, compile_hotword_context, parse_hotword_list_ids,
+)
+from .model_registry import (
+    asr_models, default_asr_model, model_installation, resolve_asr_model,
+    default_tts_model, resolve_tts_checkpoint, resolve_tts_model, tts_models,
+)
 from .utils import safe_filename
 from .purge import purge_jobs
 from starlette.concurrency import run_in_threadpool
 from .api_docs import (
-    ADMISSION_RESPONSE, API_DESCRIPTION, AUTH_RESPONSES, BINARY_SCHEMA, CONFLICT_RESPONSE,
+    ADMISSION_RESPONSE, API_DESCRIPTION, ASR_SERVICE_RESPONSE, ASR_VALIDATION_RESPONSE,
+    AUTH_RESPONSES, BINARY_SCHEMA, CONFLICT_RESPONSE,
     IDEMPOTENCY_RESPONSES, conditional_job_responses, idempotency_replay_response,
     NOT_FOUND_RESPONSE, OPENAPI_TAGS, OPTIONAL_IDEMPOTENCY_RESPONSES, SERVICE_RESPONSE, TOO_LARGE_RESPONSE,
-    TTS_CONTROL_VALIDATION_RESPONSE, VALIDATION_RESPONSE, bilingual, problem_response, sse_response,
+    TTS_CONTROL_VALIDATION_RESPONSE, TTS_SERVICE_RESPONSE, VALIDATION_RESPONSE, bilingual, problem_response, sse_response,
     enrich_openapi_schema,
 )
 from .api_models import (
@@ -79,6 +94,7 @@ from .api_models import (
     OpenAISpeechRequest, OpenAITranscription, OpenAIVerboseTranscription, ProblemDetail, SystemResponse,
     VoiceListResponse, VoiceProfileResponse, VoiceprintPeopleResponse,
     VoiceprintPersonResponse, VoiceprintSamplesResponse, VoiceprintUploadResponse,
+    HotwordListResponse, HotwordListsResponse,
 )
 
 
@@ -88,15 +104,14 @@ PRESET_SPEAKER_NATIVE_LANGUAGES = {
     "Dylan": "Chinese", "Eric": "Chinese", "Ryan": "English", "Aiden": "English",
     "Ono_Anna": "Japanese", "Sohee": "Korean",
 }
+DEFAULT_ASR_MODEL_ID = str(default_asr_model()["public_id"])
+DEFAULT_TTS_MODEL_ID = str(default_tts_model()["public_id"])
+MAX_TTS_INSTRUCTION_CHARS = 1000
 TTS_LANGUAGES = [
     "Auto", "Chinese", "English", "Japanese", "Korean", "German",
     "French", "Russian", "Portuguese", "Spanish", "Italian",
 ]
 TTS_LANGUAGE_BY_KEY = {language.lower(): language for language in TTS_LANGUAGES}
-TTS_UNSUPPORTED_INSTRUCTION_DETAIL = (
-    "Style instructions are not supported by the installed Qwen3-TTS 0.6B models; "
-    "omit this field or send an empty value"
-)
 SINGLE_TASK_ACCELERATION_DEFAULT = True
 ALIGNER_LANGUAGES = [
     "Chinese", "English", "Cantonese", "French", "German", "Italian",
@@ -162,6 +177,16 @@ class PersonNameRequest(BaseModel):
 class AddAsrSamplesRequest(BaseModel):
     job_id: str = Field(description="已成功完成的 ASR 任务 ID / Successfully completed ASR job ID")
     segment_ids: list[int] = Field(description="同一说话人的一个或多个段落 ID / One or more segment IDs from one speaker")
+
+
+class HotwordListCreateRequest(BaseModel):
+    name: str = Field(description="场景词表名称 / Scene vocabulary name")
+    terms: list[str] = Field(description="按优先顺序排列的热词 / Ordered hotword terms")
+
+
+class HotwordListUpdateRequest(BaseModel):
+    name: str | None = Field(None, description="新的场景词表名称 / New scene vocabulary name")
+    terms: list[str] | None = Field(None, description="完整替换后的热词 / Complete replacement term list")
 
 
 class SpeakerNameRequest(BaseModel):
@@ -307,12 +332,19 @@ def idempotent_job(
     idempotency_key: str,
     file_digest: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
+    ignored_fields = {"effective_context", "hotword_lists", "hotword_term_count"}
+    if request_data.get("model") == DEFAULT_ASR_MODEL_ID:
+        ignored_fields.add("model")
+    if not request_data.get("hotword_list_ids"):
+        ignored_fields.add("hotword_list_ids")
+    if operation == "upload_voiceprint_sample":
+        ignored_fields.add("voiceprint_sample_id")
     try:
         return create_job_idempotent(
             kind, display_name, request_data, job_id, operation,
             idempotency_key_hash(idempotency_key), request_fingerprint(
                 request_data, file_digest,
-                {"voiceprint_sample_id"} if operation == "upload_voiceprint_sample" else None,
+                ignored_fields,
             ),
         )
     except IdempotencyConflict as exc:
@@ -412,6 +444,259 @@ def validate_compute_device(value: str) -> tuple[str, str]:
     if snapshot is None:
         raise HTTPException(status_code=503, detail="GPU compute is unavailable; select CPU or check NVIDIA runtime")
     return normalized, str(snapshot["name"])
+
+
+def _asr_model_devices(model: dict[str, Any]) -> list[dict[str, Any]]:
+    installation = model_installation(settings.models_dir, model)
+    installed = bool(installation["installed"] or settings.mock_mode)
+    snapshot = gpu_snapshot(0)
+    minimum = int(model.get("minimum_gpu_memory_mib") or 0)
+    total = int(snapshot["memory_total_mib"]) if snapshot is not None else None
+    gpu_available = bool(installed and snapshot is not None and total is not None and total >= minimum)
+    if not installed:
+        reason_code, reason = "model_not_installed", "Model files are not installed at the pinned revision"
+    elif snapshot is None:
+        reason_code, reason = "gpu_unavailable", "No compatible NVIDIA GPU is available"
+    elif total is not None and total < minimum:
+        reason_code = "insufficient_gpu_memory"
+        reason = f"This model requires at least {minimum} MiB total GPU memory; detected {total} MiB"
+    else:
+        reason_code = reason = None
+    return [
+        {
+            "id": "cpu", "precision": "FP32", "available": installed,
+            "default": installed and not gpu_available, "quantized": False,
+            "unavailable_reason_code": None if installed else "model_not_installed",
+            "unavailable_reason": None if installed else "Model files are not installed at the pinned revision",
+        },
+        {
+            "id": "gpu", "precision": "BF16", "available": gpu_available,
+            "default": gpu_available, "quantized": False,
+            "minimum_memory_mib": minimum, "total_memory_mib": total,
+            "unavailable_reason_code": reason_code, "unavailable_reason": reason,
+        },
+    ]
+
+
+def asr_model_capabilities() -> list[dict[str, Any]]:
+    result = []
+    for model in asr_models():
+        installation = model_installation(settings.models_dir, model)
+        result.append({
+            "id": model["public_id"], "name": model["name"],
+            "revision": model["revision"],
+            "installed": bool(installation["installed"] or settings.mock_mode),
+            "installation_state": "installed" if settings.mock_mode else installation["state"],
+            "default": bool(model.get("default")),
+            "compute_devices": _asr_model_devices(model),
+        })
+    return result
+
+
+def validate_asr_model_device(identifier: str, value: str) -> tuple[dict[str, Any], str, str]:
+    model = resolve_asr_model(identifier)
+    if model is None:
+        raise ApiProblem(422, "unknown_asr_model", "Unknown ASR model")
+    normalized = value.strip().lower()
+    if normalized not in COMPUTE_DEVICES:
+        raise HTTPException(status_code=422, detail="compute_device must be cpu or gpu")
+    installation = model_installation(settings.models_dir, model)
+    if not installation["installed"] and not settings.mock_mode:
+        raise ApiProblem(503, "asr_model_unavailable", "The selected ASR model is not installed at the pinned revision")
+    if normalized == "cpu":
+        return model, normalized, "CPU"
+    snapshot = cached_gpu_snapshot(0, probe=gpu_snapshot)
+    if snapshot is None:
+        raise ApiProblem(503, "gpu_unavailable", "GPU compute is unavailable; select CPU or check NVIDIA runtime")
+    minimum = int(model.get("minimum_gpu_memory_mib") or 0)
+    total = int(snapshot["memory_total_mib"])
+    if total < minimum:
+        raise ApiProblem(
+            503, "insufficient_gpu_memory",
+            f"{model['name']} requires at least {minimum} MiB total GPU memory; detected {total} MiB",
+        )
+    return model, normalized, str(snapshot["name"])
+
+
+def tts_model_controls(model: dict[str, Any]) -> dict[str, Any]:
+    instruction_modes = ["preset", "voice_design"] if model["public_id"] == "qwen3-tts-1.7b" else []
+    return {
+        "instruction_voice_modes": instruction_modes,
+        "instruction_required_voice_modes": ["voice_design"] if "voice_design" in instruction_modes else [],
+        "max_instruction_chars": MAX_TTS_INSTRUCTION_CHARS,
+        "speaking_rate_parameter": False,
+        "pitch_parameter": False,
+        "sampling_parameters": False,
+    }
+
+
+def tts_model_voice_modes(model: dict[str, Any]) -> list[str]:
+    variants = model["checkpoints"]
+    modes: list[str] = []
+    if "custom_voice" in variants:
+        modes.append("preset")
+    if "base" in variants:
+        modes.extend(["profile", "inline_clone", "voiceprint"])
+    if "voice_design" in variants:
+        modes.append("voice_design")
+    return modes
+
+
+def _tts_model_installations(model: dict[str, Any]) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    return [
+        (variant, checkpoint, model_installation(settings.models_dir, checkpoint))
+        for variant, checkpoint in model["checkpoints"].items()
+    ]
+
+
+def _tts_model_devices(model: dict[str, Any]) -> list[dict[str, Any]]:
+    installations = _tts_model_installations(model)
+    installed = bool(settings.mock_mode or all(item[2]["installed"] for item in installations))
+    snapshot = gpu_snapshot(0)
+    minimum = int(model.get("minimum_gpu_memory_mib") or 0)
+    total = int(snapshot["memory_total_mib"]) if snapshot is not None else None
+    gpu_available = bool(installed and snapshot is not None and total is not None and total >= minimum)
+    if not installed:
+        reason_code, reason = "model_not_installed", "Model files are not installed at the pinned revisions"
+    elif snapshot is None:
+        reason_code, reason = "gpu_unavailable", "No compatible NVIDIA GPU is available"
+    elif total is not None and total < minimum:
+        reason_code = "insufficient_gpu_memory"
+        reason = f"This model requires at least {minimum} MiB total GPU memory; detected {total} MiB"
+    else:
+        reason_code = reason = None
+    return [
+        {
+            "id": "cpu", "precision": "FP32", "available": installed,
+            "default": installed and not gpu_available, "quantized": False,
+            "unavailable_reason_code": None if installed else "model_not_installed",
+            "unavailable_reason": None if installed else "Model files are not installed at the pinned revisions",
+        },
+        {
+            "id": "gpu", "precision": "BF16", "available": gpu_available,
+            "default": gpu_available, "quantized": False,
+            "minimum_memory_mib": minimum, "total_memory_mib": total,
+            "unavailable_reason_code": reason_code, "unavailable_reason": reason,
+        },
+    ]
+
+
+def tts_model_capabilities() -> list[dict[str, Any]]:
+    result = []
+    for model in tts_models():
+        installations = _tts_model_installations(model)
+        checkpoints = [{
+            "variant": variant, "name": checkpoint["name"], "revision": checkpoint["revision"],
+            "installed": bool(installation["installed"] or settings.mock_mode),
+            "installation_state": "installed" if settings.mock_mode else installation["state"],
+        } for variant, checkpoint, installation in installations]
+        installed_count = sum(1 for item in checkpoints if item["installed"])
+        aggregate_state = "installed" if installed_count == len(checkpoints) else "missing" if not installed_count else "partial"
+        result.append({
+            "id": model["public_id"], "name": model["name"], "default": model["default"],
+            "installed": installed_count == len(checkpoints), "installation_state": aggregate_state,
+            "voice_modes": tts_model_voice_modes(model), "compute_devices": _tts_model_devices(model),
+            "controls": tts_model_controls(model), "checkpoints": checkpoints,
+        })
+    return result
+
+
+def validate_tts_model_device(
+    identifier: str, voice_mode: str, value: str,
+) -> tuple[dict[str, Any], dict[str, Any], str, str]:
+    model = resolve_tts_model(identifier)
+    if model is None:
+        raise ApiProblem(422, "unknown_tts_model", "Unknown TTS model")
+    checkpoint = resolve_tts_checkpoint(model, voice_mode)
+    if checkpoint is None:
+        raise ApiProblem(422, "unsupported_tts_voice_mode", "The selected TTS model does not support this voice mode")
+    normalized = value.strip().lower()
+    if normalized not in COMPUTE_DEVICES:
+        raise HTTPException(status_code=422, detail="compute_device must be cpu or gpu")
+    installation = model_installation(settings.models_dir, checkpoint)
+    if not installation["installed"] and not settings.mock_mode:
+        raise ApiProblem(503, "tts_model_unavailable", "The selected TTS checkpoint is not installed at the pinned revision")
+    if normalized == "cpu":
+        return model, checkpoint, normalized, "CPU"
+    snapshot = cached_gpu_snapshot(0, probe=gpu_snapshot)
+    if snapshot is None:
+        raise ApiProblem(503, "gpu_unavailable", "GPU compute is unavailable; select CPU or check NVIDIA runtime")
+    minimum = int(model.get("minimum_gpu_memory_mib") or 0)
+    total = int(snapshot["memory_total_mib"])
+    if total < minimum:
+        raise ApiProblem(
+            503, "insufficient_gpu_memory",
+            f"{model['name']} requires at least {minimum} MiB total GPU memory; detected {total} MiB",
+        )
+    return model, checkpoint, normalized, str(snapshot["name"])
+
+
+def validate_tts_instruction(model: dict[str, Any], voice_mode: str, value: str) -> str:
+    instruction = value.strip()
+    if len(instruction) > MAX_TTS_INSTRUCTION_CHARS:
+        raise ApiProblem(422, "invalid_tts_instruction", f"instruct must not exceed {MAX_TTS_INSTRUCTION_CHARS} characters")
+    controls = tts_model_controls(model)
+    supported = voice_mode in controls["instruction_voice_modes"]
+    required = voice_mode in controls["instruction_required_voice_modes"]
+    if instruction and not supported:
+        raise ApiProblem(422, "unsupported_tts_control", "Natural-language instructions are not supported by this model and voice mode")
+    if required and not instruction:
+        raise ApiProblem(422, "tts_instruction_required", "A voice-design instruction is required")
+    return instruction
+
+
+def public_hotword_list(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": item["id"], "name": item["name"], "terms": item["terms"],
+        "term_count": len(item["terms"]), "created_at": item["created_at"],
+        "updated_at": item["updated_at"],
+    }
+
+
+def hotword_request_data(
+    context: str,
+    raw_ids: str | None,
+    existing_job: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    try:
+        ids = parse_hotword_list_ids(raw_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if existing_job is not None:
+        stored = existing_job.get("request") or {}
+        return {
+            "hotword_list_ids": ids,
+            "hotword_lists": stored.get("hotword_lists") or [],
+            "hotword_term_count": int(stored.get("hotword_term_count") or 0),
+            "effective_context": str(stored.get("effective_context") or context.strip()),
+        }
+    selected = []
+    missing = []
+    for item_id in ids:
+        item = get_hotword_list(item_id)
+        if item is None:
+            missing.append(item_id)
+        else:
+            selected.append(item)
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Unknown hotword list IDs: {', '.join(missing)}")
+    try:
+        effective, term_count = compile_hotword_context(context, selected)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    ordered = sorted(selected, key=lambda item: (item["name_key"], item["id"]))
+    return {
+        "hotword_list_ids": [item["id"] for item in ordered],
+        "hotword_lists": [
+            {
+                "id": item["id"], "name": item["name"], "terms": item["terms"],
+                "updated_at": item["updated_at"],
+            }
+            for item in ordered
+        ],
+        "hotword_term_count": term_count,
+        "effective_context": effective,
+    }
 
 
 def validate_tts_language(value: Any, field: str = "language") -> str:
@@ -670,15 +955,25 @@ def create_app() -> FastAPI:
     @app.get(
         "/api/v1/capabilities", response_model=CapabilitiesResponse, response_model_exclude_unset=True,
         tags=[SERVICE_TAG], summary="读取服务能力 / Get service capabilities",
-        description=bilingual("消费方应从这里读取设备可用性、格式、上限和默认值，不要硬编码部署能力。", "Read live device availability, formats, limits, and defaults here instead of hard-coding deployment capabilities."),
+        description=bilingual(
+            "消费方应从这里读取设备可用性、格式、上限和默认值，不要硬编码部署能力。ASR 设备能力按模型位于 `asr.models[].compute_devices`；TTS 的权威模型级能力位于 `tts.model_capabilities[]`。显存字段均为总显存口径。两个顶层 `compute_devices` 以及 `tts.controls` 只是默认 0.6B 模型的兼容视图。",
+            "Read live device availability, formats, limits, and defaults here instead of hard-coding deployment capabilities. ASR device eligibility is model-scoped under `asr.models[].compute_devices`; authoritative TTS model behavior is under `tts.model_capabilities[]`. Memory fields use reported total GPU memory. Both top-level `compute_devices` fields and `tts.controls` are compatibility views for the default 0.6B models.",
+        ),
         operation_id="getCapabilities", responses={**AUTH_RESPONSES},
     )
     def capabilities(_: None = Depends(require_api_key)) -> CapabilitiesResponse:
+        model_capabilities = asr_model_capabilities()
+        default_model = default_asr_model()
+        default_capability = next(item for item in model_capabilities if item["default"])
+        tts_capabilities = tts_model_capabilities()
+        default_tts_capability = next(item for item in tts_capabilities if item["default"])
         return {
             "services": sorted(settings.enabled_services),
             "offline": True,
             "asr": {
-                "model": "Qwen3-ASR-0.6B",
+                "model": default_model["name"],
+                "default_model": default_model["public_id"],
+                "models": model_capabilities,
                 "diarization": "CAM++ single-active-speaker",
                 "speaker_count": {"min": 1, "max": 15, "default": "auto"},
                 "voiceprint_library": True,
@@ -687,25 +982,35 @@ def create_app() -> FastAPI:
                 "timestamp_precisions": ["segment", "word_or_character"],
                 "aligner_languages": ALIGNER_LANGUAGES,
                 "exports": ["json", "srt", "vtt", "txt"],
-                "compute_devices": compute_capabilities("gpu"),
+                "compute_devices": default_capability["compute_devices"],
                 "single_task_acceleration": {"supported": True, "default": SINGLE_TASK_ACCELERATION_DEFAULT},
+                "hotword_library": {
+                    "supported": True,
+                    "max_lists": MAX_HOTWORD_LISTS,
+                    "max_terms_per_list": MAX_TERMS_PER_LIST,
+                    "max_selected_lists": MAX_SELECTED_LISTS,
+                    "max_selected_terms": MAX_SELECTED_TERMS,
+                    "max_prompt_chars": MAX_HOTWORD_PROMPT_CHARS,
+                    "max_name_chars": MAX_HOTWORD_NAME_CHARS,
+                    "max_term_chars": MAX_HOTWORD_TERM_CHARS,
+                },
             },
             "tts": {
-                "models": ["Qwen3-TTS-12Hz-0.6B-Base", "Qwen3-TTS-12Hz-0.6B-CustomVoice"],
-                "voice_modes": ["preset", "profile", "inline_clone", "voiceprint"],
+                "models": [
+                    checkpoint["name"]
+                    for model in tts_capabilities for checkpoint in model["checkpoints"]
+                ],
+                "default_model": DEFAULT_TTS_MODEL_ID,
+                "model_capabilities": tts_capabilities,
+                "voice_modes": ["preset", "profile", "inline_clone", "voiceprint", "voice_design"],
                 "preset_speakers": PRESET_SPEAKERS,
                 "preset_speaker_native_languages": PRESET_SPEAKER_NATIVE_LANGUAGES,
                 "languages": TTS_LANGUAGES,
                 "default_language": "Auto",
                 "formats": ["wav", "flac", "mp3"],
-                "compute_devices": compute_capabilities("gpu"),
+                "compute_devices": default_tts_capability["compute_devices"],
                 "single_task_acceleration": {"supported": True, "default": SINGLE_TASK_ACCELERATION_DEFAULT},
-                "controls": {
-                    "instruction_voice_modes": [],
-                    "speaking_rate_parameter": False,
-                    "pitch_parameter": False,
-                    "sampling_parameters": False,
-                },
+                "controls": default_tts_capability["controls"],
             },
             "limits": {
                 "max_upload_bytes": settings.max_upload_bytes,
@@ -722,6 +1027,82 @@ def create_app() -> FastAPI:
                 "heartbeat_seconds": EVENT_HEARTBEAT_SECONDS, "history_replay": False,
             },
         }
+
+    @app.get(
+        "/api/v1/asr/hotword-lists", response_model=HotwordListsResponse,
+        response_model_exclude_unset=True, tags=[ASR_TAG],
+        summary="读取 ASR 热词库 / List ASR hotword lists",
+        description=bilingual(
+            "列出本地按场景维护的热词词表。提交 ASR 时通过 `hotword_list_ids` 选择；选择顺序不表示识别权重。",
+            "List locally managed, scenario-specific hotword lists. Select them through `hotword_list_ids` when submitting ASR; selection order does not imply recognition weight.",
+        ),
+        operation_id="listAsrHotwordLists", responses={**AUTH_RESPONSES},
+    )
+    def hotword_lists(_: None = Depends(require_api_key)) -> dict[str, Any]:
+        items = [public_hotword_list(item) for item in list_hotword_lists()]
+        return {"items": items, "count": len(items)}
+
+    @app.post(
+        "/api/v1/asr/hotword-lists", status_code=201,
+        response_model=HotwordListResponse, response_model_exclude_unset=True,
+        tags=[ASR_TAG], summary="创建 ASR 热词词表 / Create an ASR hotword list",
+        description=bilingual(
+            "创建名称唯一的本地热词词表。名称在 NFKC、空白折叠和大小写无关规范化后唯一；空词条会移除，等价重复词保留首次形式。具体上限读取 `/api/v1/capabilities` 的 `asr.hotword_library`。",
+            "Create a uniquely named local hotword list. Names are unique after NFKC normalization, whitespace folding, and case folding. Empty terms are removed and equivalent duplicates preserve their first display form. Read limits from `asr.hotword_library` in `/api/v1/capabilities`.",
+        ),
+        operation_id="createAsrHotwordList",
+        responses={**AUTH_RESPONSES, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
+    )
+    def add_hotword_list(
+        payload: HotwordListCreateRequest, _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        try:
+            item = create_hotword_list(payload.name, payload.terms)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (sqlite3.IntegrityError, OverflowError) as exc:
+            detail = "A hotword list with this name already exists" if isinstance(
+                exc, sqlite3.IntegrityError
+            ) else str(exc)
+            raise ApiProblem(409, "hotword_list_conflict", detail) from exc
+        return public_hotword_list(item)
+
+    @app.patch(
+        "/api/v1/asr/hotword-lists/{item_id}", response_model=HotwordListResponse,
+        response_model_exclude_unset=True, tags=[ASR_TAG],
+        summary="更新 ASR 热词词表 / Update an ASR hotword list",
+        description=bilingual(
+            "至少提供 `name` 或 `terms`；提供 `terms` 时完整替换原词条。已提交任务保存不可变快照，不受后续更新影响。",
+            "Provide at least `name` or `terms`; when supplied, `terms` completely replaces the previous entries. Submitted jobs keep immutable snapshots and are unaffected by later updates.",
+        ),
+        operation_id="updateAsrHotwordList",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
+    )
+    def edit_hotword_list(
+        item_id: str, payload: HotwordListUpdateRequest,
+        _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        try:
+            item = update_hotword_list(item_id, name=payload.name, terms=payload.terms)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except sqlite3.IntegrityError as exc:
+            raise ApiProblem(409, "hotword_list_conflict", "A hotword list with this name already exists") from exc
+        if item is None:
+            raise HTTPException(status_code=404, detail="Hotword list not found")
+        return public_hotword_list(item)
+
+    @app.delete(
+        "/api/v1/asr/hotword-lists/{item_id}", status_code=204, tags=[ASR_TAG],
+        summary="删除 ASR 热词词表 / Delete an ASR hotword list",
+        description=bilingual("删除词表；已提交任务保留自己的不可变快照。", "Delete the list while submitted jobs retain their immutable snapshots."),
+        operation_id="deleteAsrHotwordList",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE},
+    )
+    def remove_hotword_list(item_id: str, _: None = Depends(require_api_key)) -> Response:
+        if not delete_hotword_list(item_id):
+            raise HTTPException(status_code=404, detail="Hotword list not found")
+        return Response(status_code=204)
 
     @app.get(
         "/api/v1/queue", response_model=QueueResponse, response_model_exclude_unset=True,
@@ -769,20 +1150,22 @@ def create_app() -> FastAPI:
         response_model_exclude_unset=True, tags=[ASR_TAG],
         summary="提交异步 ASR 任务 / Submit asynchronous ASR job",
         description=bilingual(
-            "上传音频并立即返回排队任务。通过 `status_url` 轮询；成功后读取 `result_url`。GPU 不可用时返回 503，不回退 CPU。",
-            "Upload audio and immediately receive a queued job. Poll `status_url`, then read `result_url`. An unavailable GPU returns 503 and never falls back silently.",
+            "上传音频并立即返回排队任务。`model` 默认 0.6B，也可选择 1.7B；两个模型都支持 `context` 和可选热词库。词表会在提交时生成不可变快照，留空 `hotword_list_ids` 表示不使用已保存词表。通过 `status_url` 轮询；成功后读取 `result_url`。GPU 不可用时返回 503，不回退 CPU。",
+            "Upload audio and immediately receive a queued job. `model` defaults to 0.6B and may select 1.7B; both support `context` and the optional hotword library. Selected lists are snapshotted at submission, while an empty `hotword_list_ids` disables stored lists. Poll `status_url`, then read `result_url`. An unavailable GPU returns 503 and never falls back silently.",
         ),
         operation_id="submitAsrJob",
-        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TOO_LARGE_RESPONSE, **ASR_VALIDATION_RESPONSE, **ASR_SERVICE_RESPONSE},
     )
     async def submit_asr(
         response: Response,
         file: UploadFile = File(..., description="待转写音频或视频 / Audio or video to transcribe"),
+        model: str = Form(DEFAULT_ASR_MODEL_ID, description="ASR 模型 ID / ASR model ID", json_schema_extra={"enum": [item["public_id"] for item in asr_models()]}),
         language: str = Form("Auto", description="识别语言；Auto 可检测其他语种，但只有公开清单支持字词对齐 / Recognition language; Auto may detect other languages, while only the public list supports word alignment", json_schema_extra={"enum": ASR_LANGUAGES}),
         speaker_count: str = Form("auto", description="auto 或 1–15 / auto or an integer from 1 to 15", json_schema_extra={"enum": ["auto", *[str(value) for value in range(1, 16)]]}),
         diarize: bool = Form(True, description="启用说话人分离 / Enable speaker diarization"),
         align: bool = Form(True, description="返回支持语言的精确时间戳 / Produce precise timestamps for supported languages"),
-        context: str = Form("", description="识别上下文提示 / Recognition context hint"),
+        context: str = Form("", description="一次性识别上下文；所选词表的 Vocabulary 段会追加在其后 / One-off recognition context followed by the Vocabulary section generated from selected lists"),
+        hotword_list_ids: str = Form("", description="逗号分隔的本地词表 ID，最多 8 个；留空禁用已保存词表 / Comma-separated local list IDs, maximum 8; empty disables stored lists"),
         export_formats: str = Form("json,srt,vtt,txt", description="逗号分隔：json,srt,vtt,txt / Comma-separated export formats"),
         compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         use_voiceprint_library: bool = Form(True, description="用声纹库匹配并命名说话人 / Match and label speakers from the voiceprint library"),
@@ -793,7 +1176,15 @@ def create_app() -> FastAPI:
         ensure_service("asr")
         idempotency_key = validate_idempotency_key(idempotency_key)
         language = validate_asr_language(language)
-        compute_device, compute_device_name = await run_in_threadpool(validate_compute_device, compute_device)
+        selected_model, compute_device, compute_device_name = await run_in_threadpool(
+            validate_asr_model_device, model, compute_device,
+        )
+        existing = await run_in_threadpool(
+            find_idempotent_job, "submit_asr", idempotency_key_hash(idempotency_key),
+        )
+        hotword_data = await run_in_threadpool(
+            hotword_request_data, context, hotword_list_ids, existing,
+        )
         job_id = uuid.uuid4().hex
         original_name = safe_filename(file.filename or "audio.bin")
         input_path = settings.jobs_dir / job_id / "input" / original_name
@@ -811,10 +1202,12 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail="Unsupported export format")
         request_data = {
             "input_path": str(input_path), "original_name": original_name, "size_bytes": size,
+            "model": selected_model["public_id"],
             "language": language, "speaker_count": speaker_value, "diarize": diarize,
             "align": align, "context": context, "export_formats": formats, "compute_device": compute_device,
             "compute_device_name": compute_device_name, "use_voiceprint_library": use_voiceprint_library,
             "accelerate_single_task": accelerate_single_task,
+            **hotword_data,
         }
         job, replayed = idempotent_job(
             "asr", original_name, request_data, job_id, "submit_asr",
@@ -831,15 +1224,16 @@ def create_app() -> FastAPI:
         response_model_exclude_unset=True, tags=[TTS_TAG],
         summary="自动分析 TTS 克隆参考 / Analyze a TTS clone reference",
         description=bilingual(
-            "上传单人参考音频并创建可见的 ASR 任务，自动识别参考语种、逐字文本和时间戳。成功后把任务 ID 作为 `reference_job_id` 提交给 TTS。",
-            "Upload clean single-speaker reference audio and create a visible ASR job that detects its language, exact transcript, and timestamps. Pass the successful job ID to TTS as `reference_job_id`.",
+            "上传单人参考音频并创建可见的 ASR 任务，自动识别参考语种、逐字文本和时间戳。可选择 0.6B 或 1.7B，但该用途不启用热词库。成功后把任务 ID 作为 `reference_job_id` 提交给 TTS。",
+            "Upload clean single-speaker reference audio and create a visible ASR job that detects its language, exact transcript, and timestamps. Either 0.6B or 1.7B may be selected, but this workflow does not use the hotword library. Pass the successful job ID to TTS as `reference_job_id`.",
         ),
         operation_id="analyzeTtsCloneReference",
-        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TOO_LARGE_RESPONSE, **ASR_VALIDATION_RESPONSE, **ASR_SERVICE_RESPONSE},
     )
     async def analyze_tts_clone_reference(
         response: Response,
         file: UploadFile = File(..., description="单人干净参考音频或录音容器 / Clean single-speaker audio or recording container"),
+        model: str = Form(DEFAULT_ASR_MODEL_ID, description="参考转写使用的 ASR 模型 / ASR model for reference transcription", json_schema_extra={"enum": [item["public_id"] for item in asr_models()]}),
         compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
         idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
@@ -848,7 +1242,9 @@ def create_app() -> FastAPI:
         ensure_service("tts")
         ensure_service("asr")
         idempotency_key = validate_idempotency_key(idempotency_key)
-        compute_device, compute_device_name = await run_in_threadpool(validate_compute_device, compute_device)
+        selected_model, compute_device, compute_device_name = await run_in_threadpool(
+            validate_asr_model_device, model, compute_device,
+        )
         job_id = uuid.uuid4().hex
         original_name = safe_filename(file.filename or "clone-reference.bin")
         input_path = settings.jobs_dir / job_id / "input" / original_name
@@ -856,6 +1252,7 @@ def create_app() -> FastAPI:
         request_data = {
             "purpose": "tts_clone_reference", "input_path": str(input_path),
             "original_name": original_name, "size_bytes": size, "language": "Auto",
+            "model": selected_model["public_id"],
             "speaker_count": 1, "diarize": False, "align": True, "context": "",
             "export_formats": ["json", "txt"], "compute_device": compute_device,
             "compute_device_name": compute_device_name, "use_voiceprint_library": False,
@@ -876,17 +1273,18 @@ def create_app() -> FastAPI:
         response_model_exclude_unset=True, tags=[TTS_TAG],
         summary="提交异步 TTS 任务 / Submit asynchronous TTS job",
         description=bilingual(
-            "四种模式：`preset` 传 `speaker`；`profile` 传 `voice_profile_id`；`inline_clone` 优先传已成功的 `reference_job_id`，也兼容 `reference_audio` 加逐字准确的 `reference_text`；`voiceprint` 传具体且可用于 TTS 的 `voiceprint_sample_id`。`language` 始终表示输出文本语种。",
-            "Four modes: `preset` uses `speaker`; `profile` uses `voice_profile_id`; `inline_clone` preferably uses a successful `reference_job_id`, while `reference_audio` plus exact `reference_text` remains supported; `voiceprint` requires a concrete eligible sample ID. `language` always means the target text language.",
+            "`model` 默认 0.6B，也可选择 1.7B。`preset` 使用 CustomVoice；三种克隆来源使用 Base；仅 1.7B 提供 `voice_design`。自然语言 `instruct` 只支持 1.7B 的 preset 和 voice_design，后者必须提供。",
+            "`model` defaults to 0.6B and may select 1.7B. `preset` uses CustomVoice, the three clone sources use Base, and only 1.7B provides `voice_design`. Natural-language `instruct` is supported only by 1.7B preset and voice_design, and is required for the latter.",
         ),
         operation_id="submitTtsJob",
-        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TOO_LARGE_RESPONSE, **TTS_CONTROL_VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TOO_LARGE_RESPONSE, **TTS_CONTROL_VALIDATION_RESPONSE, **TTS_SERVICE_RESPONSE},
     )
     async def submit_tts(
         response: Response,
         text: str = Form(..., description="需要合成的文本 / Text to synthesize", json_schema_extra={"minLength": 1, "maxLength": settings.max_tts_chars}),
+        model: str = Form(DEFAULT_TTS_MODEL_ID, description="TTS 模型 ID / TTS model ID", json_schema_extra={"enum": [item["public_id"] for item in tts_models()]}),
         language: str = Form("Auto", description="输出文本语种；已知时应显式指定 / Target text language; specify it when known", json_schema_extra={"enum": TTS_LANGUAGES}),
-        voice_mode: str = Form("preset", description="preset、profile、inline_clone 或 voiceprint", json_schema_extra={"enum": ["preset", "profile", "inline_clone", "voiceprint"]}),
+        voice_mode: str = Form("preset", description="preset、profile、inline_clone、voiceprint 或 voice_design", json_schema_extra={"enum": ["preset", "profile", "inline_clone", "voiceprint", "voice_design"]}),
         speaker: str | None = Form(None, description="preset 模式的官方音色 / Official speaker for preset mode"),
         voice_profile_id: str | None = Form(None, description="profile 模式的声音档案 ID / Voice profile ID for profile mode"),
         voiceprint_sample_id: str | None = Form(None, description="voiceprint 模式的具体可用样本 ID / Concrete eligible sample ID for voiceprint mode"),
@@ -896,9 +1294,8 @@ def create_app() -> FastAPI:
         reference_language: str | None = Form(None, description="参考音频语种；省略时使用分析结果 / Reference audio language; defaults to the analysis result", json_schema_extra={"enum": ALIGNER_LANGUAGES}),
         instruct: str = Form(
             "",
-            description="已弃用；当前 0.6B 模型不支持风格指令，只能省略或传空值 / Deprecated; the current 0.6B models do not support style instructions, so omit it or send an empty value",
-            deprecated=True,
-            json_schema_extra={"maxLength": 0},
+            description="1.7B preset 的可选自然语言控制，voice_design 必填；其它组合必须为空 / Optional natural-language control for 1.7B preset, required for voice_design, and empty for other combinations",
+            json_schema_extra={"maxLength": MAX_TTS_INSTRUCTION_CHARS},
         ),
         response_format: str = Form("wav", description="wav、flac 或 mp3", json_schema_extra={"enum": ["wav", "flac", "mp3"]}),
         display_name: str = Form("语音合成", description="任务显示名称 / Job display name"),
@@ -909,20 +1306,21 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         ensure_service("tts")
         idempotency_key = validate_idempotency_key(idempotency_key)
-        compute_device, compute_device_name = await run_in_threadpool(validate_compute_device, compute_device)
         language = validate_tts_language(language)
         clean_text = text.strip()
         if not clean_text or len(clean_text) > settings.max_tts_chars:
             raise HTTPException(status_code=422, detail=f"Text must contain 1-{settings.max_tts_chars} characters")
-        if voice_mode not in {"preset", "profile", "inline_clone", "voiceprint"}:
-            raise HTTPException(status_code=422, detail="voice_mode must be preset, profile, inline_clone or voiceprint")
+        if voice_mode not in {"preset", "profile", "inline_clone", "voiceprint", "voice_design"}:
+            raise HTTPException(status_code=422, detail="voice_mode must be preset, profile, inline_clone, voiceprint or voice_design")
         if response_format not in {"wav", "flac", "mp3"}:
             raise HTTPException(status_code=422, detail="response_format must be wav, flac or mp3")
-        if instruct.strip():
-            raise HTTPException(status_code=422, detail=TTS_UNSUPPORTED_INSTRUCTION_DETAIL)
-        instruct = ""
+        selected_model, _, compute_device, compute_device_name = await run_in_threadpool(
+            validate_tts_model_device, model, voice_mode, compute_device,
+        )
+        instruct = validate_tts_instruction(selected_model, voice_mode, instruct)
         request_data: dict[str, Any] = {
-            "text": clean_text, "language": language, "voice_mode": voice_mode,
+            "text": clean_text, "model": selected_model["public_id"],
+            "language": language, "voice_mode": voice_mode,
             "speaker": speaker, "voice_profile_id": voice_profile_id, "reference_text": reference_text,
             "instruct": instruct, "response_format": response_format, "compute_device": compute_device,
             "compute_device_name": compute_device_name,
@@ -933,6 +1331,8 @@ def create_app() -> FastAPI:
         if voice_mode == "preset":
             if speaker not in PRESET_SPEAKERS:
                 raise HTTPException(status_code=422, detail="Unknown preset speaker")
+        elif voice_mode == "voice_design":
+            pass
         elif voice_mode == "profile":
             voice = get_voice(voice_profile_id or "")
             if voice is None:
@@ -1260,18 +1660,19 @@ def create_app() -> FastAPI:
         response_model=VoiceprintUploadResponse, response_model_exclude_unset=True,
         tags=[VOICEPRINT_TAG], summary="上传并转写声纹样本 / Upload and transcribe voiceprint sample",
         description=bilingual(
-            "立即返回 `pending` 样本和可见 ASR 入库任务。任务成功后重新查询人员列表，样本才可能用于 TTS。",
-            "Immediately return a pending sample and a visible ASR import job. Refresh the people list after success before using the sample for TTS.",
+            "立即返回 `pending` 样本和可见 ASR 入库任务。可选择 0.6B 或 1.7B，但声纹入库不使用热词库。任务成功后重新查询人员列表，样本才可能用于 TTS。",
+            "Immediately return a pending sample and a visible ASR import job. Either 0.6B or 1.7B may be selected, but voiceprint imports do not use the hotword library. Refresh the people list after success before using the sample for TTS.",
         ),
         operation_id="uploadVoiceprintSample",
-        responses={**idempotency_replay_response("VoiceprintUploadResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **NOT_FOUND_RESPONSE, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+        responses={**idempotency_replay_response("VoiceprintUploadResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **NOT_FOUND_RESPONSE, **TOO_LARGE_RESPONSE, **ASR_VALIDATION_RESPONSE, **ASR_SERVICE_RESPONSE},
     )
     async def upload_voiceprint_sample(
         response: Response,
         person_id: str,
         file: UploadFile = File(..., description="单人干净音频或浏览器录音容器 / Clean single-speaker audio or browser recording container"),
+        model: str = Form(DEFAULT_ASR_MODEL_ID, description="样本转写使用的 ASR 模型 / ASR model for sample transcription", json_schema_extra={"enum": [item["public_id"] for item in asr_models()]}),
         language: str = Form("Auto", description="转写语言；显式值限公开对齐语种 / Transcription language; explicit values are limited to public alignment languages", json_schema_extra={"enum": ASR_LANGUAGES}),
-        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
+        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
         idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
@@ -1282,7 +1683,9 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Voiceprint person not found")
         idempotency_key = validate_idempotency_key(idempotency_key)
         language = validate_asr_language(language)
-        compute_device, compute_device_name = await run_in_threadpool(validate_compute_device, compute_device)
+        selected_model, compute_device, compute_device_name = await run_in_threadpool(
+            validate_asr_model_device, model, compute_device,
+        )
         job_id = uuid.uuid4().hex
         sample_id = "sample_" + uuid.uuid4().hex[:16]
         original_name = safe_filename(file.filename or "voiceprint-audio.bin")
@@ -1292,6 +1695,7 @@ def create_app() -> FastAPI:
             "purpose": "voiceprint_import", "voiceprint_sample_id": sample_id,
             "voiceprint_person_id": person["id"],
             "input_path": str(input_path), "original_name": original_name, "size_bytes": size,
+            "model": selected_model["public_id"],
             "language": language, "speaker_count": 1, "diarize": False, "align": True,
             "context": "", "export_formats": ["json", "txt"], "compute_device": compute_device,
             "compute_device_name": compute_device_name, "use_voiceprint_library": False,
@@ -1782,17 +2186,23 @@ def add_openai_routes(app: FastAPI) -> None:
     def openai_models(_: None = Depends(require_api_key)) -> OpenAIModelList:
         data = []
         if "asr" in settings.enabled_services:
-            data.append({"id": "qwen3-asr-0.6b", "object": "model", "owned_by": "local"})
+            data.extend(
+                {"id": item["public_id"], "object": "model", "owned_by": "local"}
+                for item in asr_models()
+            )
         if "tts" in settings.enabled_services:
-            data.append({"id": "qwen3-tts-0.6b", "object": "model", "owned_by": "local"})
+            data.extend(
+                {"id": item["public_id"], "object": "model", "owned_by": "local"}
+                for item in tts_models()
+            )
         return {"object": "list", "data": data}
 
     @app.post(
         "/v1/audio/transcriptions", response_class=Response, tags=[OPENAI_TAG],
         summary="同步兼容转写 / Create synchronous compatible transcription",
         description=bilingual(
-            "兼容式同步入口，会等待内部任务完成。长音频、进度查询、取消和可靠恢复应使用 `/api/v1/asr/jobs`。响应头 `X-Job-ID` 可关联历史任务。",
-            "Synchronous compatibility endpoint that waits for the internal job. Use `/api/v1/asr/jobs` for long audio, progress, cancellation, and recovery. `X-Job-ID` links the response to job history.",
+            "兼容式同步入口，会等待内部任务完成。支持 0.6B/1.7B、一次性 `prompt` 和本地热词词表；词表内容在提交时保存快照。长音频、进度查询、取消和可靠恢复应使用 `/api/v1/asr/jobs`。响应头 `X-Job-ID` 可关联历史任务。",
+            "Synchronous compatibility endpoint that waits for the internal job. It supports 0.6B/1.7B, a one-off `prompt`, and snapshotted local hotword lists. Use `/api/v1/asr/jobs` for long audio, progress, cancellation, and recovery. `X-Job-ID` links the response to job history.",
         ),
         operation_id="createOpenAITranscription",
         responses={
@@ -1818,17 +2228,19 @@ def add_openai_routes(app: FastAPI) -> None:
             500: problem_response("内部转写任务失败 / Internal transcription job failed", 500),
             504: problem_response("兼容接口等待超时 / Compatibility wait timed out", 504),
             **AUTH_RESPONSES, **OPTIONAL_IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE,
-            **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE,
+            **NOT_FOUND_RESPONSE, **TOO_LARGE_RESPONSE, **ASR_VALIDATION_RESPONSE, **ASR_SERVICE_RESPONSE,
         },
     )
     async def openai_transcription(
         file: UploadFile = File(..., description="待转写音频或视频 / Audio or video to transcribe"),
-        model: str = Form("qwen3-asr-0.6b", description="qwen3-asr-0.6b"),
+        model: str = Form(DEFAULT_ASR_MODEL_ID, description="ASR 模型 ID / ASR model ID", json_schema_extra={"enum": [item["public_id"] for item in asr_models()]}),
+        prompt: str = Form("", description="一次性识别上下文；所选词表的 Vocabulary 段会追加在其后 / One-off recognition context followed by the Vocabulary section generated from selected lists"),
+        hotword_list_ids: str = Form("", description="逗号分隔的本地词表 ID，最多 8 个；留空禁用已保存词表 / Comma-separated local list IDs, maximum 8; empty disables stored lists"),
         language: str = Form("Auto", description="识别语言；显式值限公开对齐语种 / Recognition language; explicit values are limited to public alignment languages", json_schema_extra={"enum": ASR_LANGUAGES}),
         response_format: str = Form("json", description="json、verbose_json、text、srt 或 vtt"),
         diarize: bool = Form(True, description="启用说话人分离 / Enable diarization"),
         speaker_count: str = Form("auto", description="auto 或 1–15 / auto or 1–15"),
-        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
+        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         use_voiceprint_library: bool = Form(True, description="匹配声纹库 / Match voiceprint library"),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
         idempotency_key: str | None = Header(None, alias="Idempotency-Key", description=OPTIONAL_IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
@@ -1836,9 +2248,21 @@ def add_openai_routes(app: FastAPI) -> None:
     ) -> Response:
         ensure_service("asr")
         language = validate_asr_language(language)
-        compute_device, compute_device_name = await run_in_threadpool(validate_compute_device, compute_device)
-        if model not in {"qwen3-asr-0.6b", "Qwen/Qwen3-ASR-0.6B"}:
+        selected_model = resolve_asr_model(model)
+        if selected_model is None:
             raise HTTPException(status_code=404, detail="Unknown transcription model")
+        selected_model, compute_device, compute_device_name = await run_in_threadpool(
+            validate_asr_model_device, selected_model["public_id"], compute_device,
+        )
+        existing = None
+        if idempotency_key is not None:
+            idempotency_key = validate_idempotency_key(idempotency_key)
+            existing = await run_in_threadpool(
+                find_idempotent_job, "openai_transcription", idempotency_key_hash(idempotency_key),
+            )
+        hotword_data = await run_in_threadpool(
+            hotword_request_data, prompt, hotword_list_ids, existing,
+        )
         try:
             speakers = None if speaker_count == "auto" else int(speaker_count)
         except ValueError as exc:
@@ -1851,14 +2275,15 @@ def add_openai_routes(app: FastAPI) -> None:
         size, file_digest = await save_upload(file, target, settings.max_upload_bytes)
         request_data = {
             "input_path": str(target), "original_name": name, "size_bytes": size, "language": language,
-            "speaker_count": speakers, "diarize": diarize, "align": True, "context": "",
+            "model": selected_model["public_id"],
+            "speaker_count": speakers, "diarize": diarize, "align": True, "context": prompt,
             "export_formats": ["json", "srt", "vtt", "txt"], "compute_device": compute_device,
             "compute_device_name": compute_device_name, "use_voiceprint_library": use_voiceprint_library,
             "accelerate_single_task": accelerate_single_task,
+            **hotword_data,
         }
         replayed = False
         if idempotency_key is not None:
-            idempotency_key = validate_idempotency_key(idempotency_key)
             job, replayed = idempotent_job(
                 "asr", name, request_data, job_id, "openai_transcription",
                 idempotency_key, file_digest,
@@ -1889,8 +2314,8 @@ def add_openai_routes(app: FastAPI) -> None:
         "/v1/audio/speech", response_class=FileResponse, tags=[OPENAI_TAG],
         summary="同步兼容语音合成 / Create synchronous compatible speech",
         description=bilingual(
-            "等待内部 TTS 任务完成并直接返回音频。`voice` 支持官方预置音色或 `voice_` 声音档案，不支持直接传声纹样本 ID。需要进度、取消或精确声纹样本时使用 `/api/v1/tts/jobs`。",
-            "Wait for an internal TTS job and return audio. `voice` accepts an official preset or a `voice_` profile, not a voiceprint sample ID. Use `/api/v1/tts/jobs` for progress, cancellation, or an exact voiceprint sample.",
+            "等待内部 TTS 任务完成并直接返回音频。`model` 省略时使用 0.6B；1.7B 官方预置音色可选填 `instructions`，其它组合必须留空。`voice` 支持官方预置音色或 `voice_` 声音档案，不支持 VoiceDesign 或直接传声纹样本 ID。需要进度、取消、VoiceDesign 或精确声纹样本时使用 `/api/v1/tts/jobs`。",
+            "Wait for an internal TTS job and return audio. Omitting `model` uses 0.6B; an official 1.7B preset may include `instructions`, which must be empty for every other combination. `voice` accepts an official preset or a `voice_` profile, not VoiceDesign or a voiceprint sample ID. Use `/api/v1/tts/jobs` for progress, cancellation, VoiceDesign, or an exact voiceprint sample.",
         ),
         operation_id="createOpenAISpeech",
         responses={
@@ -1912,7 +2337,7 @@ def add_openai_routes(app: FastAPI) -> None:
             500: problem_response("内部合成任务失败 / Internal speech job failed", 500),
             504: problem_response("兼容接口等待超时 / Compatibility wait timed out", 504),
             **AUTH_RESPONSES, **OPTIONAL_IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE,
-            **TTS_CONTROL_VALIDATION_RESPONSE, **SERVICE_RESPONSE,
+            **TTS_CONTROL_VALIDATION_RESPONSE, **TTS_SERVICE_RESPONSE,
         },
     )
     async def openai_speech(
@@ -1921,22 +2346,30 @@ def add_openai_routes(app: FastAPI) -> None:
         _: None = Depends(require_api_key),
     ) -> FileResponse:
         ensure_service("tts")
-        compute_device, compute_device_name = await run_in_threadpool(validate_compute_device, payload.compute_device)
         accelerate_single_task = payload.accelerate_single_task
-        if payload.model not in {"qwen3-tts-0.6b", "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"}:
-            raise HTTPException(status_code=404, detail="Unknown speech model")
         text = payload.input.strip()
         if not text:
             raise HTTPException(status_code=422, detail="input is required")
         if payload.response_format not in {"wav", "flac", "mp3"}:
             raise HTTPException(status_code=422, detail="response_format must be wav, flac or mp3")
-        instructions = str(payload.model_dump().get("instructions") or "")
-        if instructions.strip():
-            raise HTTPException(status_code=422, detail=TTS_UNSUPPORTED_INSTRUCTION_DETAIL)
+        unsupported_controls = {
+            "speed", "pitch", "temperature", "top_k", "top_p", "repetition_penalty",
+        }.intersection((payload.model_extra or {}).keys())
+        if unsupported_controls:
+            raise ApiProblem(
+                422, "unsupported_tts_control",
+                f"Unsupported TTS controls: {', '.join(sorted(unsupported_controls))}",
+            )
         language = validate_tts_language(payload.language)
         voice = payload.voice
+        voice_mode = "profile" if voice.startswith("voice_") else "preset"
+        selected_model, _, compute_device, compute_device_name = await run_in_threadpool(
+            validate_tts_model_device, payload.model, voice_mode, payload.compute_device,
+        )
+        instructions = validate_tts_instruction(selected_model, voice_mode, payload.instructions)
         request_data: dict[str, Any] = {
-            "text": text, "language": language, "instruct": "",
+            "text": text, "model": selected_model["public_id"],
+            "language": language, "instruct": instructions,
             "response_format": payload.response_format, "compute_device": compute_device,
             "compute_device_name": compute_device_name,
             "accelerate_single_task": accelerate_single_task,

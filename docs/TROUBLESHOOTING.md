@@ -33,23 +33,36 @@ curl -I https://modelscope.cn
 ## GPU 不可用或显存不足
 
 - `nvidia-smi` 必须成功，驱动需兼容安装的 PyTorch CUDA 13.0 wheel。
-- API 返回 503 时选择 CPU，服务不会静默回退。
-- 4 GB 显存下 ASR、Aligner 与 TTS GPU 任务仍由全局锁串行运行。TTS 默认仅在单个任务内对相邻文本块尝试 batch 2，并逐块执行声码器解码。
-- “单任务加速”现在默认开启，ASR/TTS 会按硬件自动扩大内部批次；OOM 时按 `16→12→8→6→4→2→1` 回退并重试当前批次。排障或对照 batch 1 时可在页面关闭，API 客户端则显式传入 `accelerate_single_task=false`。完成任务可在结果 JSON 的 `acceleration.target_batch_size`、`stage_batch_sizes` 和 `oom_fallbacks` 查看实际选择。
+- ASR 与 TTS GPU 资格都按所选模型和 `nvidia-smi` 报告的**总显存**判断，不读取当前空闲显存。0.6B/1.7B 的门槛分别是 3840/7936 MiB；例如 4096 MiB 可选择 0.6B，8151 MiB 可选择 1.7B。
+- 查询受保护的 `GET /api/v1/capabilities`，查看 `asr.models[].compute_devices` 或 `tts.model_capabilities[].compute_devices` 中的 `available`、`minimum_memory_mib`、`total_memory_mib` 和 `unavailable_reason_code`。两个顶层 `compute_devices` 兼容字段都只代表默认 0.6B 模型。
+- `gpu_unavailable` 表示没有兼容 GPU，`insufficient_gpu_memory` 表示所选模型未达到总显存门槛，`asr_model_unavailable` / `tts_model_unavailable` 表示固定 revision 未完整安装。显式 API GPU 请求返回 `503`，不会静默回退；前端会显示原因并按 CPU 创建本次任务。
+- 总显存达到门槛只表示允许尝试，不保证其他 GPU 程序、WDDM 或驱动开销不会导致实际 OOM；batch 1 仍失败时应关闭其他 GPU 程序或改用 CPU。
+- ASR、Aligner 与 TTS GPU 任务由全局锁串行运行。单任务加速开启时，ASR/TTS 按硬件和模型保守分档批处理；1.7B 会在硬件档位基础上降低两个批次档位。TTS decoder 仍按文本块顺序执行，关闭加速时固定为 batch 1。
+- “单任务加速”默认开启；OOM 时按 `16→12→8→6→4→2→1` 回退并重试当前批次。排障或对照 batch 1 时可在页面关闭，API 客户端则显式传入 `accelerate_single_task=false`。完成任务可在结果 JSON 的 `acceleration.target_batch_size`、`stage_target_batch_sizes`、`stage_batch_sizes`、`batch_penalty_steps` 和 `oom_fallbacks` 查看实际选择。
 - OOM 后先确认没有其他 GPU 程序，再重试任务；不要同时启动另一套模型服务。
 
 若要判断开关在当前机器和素材上的实际收益，至少执行三组交替基准；短音频或单句文本只有一个块时通常没有明显收益：
 
 ```bash
-.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py asr --device gpu --audio meeting.wav --repeat 3
-.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py tts --device gpu --repeat 3
+.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py asr --model qwen3-asr-0.6b --device gpu --audio meeting.wav --repeat 3
+.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py asr --model qwen3-asr-1.7b --device cpu --audio meeting.wav --repeat 3
+.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py tts --model qwen3-tts-1.7b --device cpu --repeat 3
 ```
+
+## 热词未生效或提交返回 422
+
+- 0.6B 和 1.7B 使用相同热词接口。热词会作为 Qwen ASR 的上下文提示，不是强制词典；音质、发音、上下文歧义和词表噪声仍会影响结果。优先加入专有名词、项目代号和容易混淆的短语，避免把通用高频词全部加入。
+- 单个词表最多 200 个词条，最多保存 100 个词表；一次任务最多选择 8 个词表、合并后最多 500 个唯一词条，自动生成的 `Vocabulary: ...` 段最多 8000 字符。具体值以 `/api/v1/capabilities` 的 `asr.hotword_library` 为准。
+- 名称和词条会执行 NFKC、首尾/重复空白规范化及大小写无关去重；空词条被移除，单个词条最长 64 字符。未知词表 ID、选择过多或合并超限返回 `422`。
+- 原生 ASR 的 `context`、OpenAI 兼容转写的 `prompt` 会放在自动生成的 Vocabulary 段之前。留空 `hotword_list_ids` 只表示不使用已保存词表，不会清除显式 `context`/`prompt`。
+- 提交时会把词表内容写入 `request.hotword_lists` 快照，结果的 `hotword_context` 返回所用 ID、名称和去重词数。后续编辑或删除词表不会改变历史任务或相同幂等请求的重放。
+- 热词仅用于普通 ASR 和 `/v1/audio/transcriptions`；TTS 克隆参考分析与声纹样本入库不会启用热词。
 
 ## TTS 提交因 instruct 或 instructions 返回 422
 
-- 当前固定的 Qwen3-TTS 0.6B Base/CustomVoice 不支持自然语言风格、情绪或韵律指令，也没有独立语速、音高或公开采样参数；非空 `instruct` / `instructions` 会在任务创建前被拒绝，而不是静默忽略。
-- 删除该字段或发送空值后重试；不要通过改写标点之外的隐藏参数猜测模型控制能力。
-- 消费方应读取受保护的 `GET /api/v1/capabilities`，以 `tts.controls` 为准决定是否显示或发送高级控制项。当前返回空的 `instruction_voice_modes`，其余控制能力均为 `false`。
+- 消费方应读取受保护的 `GET /api/v1/capabilities`，按所选 `tts.model_capabilities[]` 的 `voice_modes` 和 `controls` 决定显示及发送字段；顶层 `tts.controls` 只代表默认 0.6B。
+- 0.6B 所有模式、以及 1.7B Base 克隆模式都必须省略 `instruct`。1.7B CustomVoice 预置音色可以选填自然语言指令，1.7B VoiceDesign 必须填写。选错组合分别返回 `unsupported_tts_control`、`unsupported_tts_voice_mode` 或 `tts_instruction_required`。
+- 指令用于综合描述声线、语速、音调、韵律和情绪；API 没有独立数值 `speed`/`pitch`，也不接受底层采样参数。OpenAI 兼容 `instructions` 只支持 1.7B 预置音色，VoiceDesign 使用原生异步接口。
 
 ## API 提交返回 429
 
@@ -61,15 +74,15 @@ curl -I https://modelscope.cn
 
 ## ETA 尚未出现或 SSE 断线
 
-- ETA 只使用本机同类历史任务。少于 5 个有效样本时 `estimate.state` 为 `warming_up`，没有剩余时间属于预期行为；可用后的区间也只是建议，不是 SLA。
+- ETA 只使用本机相同模型、设备、模式和相近任务特征的历史任务；ASR 与 TTS 的 0.6B/1.7B 都分别热身。少于 5 个有效样本时 `estimate.state` 为 `warming_up`，切换模型后暂时没有剩余时间属于预期行为；可用后的区间也只是建议，不是 SLA。
 - 单任务 SSE 使用 `/api/v1/jobs/{job_id}/events`，全局快照使用 `/api/v1/events`。两者都没有历史重放；断线后重新连接，并用收到的首个快照或任务状态接口校准。
 - 无法使用 SSE 时按响应中的 `poll_after_seconds` 轮询 `status_url`，保存响应 `ETag` 并在后续请求发送 `If-None-Match`；`304` 表示任务和同类队列上下文未变化。
 
 ## 推理进度显示“估算”或短暂停顿
 
-- `progress` 保证不会倒退，但不是模型承诺的精确剩余比例。TTS codec 帧总量和 ASR 输出 token 总量只能在完成前估算，因此 `progress_detail.basis=estimated` 属于正常状态。
+- `progress` 保证不会倒退，但不是模型承诺的精确剩余比例。`model_load` 只报告模型加载的开始和完成边界；底层阻塞加载期间可能没有更新，服务不会伪造百分比或心跳。TTS codec 帧总量和 ASR 输出 token 总量只能在完成前估算，因此 `progress_detail.basis=estimated` 属于正常状态。
 - `progress_detail.current/total` 表示已确认完成的文本或音频分块；`activity` 表示当前推理调用内部的模型活动。`activity.sequence` 在新批次或 OOM 降批重试时递增，消费方应按整个任务快照替换显示，不要自行累计。
-- 模型活动最多约每 0.5 秒持久化一次，极短任务可能只显示阶段边界。GPU 同步、音频编码、SSE/轮询传输也可能造成短暂停顿；任务完成时会以确认值收敛到 100%。
+- 模型实际产生细粒度活动时，服务最多约每 0.5 秒持久化一次；这不是固定心跳，极短任务或阻塞调用可能只显示阶段边界。GPU 同步、音频编码、SSE/轮询传输也可能造成短暂停顿；任务完成时会以确认值收敛到 100%。
 - 需要更及时的页面/API 更新时优先使用单任务 SSE；轮询客户端应遵循 `poll_after_seconds`，不应为追求动画效果高频请求数据库。
 - 浏览器原生 `EventSource` 不能附加自定义 Authorization Header。项目同源页面使用 HttpOnly 会话 Cookie；外部浏览器应用应通过同源后端代理，服务端客户端可直接发送 Bearer Header。
 

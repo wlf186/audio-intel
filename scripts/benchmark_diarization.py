@@ -8,10 +8,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from audio_intel.model_registry import default_asr_model
 
 
 DIALOGUE = [
@@ -234,7 +235,7 @@ def evaluate(output: Path, compute_device: str) -> None:
         vad = run_vad(audio, rate)
         chunks = write_chunks(audio, rate, combine_vad(vad, duration), work / "chunks")
         transcribed = run_stage("transcribe", {
-            "model_path": str(settings.models_dir / "Qwen3-ASR-0.6B"),
+            "model_path": str(settings.models_dir / default_asr_model()["name"]),
             "chunks": chunks,
             "language": "Chinese",
             "context": "",

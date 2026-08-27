@@ -6,12 +6,14 @@
 |---|---|---|
 | api | Python 3.12、FastAPI 0.141.1、Uvicorn 0.52.4 | API、队列管理、测试与前端托管 |
 | asr | PyTorch 2.11.0+cu130、qwen-asr 0.0.6、Transformers 4.57.6 | ASR、ForcedAligner、VAD、说话人分离 |
-| tts | PyTorch 2.11.0+cu130、qwen-tts 0.1.1、Transformers 4.57.3 | TTS 推理与声音克隆 |
+| tts | PyTorch 2.11.0+cu130、qwen-tts 0.1.1、Transformers 4.57.3 | 0.6B/1.7B Base、CustomVoice 与 VoiceDesign 推理 |
 | aligner | PyTorch 2.11.0+cu130、qwen-asr 0.0.6、Transformers 4.57.6 | TTS 超长参考样本的按需对齐 |
 
 qwen-tts 0.1.1 与 qwen-asr 0.0.6 精确要求不同 Transformers 版本，严禁同环境安装。Torch 2.11 要求 `setuptools<82`，因此模型环境固定到已修复已知旧版公告且满足该约束的 setuptools 81.0.0。
 
-前端固定 pnpm 10.15.1，支持 Node 22.20+，CI 和文档推荐 Node 24 LTS。TypeScript 7、Vite 8、lucide-react 1.x 以及 Torch/Qwen 大版本升级不属于例行补丁，应单独做兼容与真实模型验证。
+前端固定 pnpm 10.15.1，支持 Node 22.20+，CI 和文档推荐 Node 24 LTS；当前锁定 React 19、TypeScript 5.9 和 Vite 7。TypeScript 6、Vite 8、lucide-react 1.x 以及 Torch/Qwen 大版本升级不属于例行补丁，应单独做兼容与真实模型验证。
+
+新增 0.6B/1.7B 模型大小或 Base、CustomVoice、VoiceDesign checkpoint 不等于新增 Python 包依赖：模型身份和 revision 由 `audio_intel/model_manifest.json` 固定。只要直接依赖清单未改变，就不应仅因增加 checkpoint 而重新生成哈希锁。
 
 ## 锁文件
 

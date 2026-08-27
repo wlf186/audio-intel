@@ -12,6 +12,7 @@ from typing import Any, Iterator
 
 from audio_intel.config import settings
 from audio_intel.gpu import compute_device_name, gpu_lease
+from audio_intel.model_registry import model_installation, resolve_tts_checkpoint, resolve_tts_model
 from audio_intel.performance import lower_batch_size, resolve_acceleration
 from audio_intel.progress import ThrottledProgress
 from audio_intel.utils import waveform_peaks
@@ -26,9 +27,6 @@ MAX_CLONE_REFERENCE_SECONDS = 15.0
 TTS_CODEC_FRAMES_PER_SECOND = 12.5
 TTS_INITIAL_CODEC_FRAMES_PER_TEXT_TOKEN = 4.5
 MAX_IN_FLIGHT_BATCH_PROGRESS = 0.95
-UNSUPPORTED_INSTRUCTION_DETAIL = (
-    "Style instructions are not supported by the installed Qwen3-TTS 0.6B models"
-)
 
 
 def aligner_python() -> Path:
@@ -55,20 +53,22 @@ def split_text(text: str, limit: int = 300) -> list[str]:
     return chunks
 
 
-def load_model(mode: str, compute_device: str) -> Any:
-    key = "custom" if mode == "preset" else "base"
+def load_model(model_definition: dict[str, Any], mode: str, compute_device: str) -> Any:
+    checkpoint = resolve_tts_checkpoint(model_definition, mode)
+    if checkpoint is None:
+        raise ValueError("The persisted TTS model does not support this voice mode")
+    key = checkpoint["name"]
     import torch
     from qwen_tts import Qwen3TTSModel
-    model_name = "Qwen3-TTS-12Hz-0.6B-CustomVoice" if key == "custom" else "Qwen3-TTS-12Hz-0.6B-Base"
     if compute_device == "gpu":
         return Qwen3TTSModel.from_pretrained(
-            str(settings.models_dir / model_name), device_map="cuda:0", dtype=torch.bfloat16,
+            str(settings.models_dir / key), device_map="cuda:0", dtype=torch.bfloat16,
             attn_implementation="sdpa", local_files_only=True,
         )
     if key not in _cpu_models:
         _cpu_models.clear()  # one CPU full-precision model resident at a time
         _cpu_models[key] = Qwen3TTSModel.from_pretrained(
-            str(settings.models_dir / model_name), device_map="cpu", dtype=torch.float32,
+            str(settings.models_dir / key), device_map="cpu", dtype=torch.float32,
             attn_implementation="sdpa", local_files_only=True,
         )
     return _cpu_models[key]
@@ -136,6 +136,13 @@ def _generate_tts_batch(
     language = request.get("language") or "Auto"
     decode_context = _sequential_speech_decode(model) if batched else nullcontext()
     with _observe_tts_decode(model, progress_callback), decode_context:
+        if request["voice_mode"] == "voice_design":
+            return model.generate_voice_design(
+                text=text,
+                language=[language] * len(texts) if batched else language,
+                instruct=[request["instruct"]] * len(texts) if batched else request["instruct"],
+                non_streaming_mode=True,
+            )
         if request["voice_mode"] == "preset":
             return model.generate_custom_voice(
                 text=text,
@@ -215,21 +222,53 @@ def encode(path: Path, audio: Any, rate: int, output_format: str) -> Path:
 
 def process_job(context: JobContext) -> dict[str, Any]:
     request = context.job["request"]
-    if str(request.get("instruct") or "").strip():
-        raise ValueError(UNSUPPORTED_INSTRUCTION_DETAIL)
+    model_definition = resolve_tts_model(request.get("model"))
+    if model_definition is None:
+        raise ValueError("Unknown TTS model in persisted job request")
+    checkpoint = resolve_tts_checkpoint(model_definition, request.get("voice_mode", "preset"))
+    if checkpoint is None:
+        raise ValueError("The persisted TTS model does not support this voice mode")
+    installation = model_installation(settings.models_dir, checkpoint)
+    if not installation["installed"] and not settings.mock_mode:
+        raise RuntimeError(
+            f"{checkpoint['name']} is not installed at revision {checkpoint['revision']}"
+        )
+    instruction = str(request.get("instruct") or "").strip()
+    instruction_supported = (
+        model_definition["public_id"] == "qwen3-tts-1.7b"
+        and request.get("voice_mode") in {"preset", "voice_design"}
+    )
+    if instruction and not instruction_supported:
+        raise ValueError("Natural-language instructions are not supported by this TTS model and voice mode")
+    if request.get("voice_mode") == "voice_design" and not instruction:
+        raise ValueError("A voice-design instruction is required")
+    request["instruct"] = instruction
     compute_device = request.get("compute_device", "cpu")
     chunks = split_text(request["text"])
-    acceleration = resolve_acceleration(bool(request.get("accelerate_single_task", False)), compute_device)
-    context.progress(0.05, "loading_tts_model")
+    acceleration = resolve_acceleration(
+        bool(request.get("accelerate_single_task", False)), compute_device,
+        int(model_definition.get("batch_penalty_steps") or 0),
+    )
+    context.progress(
+        0.05, "loading_tts_model", stage_progress=0.0, basis="estimated",
+        activity={"sequence": 1, "current": 0, "unit": "model_load", "basis": "estimated"},
+    )
     lease = gpu_lease(lambda: context.progress(0.05, "waiting_for_gpu")) if compute_device == "gpu" and not settings.mock_mode else None
     if lease is not None:
         lease.__enter__()
     model = None
     try:
-        if request["voice_mode"] != "preset":
+        if request["voice_mode"] not in {"preset", "voice_design"}:
             _prepare_clone_reference(context, request, compute_device)
-        model = None if settings.mock_mode else load_model(request["voice_mode"], compute_device)
-        return _process_loaded(context, request, chunks, model, compute_device, acceleration)
+        model = None if settings.mock_mode else load_model(model_definition, request["voice_mode"], compute_device)
+        context.progress(
+            0.12, "loading_tts_model", stage_progress=1.0,
+            activity={"sequence": 1, "current": 1, "total": 1, "unit": "model_load", "basis": "observed"},
+        )
+        return _process_loaded(
+            context, request, chunks, model, compute_device, acceleration,
+            model_definition, checkpoint,
+        )
     finally:
         if compute_device == "gpu" and model is not None:
             import gc
@@ -248,10 +287,12 @@ def _process_loaded(
     model: Any,
     compute_device: str,
     acceleration: dict[str, Any],
+    model_definition: dict[str, Any],
+    checkpoint: dict[str, Any],
 ) -> dict[str, Any]:
     waveforms, rate = [], 24000
     clone_prompt = None
-    if model is not None and request["voice_mode"] != "preset":
+    if model is not None and request["voice_mode"] not in {"preset", "voice_design"}:
         context.progress(0.12, "preparing_voice_clone")
         clone_prompt = model.create_voice_clone_prompt(
             ref_audio=request["reference_audio_path"], ref_text=request["reference_text"],
@@ -264,8 +305,6 @@ def _process_loaded(
     configured_batch_size = 1
     if acceleration["requested"]:
         configured_batch_size = int(acceleration["target_batch_size"])
-    elif compute_device == "gpu" and model is not None and _gpu_can_microbatch(torch_module):
-        configured_batch_size = GPU_TTS_BATCH_SIZE
     actual_batch_sizes: list[int] = []
     fallbacks: list[dict[str, int]] = []
     token_counts = _tts_text_token_counts(model, chunks) if model is not None else [max(1, len(text)) for text in chunks]
@@ -368,6 +407,10 @@ def _process_loaded(
     return {
         "duration": round(len(merged) / rate, 3), "sample_rate": rate, "format": output_format,
         "language": request.get("language") or "Auto",
+        "model": model_definition["public_id"],
+        "model_name": checkpoint["name"],
+        "model_revision": checkpoint["revision"],
+        "instruct": request.get("instruct") or "",
         "voice_mode": request["voice_mode"],
         "speaker": request.get("speaker") or request.get("voiceprint_person_name") or request.get("voice_profile_id"),
         "voiceprint_person_id": request.get("voiceprint_person_id"),

@@ -210,6 +210,8 @@ def test_api_queues_asr_and_validates_tts(tmp_path, monkeypatch) -> None:
         assert capabilities["tts"]["single_task_acceleration"] == {"supported": True, "default": True}
         assert capabilities["tts"]["controls"] == {
             "instruction_voice_modes": [],
+            "instruction_required_voice_modes": [],
+            "max_instruction_chars": 1000,
             "speaking_rate_parameter": False,
             "pitch_parameter": False,
             "sampling_parameters": False,
@@ -242,9 +244,106 @@ def test_tts_rejects_unsupported_style_instructions_before_job_creation(tmp_path
     assert whitespace.status_code == 202
     assert whitespace.json()["request"]["instruct"] == ""
     assert rejected.status_code == 422
-    assert "0.6B models" in rejected.json()["detail"]
+    assert rejected.json()["code"] == "unsupported_tts_control"
+    assert "not supported" in rejected.json()["detail"]
     assert before == after == 1
     assert not list(local.jobs_dir.glob("*/input/*"))
+
+
+def test_tts_models_controls_and_gpu_admission_are_model_scoped(tmp_path, monkeypatch) -> None:
+    local = replace(
+        settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
+        enabled_services=frozenset({"tts"}), min_free_disk_bytes=0,
+        max_queued_tts=20, mock_mode=True,
+    )
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    gpu = {"name": "4 GB GPU", "memory_used_mib": 0, "memory_total_mib": 4096, "utilization": 0}
+    monkeypatch.setattr(api_module, "gpu_snapshot", lambda *_: gpu)
+    monkeypatch.setattr(api_module, "cached_gpu_snapshot", lambda *_args, **_kwargs: gpu)
+
+    with TestClient(api_module.create_app()) as client:
+        capabilities = client.get("/api/v1/capabilities").json()["tts"]
+        assert capabilities["default_model"] == "qwen3-tts-0.6b"
+        assert [item["id"] for item in capabilities["model_capabilities"]] == [
+            "qwen3-tts-0.6b", "qwen3-tts-1.7b",
+        ]
+        large = capabilities["model_capabilities"][1]
+        assert large["voice_modes"][-1] == "voice_design"
+        assert large["controls"]["instruction_voice_modes"] == ["preset", "voice_design"]
+        assert large["controls"]["instruction_required_voice_modes"] == ["voice_design"]
+        large_gpu = next(item for item in large["compute_devices"] if item["id"] == "gpu")
+        assert large_gpu["available"] is False
+        assert large_gpu["minimum_memory_mib"] == 7936
+
+        default_job = client.post(
+            "/api/v1/tts/jobs", headers=idem(),
+            data={"text": "默认", "voice_mode": "preset", "speaker": "Vivian", "compute_device": "cpu"},
+        )
+        instructed = client.post(
+            "/api/v1/tts/jobs", headers=idem(),
+            data={
+                "text": "高兴", "model": "qwen3-tts-1.7b", "voice_mode": "preset",
+                "speaker": "Vivian", "instruct": "开心地说", "compute_device": "cpu",
+            },
+        )
+        design_required = client.post(
+            "/api/v1/tts/jobs", headers=idem(),
+            data={"text": "设计", "model": "qwen3-tts-1.7b", "voice_mode": "voice_design", "compute_device": "cpu"},
+        )
+        designed = client.post(
+            "/api/v1/tts/jobs", headers=idem(),
+            data={
+                "text": "设计", "model": "qwen3-tts-1.7b", "voice_mode": "voice_design",
+                "instruct": "低沉温柔的男声", "compute_device": "cpu",
+            },
+        )
+        clone_instruction = client.post(
+            "/api/v1/tts/jobs", headers=idem(),
+            data={
+                "text": "克隆", "model": "qwen3-tts-1.7b", "voice_mode": "inline_clone",
+                "instruct": "慢速", "compute_device": "cpu",
+            },
+        )
+        small_design = client.post(
+            "/api/v1/tts/jobs", headers=idem(),
+            data={"text": "设计", "model": "qwen3-tts-0.6b", "voice_mode": "voice_design", "compute_device": "cpu"},
+        )
+        large_gpu_response = client.post(
+            "/api/v1/tts/jobs", headers=idem(),
+            data={
+                "text": "GPU", "model": "qwen3-tts-1.7b", "voice_mode": "preset",
+                "speaker": "Vivian", "compute_device": "gpu",
+            },
+        )
+
+    assert default_job.status_code == instructed.status_code == designed.status_code == 202
+    assert default_job.json()["request"]["model"] == "qwen3-tts-0.6b"
+    assert instructed.json()["request"]["instruct"] == "开心地说"
+    assert designed.json()["request"]["model"] == "qwen3-tts-1.7b"
+    assert design_required.json()["code"] == "tts_instruction_required"
+    assert clone_instruction.json()["code"] == "unsupported_tts_control"
+    assert small_design.json()["code"] == "unsupported_tts_voice_mode"
+    assert large_gpu_response.json()["code"] == "insufficient_gpu_memory"
+
+
+def test_tts_gpu_memory_tier_allows_driver_reserved_capacity(tmp_path, monkeypatch) -> None:
+    local = replace(settings, models_dir=tmp_path / "models", mock_mode=True)
+    monkeypatch.setattr(api_module, "settings", local)
+    model = api_module.resolve_tts_model("qwen3-tts-1.7b")
+    assert model is not None
+
+    def available(total_mib: int) -> bool:
+        monkeypatch.setattr(
+            api_module, "gpu_snapshot",
+            lambda *_: {"name": "Tier GPU", "memory_used_mib": 0, "memory_total_mib": total_mib, "utilization": 0},
+        )
+        devices = api_module._tts_model_devices(model)
+        return next(item for item in devices if item["id"] == "gpu")["available"]
+
+    assert available(7935) is False
+    assert available(7936) is True
+    assert available(8151) is True
 
 
 def test_asr_public_languages_are_normalized_and_rejected_before_job_creation(tmp_path, monkeypatch) -> None:
@@ -308,6 +407,154 @@ def test_gpu_request_fails_cleanly_when_unavailable(tmp_path, monkeypatch) -> No
         response = client.post("/api/v1/tts/jobs", headers=idem(), data={"text": "test", "voice_mode": "preset", "speaker": "Vivian", "compute_device": "gpu"})
         assert response.status_code == 503
         assert "GPU compute is unavailable" in response.json()["detail"]
+
+
+def test_asr_models_are_selectable_across_native_entrypoints_and_gpu_is_model_scoped(tmp_path, monkeypatch) -> None:
+    local = replace(
+        settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
+        enabled_services=frozenset({"asr", "tts"}), mock_mode=True,
+        max_queued_asr=10, min_free_disk_bytes=0,
+    )
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    monkeypatch.setattr(
+        api_module, "gpu_snapshot",
+        lambda *_: {"name": "4 GB GPU", "memory_used_mib": 0, "memory_total_mib": 4096, "utilization": 0},
+    )
+    with TestClient(api_module.create_app()) as client:
+        capabilities = client.get("/api/v1/capabilities").json()["asr"]
+        assert capabilities["default_model"] == "qwen3-asr-0.6b"
+        assert [item["id"] for item in capabilities["models"]] == [
+            "qwen3-asr-0.6b", "qwen3-asr-1.7b",
+        ]
+        large = capabilities["models"][1]
+        large_gpu = next(item for item in large["compute_devices"] if item["id"] == "gpu")
+        assert large_gpu["available"] is False
+        assert large_gpu["minimum_memory_mib"] == 7936
+        assert large_gpu["unavailable_reason_code"] == "insufficient_gpu_memory"
+
+        default_job = client.post(
+            "/api/v1/asr/jobs", headers=idem(),
+            files={"file": ("default.wav", b"RIFF-default", "audio/wav")},
+            data={"compute_device": "cpu"},
+        )
+        large_cpu = client.post(
+            "/api/v1/asr/jobs", headers=idem(),
+            files={"file": ("large.wav", b"RIFF-large", "audio/wav")},
+            data={"model": "Qwen/Qwen3-ASR-1.7B", "compute_device": "cpu"},
+        )
+        large_gpu_response = client.post(
+            "/api/v1/asr/jobs", headers=idem(),
+            files={"file": ("large-gpu.wav", b"RIFF-large", "audio/wav")},
+            data={"model": "qwen3-asr-1.7b", "compute_device": "gpu"},
+        )
+        clone = client.post(
+            "/api/v1/tts/clone-references", headers=idem(),
+            files={"file": ("reference.wav", b"RIFF-reference", "audio/wav")},
+            data={"model": "qwen3-asr-1.7b", "compute_device": "cpu"},
+        )
+        person = client.post("/api/v1/voiceprints/people", json={"name": "模型测试"}).json()
+        sample = client.post(
+            f"/api/v1/voiceprints/people/{person['id']}/samples/upload", headers=idem(),
+            files={"file": ("sample.wav", b"RIFF-sample", "audio/wav")},
+            data={"model": "qwen3-asr-1.7b", "compute_device": "cpu"},
+        )
+
+    assert default_job.json()["request"]["model"] == "qwen3-asr-0.6b"
+    assert large_cpu.status_code == clone.status_code == sample.status_code == 202
+    assert large_cpu.json()["request"]["model"] == "qwen3-asr-1.7b"
+    assert clone.json()["request"]["model"] == "qwen3-asr-1.7b"
+    assert sample.json()["job"]["request"]["model"] == "qwen3-asr-1.7b"
+    assert large_gpu_response.status_code == 503
+    assert large_gpu_response.json()["code"] == "insufficient_gpu_memory"
+
+
+def test_asr_gpu_memory_tiers_allow_driver_reserved_capacity(tmp_path, monkeypatch) -> None:
+    local = replace(settings, models_dir=tmp_path / "models", mock_mode=True)
+    monkeypatch.setattr(api_module, "settings", local)
+
+    def available(model_id: str, total_mib: int) -> bool:
+        monkeypatch.setattr(
+            api_module, "gpu_snapshot",
+            lambda *_: {
+                "name": "Tier GPU", "memory_used_mib": 0,
+                "memory_total_mib": total_mib, "utilization": 0,
+            },
+        )
+        model = api_module.resolve_asr_model(model_id)
+        assert model is not None
+        devices = api_module._asr_model_devices(model)
+        return next(item for item in devices if item["id"] == "gpu")["available"]
+
+    assert available("qwen3-asr-0.6b", 3839) is False
+    assert available("qwen3-asr-0.6b", 3840) is True
+    assert available("qwen3-asr-1.7b", 7935) is False
+    assert available("qwen3-asr-1.7b", 7936) is True
+    assert available("qwen3-asr-1.7b", 8151) is True
+    monkeypatch.setattr(
+        api_module, "cached_gpu_snapshot",
+        lambda *_args, **_kwargs: {
+            "name": "RTX PRO 1000 Blackwell", "memory_used_mib": 0,
+            "memory_total_mib": 8151, "utilization": 0,
+        },
+    )
+    model, device, device_name = api_module.validate_asr_model_device(
+        "qwen3-asr-1.7b", "gpu",
+    )
+    assert (model["public_id"], device, device_name) == (
+        "qwen3-asr-1.7b", "gpu", "RTX PRO 1000 Blackwell",
+    )
+
+
+def test_hotword_library_normalizes_snapshots_and_survives_edit_delete_on_replay(tmp_path, monkeypatch) -> None:
+    local = replace(
+        settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
+        enabled_services=frozenset({"asr"}), min_free_disk_bytes=0,
+    )
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    key = str(uuid.uuid4())
+    request = {
+        "headers": {"Idempotency-Key": key},
+        "files": {"file": ("terms.wav", b"RIFF-terms", "audio/wav")},
+        "data": {"compute_device": "cpu"},
+    }
+    with TestClient(api_module.create_app()) as client:
+        created = client.post(
+            "/api/v1/asr/hotword-lists",
+            json={"name": "  医疗　术语 ", "terms": [" Qwen ", "量子", "ｑｗｅｎ", ""]},
+        )
+        assert created.status_code == 201
+        item = created.json()
+        assert item["name"] == "医疗 术语"
+        assert item["terms"] == ["Qwen", "量子"]
+        # NFKC and case folding collapse equivalent spellings while preserving first display form.
+        assert item["term_count"] == 2
+        listing = client.get("/api/v1/asr/hotword-lists").json()
+        assert listing["count"] == 1
+
+        request["data"] = {
+            "compute_device": "cpu", "context": "会议上下文",
+            "hotword_list_ids": item["id"],
+        }
+        submitted = client.post("/api/v1/asr/jobs", **request)
+        assert submitted.status_code == 202
+        job_request = submitted.json()["request"]
+        assert job_request["hotword_list_ids"] == [item["id"]]
+        assert job_request["hotword_lists"][0]["terms"] == item["terms"]
+        assert job_request["effective_context"].startswith("会议上下文\n\nVocabulary: ")
+
+        updated = client.patch(
+            f"/api/v1/asr/hotword-lists/{item['id']}",
+            json={"terms": ["新术语"]},
+        )
+        assert updated.status_code == 200
+        assert client.delete(f"/api/v1/asr/hotword-lists/{item['id']}").status_code == 204
+        replay = client.post("/api/v1/asr/jobs", **request)
+
+    assert replay.status_code == 200
+    assert replay.json()["id"] == submitted.json()["id"]
+    assert replay.json()["request"]["hotword_lists"][0]["terms"] == item["terms"]
 
 
 def test_voiceprint_upload_accepts_browser_recording_container(tmp_path, monkeypatch) -> None:
@@ -391,7 +638,7 @@ def test_openai_compatible_acceleration_defaults_and_explicit_opt_out(tmp_path, 
 
     assert [response.status_code for response in (omitted_asr, disabled_asr, omitted_tts, disabled_tts)] == [200, 200, 200, 200]
     assert rejected_tts.status_code == 422
-    assert "0.6B models" in rejected_tts.json()["detail"]
+    assert rejected_tts.json()["code"] == "unsupported_tts_control"
     assert omitted_asr.headers["x-job-id"]
     assert omitted_tts.headers["x-job-id"]
     assert [request["accelerate_single_task"] for _, request in captured] == [True, False, True, False]
@@ -422,6 +669,7 @@ def test_tts_clone_reference_analysis_and_snapshot_submission(tmp_path, monkeypa
         assert analysis["display_name"] == "TTS 克隆参考分析 · reference.webm"
         assert analysis["request"] == {
             "purpose": "tts_clone_reference",
+            "model": "qwen3-asr-0.6b",
             "input_path": analysis["request"]["input_path"],
             "original_name": "reference.webm", "size_bytes": 13, "language": "Auto",
             "speaker_count": 1, "diarize": False, "align": True, "context": "",

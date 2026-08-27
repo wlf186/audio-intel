@@ -35,6 +35,7 @@ class VoiceMode(str, Enum):
     profile = "profile"
     inline_clone = "inline_clone"
     voiceprint = "voiceprint"
+    voice_design = "voice_design"
 
 
 class VoiceprintSampleState(str, Enum):
@@ -101,11 +102,27 @@ class HealthResponse(PublicModel):
 
 
 class ComputeCapability(PublicModel):
-    id: ComputeDevice
-    precision: str
-    available: bool
-    default: bool
-    quantized: bool
+    id: ComputeDevice = Field(description="计算设备 ID / Compute device ID")
+    precision: str = Field(description="该设备使用的模型精度 / Model precision used on this device")
+    available: bool = Field(description="当前模型能否在该设备运行 / Whether the current model can run on this device")
+    default: bool = Field(description="该模型当前建议的默认设备 / Recommended default device for this model")
+    quantized: bool = Field(description="是否使用量化权重 / Whether quantized weights are used")
+    minimum_memory_mib: int | None = Field(
+        None,
+        description="GPU 准入所需的最小总显存；不是当前空闲显存 / Minimum reported total GPU memory for admission, not current free memory",
+    )
+    total_memory_mib: int | None = Field(
+        None,
+        description="当前 GPU 报告的总显存 / Total memory reported by the current GPU",
+    )
+    unavailable_reason_code: str | None = Field(
+        None,
+        description="设备不可用时的稳定原因代码 / Stable reason code when the device is unavailable",
+    )
+    unavailable_reason: str | None = Field(
+        None,
+        description="设备不可用时的可读原因 / Human-readable reason when the device is unavailable",
+    )
 
 
 class AccelerationCapability(PublicModel):
@@ -119,6 +136,8 @@ class TtsControlCapability(PublicModel):
         json_schema_extra={
             "example": {
                 "instruction_voice_modes": [],
+                "instruction_required_voice_modes": [],
+                "max_instruction_chars": 1000,
                 "speaking_rate_parameter": False,
                 "pitch_parameter": False,
                 "sampling_parameters": False,
@@ -128,6 +147,12 @@ class TtsControlCapability(PublicModel):
 
     instruction_voice_modes: list[VoiceMode] = Field(
         description="支持自然语言风格、情绪和韵律指令的音色模式 / Voice modes supporting natural-language style, emotion, and prosody instructions",
+    )
+    instruction_required_voice_modes: list[VoiceMode] = Field(
+        description="必须提供自然语言指令的音色模式 / Voice modes that require a natural-language instruction",
+    )
+    max_instruction_chars: int = Field(
+        description="自然语言指令最大字符数 / Maximum natural-language instruction length",
     )
     speaking_rate_parameter: bool = Field(
         description="公共 API 是否提供独立语速参数 / Whether the public API exposes a dedicated speaking-rate parameter",
@@ -146,8 +171,55 @@ class SpeakerCountCapability(PublicModel):
     default: str
 
 
+class AsrModelCapability(PublicModel):
+    id: str = Field(description="提交接口使用的规范 ASR 模型 ID / Canonical ASR model ID used by submission endpoints")
+    name: str = Field(description="ASR 模型显示名称 / ASR model display name")
+    revision: str = Field(description="模型清单固定的 revision / Revision pinned by the model manifest")
+    installed: bool = Field(description="固定 revision 是否完整安装 / Whether the pinned revision is completely installed")
+    installation_state: str = Field(description="模型安装检查状态 / Model installation check state")
+    default: bool = Field(description="是否为省略 model 时的默认模型 / Whether this is the default when model is omitted")
+    compute_devices: list[ComputeCapability] = Field(
+        description="该模型逐设备的实时可用性 / Live per-device availability for this model",
+    )
+
+
+class TtsCheckpointCapability(PublicModel):
+    variant: str = Field(description="模型组内的 checkpoint 类型 / Checkpoint variant within the model group")
+    name: str = Field(description="模型清单中的实际 checkpoint 名称 / Physical checkpoint name from the manifest")
+    revision: str = Field(description="模型清单固定的 revision / Revision pinned by the model manifest")
+    installed: bool = Field(description="固定 revision 是否完整安装 / Whether the pinned revision is completely installed")
+    installation_state: str = Field(description="模型安装检查状态 / Model installation check state")
+
+
+class TtsModelCapability(PublicModel):
+    id: str = Field(description="提交接口使用的规范 TTS 模型 ID / Canonical TTS model ID used by submission endpoints")
+    name: str = Field(description="TTS 模型组显示名称 / TTS model-group display name")
+    default: bool = Field(description="是否为省略 model 时的默认模型 / Whether this is the default when model is omitted")
+    installed: bool = Field(description="该模型组所需 checkpoint 是否完整安装 / Whether all checkpoints required by this model group are installed")
+    installation_state: str = Field(description="模型组聚合安装状态 / Aggregate model-group installation state")
+    voice_modes: list[VoiceMode] = Field(description="该模型组支持的音色模式 / Voice modes supported by this model group")
+    compute_devices: list[ComputeCapability] = Field(description="该模型逐设备的实时可用性 / Live per-device availability for this model")
+    controls: TtsControlCapability = Field(description="该模型的高级控制能力 / Advanced controls supported by this model")
+    checkpoints: list[TtsCheckpointCapability] = Field(description="模型组使用的固定 checkpoint / Pinned checkpoints used by the model group")
+
+
+class HotwordLibraryCapability(PublicModel):
+    supported: bool = Field(description="是否支持本地 ASR 热词库 / Whether the local ASR hotword library is supported")
+    max_lists: int = Field(description="最多可保存的词表数 / Maximum number of stored lists")
+    max_terms_per_list: int = Field(description="单个词表最多词条数 / Maximum terms per list")
+    max_selected_lists: int = Field(description="单次 ASR 最多选择的词表数 / Maximum lists selected for one ASR request")
+    max_selected_terms: int = Field(description="单次 ASR 合并后最多唯一词条数 / Maximum unique merged terms for one ASR request")
+    max_prompt_chars: int = Field(
+        description="自动生成 Vocabulary 段的最大字符数 / Maximum characters in the generated Vocabulary section",
+    )
+    max_name_chars: int = Field(description="词表名称最大字符数 / Maximum list-name length")
+    max_term_chars: int = Field(description="单个热词最大字符数 / Maximum hotword-term length")
+
+
 class AsrCapability(PublicModel):
-    model: str
+    model: str = Field(description="默认模型显示名称的兼容字段 / Compatibility field containing the default model display name")
+    default_model: str = Field(description="省略 model 时使用的规范模型 ID / Canonical model ID used when model is omitted")
+    models: list[AsrModelCapability] = Field(description="所有可提交 ASR 模型及逐设备能力 / All submit-capable ASR models and per-device capabilities")
     diarization: str
     speaker_count: SpeakerCountCapability
     voiceprint_library: bool
@@ -156,21 +228,40 @@ class AsrCapability(PublicModel):
     timestamp_precisions: list[str]
     aligner_languages: list[str]
     exports: list[str]
-    compute_devices: list[ComputeCapability]
+    compute_devices: list[ComputeCapability] = Field(
+        description="默认 ASR 模型的设备能力兼容视图；新客户端使用 models[].compute_devices / Compatibility view for the default ASR model; new clients should use models[].compute_devices",
+    )
     single_task_acceleration: AccelerationCapability
+    hotword_library: HotwordLibraryCapability = Field(
+        description="本地场景热词库的支持状态与提交限制 / Support status and submission limits for the local scenario hotword library",
+    )
 
 
 class TtsCapability(PublicModel):
-    models: list[str]
-    voice_modes: list[VoiceMode]
+    models: list[str] = Field(
+        description="旧客户端兼容的实际 checkpoint 名称列表；新客户端使用 model_capabilities[] / Physical checkpoint names retained for compatibility; new clients should use model_capabilities[]",
+    )
+    default_model: str = Field(
+        description="省略 model 时使用的规范公共模型 ID / Canonical public model ID used when model is omitted",
+    )
+    model_capabilities: list[TtsModelCapability] = Field(
+        description="按规范模型 ID 提供的权威设备、音色模式、控制和 checkpoint 能力 / Authoritative device, voice-mode, control, and checkpoint capabilities by canonical model ID",
+    )
+    voice_modes: list[VoiceMode] = Field(
+        description="所有模型组音色模式的兼容并集；按所选模型判断时使用 model_capabilities[].voice_modes / Compatibility union across model groups; use model_capabilities[].voice_modes for the selected model",
+    )
     preset_speakers: list[str]
     preset_speaker_native_languages: dict[str, str]
     languages: list[str]
     default_language: str
     formats: list[str]
-    compute_devices: list[ComputeCapability]
+    compute_devices: list[ComputeCapability] = Field(
+        description="默认 0.6B 模型的设备能力兼容视图；新客户端使用 model_capabilities[].compute_devices / Compatibility view for the default 0.6B model; new clients should use model_capabilities[].compute_devices",
+    )
     single_task_acceleration: AccelerationCapability
-    controls: TtsControlCapability
+    controls: TtsControlCapability = Field(
+        description="默认 0.6B 模型的控制能力兼容视图；新客户端使用 model_capabilities[].controls / Compatibility control view for the default 0.6B model; new clients should use model_capabilities[].controls",
+    )
 
 
 class ApiLimits(PublicModel):
@@ -285,12 +376,41 @@ class OomFallback(PublicModel):
 
 
 class AccelerationResponse(PublicModel):
-    requested: bool
-    active: bool
-    device: ComputeDevice
-    target_batch_size: int
-    stage_batch_sizes: dict[str, int]
-    oom_fallbacks: list[OomFallback]
+    requested: bool = Field(description="本次任务是否请求单任务加速 / Whether single-task acceleration was requested")
+    active: bool = Field(description="至少一个阶段是否实际使用大于 1 的批次 / Whether any stage actually used a batch larger than 1")
+    device: ComputeDevice = Field(description="计算批次档位时使用的设备 / Device used to resolve the batch tier")
+    target_batch_size: int = Field(description="应用模型保守降档后的任务目标批次 / Job target batch after model-specific conservative penalties")
+    stage_target_batch_sizes: dict[str, int] | None = Field(
+        None,
+        description="各阶段在 OOM 回退前的目标批次；仅在流水线阶段目标不同时返回 / Per-stage targets before OOM fallback; returned only when pipeline stages have different targets",
+    )
+    stage_batch_sizes: dict[str, int] = Field(description="各阶段最终使用的有效批次 / Effective batch size used by each stage")
+    batch_penalty_steps: int = Field(
+        0,
+        description="模型在硬件档位基础上保守降低的批次档位数 / Number of conservative batch-tier reductions applied for the model",
+    )
+    gpu_memory_total_mib: int | None = Field(
+        None,
+        description="GPU 分档时报告的总显存 MiB；不是当前空闲显存 / Reported total GPU memory in MiB used for tiering, not current free memory",
+    )
+    physical_cores: int | None = Field(
+        None,
+        description="CPU 分档时检测到的物理核心数 / Physical CPU cores detected for tiering",
+    )
+    available_memory_bytes: int | None = Field(
+        None,
+        description="CPU 分档时检测到的可用内存字节数 / Available memory bytes detected for CPU tiering",
+    )
+    oom_fallbacks: list[OomFallback] = Field(description="按发生顺序记录的 OOM 降批重试 / OOM batch-reduction retries in occurrence order")
+
+
+class HotwordContextResponse(PublicModel):
+    enabled: bool = Field(
+        description="本次任务是否选择了已保存词表；不表示是否传入一次性 context/prompt / Whether stored lists were selected; does not indicate a one-off context or prompt",
+    )
+    list_ids: list[str] = Field(description="提交时保存的词表 ID 快照 / Hotword-list ID snapshot stored at submission")
+    list_names: list[str] = Field(description="提交时保存的词表名称快照 / Hotword-list name snapshot stored at submission")
+    term_count: int = Field(description="合并去重后的热词数 / Number of unique merged hotword terms")
 
 
 class JobResultResponse(PublicModel):
@@ -306,6 +426,14 @@ class JobResultResponse(PublicModel):
     format: str | None = None
     sample_rate: int | None = None
     voice_mode: VoiceMode | None = None
+    model: str | None = Field(None, description="执行任务的规范模型 ID / Canonical model ID used for execution")
+    model_name: str | None = Field(None, description="执行任务的模型显示名称 / Display name of the model used for execution")
+    model_revision: str | None = Field(None, description="执行任务的固定模型 revision / Pinned model revision used for execution")
+    instruct: str | None = Field(None, description="TTS 使用的自然语言控制指令快照 / Natural-language control instruction snapshot used by TTS")
+    hotword_context: HotwordContextResponse | None = Field(
+        None,
+        description="ASR 任务使用的已保存热词表快照摘要 / Summary of stored hotword-list snapshots used by an ASR job",
+    )
     compute_device: ComputeDevice | None = None
     compute_device_name: str | None = None
     precision: str | None = None
@@ -342,7 +470,7 @@ class JobProgressActivity(PublicModel):
     sequence: int = Field(ge=1, description="当前阶段内推理调用序号；OOM 重试会递增 / Inference-call sequence within the stage; increments on OOM retry")
     current: int = Field(ge=0, description="已观测的当前模型活动量 / Observed model activity count")
     total: int | None = Field(default=None, ge=1, description="预计或已知的当前调用总量 / Estimated or known total for the current call")
-    unit: str = Field(description="codec_frame、output_token 或 model_layer")
+    unit: str = Field(description="model_load、codec_frame、output_token 或 model_layer / Model-load, codec-frame, output-token, or model-layer activity")
     basis: ProgressBasis = Field(description="total 及其比例是实测还是估算 / Whether total and its ratio are observed or estimated")
     updated_at: str = Field(description="活动计数更新时间 / Activity counter update time")
 
@@ -496,6 +624,20 @@ class VoiceprintUploadResponse(PublicModel):
     job: JobResponse
 
 
+class HotwordListResponse(PublicModel):
+    id: str
+    name: str
+    terms: list[str] = Field(description="规范化并按首次出现顺序保存的热词 / Normalized hotword terms stored in first-occurrence order")
+    term_count: int = Field(description="当前词表中的热词数量 / Number of terms in the current list")
+    created_at: str
+    updated_at: str
+
+
+class HotwordListsResponse(PublicModel):
+    items: list[HotwordListResponse]
+    count: int
+
+
 class PurgeDeletedItem(PublicModel):
     id: str
     reclaimed_bytes: int
@@ -551,6 +693,7 @@ class OpenAISpeechRequest(PublicModel):
     model: str = Field(
         "qwen3-tts-0.6b",
         description="本地兼容模型别名 / Local compatible model alias",
+        json_schema_extra={"enum": ["qwen3-tts-0.6b", "qwen3-tts-1.7b"]},
     )
     input: str = Field(description="需要合成的文本 / Text to synthesize")
     voice: str = Field(
@@ -573,9 +716,8 @@ class OpenAISpeechRequest(PublicModel):
     )
     instructions: str = Field(
         "",
-        description="已弃用；当前 0.6B 模型不支持风格指令，只能省略或传空值 / Deprecated; the current 0.6B models do not support style instructions, so omit it or send an empty value",
-        deprecated=True,
-        json_schema_extra={"maxLength": 0},
+        description="1.7B 预置音色的可选自然语言风格、韵律和情绪指令；其它组合必须为空 / Optional natural-language style, prosody, and emotion instruction for a 1.7B preset voice; must be empty for other combinations",
+        json_schema_extra={"maxLength": 1000},
     )
     compute_device: str = Field(
         "gpu", description="计算设备；GPU 不可用时返回 503 / Compute device; unavailable GPU returns 503",

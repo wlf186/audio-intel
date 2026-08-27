@@ -45,3 +45,24 @@ def test_dynamic_stage_is_normalized_for_consumers() -> None:
         "basis": "observed", "current": 3, "total": 8,
         "unit": "text_chunk", "activity": None,
     }
+
+
+def test_asr_eta_never_mixes_model_histories(tmp_path, monkeypatch) -> None:
+    local = replace(settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp")
+    monkeypatch.setattr(db_module, "settings", local)
+    db_module.init_db()
+    base = {
+        "input_duration_seconds": 10, "compute_device": "cpu",
+        "accelerate_single_task": True, "diarize": True, "align": True,
+    }
+    current = db_module.create_job("asr", "large", {**base, "model": "qwen3-asr-1.7b"})
+    for index in range(6):
+        sample = db_module.create_job("asr", f"small-{index}", {**base, "model": "qwen3-asr-0.6b"})
+        with sqlite3.connect(local.database_path) as database:
+            database.execute(
+                "UPDATE jobs SET state='succeeded',processing_seconds=10,finished_at=?,updated_at=? WHERE id=?",
+                (db_module.utcnow(), db_module.utcnow(), sample["id"]),
+            )
+    estimate = estimate_for_job(db_module.get_job(current["id"]), queue_context())
+    assert estimate["state"] == "warming_up"
+    assert estimate["sample_count"] == 0

@@ -77,7 +77,7 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         for method, operation in methods.items()
         if method in HTTP_METHODS
     ]
-    assert len(operations) == 36
+    assert len(operations) == 40
     assert len({operation["operationId"] for operation in operations}) == len(operations)
     assert all(operation.get("tags") for operation in operations)
     assert all("**English:**" in operation.get("description", "") for operation in operations)
@@ -108,6 +108,15 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     assert progress_detail["activity"]["anyOf"][0]["$ref"].endswith("/JobProgressActivity")
     activity = schema["components"]["schemas"]["JobProgressActivity"]["properties"]
     assert {"sequence", "current", "total", "unit", "basis", "updated_at"} <= set(activity)
+    assert "start/end boundaries only" in schema["info"]["description"]
+    acceleration = schema["components"]["schemas"]["AccelerationResponse"]["properties"]
+    assert {
+        "requested", "active", "device", "target_batch_size", "stage_target_batch_sizes",
+        "stage_batch_sizes", "batch_penalty_steps", "gpu_memory_total_mib", "physical_cores",
+        "available_memory_bytes", "oom_fallbacks",
+    } == set(acceleration)
+    assert "total GPU memory" in acceleration["gpu_memory_total_mib"]["description"]
+    assert "conservative batch-tier reductions" in acceleration["batch_penalty_steps"]["description"]
     assert "EventSnapshot" in schema["components"]["schemas"]
     assert "EventJobResponse" in schema["components"]["schemas"]
     assert "AdmissionProblemDetail" in schema["components"]["schemas"]
@@ -120,19 +129,24 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     assert "text/event-stream" in job_events["content"]
     assert job_events["x-event-data-schema"]["$ref"].endswith("/EventJobResponse")
     assert "audio/wav" in schema["paths"]["/v1/audio/speech"]["post"]["responses"]["200"]["content"]
+    speech_description = schema["paths"]["/v1/audio/speech"]["post"]["description"]
+    assert all(value in speech_description for value in ("0.6B", "1.7B", "instructions", "VoiceDesign"))
     assert "/api/v1/tts/clone-references" in schema["paths"]
     speech_schema = schema["components"]["schemas"]["OpenAISpeechRequest"]["properties"]
     assert speech_schema["language"]["default"] == "Auto"
     assert speech_schema["compute_device"]["default"] == "gpu"
     assert speech_schema["accelerate_single_task"]["default"] is True
-    assert speech_schema["instructions"]["deprecated"] is True
-    assert speech_schema["instructions"]["maxLength"] == 0
+    assert speech_schema["instructions"]["maxLength"] == 1000
+    assert "1.7B preset" in speech_schema["instructions"]["description"]
     controls_schema = schema["components"]["schemas"]["TtsControlCapability"]["properties"]
     assert set(controls_schema) == {
-        "instruction_voice_modes", "speaking_rate_parameter", "pitch_parameter", "sampling_parameters",
+        "instruction_voice_modes", "instruction_required_voice_modes", "max_instruction_chars",
+        "speaking_rate_parameter", "pitch_parameter", "sampling_parameters",
     }
     expected_controls = {
         "instruction_voice_modes": [],
+        "instruction_required_voice_modes": [],
+        "max_instruction_chars": 1000,
         "speaking_rate_parameter": False,
         "pitch_parameter": False,
         "sampling_parameters": False,
@@ -142,14 +156,57 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     assert schema["components"]["schemas"]["CapabilitiesResponse"]["example"]["tts"]["controls"] == expected_controls
     tts_body_ref = schema["paths"]["/api/v1/tts/jobs"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"]
     tts_body = schema["components"]["schemas"][tts_body_ref.rsplit("/", 1)[-1]]
-    assert tts_body["properties"]["instruct"]["deprecated"] is True
-    assert tts_body["properties"]["instruct"]["maxLength"] == 0
+    assert tts_body["properties"]["instruct"]["maxLength"] == 1000
+    assert "voice_design" in tts_body["properties"]["instruct"]["description"]
     for path in ("/api/v1/tts/jobs", "/v1/audio/speech"):
         unsupported = schema["paths"][path]["post"]["responses"]["422"]["content"]["application/problem+json"]["examples"]["unsupported_instruction"]["value"]
         assert unsupported["status"] == 422
-        assert unsupported["code"] == "http_422"
-        assert "0.6B models" in unsupported["detail"]
+        assert unsupported["code"] == "unsupported_tts_control"
+        assert "model and voice mode" in unsupported["detail"]
+        service_examples = schema["paths"][path]["post"]["responses"]["503"]["content"]["application/problem+json"]["examples"]
+        assert set(service_examples) == {"tts_model_unavailable", "gpu_unavailable", "insufficient_gpu_memory"}
     assert schema["components"]["schemas"]["AsrCapability"]["properties"]["default_language"]["type"] == "string"
+    asr_capability = schema["components"]["schemas"]["AsrCapability"]["properties"]
+    assert {"default_model", "models", "hotword_library"} <= set(asr_capability)
+    tts_capability = schema["components"]["schemas"]["TtsCapability"]["properties"]
+    assert {"default_model", "model_capabilities", "controls"} <= set(tts_capability)
+    assert "Physical checkpoint names retained for compatibility" in tts_capability["models"]["description"]
+    assert "Compatibility union" in tts_capability["voice_modes"]["description"]
+    assert "default 0.6B model" in tts_capability["compute_devices"]["description"]
+    assert "model_capabilities[].controls" in tts_capability["controls"]["description"]
+    assert {"voice_modes", "compute_devices", "controls", "checkpoints"} <= set(
+        schema["components"]["schemas"]["TtsModelCapability"]["properties"]
+    )
+    compute_capability = schema["components"]["schemas"]["ComputeCapability"]["properties"]
+    assert {"minimum_memory_mib", "total_memory_mib", "unavailable_reason_code"} <= set(compute_capability)
+    assert "total GPU memory" in compute_capability["minimum_memory_mib"]["description"]
+    hotword_capability = schema["components"]["schemas"]["HotwordLibraryCapability"]["properties"]
+    assert set(hotword_capability) == {
+        "supported", "max_lists", "max_terms_per_list", "max_selected_lists",
+        "max_selected_terms", "max_prompt_chars", "max_name_chars", "max_term_chars",
+    }
+    assert "scenario hotword library" in asr_capability["hotword_library"]["description"]
+    hotword_list = schema["components"]["schemas"]["HotwordListResponse"]["properties"]
+    assert "first-occurrence order" in hotword_list["terms"]["description"]
+    assert "Number of terms" in hotword_list["term_count"]["description"]
+    result_properties = schema["components"]["schemas"]["JobResultResponse"]["properties"]
+    assert {"model", "model_name", "model_revision", "hotword_context"} <= set(result_properties)
+    hotword_context = schema["components"]["schemas"]["HotwordContextResponse"]["properties"]
+    assert set(hotword_context) == {"enabled", "list_ids", "list_names", "term_count"}
+    result_examples = schema["paths"]["/api/v1/jobs/{job_id}/result"]["get"]["responses"]["200"]["content"]["application/json"]["examples"]
+    assert result_examples["asr"]["value"]["hotword_context"]["enabled"] is True
+    assert "qwen3-asr-1.7b" == result_examples["asr"]["value"]["model"]
+    assert result_examples["tts"]["value"]["precision"] == "BF16"
+    capabilities_example = schema["paths"]["/api/v1/capabilities"]["get"]["responses"]["200"]["content"]["application/json"]["example"]
+    assert [item["id"] for item in capabilities_example["asr"]["models"]] == [
+        "qwen3-asr-0.6b", "qwen3-asr-1.7b",
+    ]
+    assert [item["id"] for item in capabilities_example["tts"]["model_capabilities"]] == [
+        "qwen3-tts-0.6b", "qwen3-tts-1.7b",
+    ]
+    large_tts = capabilities_example["tts"]["model_capabilities"][1]
+    assert large_tts["controls"]["instruction_voice_modes"] == ["preset", "voice_design"]
+    assert next(device for device in large_tts["compute_devices"] if device["id"] == "gpu")["minimum_memory_mib"] == 7936
     for path in (
         "/api/v1/asr/jobs",
         "/api/v1/tts/clone-references",
@@ -210,6 +267,35 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         body = schema["components"]["schemas"][body_ref.rsplit("/", 1)[-1]]
         assert body["properties"]["language"]["enum"] == api_module.ASR_LANGUAGES
 
+    for path in (
+        "/api/v1/asr/jobs",
+        "/api/v1/tts/clone-references",
+        "/api/v1/voiceprints/people/{person_id}/samples/upload",
+        "/v1/audio/transcriptions",
+    ):
+        operation = schema["paths"][path]["post"]
+        body_ref = operation["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"]
+        body = schema["components"]["schemas"][body_ref.rsplit("/", 1)[-1]]
+        assert body["properties"]["model"]["default"] == "qwen3-asr-0.6b"
+        assert body["properties"]["model"]["enum"] == ["qwen3-asr-0.6b", "qwen3-asr-1.7b"]
+        assert body["properties"]["compute_device"]["enum"] == ["cpu", "gpu"]
+        service_examples = operation["responses"]["503"]["content"]["application/problem+json"]["examples"]
+        assert set(service_examples) == {
+            "asr_model_unavailable", "gpu_unavailable", "insufficient_gpu_memory",
+        }
+
+    asr_body_ref = schema["paths"]["/api/v1/asr/jobs"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"]
+    asr_body = schema["components"]["schemas"][asr_body_ref.rsplit("/", 1)[-1]]
+    assert "maximum 8" in asr_body["properties"]["hotword_list_ids"]["description"]
+    hotword_create = schema["paths"]["/api/v1/asr/hotword-lists"]["post"]
+    assert "NFKC" in hotword_create["description"]
+    assert "project_terms" in hotword_create["requestBody"]["content"]["application/json"]["examples"]
+    hotword_patch = schema["paths"]["/api/v1/asr/hotword-lists/{item_id}"]["patch"]
+    assert "completely replaces" in hotword_patch["description"]
+    assert "replace_terms" in hotword_patch["requestBody"]["content"]["application/json"]["examples"]
+    assert "8151 MiB" in schema["info"]["description"]
+    assert "recognition hints" in schema["info"]["description"]
+
     for methods in schema["paths"].values():
         for method, operation in methods.items():
             if method not in HTTP_METHODS:
@@ -252,7 +338,9 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         for media in operation.get("requestBody", {}).get("content", {}).values()
     ]
     assert request_media and all(media.get("examples") for media in request_media)
-    assert set(schema["paths"]["/api/v1/tts/jobs"]["post"]["requestBody"]["content"]["multipart/form-data"]["examples"]) >= {"preset", "inline_clone", "voiceprint"}
+    assert set(schema["paths"]["/api/v1/tts/jobs"]["post"]["requestBody"]["content"]["multipart/form-data"]["examples"]) >= {
+        "preset", "preset_1_7b", "voice_design", "inline_clone", "voiceprint",
+    }
 
 
 def test_documentation_code_blocks_are_self_contained_and_syntactically_valid() -> None:

@@ -4,9 +4,9 @@
 
 ## 快速复原
 
-自动安装支持 **Ubuntu 22.04/24.04 x86_64** 和 **Windows 11 x64 原生环境**。完整 ASR + TTS 建议至少 16 GB 内存（32 GB 更舒适）和 30 GB 可用磁盘。NVIDIA GPU 可选；GPU 模式要求 `nvidia-smi` 正常且驱动兼容 PyTorch CUDA 13.0，CPU 模式不需要显卡。Windows 自动化会在 Windows CI 验证，但真实模型尚无 Windows GPU 实机验收记录。
+自动安装支持 **Ubuntu 22.04/24.04 x86_64** 和 **Windows 11 x64 原生环境**。完整 ASR + TTS 建议至少 16 GB 内存（32 GB 更舒适）；0.6B/1.7B 全部模型、隔离运行时和安装缓存合计约 43 GiB，因此至少预留 55 GiB、建议 70 GiB 可用磁盘，为任务数据、升级和 5 GiB 准入保护留出空间。NVIDIA GPU 可选；GPU 模式要求 `nvidia-smi` 正常且驱动兼容 PyTorch CUDA 13.0，CPU 模式不需要显卡。Windows 自动化会在 Windows CI 验证，但真实模型尚无 Windows GPU 实机验收记录。
 
-Linux 需要 Git、curl、tar、Node.js 22.20+（推荐 Node.js 24 LTS）与 Corepack；Python 3.12 和固定版本的 uv 会安装到项目目录：
+Linux 需要 Git、curl、tar、Node.js 22.20+（推荐 Node.js 24 LTS）与 Corepack；复制本地 `/docs` 的 Bash API 示例时还需要 `jq`，但服务运行本身不依赖它。Python 3.12 和固定版本的 uv 会安装到项目目录：
 
 ```bash
 git clone https://github.com/wlf186/audio-intel.git
@@ -70,27 +70,31 @@ ASR 与 TTS 参数分别以轻量、带版本的 `localStorage` 配置保存在�
         ├── SQLite WAL 异步任务队列 ── ASR worker 监督器
         │       └── 可重启任务执行器
         │           FSMN-VAD (CPU) → CAM++ (CPU)
-        │           → Qwen3-ASR-0.6B (CPU FP32 / GPU BF16 阶段子进程)
+        │           → Qwen3-ASR-0.6B / 1.7B (CPU FP32 / GPU BF16 阶段子进程)
         │           → 阶段子进程退出释放模型内存
         │           → ForcedAligner-0.6B (与 ASR 使用同一设备)
         │           → JSON / SRT / VTT / TXT
         │
         └── SQLite WAL 异步任务队列 ── TTS worker 监督器
                 └── 可重启任务执行器
-                    Qwen3-TTS CustomVoice 或 Base（二选一）
+                    Qwen3-TTS 0.6B / 1.7B CustomVoice、Base 或 VoiceDesign（按任务加载一个）
                     └── 超长克隆参考 → 独立 aligner 环境（按需启动后退出）
                     CPU FP32 / GPU BF16 + SDPA + 默认开启、可关闭的单任务自动批处理 → WAV / FLAC / MP3
 ```
 
 ASR 公开支持 `Auto`，以及 Chinese、English、Cantonese、French、German、Italian、Japanese、Korean、Portuguese、Russian、Spanish 这 11 种可进行 ForcedAligner 字/词级对齐的语言；显式传入其他语言会返回 `422`。Auto 仍可能检测出模型支持的其他语种，此时任务正常完成并返回句段级时间戳，页面会明确提示本次未执行字词对齐。ASR 按 FSMN-VAD 的语音区间合并为约 20–60 秒的块，并利用可用的字词时间戳把大块重新切成连续的说话人轮次；即使选择“仅句级时间戳”，多人任务也会在内部对齐后隐藏字词明细。短录音会绕过 FunASR 少于 20 个声纹窗口时的单人回退，已知人数使用 KMeans，自动人数使用短音频余弦聚类。CAM++ 采用 single-active-speaker 模式，真正重叠语音仍只会归属给一位说话人。
 
-ASR 与 TTS 默认都使用 GPU。两者均可按任务选择 `cpu` 或 `gpu`：CPU 使用 FP32，GPU 使用 BF16，不使用量化；GPU 任务通过项目内的全局锁串行执行，避免 4 GB 显存同时装载多个大模型。ASR 的 FSMN-VAD 和 CAM++ 始终在 CPU 上运行，设备选项会同时切换 ASR 主模型和 ForcedAligner；GPU 模式下 CAM++ 会在 CPU 内部批处理，并与 GPU 识别和对齐重叠执行。自动说话人数会对低支持度的疑似拆分簇执行一次保守的整段声纹复核，只有滑窗和整段两个视角均有充分区分度时才合并；手动指定人数不受该复核影响。TTS GPU 模式默认会在显存充足时对同一任务的相邻文本块执行 batch 2，声码器仍逐块解码。
+ASR 默认使用 `qwen3-asr-0.6b`，也可在普通转写、TTS 克隆参考分析、声纹样本上传和 OpenAI 兼容转写中选择 `qwen3-asr-1.7b`。`setup asr/all` 会下载两个固定 revision；运行期只从本地模型目录离线加载。1.7B 的 CPU 路径始终可选。GPU 能力按 `nvidia-smi` 报告的总显存而不是当前空闲显存判断，并为驱动或硬件保留区预留 256 MiB 容差：1.7B 的 8 GiB 档门槛为 7936 MiB，0.6B 的 4 GiB 档门槛为 3840 MiB，因此报告 8151 MiB 的 8 GiB 显卡可选择 1.7B。该门槛只决定准入，其他 GPU 进程仍可能导致实际推理 OOM。显式 API GPU 请求不满足条件时返回 `503`，页面则显示原因并按 CPU 创建本次任务。1.7B 复用单任务自动批处理和 OOM 降档机制，并采用更保守的起始批次；当前 4 GiB RTX A1000 只能实机覆盖 0.6B GPU 路径，1.7B GPU 仍需在 8 GiB 设备上验收。
 
-ASR/TTS 提交页默认开启“单任务加速”；原生 API 与 OpenAI 兼容端点的布尔参数 `accelerate_single_task` 也默认为 `true`，可显式传入 `false` 关闭。开启后只按当前 CPU 核心/可用内存或 GPU 总显存自动扩大任务内部批次，不增加任务并发，也不改变模型、精度、分块、说话人算法或 TTS 声码器的逐块解码。GPU 分档为 `<8/8/12/16/24/32+ GB → 2/4/6/8/12/16`；CPU 在物理核心与可用内存同时达到 `8+12/16+24/32+48/48+64` 时使用 `2/4/6/8`。发生 OOM 会按 `16→12→8→6→4→2→1` 在当前任务内重试。任务结果的 `acceleration` 会记录目标/实际批次和回退。GPU 不可用时仍明确返回 `503`，不会静默回退到 CPU。可通过 `GET /api/v1/capabilities` 查询当前设备能力、说话人数上限与开关默认值。
+“热词库”按场景保存多个本地词表，0.6B 与 1.7B 的接口和限制相同。普通 ASR 或 OpenAI 兼容转写可通过 `hotword_list_ids` 选择最多 8 个词表；留空表示不启用已保存词表。提交时会规范化、去重并生成 Qwen ASR 的 `Vocabulary: ...` 上下文，同时把词表内容快照写入任务，因此后续编辑或删除词表不会改变历史任务或幂等重放。一次性 `context` / `prompt` 会放在自动生成的 Vocabulary 段之前；克隆参考和声纹入库不使用热词。热词属于识别提示而不是强制词典，建议只放容易误识别的专有名词并保持词表聚焦，不能保证每个词都会命中。
+
+ASR 与 TTS 默认都使用 GPU。两者均可按任务选择 `cpu` 或 `gpu`：CPU 使用 FP32，GPU 使用 BF16，不使用量化；GPU 任务通过项目内的全局锁串行执行，避免同时装载多个大模型。TTS 与 ASR 一样按 `nvidia-smi` 报告的总显存执行 3840/7936 MiB 准入；因此 8151 MiB 的 8 GiB 卡可选择 1.7B。API 显式请求不合格 GPU 时返回 `503`，页面会说明原因并将本次任务切到 CPU。ASR 的 FSMN-VAD 和 CAM++ 始终在 CPU 上运行，设备选项会同时切换 ASR 主模型和 ForcedAligner；GPU 模式下 CAM++ 会在 CPU 内部批处理，并与 GPU 识别和对齐重叠执行。自动说话人数会对低支持度的疑似拆分簇执行一次保守的整段声纹复核，只有滑窗和整段两个视角均有充分区分度时才合并；手动指定人数不受该复核影响。
+
+ASR/TTS 提交页默认开启“单任务加速”；原生 API 与 OpenAI 兼容端点的布尔参数 `accelerate_single_task` 也默认为 `true`，可显式传入 `false` 关闭。开启后只按当前 CPU 核心/可用内存或 GPU 总显存自动扩大任务内部批次，不增加任务并发，也不改变模型、精度、分块、说话人算法或 TTS 声码器的逐块解码。GPU 分档为 `<8/8/12/16/24/32+ GB → 2/4/6/8/12/16`；CPU 在物理核心与可用内存同时达到 `8+12/16+24/32+48/48+64` 时使用 `2/4/6/8`。ASR 与 TTS 的 1.7B 模型都会在硬件分档基础上降低两个批次档位，采用更保守的起始值；关闭加速时固定为 batch 1。发生 OOM 会按 `16→12→8→6→4→2→1` 在当前任务内重试。任务结果的 `acceleration` 会记录模型修正后的任务/阶段目标、实际批次、硬件诊断、降档步数和 OOM 回退。GPU 不可用时仍明确返回 `503`，不会静默回退到 CPU。可通过 `GET /api/v1/capabilities` 查询当前设备能力、说话人数上限与开关默认值。
 
 “声纹库”可为同一人员保存多个独立样本。样本既可从同一 ASR 说话人的选中段落加入，也可上传音频，或直接用浏览器麦克风录制最长 30 秒的单人语音；录音停止后可先试听、重录，再确认创建一个可见的 ASR 入库任务来自动生成转写和字词时间戳。未确认的录音只暂存在当前页面内存中，不会写入浏览器长期存储；麦克风功能要求使用 `localhost`、`127.0.0.1` 或 HTTPS，权限不可用时仍可上传文件。ASR 的 `use_voiceprint_library` 默认开启，只在普通说话人分离结束后用 CAM++ 匹配并命名，不会改变聚类、说话人 ID 或分段；任务中的名称是历史快照，之后修改库中人员名称不会回写历史任务。
 
-声音克隆使用 Base 模型的 ICL 路径，要求干净参考音频和逐字准确的参考文本；代码固定 `x_vector_only_mode=False`。页面上传或录制一次性参考音频后，会先创建一个可查询、可在任务记录中查看的 ASR 分析任务，自动填写参考文本和语种，用户核对后再提交 TTS；API 消费方可用 `/api/v1/tts/clone-references` 和 `reference_job_id` 完成同一流程，旧的 `reference_audio` + `reference_text` 提交方式仍兼容。除直接上传外，也可明确选择声纹库中的人员和样本。超过 15 秒的库样本会先依据已有字词时间戳在完整词边界截断；旧样本没有时间戳时按需运行 ForcedAligner。预置音色使用 CustomVoice 模型的 9 个官方音色。两个 TTS 模型不会同时驻留内存。
+TTS 默认使用 `qwen3-tts-0.6b`，也可切换 `qwen3-tts-1.7b`。预置音色按所选大小加载 CustomVoice；声音克隆按所选大小加载 Base 的 ICL 路径，要求干净参考音频和逐字准确的参考文本，并固定 `x_vector_only_mode=False`；1.7B 还可加载 VoiceDesign，根据必填自然语言描述直接设计新音色。页面上传或录制一次性参考音频后，会先创建一个可查询、可在任务记录中查看的 ASR 分析任务，自动填写参考文本和语种，用户核对后再提交 TTS；API 消费方可用 `/api/v1/tts/clone-references` 和 `reference_job_id` 完成同一流程，旧的 `reference_audio` + `reference_text` 提交方式仍兼容。超过 15 秒的库样本会在完整词边界截断。每个 TTS 执行器同一时间只驻留当前任务所需的一个 checkpoint。
 
 TTS 输出 `language` 默认是 `Auto`，支持中、英、日、韩、德、法、俄、葡、西、意语。已知文本语种时建议显式选择；预置音色应优先选择 `/api/v1/capabilities` 中 `preset_speaker_native_languages` 指示的母语。一次性克隆的 `reference_language` 独立控制参考音频的识别和长音频对齐，不应与输出语种混淆。
 
@@ -113,14 +117,27 @@ run/          监督器 PID 与执行器身份元数据
 ```bash
 BASE_URL=http://127.0.0.1:20810
 ASR_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
+# 创建场景词表并取得真实 ID；已有词表也可直接复用其 ID。
+HOTWORD_LIST_ID=$(curl --fail-with-body -sS \
+  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d "{\"name\":\"项目术语-$ASR_KEY\",\"terms\":[\"Qwen3-ASR\",\"Sandevistan-Audio\"]}" \
+  "$BASE_URL/api/v1/asr/hotword-lists" | \
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 # ASR
 curl -F file=@meeting.wav \
   -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -H "Idempotency-Key: $ASR_KEY" \
   -F language=Auto -F speaker_count=auto \
+  -F model=qwen3-asr-0.6b -F hotword_list_ids="$HOTWORD_LIST_ID" \
   -F diarize=true -F align=true -F use_voiceprint_library=true \
   -F compute_device=gpu -F accelerate_single_task=true \
   "$BASE_URL/api/v1/asr/jobs"
+
+# 提交响应返回前词表内容已经写入任务快照，演示词表可以立即删除。
+curl --fail-with-body -sS -X DELETE \
+  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  "$BASE_URL/api/v1/asr/hotword-lists/$HOTWORD_LIST_ID"
 
 # TTS 预置音色
 TTS_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
@@ -149,6 +166,7 @@ curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/
 以下仅列出主要端点；完整且实时的接口定义以 `/docs` 和 `/openapi.json` 为准：
 
 - `POST /api/v1/asr/jobs`、`POST /api/v1/tts/clone-references`、`POST /api/v1/tts/jobs`
+- `GET|POST /api/v1/asr/hotword-lists`、`PATCH|DELETE /api/v1/asr/hotword-lists/{id}`
 - `GET /api/v1/jobs`、`GET /api/v1/jobs/{id}`
 - `GET /api/v1/queue`、`GET /api/v1/jobs/{id}/events`（单任务 SSE）
 - `POST /api/v1/jobs/{id}/cancel`、`POST /api/v1/jobs/{id}/retry`
@@ -171,16 +189,16 @@ curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/
 
 `GET /api/v1/jobs` 支持 `kind`、`state`、`q`、`limit`、`offset` 服务端分页，始终按 `created_at DESC, id DESC` 稳定排序；`count` 是本页数量，`total` 是筛选后的任务总数，`has_more` 表示是否还有下一页。
 
-当前 TTS 使用的 Qwen3-TTS 12Hz 0.6B Base/CustomVoice 会根据文本语义和标点自然生成韵律，但不支持自然语言风格/情绪指令，也没有独立语速或音高参数。消费方应读取 `/api/v1/capabilities.tts.controls`，不要把模型内部固定的 `temperature`、`top_k`、`top_p`、`repetition_penalty` 采样配置当作语义控制。原生 `instruct` 与 OpenAI 兼容 `instructions` 是弃用兼容字段；省略或传空值可正常生成，非空值会在任务创建前返回 `422`，不会再被静默忽略。
+TTS 高级控制以 `/api/v1/capabilities.tts.model_capabilities[]` 为准：0.6B 不接受自然语言指令；1.7B CustomVoice 的预置音色可选 `instruct`，VoiceDesign 则必须用 `instruct` 描述声线、语速、音调、韵律和情绪；Base 克隆模式不接受指令。官方公共推理接口没有独立数值语速/音高参数，本项目也不开放 `temperature`、`top_k`、`top_p`、`repetition_penalty` 等固定采样项。OpenAI 兼容 `instructions` 仅覆盖 1.7B 预置音色；VoiceDesign 请使用原生异步接口。不支持的组合返回 `422`，不会静默忽略。
 
-排队任务响应中的 `queue.position` 是同类 FIFO 队列中从 1 开始的位置，任务开始运行后为 `null`。`progress` 是单调的最佳整体进度；TTS 解码和 ASR 模型推理期间会按约 0.5 秒的最小写入间隔细化。消费方必须查看 `progress_detail.basis`：`estimated` 表示百分比包含最佳估算，不能当作精确完成量；`current/total/unit` 是已确认的阶段单元，`activity` 则描述当前推理调用的 `codec_frame`、`output_token` 或 `model_layer` 活动，其中 `activity.basis` 单独说明活动总量是否估算。`estimate` 在至少积累 5 个本机相近历史样本后返回耗时区间和置信度，它只是建议，不是 SLA。SSE 断线时应重新连接并用任务状态接口校准，也可按 `poll_after_seconds` 轮询并使用 ETag/`If-None-Match`。`processing_seconds` 是累计实际处理耗时，不包含排队等待，并会跨失败重试累加；运行中任务配合 `processing_as_of` 可实时显示。`compute_device` 返回 `cpu` 或 `gpu`，`compute_device_name` 返回任务提交/执行时持久化的具体设备名；GPU 名称动态取自实际 `cuda:0`，不会因以后更换硬件而改写历史记录。ASR/TTS worker 使用常驻监督器管理可复用的任务执行进程；取消先等待短暂的协作退出，随后在必要时终止当前任务的完整进程树，确认 GPU 与文件锁释放后才进入“已取消”。默认协作等待 1 秒，可通过 `AUDIO_INTEL_CANCEL_GRACE_SECONDS` 调整。永久删除会清理任务输入、输出、错误文件、临时目录和 SQLite 记录，并在批次结束后执行安全擦除、WAL 截断与数据库压缩。
+排队任务响应中的 `queue.position` 是同类 FIFO 队列中从 1 开始的位置，任务开始运行后为 `null`。`progress` 是单调的最佳整体进度；模型实际提供细粒度活动时，ASR 推理与 TTS 解码按约 0.5 秒的最小写入间隔持久化。模型加载只报告 `model_load` 的开始和完成边界，阻塞加载期间可能长时间没有新活动，服务不会伪造百分比或心跳。消费方必须查看 `progress_detail.basis`：`estimated` 表示百分比包含最佳估算，不能当作精确完成量；`current/total/unit` 是已确认的阶段单元，`activity` 则描述当前推理调用的 `model_load`、`codec_frame`、`output_token` 或 `model_layer` 活动，其中 `activity.basis` 单独说明活动总量是否估算。`estimate` 在至少积累 5 个相同模型、设备和相近任务特征的本机历史样本后返回耗时区间和置信度；0.6B 与 1.7B 分别热身，它只是建议，不是 SLA。SSE 断线时应重新连接并用任务状态接口校准，也可按 `poll_after_seconds` 轮询并使用 ETag/`If-None-Match`。`processing_seconds` 是累计实际处理耗时，不包含排队等待，并会跨失败重试累加；运行中任务配合 `processing_as_of` 可实时显示。`compute_device` 返回 `cpu` 或 `gpu`，`compute_device_name` 返回任务提交/执行时持久化的具体设备名；GPU 名称动态取自实际 `cuda:0`，不会因以后更换硬件而改写历史记录。ASR/TTS worker 使用常驻监督器管理可复用的任务执行进程；取消先等待短暂的协作退出，随后在必要时终止当前任务的完整进程树，确认 GPU 与文件锁释放后才进入“已取消”。默认协作等待 1 秒，可通过 `AUDIO_INTEL_CANCEL_GRACE_SECONDS` 调整。永久删除会清理任务输入、输出、错误文件、临时目录和 SQLite 记录，并在批次结束后执行安全擦除、WAL 截断与数据库压缩。
 
 ## OpenAI 兼容消费
 
 ```bash
 curl -F file=@meeting.wav -F model=qwen3-asr-0.6b -F compute_device=gpu \
   -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
-  -F response_format=verbose_json \
+  -F prompt='项目会议' -F response_format=verbose_json \
   http://127.0.0.1:20810/v1/audio/transcriptions
 
 curl -H 'Content-Type: application/json' \
@@ -217,8 +235,8 @@ AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all  # 仅供快速管线验收，不
 服务启动后，可用相同输入交替执行关闭/开启任务并输出中位耗时、加速倍数及每次实际批次：
 
 ```bash
-.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py asr --device gpu --audio meeting.wav
-.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py tts --device cpu
+.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py asr --model qwen3-asr-1.7b --device cpu --audio meeting.wav
+.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py tts --model qwen3-tts-1.7b --device cpu
 ```
 
 Windows mock 全链路验证：

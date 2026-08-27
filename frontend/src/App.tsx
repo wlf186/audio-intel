@@ -1,16 +1,17 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react'
 import {AppShell,type Page} from './components/AppShell'
 import {api} from './lib/api'
-import type {AuthSession,Capabilities,Health,Job,JobHistoryQuery,JobResult,ResultRevealRequest,VoiceprintPerson} from './lib/types'
+import type {AuthSession,Capabilities,Health,HotwordList,Job,JobHistoryQuery,JobResult,ResultRevealRequest,VoiceprintPerson} from './lib/types'
 import {AsrPage} from './pages/AsrPage'
 import {TtsPage} from './pages/TtsPage'
 import {JobsPage} from './pages/JobsPage'
 import {SystemPage} from './pages/SystemPage'
 import {VoiceprintsPage} from './pages/VoiceprintsPage'
+import {HotwordsPage} from './pages/HotwordsPage'
 import {AuthGate} from './components/AuthGate'
 import {newestJobsFirst} from './lib/jobs'
 
-const pages=new Set<Page>(['asr','tts','voiceprints','jobs','system'])
+const pages=new Set<Page>(['asr','tts','hotwords','voiceprints','jobs','system'])
 const jobLimit=100
 const initialJobHistoryQuery:JobHistoryQuery={kind:'all',state:'all',search:'',limit:25,offset:0}
 function pageFromHash():Page{const value=location.hash.slice(1) as Page;return pages.has(value)?value:'asr'}
@@ -22,6 +23,7 @@ export default function App(){
  const [health,setHealth]=useState<Health>()
  const [capabilities,setCapabilities]=useState<Capabilities>()
  const [voiceprints,setVoiceprints]=useState<VoiceprintPerson[]>([])
+ const [hotwordLists,setHotwordLists]=useState<HotwordList[]>([])
  const [connectionError,setConnectionError]=useState('')
  const [systemError,setSystemError]=useState('')
  const [auth,setAuth]=useState<AuthSession>()
@@ -34,6 +36,7 @@ export default function App(){
  const refreshSequence=useRef(0)
  const revealSequence=useRef(0)
  const refreshVoiceprints=useCallback(async()=>{const response=await api.voiceprints();setVoiceprints(response.items)},[])
+ const refreshHotwordLists=useCallback(async()=>{const response=await api.hotwordLists();setHotwordLists(response.items)},[])
  const authenticated=auth?.authenticated===true
  const mergeJobs=useCallback((items:Job[])=>setJobs(current=>{const previous=new Map(current.map(job=>[job.id,job]));const merged=newestJobsFirst(items).map(job=>{const existing=previous.get(job.id);return existing&&sameJobSnapshot(existing,job)?existing:job});return merged.length===current.length&&merged.every((job,index)=>job===current[index])?current:merged}),[])
  const workspaceJobs=useMemo(()=>newestJobsFirst([...jobs,...Object.values(pinnedJobs).filter((job):job is Job=>Boolean(job)&&!jobs.some(item=>item.id===job.id))]),[jobs,pinnedJobs])
@@ -45,7 +48,7 @@ export default function App(){
  useEffect(()=>{if(!authenticated)return;const timer=setInterval(()=>void refreshSystem(),page==='system'?2000:10000);return()=>clearInterval(timer)},[authenticated,page,refreshSystem])
  useEffect(()=>{if(!authenticated||capabilities?.events?.sse!==true){setEventsConnected(false);return}const source=new EventSource(capabilities.events.global_url);const snapshot=(event:MessageEvent<string>)=>{try{const payload=JSON.parse(event.data) as {jobs?:Job[]};if(payload.jobs)mergeJobs(payload.jobs);setEventsConnected(true);setConnectionError('')}catch{setConnectionError('任务事件格式无效')}};source.addEventListener('snapshot',snapshot as EventListener);source.addEventListener('heartbeat',()=>setEventsConnected(true));source.onopen=()=>setEventsConnected(true);source.onerror=()=>setEventsConnected(false);return()=>{source.close();setEventsConnected(false)}},[authenticated,capabilities?.events?.sse,capabilities?.events?.global_url,mergeJobs])
  useEffect(()=>{if(!authenticated||eventsConnected)return;const timer=setInterval(()=>void refreshJobs(),5000);return()=>clearInterval(timer)},[authenticated,eventsConnected,refreshJobs])
- useEffect(()=>{if(!authenticated)return;void Promise.all([api.capabilities().then(setCapabilities),refreshVoiceprints()]).catch(error=>setConnectionError((error as Error).message))},[authenticated,refreshVoiceprints])
+ useEffect(()=>{if(!authenticated)return;void Promise.all([api.capabilities().then(setCapabilities),refreshVoiceprints(),refreshHotwordLists()]).catch(error=>setConnectionError((error as Error).message))},[authenticated,refreshVoiceprints,refreshHotwordLists])
  const hasPendingVoiceprint=voiceprints.some(person=>person.samples.some(sample=>sample.state==='pending'))
  useEffect(()=>{if(!hasPendingVoiceprint)return;const timer=setInterval(()=>void refreshVoiceprints(),2000);return()=>clearInterval(timer)},[hasPendingVoiceprint,refreshVoiceprints])
  useEffect(()=>{const onHash=()=>setPage(pageFromHash());addEventListener('hashchange',onHash);return()=>removeEventListener('hashchange',onHash)},[])
@@ -58,11 +61,12 @@ export default function App(){
  const onJobsRemoved=useCallback((ids:string[])=>{const removed=new Set(ids);setJobs(current=>current.filter(job=>!removed.has(job.id)));setPinnedJobs(current=>{const next={...current};for(const kind of ['asr','tts'] as const)if(next[kind]&&removed.has(next[kind]!.id))delete next[kind];return next});setSelected(current=>{const next={...current};for(const kind of ['asr','tts'] as const)if(next[kind]&&removed.has(next[kind]!))delete next[kind];return next})},[])
  const gpuAvailable=health?Boolean(health.hardware.gpu):undefined
  const login=async(key:string)=>{await api.login(key);setAuth({required:true,authenticated:true});setAuthError('')}
- const logout=async()=>{await api.logout();setJobs([]);setPinnedJobs({});setSelected({});setHealth(undefined);setSystemError('');setCapabilities(undefined);setVoiceprints([]);setAuth({required:true,authenticated:false})}
+ const logout=async()=>{await api.logout();setJobs([]);setPinnedJobs({});setSelected({});setHealth(undefined);setSystemError('');setCapabilities(undefined);setVoiceprints([]);setHotwordLists([]);setAuth({required:true,authenticated:false})}
  return <><AppShell page={page} setPage={navigate} health={health} systemError={systemError} connectionError={connectionError} authRequired={auth?.required&&authenticated} onLogout={()=>void logout()}>
-  {page==='asr'?<AsrPage jobs={workspaceJobs} onJobSubmitted={onJobSubmitted} onJobResultUpdated={onJobResultUpdated} selectedJobId={selected.asr} onSelect={openJob} gpuAvailable={gpuAvailable} maxSpeakers={capabilities?.asr.speaker_count.max||15} asrLanguages={capabilities?.asr.languages} alignerLanguages={capabilities?.asr.aligner_languages} voiceprints={voiceprints} refreshVoiceprints={refreshVoiceprints} revealRequest={reveal?.kind==='asr'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
-  {page==='tts'?<TtsPage jobs={workspaceJobs} onJobSubmitted={onJobSubmitted} selectedJobId={selected.tts} onSelect={openJob} gpuAvailable={gpuAvailable} voiceprints={voiceprints} ttsLanguages={capabilities?.tts?.languages} ttsControls={capabilities?.tts?.controls} referenceLanguages={capabilities?.asr.aligner_languages} revealRequest={reveal?.kind==='tts'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
-  {page==='voiceprints'?<VoiceprintsPage people={voiceprints} refresh={refreshVoiceprints} onJobSubmitted={onJobSubmitted} gpuAvailable={gpuAvailable} asrLanguages={capabilities?.asr.languages}/>:null}
+  {page==='asr'?<AsrPage jobs={workspaceJobs} onJobSubmitted={onJobSubmitted} onJobResultUpdated={onJobResultUpdated} selectedJobId={selected.asr} onSelect={openJob} gpuAvailable={gpuAvailable} maxSpeakers={capabilities?.asr.speaker_count.max||15} asrLanguages={capabilities?.asr.languages} alignerLanguages={capabilities?.asr.aligner_languages} asrModels={capabilities?.asr.models||[]} hotwordLists={hotwordLists} hotwordLimits={capabilities?.asr.hotword_library} voiceprints={voiceprints} refreshVoiceprints={refreshVoiceprints} revealRequest={reveal?.kind==='asr'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
+  {page==='tts'?<TtsPage jobs={workspaceJobs} onJobSubmitted={onJobSubmitted} selectedJobId={selected.tts} onSelect={openJob} gpuAvailable={gpuAvailable} voiceprints={voiceprints} asrModels={capabilities?.asr.models||[]} ttsModels={capabilities?.tts?.model_capabilities||[]} ttsLanguages={capabilities?.tts?.languages} referenceLanguages={capabilities?.asr.aligner_languages} revealRequest={reveal?.kind==='tts'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
+  {page==='hotwords'?<HotwordsPage items={hotwordLists} limits={capabilities?.asr.hotword_library} refresh={refreshHotwordLists}/>:null}
+  {page==='voiceprints'?<VoiceprintsPage people={voiceprints} refresh={refreshVoiceprints} onJobSubmitted={onJobSubmitted} gpuAvailable={gpuAvailable} asrModels={capabilities?.asr.models||[]} asrLanguages={capabilities?.asr.languages}/>:null}
   {page==='jobs'?<JobsPage liveJobs={jobs} query={jobHistoryQuery} setQuery={setJobHistoryQuery} refreshRecentJobs={refreshJobs} openJob={openJob} onJobUpdated={onJobUpdated} onJobsRemoved={onJobsRemoved}/>:null}
   {page==='system'?<SystemPage health={health} systemError={systemError}/>:null}
  </AppShell>{!auth||!authenticated?<AuthGate loading={!auth&&!authError} error={authError} onLogin={login}/>:null}</>

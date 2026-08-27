@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .model_registry import asr_models, tts_models
+
 
 API_DESCRIPTION = r"""
 ## 快速开始 / Quick start
@@ -23,9 +25,17 @@ ASR 与 TTS 默认使用 `compute_device=gpu` 且启用 `accelerate_single_task`
 
 ASR and TTS default to GPU with single-task acceleration enabled. TTS output language defaults to `Auto`; choose an explicit language when known, and prefer each preset speaker's native language reported by `/api/v1/capabilities`. Analyze one-off clone references first, then review the transcript and reference language before synthesis.
 
-当前安装的 Qwen3-TTS 0.6B Base/CustomVoice 不支持自然语言风格指令，也没有独立的语速或音高参数。请从 `/api/v1/capabilities.tts.controls` 判断公共控制能力；`instruct` 与 OpenAI 兼容接口的 `instructions` 仅为弃用兼容字段，非空值会在创建任务前返回 `422`。模型内部的 `temperature=0.9`、`top_k=50`、`top_p=1.0` 和 `repetition_penalty=1.05` 是固定采样配置，不是公开的语调、语速、风格或情绪控制参数。
+ASR 默认模型为 `qwen3-asr-0.6b`，也可选择 `qwen3-asr-1.7b`。消费方应读取 `asr.models[].compute_devices`，按模型判断设备能力；GPU 门槛使用报告的**总显存**而非当前空闲显存。0.6B/1.7B 的门槛分别为 3840/7936 MiB，因此报告 8151 MiB 的 8 GiB 显卡可选择 1.7B。门槛是准入条件，不保证运行时不会受其他 GPU 进程影响而 OOM。显式 API GPU 请求不可用时返回 `503`，不会自动改为 CPU。
 
-The installed Qwen3-TTS 0.6B Base/CustomVoice checkpoints do not support natural-language style instructions or dedicated speaking-rate and pitch parameters. Read public control support from `/api/v1/capabilities.tts.controls`; `instruct` and the OpenAI-compatible `instructions` field are deprecated compatibility fields, and a non-empty value returns `422` before a job is created. Internal defaults such as `temperature=0.9`, `top_k=50`, `top_p=1.0`, and `repetition_penalty=1.05` are fixed sampling configuration, not public tone, rate, style, or emotion controls.
+The default ASR model is `qwen3-asr-0.6b`; `qwen3-asr-1.7b` is also available. Read `asr.models[].compute_devices` for model-scoped device eligibility. GPU admission uses reported total memory, not current free memory. The 0.6B/1.7B thresholds are 3840/7936 MiB, so an 8151 MiB 8 GiB GPU is eligible for 1.7B. Admission does not guarantee that unrelated GPU use cannot cause an OOM. An explicit unavailable GPU request returns `503` and never changes to CPU automatically.
+
+两个 ASR 模型都可使用本地热词库。一次最多选择 8 个词表；留空禁用已保存词表。服务会规范化并去重词条，把 `Vocabulary: ...` 追加到一次性 `context`/`prompt`，并在提交时保存不可变词表快照。热词是识别提示而非强制词典，不保证每次命中；克隆参考分析和声纹样本入库不使用热词。
+
+Both ASR models support the local hotword library. Select up to eight lists, or leave the field empty to disable stored lists. The service normalizes and deduplicates terms, appends a `Vocabulary: ...` section to a one-off `context`/`prompt`, and stores immutable list snapshots at submission. Hotwords are recognition hints, not a forced dictionary; clone-reference analysis and voiceprint imports do not use them.
+
+TTS 默认模型组为 `qwen3-tts-0.6b`，也可选择 `qwen3-tts-1.7b`。逐模型能力位于 `tts.model_capabilities[]`；GPU 总显存门槛同样为 3840/7936 MiB。1.7B 的预置音色支持可选自然语言 `instruct`，`voice_design` 用必填指令描述音色、语速、音调、韵律和情绪；Base 克隆模式不支持指令。官方没有独立数值语速或音高参数，底层采样配置也不公开。消费方必须按所选模型的 `controls` 决定显示和发送哪些字段。
+
+The default TTS model group is `qwen3-tts-0.6b`, with `qwen3-tts-1.7b` also available. Read per-model behavior from `tts.model_capabilities[]`; total-memory GPU thresholds are likewise 3840/7936 MiB. A 1.7B preset voice accepts an optional natural-language `instruct`, while `voice_design` requires an instruction describing timbre, rate, pitch, prosody, and emotion. Base voice-clone modes do not accept instructions. There are no dedicated numeric speaking-rate or pitch parameters, and low-level sampling remains fixed. Send controls only when the selected model capability advertises them.
 
 ASR 显式语种限 `Chinese、English、Cantonese、French、German、Italian、Japanese、Korean、Portuguese、Russian、Spanish`，这 11 种均支持字词级对齐。`Auto` 可能检测到模型支持的其他语种；识别仍会成功，但 `timestamp_precision` 为 `segment`。清单外的显式值会在创建任务前返回 `422`。
 
@@ -42,11 +52,19 @@ BASE_URL=http://127.0.0.1:20810
 AUTH=()
 if [[ -n "${AUDIO_INTEL_API_KEY:-}" ]]; then AUTH=(-H "Authorization: Bearer $AUDIO_INTEL_API_KEY"); fi
 IDEMPOTENCY_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
-TMP_DIR=$(mktemp -d); trap 'rm -rf "$TMP_DIR"' EXIT
+TMP_DIR=$(mktemp -d)
+HOTWORD_LIST_ID=
+cleanup(){ rm -rf "$TMP_DIR"; if [[ -n "$HOTWORD_LIST_ID" ]]; then curl -sS -X DELETE "${AUTH[@]}" "$BASE_URL/api/v1/asr/hotword-lists/$HOTWORD_LIST_ID" >/dev/null || true; fi; }
+trap cleanup EXIT
+
+HOTWORD_LIST_ID=$(curl --fail-with-body -sS "${AUTH[@]}" -H 'Content-Type: application/json' \
+  -d "{\"name\":\"API 示例术语 $IDEMPOTENCY_KEY\",\"terms\":[\"Qwen3-ASR\",\"Sandevistan-Audio\"]}" \
+  "$BASE_URL/api/v1/asr/hotword-lists" | jq -r .id)
 
 while :; do
   HTTP_STATUS=$(curl -sS -o "$TMP_DIR/job.json" -w '%{http_code}' "${AUTH[@]}" \
     -H "Idempotency-Key: $IDEMPOTENCY_KEY" -F file=@meeting.wav \
+    -F model=qwen3-asr-0.6b -F hotword_list_ids="$HOTWORD_LIST_ID" \
     -F language=Auto -F speaker_count=auto -F compute_device=gpu \
     "$BASE_URL/api/v1/asr/jobs")
   [[ "$HTTP_STATUS" == 200 || "$HTTP_STATUS" == 202 ]] && break
@@ -62,6 +80,26 @@ while :; do
 done
 [[ "$STATE" == succeeded ]] || { jq . "$TMP_DIR/job.json" >&2; exit 1; }
 curl --fail-with-body -sS "${AUTH[@]}" "$BASE_URL/api/v1/jobs/$JOB_ID/result" | jq .
+```
+</details>
+
+<details>
+<summary><strong>curl：1.7B 预置音色与音色设计 / 1.7B preset and voice design</strong></summary>
+
+```bash
+BASE_URL=http://127.0.0.1:20810
+AUTH=(); if [[ -n "${AUDIO_INTEL_API_KEY:-}" ]]; then AUTH=(-H "Authorization: Bearer $AUDIO_INTEL_API_KEY"); fi
+curl --fail-with-body -sS "${AUTH[@]}" -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
+  -F text='欢迎使用本地语音服务。' -F model=qwen3-tts-1.7b \
+  -F voice_mode=preset -F speaker=Vivian -F language=Chinese \
+  -F instruct='语速舒缓，用温柔而开心的语气说。' -F compute_device=cpu \
+  "$BASE_URL/api/v1/tts/jobs" | jq .
+
+curl --fail-with-body -sS "${AUTH[@]}" -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
+  -F text='系统已经准备就绪。' -F model=qwen3-tts-1.7b \
+  -F voice_mode=voice_design -F language=Chinese \
+  -F instruct='成熟低沉的女性声音，音调略低，语速沉稳，带着克制的喜悦。' \
+  -F compute_device=cpu "$BASE_URL/api/v1/tts/jobs" | jq .
 ```
 </details>
 
@@ -231,23 +269,24 @@ The stream immediately emits `event: job`, continues on changes, and closes at a
 
 - `state`: `queued → running → succeeded|failed|cancelled`。ASR 与 TTS 使用独立的 FIFO 队列。
 - 排队任务的 `queue.position` 从 1 开始，表示同类 FIFO 队列中的位置；任务运行后该字段为 `null`。`GET /api/v1/queue` 返回容量、准入预留和磁盘余量。ASR/TTS 队列彼此独立。
-- `progress` 是单调的 `0–1` 最佳整体进度；`progress_detail.stage_code` 是稳定阶段。`basis=estimated` 表示阶段百分比包含估算，`current/total/unit` 是已确认阶段单元，`activity` 是当前推理调用的 codec 帧、输出 token 或模型层活动。活动约每 0.5 秒最多持久化一次，不能作为 SLA。
-- `estimate` 使用相同设备、模式和任务特征的本机历史。少于 5 个有效样本时为 `warming_up`；可用后返回区间、样本数和置信度，不能作为 SLA。
+- `progress` 是单调的 `0–1` 最佳整体进度；`progress_detail.stage_code` 是稳定阶段。`basis=estimated` 表示阶段百分比包含估算，`current/total/unit` 是已确认阶段单元，`activity` 是当前模型加载、codec 帧、输出 token 或模型层活动。模型实际提供细粒度活动时约每 0.5 秒最多持久化一次；`model_load` 只报告加载开始/完成边界，阻塞加载期间不保证心跳，所有进度都不能作为 SLA。
+- `estimate` 使用相同设备、模型、模式和任务特征的本机历史；ASR/TTS 的 0.6B/1.7B 分别热身。少于 5 个有效样本时为 `warming_up`；可用后返回区间、样本数和置信度，不能作为 SLA。
 - SSE `/api/v1/events` 与 `/api/v1/jobs/{id}/events` 共享一次本地数据库快照并向客户端分发；没有事件 ID 或历史重放。断线后重连，并以首个快照或支持 ETag 的任务状态接口校准。轮询间隔可参考 `poll_after_seconds`。
 - `GET /api/v1/jobs` 的 `count` 是本页数量，不是任务总数。
 - 运行任务请求取消后仍保持 `state=running`，但 `stage=cancelling`；只有完整执行进程树退出后才进入终态 `cancelled`。结果接口在任务成功前返回 `409`。
 
-- ASR and TTS have separate FIFO queues. Queue positions are one-based within each kind.
+- ASR and TTS have separate FIFO queues. Queue positions are one-based within each kind. Progress is monotonic and best-effort. Fine-grained activity is persisted at most about every 0.5 seconds when the model exposes it; `model_load` reports start/end boundaries only and does not promise a heartbeat during a blocking load.
 - Progress is monotonic and best-effort. Inspect `progress_detail.basis` before presenting it as exact; `activity` describes the current model call and may itself have an estimated total. ETA ranges are advisory local-history estimates, never an SLA. SSE has no replay; reconnect and reconcile through the ETag-enabled status endpoint.
 
 ## 重要注意事项 / Important notes
 
-- `compute_device=gpu` 不可用时返回 `503`，不会静默回退 CPU。
+- `compute_device=gpu` 不可用时返回 `503`，不会静默回退 CPU。ASR 使用 `asr.models[]`，TTS 使用 `tts.model_capabilities[]` 判断所选模型；`minimum_memory_mib` 与 `total_memory_mib` 都是总显存口径。
+- `hotword_list_ids` 是逗号分隔的本地词表 ID；未知 ID、超过选择上限或合并后超限返回 `422`。提交后的 `request.hotword_lists` 和结果 `hotword_context` 是快照，后续编辑或删除不会改写历史。
 - ASR 消费方应从 `/api/v1/capabilities.asr.languages` 读取可提交语种；不要把模型的全部识别语种误认为全部支持字词级时间戳。
 - 删除操作要求 `purge=true` 且不可恢复；运行中任务必须先取消并等待终态。
 - 声纹克隆只能使用 `state=ready` 且 `tts_eligible=true` 的样本。OpenAI 兼容 TTS 目前仅支持预置音色和兼容 voice profile。
 - TTS 的 `language` 控制输出文本语种，`reference_language` 控制一次性克隆参考的转写/对齐语种；两者不是同一个参数。已知语种时显式填写可减少自动判断歧义。
-- 当前 0.6B TTS 仅根据文本语义和标点自然生成韵律，不支持可控风格/情绪指令，也没有独立语速或音高参数；以 `/api/v1/capabilities.tts.controls` 为准。弃用的 `instruct`/`instructions` 非空时返回 `422`，不会静默忽略。
+- 0.6B TTS 不接受自然语言指令；1.7B 仅在 preset 和 voice_design 模式接受，后者必填。克隆模式、独立 speed/pitch 和底层采样参数均不支持，发送时返回 `422` 而非静默忽略。
 - `429` 的稳定 `code` 为 `submission_concurrency_limited`、`queue_capacity_reached` 或 `insufficient_queue_storage`。按 `Retry-After` 等待并复用原 `Idempotency-Key`，不要为同一次逻辑提交生成新键。
 - 输入和结果默认保留。受保护媒体支持 Bearer 或同源会话 Cookie；ASR 源文件支持 HTTP Range。
 - 安装阶段可以下载固定版本依赖和模型；服务启动后的模型加载强制使用本地 revision，不存在云端回退。
@@ -260,7 +299,7 @@ OPENAPI_TAGS = [
     {"name": "Service / 服务", "description": "公开健康探针、能力和受保护系统状态。 / Health, capabilities, and system status."},
     {"name": "Authentication / 鉴权", "description": "Bearer API key 与同源 HttpOnly 浏览器会话。 / Bearer API key and same-origin browser sessions."},
     {"name": "ASR / 语音识别", "description": "原生异步 ASR 任务。 / Native asynchronous transcription jobs."},
-    {"name": "TTS / 语音合成", "description": "预置音色、声音档案、内联克隆和声纹样本克隆。 / Preset, profile, inline, and voiceprint synthesis."},
+    {"name": "TTS / 语音合成", "description": "预置音色、声音克隆与 1.7B 音色设计。 / Preset voices, voice cloning, and 1.7B voice design."},
     {"name": "Voiceprints / 声纹库", "description": "人员、样本、入库和受保护音频。 / People, samples, imports, and protected audio."},
     {"name": "Jobs / 任务", "description": "状态、进度、结果、取消、重试、文件和 SSE。 / Status, progress, results, cancellation, retry, media, and SSE."},
     {"name": "OpenAI compatibility / OpenAI 兼容", "description": "同步兼容接口；长任务优先使用原生异步 API。 / Synchronous compatibility endpoints; prefer native jobs for long work."},
@@ -391,6 +430,60 @@ VALIDATION_RESPONSE = {
         },
     }
 }
+ASR_VALIDATION_RESPONSE = {
+    422: {
+        "description": "ASR 模型、热词或参数校验失败 / ASR model, hotword, or parameter validation failed",
+        "content": {
+            "application/problem+json": {
+                "schema": {"$ref": "#/components/schemas/ProblemDetail"},
+                "examples": {
+                    "unknown_asr_model": {
+                        "summary": "未知 ASR 模型 / Unknown ASR model",
+                        "value": {
+                            "type": "about:blank", "title": "Unknown ASR model", "status": 422,
+                            "code": "unknown_asr_model", "detail": "Unknown ASR model",
+                        },
+                    },
+                    "unknown_hotword_list": {
+                        "summary": "未知热词词表 / Unknown hotword list",
+                        "value": {
+                            "type": "about:blank", "title": "Unknown hotword list IDs: hotwords_missing", "status": 422,
+                            "code": "http_422", "detail": "Unknown hotword list IDs: hotwords_missing",
+                        },
+                    },
+                    "hotword_selection_limit": {
+                        "summary": "选择词表过多 / Too many selected hotword lists",
+                        "value": {
+                            "type": "about:blank", "title": "No more than 8 hotword lists may be selected", "status": 422,
+                            "code": "http_422", "detail": "No more than 8 hotword lists may be selected",
+                        },
+                    },
+                },
+            },
+            "application/json": {"schema": {"$ref": "#/components/schemas/HTTPValidationError"}},
+        },
+    }
+}
+ASR_SERVICE_RESPONSE = {
+    503: problem_examples_response(
+        "ASR 模型或请求的 GPU 不可用 / ASR model or requested GPU unavailable",
+        503,
+        {
+            "asr_model_unavailable": {
+                "code": "asr_model_unavailable",
+                "detail": "The selected ASR model is not installed at the pinned revision",
+            },
+            "gpu_unavailable": {
+                "code": "gpu_unavailable",
+                "detail": "GPU compute is unavailable; select CPU or check NVIDIA runtime",
+            },
+            "insufficient_gpu_memory": {
+                "code": "insufficient_gpu_memory",
+                "detail": "Qwen3-ASR-1.7B requires at least 7936 MiB total GPU memory; detected 4096 MiB",
+            },
+        },
+    )
+}
 TTS_CONTROL_VALIDATION_RESPONSE = {
     422: {
         "description": "参数、业务或不支持的 TTS 控制参数 / Parameter, business, or unsupported TTS control validation failure",
@@ -398,21 +491,42 @@ TTS_CONTROL_VALIDATION_RESPONSE = {
             "application/problem+json": {
                 "schema": {"$ref": "#/components/schemas/ProblemDetail"},
                 "examples": {
-                    "unsupported_instruction": {
-                        "summary": "当前 0.6B 模型不支持风格指令 / Style instructions are unsupported by the current 0.6B models",
-                        "value": {
-                            "type": "about:blank",
-                            "title": "Style instructions are not supported by the installed Qwen3-TTS 0.6B models; omit this field or send an empty value",
-                            "status": 422,
-                            "code": "http_422",
-                            "detail": "Style instructions are not supported by the installed Qwen3-TTS 0.6B models; omit this field or send an empty value",
-                        },
+                    name: {
+                        "summary": summary,
+                        "value": {"type": "about:blank", "title": detail, "status": 422, "code": code, "detail": detail},
                     }
+                    for name, summary, code, detail in (
+                        ("unknown_tts_model", "未知 TTS 模型 / Unknown TTS model", "unknown_tts_model", "Unknown TTS model"),
+                        ("unsupported_voice_mode", "模型不支持该音色模式 / Voice mode unsupported by model", "unsupported_tts_voice_mode", "The selected TTS model does not support this voice mode"),
+                        ("unsupported_instruction", "模型或模式不支持指令 / Instructions unsupported by model or mode", "unsupported_tts_control", "Natural-language instructions are not supported by this model and voice mode"),
+                        ("instruction_required", "VoiceDesign 缺少指令 / VoiceDesign instruction required", "tts_instruction_required", "A voice-design instruction is required"),
+                        ("invalid_instruction", "指令过长 / Instruction too long", "invalid_tts_instruction", "instruct must not exceed 1000 characters"),
+                    )
                 },
             },
             "application/json": {"schema": {"$ref": "#/components/schemas/HTTPValidationError"}},
         },
     }
+}
+TTS_SERVICE_RESPONSE = {
+    503: problem_examples_response(
+        "TTS 模型或请求的 GPU 不可用 / TTS model or requested GPU unavailable",
+        503,
+        {
+            "tts_model_unavailable": {
+                "code": "tts_model_unavailable",
+                "detail": "The selected TTS checkpoint is not installed at the pinned revision",
+            },
+            "gpu_unavailable": {
+                "code": "gpu_unavailable",
+                "detail": "GPU compute is unavailable; select CPU or check NVIDIA runtime",
+            },
+            "insufficient_gpu_memory": {
+                "code": "insufficient_gpu_memory",
+                "detail": "Qwen3-TTS-1.7B requires at least 7936 MiB total GPU memory; detected 4096 MiB",
+            },
+        },
+    )
 }
 TOO_LARGE_RESPONSE = {413: problem_response("上传文件超过服务限制 / Uploaded file exceeds the service limit", 413)}
 IDEMPOTENCY_RESPONSES = {
@@ -539,6 +653,10 @@ FIELD_DESCRIPTIONS = {
     "sample_rate": "音频采样率，单位 Hz / Audio sample rate in Hz",
     "format": "输出文件格式 / Output file format",
     "voice_mode": "TTS 音色来源模式 / TTS voice-source mode",
+    "model_name": "实际加载的固定版本模型名称 / Pinned checkpoint name loaded for execution",
+    "model_capabilities": "按公共模型 ID 列出的设备、音色模式与控制能力 / Device, voice-mode, and control capabilities by public model ID",
+    "checkpoints": "该模型组按音色模式使用的固定版本检查点 / Pinned checkpoints used by this model group and voice mode",
+    "instruct": "模型原生自然语言音色与表达指令 / Native natural-language voice and expression instruction",
     "precision": "模型执行精度 / Model execution precision",
     "quantized": "是否使用量化模型 / Whether a quantized model was used",
 }
@@ -550,12 +668,24 @@ DATETIME_FIELDS = {
 
 REQUEST_EXAMPLES: dict[tuple[str, str], dict[str, dict[str, Any]]] = {
     ("/api/v1/asr/jobs", "post"): {
-        "meeting": {"summary": "会议转写 / Meeting transcription", "value": {"file": "meeting.wav", "language": "Auto", "speaker_count": "auto", "diarize": True, "align": True, "compute_device": "gpu", "accelerate_single_task": True}},
+        "meeting": {"summary": "默认模型会议转写 / Meeting transcription with the default model", "value": {"file": "meeting.wav", "model": "qwen3-asr-0.6b", "language": "Auto", "speaker_count": "auto", "diarize": True, "align": True, "compute_device": "gpu", "accelerate_single_task": True}},
+        "large_model_hotwords": {"summary": "1.7B CPU 与场景热词 / 1.7B CPU with scenario hotwords", "value": {"file": "meeting.wav", "model": "qwen3-asr-1.7b", "language": "Chinese", "context": "项目会议", "hotword_list_ids": "hotwords_0123456789abcdef", "speaker_count": "auto", "compute_device": "cpu", "accelerate_single_task": True}},
+    },
+    ("/api/v1/asr/hotword-lists", "post"): {
+        "project_terms": {"summary": "创建项目词表 / Create a project vocabulary", "value": {"name": "项目代号", "terms": ["Sandevistan-Audio", "Qwen3-ASR"]}},
+    },
+    ("/api/v1/asr/hotword-lists/{item_id}", "patch"): {
+        "replace_terms": {"summary": "完整替换词条 / Replace all terms", "value": {"terms": ["Qwen3-ASR", "ForcedAligner"]}},
+    },
+    ("/v1/audio/transcriptions", "post"): {
+        "hotwords": {"summary": "兼容转写与本地热词 / Compatible transcription with local hotwords", "value": {"file": "meeting.wav", "model": "qwen3-asr-1.7b", "prompt": "项目会议", "hotword_list_ids": "hotwords_0123456789abcdef", "language": "Auto", "response_format": "verbose_json", "compute_device": "cpu"}},
     },
     ("/api/v1/tts/jobs", "post"): {
-        "preset": {"summary": "预置音色 / Preset voice", "value": {"text": "你好，这是本地语音。", "language": "Chinese", "voice_mode": "preset", "speaker": "Vivian", "response_format": "wav", "compute_device": "gpu"}},
-        "inline_clone": {"summary": "分析任务克隆 / Clone from analyzed reference", "value": {"text": "这是克隆语音。", "language": "Chinese", "voice_mode": "inline_clone", "reference_job_id": "0123456789abcdef0123456789abcdef", "reference_text": "与参考音频一致的文本", "reference_language": "Chinese"}},
-        "voiceprint": {"summary": "声纹样本克隆 / Voiceprint sample clone", "value": {"text": "这是克隆语音。", "language": "Chinese", "voice_mode": "voiceprint", "voiceprint_sample_id": "sample_0123456789abcdef"}},
+        "preset": {"summary": "默认 0.6B 预置音色 / Default 0.6B preset voice", "value": {"text": "你好，这是本地语音。", "model": "qwen3-tts-0.6b", "language": "Chinese", "voice_mode": "preset", "speaker": "Vivian", "response_format": "wav", "compute_device": "gpu"}},
+        "preset_1_7b": {"summary": "1.7B 预置音色与自然语言表达指令 / 1.7B preset with expression instruction", "value": {"text": "别担心，我们一步一步来。", "model": "qwen3-tts-1.7b", "language": "Chinese", "voice_mode": "preset", "speaker": "Vivian", "instruct": "温柔、安心地说，语速稍慢，音调自然。", "response_format": "wav", "compute_device": "cpu"}},
+        "voice_design": {"summary": "1.7B 音色设计 / 1.7B voice design", "value": {"text": "欢迎收听今天的节目。", "model": "qwen3-tts-1.7b", "language": "Chinese", "voice_mode": "voice_design", "instruct": "成熟清晰的女性播音声线，语速中等，情绪沉稳而友好。", "response_format": "wav", "compute_device": "cpu"}},
+        "inline_clone": {"summary": "分析任务克隆 / Clone from analyzed reference", "value": {"text": "这是克隆语音。", "model": "qwen3-tts-1.7b", "language": "Chinese", "voice_mode": "inline_clone", "reference_job_id": "0123456789abcdef0123456789abcdef", "reference_text": "与参考音频一致的文本", "reference_language": "Chinese"}},
+        "voiceprint": {"summary": "声纹样本克隆 / Voiceprint sample clone", "value": {"text": "这是克隆语音。", "model": "qwen3-tts-1.7b", "language": "Chinese", "voice_mode": "voiceprint", "voiceprint_sample_id": "sample_0123456789abcdef"}},
     },
 }
 
@@ -566,9 +696,99 @@ JOB_EXAMPLES = {
 }
 
 RESULT_EXAMPLES = {
-    "asr": {"summary": "ASR 结果 / ASR result", "value": {"text": "欢迎使用本地转写。", "language": "Chinese", "duration": 3.2, "timestamp_precision": "word_or_character", "segments": [], "speakers": [], "artifacts": []}},
-    "tts": {"summary": "TTS 结果 / TTS result", "value": {"duration": 1.8, "format": "wav", "sample_rate": 24000, "voice_mode": "preset", "speaker": "Vivian", "compute_device": "gpu", "precision": "bfloat16", "quantized": False, "artifacts": []}},
+    "asr": {"summary": "ASR 结果 / ASR result", "value": {"text": "欢迎使用本地转写。", "language": "Chinese", "duration": 3.2, "timestamp_precision": "word_or_character", "model": "qwen3-asr-1.7b", "model_name": "Qwen3-ASR-1.7B", "model_revision": "7278e1e70fe206f11671096ffdd38061171dd6e5", "hotword_context": {"enabled": True, "list_ids": ["hotwords_0123456789abcdef"], "list_names": ["项目代号"], "term_count": 2}, "segments": [], "speakers": [], "artifacts": []}},
+    "tts": {"summary": "TTS 结果 / TTS result", "value": {"duration": 1.8, "format": "wav", "sample_rate": 24000, "voice_mode": "preset", "speaker": "Vivian", "model": "qwen3-tts-1.7b", "model_name": "Qwen3-TTS-12Hz-1.7B-CustomVoice", "model_revision": "0c0e3051f131929182e2c023b9537f8b1c68adfe", "instruct": "温柔、安心地说，语速稍慢。", "compute_device": "gpu", "precision": "BF16", "quantized": False, "artifacts": []}},
 }
+
+
+def _device_examples(minimum_memory_mib: int) -> list[dict[str, Any]]:
+    return [
+        {"id": "cpu", "precision": "FP32", "available": True, "default": False, "quantized": False},
+        {
+            "id": "gpu", "precision": "BF16", "available": True, "default": True, "quantized": False,
+            "minimum_memory_mib": minimum_memory_mib, "total_memory_mib": 8151,
+        },
+    ]
+
+
+def _capabilities_example() -> dict[str, Any]:
+    asr_entries = []
+    for model in asr_models():
+        asr_entries.append({
+            "id": model["public_id"], "name": model["name"], "revision": model["revision"],
+            "installed": True, "installation_state": "ready", "default": bool(model.get("default")),
+            "compute_devices": _device_examples(int(model["minimum_gpu_memory_mib"])),
+        })
+
+    empty_controls = {
+        "instruction_voice_modes": [], "instruction_required_voice_modes": [],
+        "max_instruction_chars": 1000, "speaking_rate_parameter": False,
+        "pitch_parameter": False, "sampling_parameters": False,
+    }
+    tts_entries = []
+    physical_models = []
+    for model in tts_models():
+        is_large = model["public_id"] == "qwen3-tts-1.7b"
+        controls = dict(empty_controls)
+        if is_large:
+            controls.update({
+                "instruction_voice_modes": ["preset", "voice_design"],
+                "instruction_required_voice_modes": ["voice_design"],
+            })
+        checkpoints = []
+        for variant, checkpoint in model["checkpoints"].items():
+            physical_models.append(checkpoint["name"])
+            checkpoints.append({
+                "variant": variant, "name": checkpoint["name"], "revision": checkpoint["revision"],
+                "installed": True, "installation_state": "ready",
+            })
+        voice_modes = ["preset", "profile", "inline_clone", "voiceprint"]
+        if is_large:
+            voice_modes.append("voice_design")
+        tts_entries.append({
+            "id": model["public_id"], "name": model["name"], "default": bool(model["default"]),
+            "installed": True, "installation_state": "ready", "voice_modes": voice_modes,
+            "compute_devices": _device_examples(int(model["minimum_gpu_memory_mib"])),
+            "controls": controls, "checkpoints": checkpoints,
+        })
+
+    default_asr = next(item for item in asr_entries if item["default"])
+    default_tts = next(item for item in tts_entries if item["default"])
+    return {
+        "services": ["asr", "tts"], "offline": True,
+        "asr": {
+            "model": default_asr["name"], "default_model": default_asr["id"], "models": asr_entries,
+            "diarization": "CAM++ single-active-speaker", "speaker_count": {"min": 1, "max": 15, "default": "auto"},
+            "voiceprint_library": True, "languages": ["Auto", "Chinese", "English"], "default_language": "Auto",
+            "timestamp_precisions": ["segment", "word_or_character"], "aligner_languages": ["Chinese", "English"],
+            "exports": ["json", "srt", "vtt", "txt"], "compute_devices": default_asr["compute_devices"],
+            "single_task_acceleration": {"supported": True, "default": True},
+            "hotword_library": {
+                "supported": True, "max_lists": 100, "max_terms_per_list": 200, "max_selected_lists": 8,
+                "max_selected_terms": 500, "max_prompt_chars": 8000, "max_name_chars": 80, "max_term_chars": 64,
+            },
+        },
+        "tts": {
+            "models": physical_models, "default_model": default_tts["id"], "model_capabilities": tts_entries,
+            "voice_modes": ["preset", "profile", "inline_clone", "voiceprint", "voice_design"],
+            "preset_speakers": ["Vivian"], "preset_speaker_native_languages": {"Vivian": "Chinese"},
+            "languages": ["Auto", "Chinese", "English"], "default_language": "Auto", "formats": ["wav", "flac", "mp3"],
+            "compute_devices": default_tts["compute_devices"],
+            "single_task_acceleration": {"supported": True, "default": True}, "controls": default_tts["controls"],
+        },
+        "limits": {
+            "max_upload_bytes": 1073741824, "max_tts_chars": 10000, "max_clone_reference_seconds": 15,
+            "max_queued_asr": 5, "max_queued_tts": 5, "max_concurrent_submissions": 2,
+            "min_free_disk_bytes": 5368709120,
+        },
+        "events": {
+            "sse": True, "global_url": "/api/v1/events", "per_job_url_template": "/api/v1/jobs/{job_id}/events",
+            "heartbeat_seconds": 15, "history_replay": False,
+        },
+    }
+
+
+CAPABILITIES_EXAMPLE = _capabilities_example()
 
 
 def _example_for_schema(value: dict[str, Any], schemas: dict[str, Any], seen: set[str] | None = None) -> Any:
@@ -631,6 +851,9 @@ def enrich_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
                         target.setdefault("format", "date-time")
         if definition.get("properties") and "example" not in definition:
             definition["example"] = _example_for_schema(definition, schemas, {schema_name})
+
+    if "CapabilitiesResponse" in schemas:
+        schemas["CapabilitiesResponse"]["example"] = CAPABILITIES_EXAMPLE
 
     for path, methods in schema.get("paths", {}).items():
         for method, operation in methods.items():

@@ -10,9 +10,9 @@ import numpy as np
 import pytest
 
 from audio_intel.config import settings
-from audio_intel.performance import cpu_batch_size, gpu_batch_size, lower_batch_size
-from audio_intel.progress import ThrottledProgress
-from audio_intel.utils import safe_filename, timecode, waveform_peaks
+from audio_intel.performance import cpu_batch_size, gpu_batch_size, lower_batch_size, resolve_acceleration
+from audio_intel.progress import ThrottledProgress, progress_snapshot_path, progress_snapshot_paths
+from audio_intel.utils import atomic_json, safe_filename, timecode, waveform_peaks
 from asr import pipeline as asr_pipeline
 from asr import stage as asr_stage
 from tts import pipeline as tts_pipeline
@@ -38,6 +38,142 @@ def test_model_progress_is_throttled_and_boundary_can_be_forced(monkeypatch) -> 
     assert [item["current"] for item in emitted] == [1, 2, 3]
 
 
+def test_asr_progress_uses_immutable_numbered_snapshots(tmp_path, monkeypatch) -> None:
+    base_path = tmp_path / "transcription-progress.json"
+    destinations = []
+    real_atomic_json = atomic_json
+
+    def publish(path, value):
+        assert not path.exists()
+        destinations.append(path)
+        real_atomic_json(path, value)
+
+    monkeypatch.setattr(asr_stage, "atomic_json", publish)
+    payload = {"progress_path": str(base_path)}
+    asr_stage._progress(payload, "transcription", 0, 2, stage_progress=0.1)
+    first_path = progress_snapshot_path(base_path, 1)
+    with first_path.open("r", encoding="utf-8") as first_snapshot:
+        asr_stage._progress(payload, "transcription", 1, 2, stage_progress=0.5)
+        assert '"completed": 0' in first_snapshot.read()
+
+    assert destinations == [
+        progress_snapshot_path(base_path, 1),
+        progress_snapshot_path(base_path, 2),
+    ]
+    assert [sequence for sequence, _ in progress_snapshot_paths(base_path)] == [1, 2]
+
+
+def test_asr_progress_publish_failure_warns_once_and_does_not_abort(tmp_path, monkeypatch, caplog) -> None:
+    def fail_publish(_path, _value):
+        raise PermissionError("simulated scanner lock")
+
+    monkeypatch.setattr(asr_stage, "atomic_json", fail_publish)
+    payload = {"progress_path": str(tmp_path / "transcription-progress.json")}
+    asr_stage._progress(payload, "transcription", 0, 1)
+    asr_stage._progress(payload, "transcription", 1, 1)
+
+    assert caplog.text.count("Unable to publish ASR progress snapshot") == 1
+
+
+def test_asr_progress_drain_uses_latest_valid_snapshot_and_cleans_consumed(tmp_path) -> None:
+    base_path = tmp_path / "transcription-progress.json"
+    atomic_json(progress_snapshot_path(base_path, 1), {
+        "stage": "transcription", "completed": 1, "total": 3,
+    })
+    atomic_json(progress_snapshot_path(base_path, 2), {
+        "stage": "transcription", "completed": 2, "total": 3,
+    })
+    progress_snapshot_path(base_path, 3).write_text("{broken", encoding="utf-8")
+    emitted = []
+
+    sequence = asr_pipeline._drain_stage_progress(base_path, emitted.append, 0)
+
+    assert sequence == 2
+    assert [item["completed"] for item in emitted] == [2]
+    assert progress_snapshot_paths(base_path) == []
+
+
+def test_asr_progress_drain_retries_transient_read_failure(tmp_path, monkeypatch) -> None:
+    base_path = tmp_path / "transcription-progress.json"
+    first_path = progress_snapshot_path(base_path, 1)
+    second_path = progress_snapshot_path(base_path, 2)
+    atomic_json(first_path, {"stage": "transcription", "completed": 1, "total": 2})
+    atomic_json(second_path, {"stage": "transcription", "completed": 2, "total": 2})
+    real_read_text = type(second_path).read_text
+
+    def read_text(path, *args, **kwargs):
+        if path == second_path:
+            raise PermissionError("simulated scanner lock")
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(second_path), "read_text", read_text)
+    emitted = []
+    sequence = asr_pipeline._drain_stage_progress(base_path, emitted.append, 0)
+
+    assert sequence == 1
+    assert [item["completed"] for item in emitted] == [1]
+    assert second_path.is_file()
+
+    monkeypatch.setattr(type(second_path), "read_text", real_read_text)
+    sequence = asr_pipeline._drain_stage_progress(base_path, emitted.append, sequence)
+    assert sequence == 2
+    assert [item["completed"] for item in emitted] == [1, 2]
+    assert progress_snapshot_paths(base_path) == []
+
+
+def test_asr_progress_cleanup_failure_does_not_repeat_callback(tmp_path, monkeypatch) -> None:
+    base_path = tmp_path / "transcription-progress.json"
+    snapshot_path = progress_snapshot_path(base_path, 1)
+    atomic_json(snapshot_path, {"stage": "transcription", "completed": 1, "total": 1})
+    real_unlink = type(snapshot_path).unlink
+
+    def unlink(path, *args, **kwargs):
+        if path == snapshot_path:
+            raise PermissionError("simulated scanner lock")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(snapshot_path), "unlink", unlink)
+    emitted = []
+    sequence = asr_pipeline._drain_stage_progress(base_path, emitted.append, 0)
+    sequence = asr_pipeline._drain_stage_progress(base_path, emitted.append, sequence)
+
+    assert sequence == 1
+    assert [item["completed"] for item in emitted] == [1]
+    assert snapshot_path.is_file()
+
+    monkeypatch.setattr(type(snapshot_path), "unlink", real_unlink)
+    asr_pipeline._drain_stage_progress(base_path, emitted.append, sequence)
+    assert progress_snapshot_paths(base_path) == []
+
+
+def test_asr_run_stage_drains_final_progress_after_fast_exit(tmp_path, monkeypatch) -> None:
+    def launch(args, **_kwargs):
+        atomic_json(progress_snapshot_path(tmp_path / "transcribe-progress.json", 1), {
+            "stage": "transcription", "completed": 1, "total": 1,
+        })
+        atomic_json(tmp_path / "transcribe-output.json", {"chunks": []})
+
+        class ExitedProcess:
+            returncode = 0
+
+            @staticmethod
+            def poll():
+                return 0
+
+        process = ExitedProcess()
+        process.args = args
+        return process
+
+    monkeypatch.setattr(asr_pipeline.subprocess, "Popen", launch)
+    emitted = []
+
+    result = asr_pipeline.run_stage("transcribe", {}, tmp_path, emitted.append)
+
+    assert result == {"chunks": []}
+    assert [item["completed"] for item in emitted] == [1]
+    assert progress_snapshot_paths(tmp_path / "transcribe-progress.json") == []
+
+
 def test_single_task_acceleration_hardware_tiers() -> None:
     gib = 1024**3
     assert [gpu_batch_size(value * 1024) for value in (4, 8, 12, 16, 24, 32)] == [2, 4, 6, 8, 12, 16]
@@ -48,6 +184,19 @@ def test_single_task_acceleration_hardware_tiers() -> None:
     assert cpu_batch_size(32, 48 * gib) == 6
     assert cpu_batch_size(48, 64 * gib) == 8
     assert [lower_batch_size(value) for value in (16, 12, 8, 6, 4, 2, 1)] == [12, 8, 6, 4, 2, 1, 1]
+
+
+def test_larger_asr_model_uses_conservative_acceleration_without_changing_device(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "audio_intel.performance.gpu_snapshot",
+        lambda *_: {"memory_total_mib": 16 * 1024},
+    )
+    standard = resolve_acceleration(True, "gpu")
+    large = resolve_acceleration(True, "gpu", batch_penalty_steps=2)
+    assert standard["target_batch_size"] == 8
+    assert large["target_batch_size"] == 4
+    assert large["device"] == "gpu"
+    assert large["batch_penalty_steps"] == 2
 
 
 def test_asr_stage_batches_in_order_and_falls_back_after_oom(monkeypatch) -> None:
@@ -117,6 +266,11 @@ def test_asr_stage_batches_in_order_and_falls_back_after_oom(monkeypatch) -> Non
     )
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     monkeypatch.setitem(sys.modules, "qwen_asr", SimpleNamespace(Qwen3ASRModel=FakeFactory))
+    progress_events = []
+    monkeypatch.setattr(
+        asr_stage, "_progress",
+        lambda *_args, **kwargs: progress_events.append(kwargs),
+    )
     chunks = [{"path": str(index), "index": index} for index in range(5)]
 
     result = asr_stage.transcribe({
@@ -131,6 +285,11 @@ def test_asr_stage_batches_in_order_and_falls_back_after_oom(monkeypatch) -> Non
         "effective_batch_size": 2, "fallbacks": [{"from": 4, "to": 2}],
     }
     assert FakeCuda.cleared == 1
+    assert progress_events[0]["activity"]["unit"] == "model_load"
+    assert all(
+        event["activity"]["sequence"] >= 1
+        for event in progress_events if event.get("activity")
+    )
     assert not FakeFactory.model.thinker.hooks
     assert all(not layer.hooks for layer in FakeFactory.model.audio_layers)
 
@@ -454,10 +613,40 @@ def test_tts_batch_uses_sequential_decoder_and_restores_it() -> None:
     assert model.arguments["language"] == ["Chinese", "Chinese"]
 
 
+def test_tts_voice_design_batches_natural_language_instruction() -> None:
+    class Tokenizer:
+        def decode(self, encoded):
+            return [item["audio_codes"] for item in encoded], 24000
+
+    class Model:
+        def __init__(self) -> None:
+            self.model = SimpleNamespace(speech_tokenizer=Tokenizer())
+            self.arguments = None
+
+        def generate_voice_design(self, **kwargs):
+            self.arguments = kwargs
+            return [[0.1], [0.2]], 24000
+
+    model = Model()
+    request = {
+        "voice_mode": "voice_design", "language": "Chinese",
+        "instruct": "温暖成熟的声音，语速舒缓。",
+    }
+
+    generated, rate = tts_pipeline._generate_tts_batch(
+        model, request, ["第一句。", "第二句。"], None,
+    )
+
+    assert generated == [[0.1], [0.2]]
+    assert rate == 24000
+    assert model.arguments["instruct"] == [request["instruct"], request["instruct"]]
+    assert model.arguments["language"] == ["Chinese", "Chinese"]
+
+
 def test_tts_worker_rejects_legacy_nonempty_instruction_before_model_loading() -> None:
     context = SimpleNamespace(job={"request": {"instruct": "Very happy."}})
 
-    with pytest.raises(ValueError, match="0.6B models"):
+    with pytest.raises(ValueError, match="not supported"):
         tts_pipeline.process_job(context)
 
 
@@ -525,6 +714,8 @@ def test_tts_acceleration_retries_current_batch_after_oom(tmp_path, monkeypatch)
     result = tts_pipeline._process_loaded(
         context, request, ["一", "二", "三", "四"], object(), "cpu",
         {"requested": True, "device": "cpu", "target_batch_size": 4},
+        tts_pipeline.resolve_tts_model("qwen3-tts-0.6b"),
+        tts_pipeline.resolve_tts_model("qwen3-tts-0.6b")["checkpoints"]["custom_voice"],
     )
 
     assert calls == [4, 2, 2]

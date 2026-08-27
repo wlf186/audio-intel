@@ -12,7 +12,7 @@ import {
 import { useMicrophoneRecorder } from '../hooks/useMicrophoneRecorder'
 import { api, formatTime } from '../lib/api'
 import { publicAsrLanguages } from '../lib/preferences'
-import type { ComputeDevice, Job, VoiceprintPerson } from '../lib/types'
+import type { AsrModelCapability, ComputeDevice, Job, VoiceprintPerson } from '../lib/types'
 import { handleTabKeys } from '../lib/tabs'
 
 type Props = {
@@ -20,6 +20,7 @@ type Props = {
   refresh: () => Promise<void>
   onJobSubmitted: (job: Job) => void
   gpuAvailable?: boolean
+  asrModels: AsrModelCapability[]
   asrLanguages?: string[]
 }
 type SampleSource = 'upload' | 'record'
@@ -29,6 +30,7 @@ export function VoiceprintsPage({
   refresh,
   onJobSubmitted,
   gpuAvailable,
+  asrModels,
   asrLanguages = publicAsrLanguages,
 }: Props) {
   const [selectedId, setSelectedId] = useState('')
@@ -37,6 +39,7 @@ export function VoiceprintsPage({
   const [file, setFile] = useState<File>()
   const [language, setLanguage] = useState('Auto')
   const [computeDevice, setComputeDevice] = useState<ComputeDevice>('gpu')
+  const [model, setModel] = useState('qwen3-asr-0.6b')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -48,6 +51,9 @@ export function VoiceprintsPage({
   )
   const microphoneActive =
     recorder.phase === 'requesting' || recorder.phase === 'recording'
+  const selectedModel=asrModels.find(item=>item.id===model)||asrModels.find(item=>item.default)
+  const modelGpu=selectedModel?.compute_devices.find(item=>item.id==='gpu')
+  const effectiveComputeDevice:ComputeDevice=computeDevice==='gpu'&&(modelGpu?.available===false||gpuAvailable===false)?'cpu':computeDevice
   useEffect(() => {
     if (selected && !selectedId) setSelectedId(selected.id)
   }, [selected, selectedId])
@@ -104,12 +110,11 @@ export function VoiceprintsPage({
     if (!selected) return
     const personId = selected.id
     const succeeded = await run(async () => {
-      if (computeDevice === 'gpu' && gpuAvailable === false)
-        throw new Error('当前未检测到可用 GPU，请选择 CPU。')
       const data = new FormData()
       data.set('file', sampleFile)
+      data.set('model', model)
       data.set('language', language)
-      data.set('compute_device', computeDevice)
+      data.set('compute_device', effectiveComputeDevice)
       const response = await api.uploadVoiceprintSample(personId, data)
       onJobSubmitted(response.job)
       setNotice('已创建“声纹样本入库”ASR 任务，可在任务记录查看进度。')
@@ -390,6 +395,9 @@ export function VoiceprintsPage({
                 </div>
               )}
               <div className="sample-options">
+                <select aria-label="声纹入库 ASR 模型" value={model} disabled={busy||microphoneActive} onChange={event=>setModel(event.target.value)}>
+                  {(asrModels.length?asrModels:[{id:'qwen3-asr-0.6b',name:'Qwen3-ASR 0.6B',installed:true} as AsrModelCapability]).map(item=><option key={item.id} value={item.id} disabled={!item.installed}>{item.name}{item.installed?'':'（未安装）'}</option>)}
+                </select>
                 <select
                   aria-label="声纹样本语言"
                   value={language}
@@ -404,17 +412,18 @@ export function VoiceprintsPage({
                 </select>
                 <select
                   aria-label="声纹入库计算设备"
-                  value={computeDevice}
+                  value={effectiveComputeDevice}
                   disabled={busy || microphoneActive}
                   onChange={(event) =>
                     setComputeDevice(event.target.value as ComputeDevice)
                   }
                 >
-                  <option value="gpu" disabled={gpuAvailable === false}>
+                  <option value="gpu" disabled={gpuAvailable === false||modelGpu?.available===false}>
                     GPU
                   </option>
                   <option value="cpu">CPU</option>
                 </select>
+                {computeDevice==='gpu'&&effectiveComputeDevice==='cpu'?<small className="device-hint">{modelGpu?.unavailable_reason||'当前模型自动使用 CPU。'}</small>:null}
                 <button
                   className="primary"
                   disabled={

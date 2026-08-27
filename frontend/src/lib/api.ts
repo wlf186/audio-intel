@@ -1,4 +1,4 @@
-import type {AuthSession,BatchDeleteResult,Capabilities,Health,Job,JobListQuery,JobListResponse,JobResult,Probe,VoiceprintPerson,VoiceprintSample} from './types'
+import type {AuthSession,BatchDeleteResult,Capabilities,Health,HotwordList,Job,JobListQuery,JobListResponse,JobResult,Probe,VoiceprintPerson,VoiceprintSample} from './types'
 
 export class HttpError extends Error{status:number;retryAfter?:number;constructor(status:number,message:string,retryAfter?:number){super(message);this.status=status;this.retryAfter=retryAfter}}
 export async function request<T>(path:string,init:RequestInit={}):Promise<T>{
@@ -29,6 +29,10 @@ export const api={
   job:(id:string)=>request<Job>(`/api/v1/jobs/${id}`),
   system:()=>request<Health>('/api/v1/system'),
   capabilities:()=>request<Capabilities>('/api/v1/capabilities'),
+  hotwordLists:()=>request<{items:HotwordList[];count:number}>('/api/v1/asr/hotword-lists'),
+  addHotwordList:(name:string,terms:string[])=>request<HotwordList>('/api/v1/asr/hotword-lists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,terms})}),
+  updateHotwordList:(id:string,name:string,terms:string[])=>request<HotwordList>(`/api/v1/asr/hotword-lists/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,terms})}),
+  removeHotwordList:(id:string)=>request<void>(`/api/v1/asr/hotword-lists/${id}`,{method:'DELETE'}),
   submitAsr:(data:FormData,idempotencyKey?:string)=>submitForm<Job>('/api/v1/asr/jobs',data,idempotencyKey),
   analyzeCloneReference:(data:FormData,idempotencyKey?:string)=>submitForm<Job>('/api/v1/tts/clone-references',data,idempotencyKey),
   submitTts:(data:FormData,idempotencyKey?:string)=>submitForm<Job>('/api/v1/tts/jobs',data,idempotencyKey),

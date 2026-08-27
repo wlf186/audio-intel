@@ -21,7 +21,9 @@ from audio_intel.db import (
     update_voiceprint_sample,
 )
 from audio_intel.gpu import compute_device_name, gpu_lease
+from audio_intel.model_registry import model_installation, resolve_asr_model
 from audio_intel.performance import resolve_acceleration
+from audio_intel.progress import progress_snapshot_paths
 from audio_intel.utils import atomic_json, timecode, waveform_peaks
 from audio_intel.worker import JobContext
 
@@ -499,6 +501,45 @@ def _stop_stage_process(process: subprocess.Popen[Any]) -> None:
     process.wait(timeout=2)
 
 
+def _drain_stage_progress(
+    progress_path: Path,
+    progress_callback: Any | None,
+    last_sequence: int,
+) -> int:
+    latest: tuple[int, dict[str, Any]] | None = None
+    consumed: list[Path] = []
+    for sequence, snapshot_path in progress_snapshot_paths(progress_path):
+        if sequence <= last_sequence:
+            consumed.append(snapshot_path)
+            continue
+        try:
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        except ValueError:
+            consumed.append(snapshot_path)
+            continue
+        consumed.append(snapshot_path)
+        if (
+            isinstance(snapshot, dict)
+            and {"stage", "completed", "total"}.issubset(snapshot)
+        ):
+            latest = (sequence, snapshot)
+
+    if latest is not None:
+        sequence, snapshot = latest
+        if progress_callback is not None:
+            progress_callback(snapshot)
+        last_sequence = sequence
+
+    for snapshot_path in consumed:
+        try:
+            snapshot_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return last_sequence
+
+
 def run_stage(
     operation: str,
     payload: dict[str, Any],
@@ -515,19 +556,14 @@ def run_stage(
         [sys.executable, "-m", "asr.stage", operation, str(input_path), str(output_path)],
         env=environment,
     )
-    last_progress = ""
+    last_progress_sequence = 0
     try:
         while process.poll() is None:
-            if progress_callback is not None and progress_path.is_file():
-                try:
-                    snapshot = json.loads(progress_path.read_text(encoding="utf-8"))
-                    marker = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
-                    if marker != last_progress:
-                        progress_callback(snapshot)
-                        last_progress = marker
-                except (OSError, ValueError, KeyError, json.JSONDecodeError):
-                    pass
+            last_progress_sequence = _drain_stage_progress(
+                progress_path, progress_callback, last_progress_sequence,
+            )
             time.sleep(0.2)
+        _drain_stage_progress(progress_path, progress_callback, last_progress_sequence)
         if process.returncode:
             raise subprocess.CalledProcessError(process.returncode, process.args)
     except BaseException:
@@ -764,6 +800,14 @@ def write_asr_exports(job_id: str, result: dict[str, Any], formats: list[str]) -
 def process_job(context: JobContext) -> dict[str, Any]:
     request = context.job["request"]
     compute_device = request.get("compute_device", "gpu")
+    asr_model = resolve_asr_model(request.get("model"))
+    if asr_model is None:
+        raise ValueError("Unknown ASR model in persisted job request")
+    installation = model_installation(settings.models_dir, asr_model)
+    if not installation["installed"] and not settings.mock_mode:
+        raise RuntimeError(
+            f"{asr_model['name']} is not installed at revision {asr_model['revision']}"
+        )
     source = Path(request["input_path"])
     normalized = context.work_dir / "normalized.wav"
     context.progress(0.04, "decoding_audio")
@@ -776,12 +820,19 @@ def process_job(context: JobContext) -> dict[str, Any]:
     else:
         vad = run_vad(audio, rate)
     chunks = write_chunks(audio, rate, combine_vad(vad, duration), context.work_dir / "chunks")
-    acceleration = resolve_acceleration(bool(request.get("accelerate_single_task", False)), compute_device)
+    acceleration_enabled = bool(request.get("accelerate_single_task", False))
+    hardware_acceleration = resolve_acceleration(acceleration_enabled, compute_device)
+    acceleration = resolve_acceleration(
+        acceleration_enabled,
+        compute_device,
+        int(asr_model.get("batch_penalty_steps") or 0),
+    )
     target_batch_size = int(acceleration["target_batch_size"])
+    alignment_batch_size = int(hardware_acceleration["target_batch_size"])
     diarization_batch_size = (
         GPU_DIARIZATION_BATCH_SIZE
         if _parallel_diarization_enabled(compute_device)
-        else min(GPU_DIARIZATION_BATCH_SIZE, target_batch_size * 4)
+        else min(GPU_DIARIZATION_BATCH_SIZE, alignment_batch_size * 4)
         if acceleration["requested"]
         else 1
     )
@@ -835,10 +886,11 @@ def process_job(context: JobContext) -> dict[str, Any]:
             transcribed = {"chunks": [{**item, "text": examples[i % len(examples)], "language": "Chinese"} for i, item in enumerate(chunks)]}
         else:
             transcribed = run_model_stage(context, "transcribe", {
-                "model_path": str(settings.models_dir / "Qwen3-ASR-0.6B"),
+                "model_path": str(settings.models_dir / asr_model["name"]),
+                "model_id": asr_model["public_id"],
                 "chunks": chunks,
                 "language": request.get("language"),
-                "context": request.get("context", ""),
+                "context": request.get("effective_context", request.get("context", "")),
                 "batch_size": target_batch_size,
             }, context.work_dir, compute_device, 0.32)
         transcription_acceleration = transcribed.get("acceleration", {
@@ -877,11 +929,11 @@ def process_job(context: JobContext) -> dict[str, Any]:
             aligned = run_model_stage(context, "align", {
                 "model_path": str(settings.models_dir / "Qwen3-ForcedAligner-0.6B"),
                 "chunks": items,
-                "batch_size": target_batch_size,
+                "batch_size": alignment_batch_size,
             }, context.work_dir, compute_device, 0.68)
             items = aligned["chunks"]
             alignment_acceleration = aligned.get("acceleration", {
-                "stage": "alignment", "target_batch_size": target_batch_size,
+                "stage": "alignment", "target_batch_size": alignment_batch_size,
                 "effective_batch_size": 1, "fallbacks": [],
             })
         else:
@@ -906,11 +958,20 @@ def process_job(context: JobContext) -> dict[str, Any]:
         voiceprint_matches=voiceprint_matches,
     )
     result.update({
+        "model": asr_model["public_id"],
+        "model_name": asr_model["name"],
+        "model_revision": asr_model["revision"],
         "compute_device": compute_device,
         "compute_device_name": compute_device_name(compute_device, request.get("compute_device_name")),
         "precision": "FP32" if compute_device == "cpu" else "BF16",
         "quantized": False,
         "voiceprint_library": voiceprint_status,
+        "hotword_context": {
+            "enabled": bool(request.get("hotword_list_ids")),
+            "list_ids": list(request.get("hotword_list_ids") or []),
+            "list_names": [item.get("name") for item in request.get("hotword_lists") or []],
+            "term_count": int(request.get("hotword_term_count") or 0),
+        },
         "acceleration": {
             **acceleration,
             "active": bool(
@@ -925,6 +986,11 @@ def process_job(context: JobContext) -> dict[str, Any]:
             "stage_batch_sizes": {
                 "transcription": transcription_acceleration["effective_batch_size"],
                 "alignment": alignment_acceleration["effective_batch_size"] if alignment_acceleration else 1,
+                "diarization": diarization_batch_size if request.get("diarize") else 1,
+            },
+            "stage_target_batch_sizes": {
+                "transcription": target_batch_size,
+                "alignment": alignment_batch_size,
                 "diarization": diarization_batch_size if request.get("diarize") else 1,
             },
             "oom_fallbacks": [

@@ -53,34 +53,70 @@ def main() -> None:
         write_test_wave(source)
         health = client.get("/api/v1/health")
         health.raise_for_status()
+        capabilities = client.get("/api/v1/capabilities")
+        capabilities.raise_for_status()
+        asr_capability = capabilities.json()["asr"]
+        default_model = asr_capability["default_model"]
+        if default_model not in {item["id"] for item in asr_capability["models"]}:
+            raise RuntimeError("Default ASR model is missing from capabilities.asr.models")
+        tts_capability = capabilities.json()["tts"]
+        default_tts_model = tts_capability["default_model"]
+        if default_tts_model not in {item["id"] for item in tts_capability["model_capabilities"]}:
+            raise RuntimeError("Default TTS model is missing from capabilities.tts.model_capabilities")
 
-        with source.open("rb") as audio:
-            asr_response = client.post(
-                "/api/v1/asr/jobs",
-                headers={"Idempotency-Key": str(uuid.uuid4())},
-                files={"file": (source.name, audio, "audio/wav")},
-                data={
-                    "language": "Chinese", "speaker_count": "2", "diarize": "true",
-                    "align": "true", "compute_device": "cpu",
+        hotword_id: str | None = None
+        try:
+            hotword_response = client.post(
+                "/api/v1/asr/hotword-lists",
+                json={
+                    "name": f"smoke-{uuid.uuid4().hex[:12]}",
+                    "terms": ["Sandevistan-Audio", "Qwen3-ASR"],
                 },
             )
-        asr_response.raise_for_status()
-        tts_response = client.post(
-            "/api/v1/tts/jobs",
-            headers={"Idempotency-Key": str(uuid.uuid4())},
-            data={
-                "text": "本地语音合成冒烟测试。", "language": "Chinese", "voice_mode": "preset",
-                "speaker": "Vivian", "response_format": "wav", "compute_device": "cpu",
-            },
-        )
-        tts_response.raise_for_status()
+            hotword_response.raise_for_status()
+            hotword_id = hotword_response.json()["id"]
 
-        for response in (asr_response, tts_response):
-            job = wait_for_job(client, response.json()["id"])
-            result = client.get(job["result_url"])
-            result.raise_for_status()
-            if not result.json().get("artifacts"):
-                raise RuntimeError(f"Job {job['id']} returned no artifacts")
+            with source.open("rb") as audio:
+                asr_response = client.post(
+                    "/api/v1/asr/jobs",
+                    headers={"Idempotency-Key": str(uuid.uuid4())},
+                    files={"file": (source.name, audio, "audio/wav")},
+                    data={
+                        "model": default_model, "hotword_list_ids": hotword_id,
+                        "language": "Chinese", "speaker_count": "2", "diarize": "true",
+                        "align": "true", "compute_device": "cpu",
+                    },
+                )
+            asr_response.raise_for_status()
+            tts_response = client.post(
+                "/api/v1/tts/jobs",
+                headers={"Idempotency-Key": str(uuid.uuid4())},
+                data={
+                    "model": default_tts_model, "text": "本地语音合成冒烟测试。", "language": "Chinese", "voice_mode": "preset",
+                    "speaker": "Vivian", "response_format": "wav", "compute_device": "cpu",
+                },
+            )
+            tts_response.raise_for_status()
+
+            for response in (asr_response, tts_response):
+                job = wait_for_job(client, response.json()["id"])
+                result = client.get(job["result_url"])
+                result.raise_for_status()
+                payload = result.json()
+                if not payload.get("artifacts"):
+                    raise RuntimeError(f"Job {job['id']} returned no artifacts")
+                if response is asr_response:
+                    if payload.get("model") != default_model:
+                        raise RuntimeError("ASR result did not preserve the selected model")
+                    hotwords = payload.get("hotword_context") or {}
+                    if not hotwords.get("enabled") or hotword_id not in hotwords.get("list_ids", []):
+                        raise RuntimeError("ASR result did not preserve the selected hotword list")
+                elif payload.get("model") != default_tts_model:
+                    raise RuntimeError("TTS result did not preserve the selected model")
+        finally:
+            if hotword_id is not None:
+                cleanup = client.delete(f"/api/v1/asr/hotword-lists/{hotword_id}")
+                cleanup.raise_for_status()
         print("Health, ASR, and TTS mock pipelines completed successfully.")
 
 

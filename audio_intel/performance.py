@@ -37,7 +37,11 @@ def cpu_batch_size(physical_cores: int, available_bytes: int) -> int:
     return 1
 
 
-def resolve_acceleration(enabled: bool, compute_device: str) -> dict[str, Any]:
+def resolve_acceleration(
+    enabled: bool,
+    compute_device: str,
+    batch_penalty_steps: int = 0,
+) -> dict[str, Any]:
     profile: dict[str, Any] = {
         "requested": bool(enabled),
         "device": compute_device,
@@ -48,17 +52,25 @@ def resolve_acceleration(enabled: bool, compute_device: str) -> dict[str, Any]:
     if compute_device == "gpu":
         snapshot = gpu_snapshot(0)
         memory_total_mib = int(snapshot["memory_total_mib"]) if snapshot else 0
+        target = gpu_batch_size(memory_total_mib) if memory_total_mib else 2
+        for _ in range(max(0, batch_penalty_steps)):
+            target = lower_batch_size(target)
         profile.update({
-            "target_batch_size": gpu_batch_size(memory_total_mib) if memory_total_mib else 2,
+            "target_batch_size": target,
             "gpu_memory_total_mib": memory_total_mib or None,
+            "batch_penalty_steps": max(0, batch_penalty_steps),
         })
         return profile
     physical_cores = psutil.cpu_count(logical=False) or psutil.cpu_count() or 1
     available_bytes = int(psutil.virtual_memory().available)
+    target = cpu_batch_size(physical_cores, available_bytes)
+    for _ in range(max(0, batch_penalty_steps)):
+        target = lower_batch_size(target)
     profile.update({
-        "target_batch_size": cpu_batch_size(physical_cores, available_bytes),
+        "target_batch_size": target,
         "physical_cores": physical_cores,
         "available_memory_bytes": available_bytes,
+        "batch_penalty_steps": max(0, batch_penalty_steps),
     })
     return profile
 

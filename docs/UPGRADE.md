@@ -16,7 +16,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 
 ## 自动迁移与兼容性
 
-- API 启动时自动将 SQLite 迁移到当前 schema v6。v5 新增持久化排队序号、稳定阶段、阶段耗时和幂等键记录；v6 追加阶段进度、估算依据、计数单位和当前模型活动。迁移是就地操作，因此备份必须在启动新版本前完成。
+- API 启动时自动将 SQLite 迁移到当前 schema v7。v5 新增持久化排队序号、稳定阶段、阶段耗时和幂等键记录；v6 追加阶段进度、估算依据、计数单位和当前模型活动；v7 新增按场景管理的 ASR 热词表。迁移是就地操作，因此备份必须在启动新版本前完成。
 - 历史 ASR/TTS 任务、旧声音档案和既有声纹样本保持可读；人员重命名不会回写历史任务中的说话人快照。
 - 浏览器鉴权改用进程内会话 Cookie，升级或重启后需要重新输入 API Key。
 - `/api/v1/health` 现在是公开最小探针；原详细结构迁移到受保护的 `/api/v1/system`。监控脚本如依赖硬件、worker、模型或路径字段必须切换端点并增加 Bearer Header。
@@ -27,10 +27,15 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - ASR/TTS 新提交默认都使用 GPU；TTS 输出语种默认由 `Chinese` 改为 `Auto`。已有浏览器偏好保持不变，无 GPU 的 API 消费方需显式传 `compute_device=cpu`，依赖固定中文默认值的消费方需显式传 `language=Chinese`。
 - 一次性 TTS 克隆参考新增 `/api/v1/tts/clone-references` 分析端点和 `reference_job_id` 提交方式。分析任务会保留在 ASR 任务记录中，旧的 `reference_audio` + `reference_text` 请求继续兼容。
 - ASR 页面、声纹样本入库和 Capabilities 现在统一公开 `Auto + 11` 种支持字词级对齐的语言。原生 ASR、OpenAI 转写和声纹入库显式传入清单外语言时由运行期失败或透传改为同步 `422`；`Auto` 检测到其他模型语种时仍成功返回句段级时间戳。
-- **不兼容变更：** 当前固定的 Qwen3-TTS 0.6B Base/CustomVoice 不支持风格或情绪指令。原生 TTS 的 `instruct` 和 OpenAI 兼容 TTS 的 `instructions` 已弃用，非空值由过去的静默忽略改为在创建任务前返回 `422`；现有客户端必须删除该参数或发送空值，并从 `/api/v1/capabilities.tts.controls` 判断实际控制能力。此项不涉及数据库迁移。
+- TTS 新增 `qwen3-tts-1.7b` 模型组，可按任务选择 CustomVoice、Base 或 VoiceDesign checkpoint；默认仍为 0.6B。`setup tts/all` 会下载新增的三个固定 revision。浏览器 TTS 偏好从 v1 自动迁移到包含 `model` 的 v2，旧客户端省略 `model` 时行为不变。
+- 原生 `instruct` 和 OpenAI 兼容 `instructions` 现在可用于 1.7B 预置音色；原生 1.7B VoiceDesign 必须提供 `instruct`。0.6B 和 Base 克隆仍拒绝非空指令。没有独立数值语速/音高或公共采样参数；客户端应按 `/api/v1/capabilities.tts.model_capabilities[]` 动态显示控制项，而不是只读取代表默认模型的 `tts.controls`。
+- TTS GPU 准入与 ASR 一致，0.6B/1.7B 使用 3840/7936 MiB 总显存门槛；Capabilities 与 TTS 结果新增模型组、checkpoint 和指令信息，均为兼容性扩展。此项不涉及数据库迁移。
 - **不兼容变更：** 原生异步 ASR、TTS、TTS 克隆参考分析和声纹样本上传现在强制要求 `Idempotency-Key`。现有客户端必须为每次逻辑提交生成 8–128 字符的键，并在超时、断线或 `429` 后复用；相同键改变请求会返回 `409`。`429` 的分类和恢复步骤见 [故障排查](TROUBLESHOOTING.md#api-提交返回-429)。
 - 新增同类队列位置、稳定阶段/细粒度进度、本机历史 ETA 区间、`GET /api/v1/queue`、单任务 SSE 和 ETag 条件轮询。TTS 解码与 ASR 推理的顶层 `progress` 现在会持续变化；`progress_detail.basis=estimated` 时百分比是最佳估算，`activity` 提供当前调用的模型活动。新增响应字段是兼容性扩展，但使用严格反序列化模型的客户端需要先允许这些字段。ETA 是热身后才出现的建议区间，不是 SLA。
-- ASR/TTS 页面参数现在分别保存在浏览器 localStorage，并提供页面级“恢复默认配置”；清除站点数据后会恢复默认。TTS 文本仅保留在 sessionStorage，文件和未确认的麦克风录音不会持久化。
+- Windows 上的 ASR 子进程进度通信改为不可变编号快照，修复父进程读取进度时覆盖同一路径可能触发的 `PermissionError: [WinError 5]`。进度频率、API 和识别结果不变；TTS 仍直接写入任务进度，不使用该文件通信机制。
+- ASR/TTS 页面参数现在分别保存在浏览器 localStorage，并提供页面级“恢复默认配置”；清除站点数据后会恢复默认。ASR 与 TTS 偏好都迁移到包含 `model` 的 v2，未保存模型时仍使用 0.6B。TTS 文本与 `instruct` 仅保留在 sessionStorage，文件和未确认的麦克风录音不会持久化。
+- ASR 新增 1.7B 模型选择和热词库。默认仍是 0.6B；旧客户端省略 `model` 和 `hotword_list_ids` 时行为不变。`setup asr/all` 会额外下载固定 revision、当前约 4.4 GiB 的 1.7B 权重。GPU 按标称 4/8 GiB 档位并扣除 256 MiB 报告容差判断，因此 0.6B/1.7B 的实际门槛分别是 3840/7936 MiB，判断口径是报告的总显存而非当前空闲显存。门槛只决定准入，不保证其他 GPU 程序不会造成运行期 OOM。
+- Capabilities 新增 `asr.default_model`、`asr.models[]` 和 `asr.hotword_library`，ASR 结果新增模型身份与 `hotword_context`。这些都是兼容性扩展；严格反序列化客户端应先允许新字段，并按 `asr.models[].compute_devices` 判断所选模型，而不是继续使用只代表默认模型的顶层 `asr.compute_devices`。
 - 声纹库新增浏览器麦克风录音入口，继续复用现有样本上传 API，不新增数据库字段或迁移。远程普通 HTTP 访问仍可能被浏览器拒绝麦克风权限，可继续使用文件上传。
 
 ## 升级后验证

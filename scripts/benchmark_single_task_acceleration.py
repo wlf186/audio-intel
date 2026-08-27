@@ -37,6 +37,7 @@ def submit(
     accelerated: bool,
     audio: Path | None,
     text: str,
+    model: str,
 ) -> dict[str, Any]:
     common = {
         "compute_device": device,
@@ -49,14 +50,14 @@ def submit(
             response = client.post(
                 "/api/v1/asr/jobs",
                 headers=headers,
-                data={**common, "language": "Auto", "speaker_count": "auto", "diarize": "true", "align": "true"},
+                data={**common, "model": model, "language": "Auto", "speaker_count": "auto", "diarize": "true", "align": "true"},
                 files={"file": (audio.name, stream, "application/octet-stream")},
             )
     else:
         response = client.post(
             "/api/v1/tts/jobs",
             headers=headers,
-            data={**common, "text": text, "language": "Chinese", "voice_mode": "preset", "speaker": "Vivian"},
+            data={**common, "model": model, "text": text, "language": "Chinese", "voice_mode": "preset", "speaker": "Vivian"},
         )
     response.raise_for_status()
     return response.json()
@@ -67,12 +68,19 @@ def main() -> None:
     parser.add_argument("kind", choices=("asr", "tts"))
     parser.add_argument("--device", choices=("cpu", "gpu"), required=True)
     parser.add_argument("--audio", type=Path, help="ASR input; required when kind=asr")
-    parser.add_argument("--text", default="这是单任务加速基准。" * 80, help="TTS input text")
+    parser.add_argument(
+        "--model", choices=("qwen3-asr-0.6b", "qwen3-asr-1.7b", "qwen3-tts-0.6b", "qwen3-tts-1.7b"),
+        help="Model ID; defaults to the 0.6B model for the selected task kind",
+    )
+    parser.add_argument("--text", default="这是单任务加速基准。" * 32, help="TTS input text")
     parser.add_argument("--base-url", default="http://127.0.0.1:20810")
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--poll-seconds", type=float, default=0.5)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    args.model = args.model or f"qwen3-{args.kind}-0.6b"
+    if not args.model.startswith(f"qwen3-{args.kind}-"):
+        parser.error(f"--model {args.model!r} does not match kind={args.kind}")
     if args.kind == "asr" and (args.audio is None or not args.audio.is_file()):
         parser.error("--audio must name an existing file when kind=asr")
     if args.repeat < 1:
@@ -87,11 +95,12 @@ def main() -> None:
         for repetition in range(args.repeat):
             # Alternating order reduces model warm-up and thermal bias.
             for accelerated in ((False, True) if repetition % 2 == 0 else (True, False)):
-                queued = submit(client, args.kind, args.device, accelerated, args.audio, args.text)
+                queued = submit(client, args.kind, args.device, accelerated, args.audio, args.text, args.model)
                 job = wait_for_job(client, queued["id"], args.poll_seconds)
                 result = job.get("result") or {}
                 runs.append({
                     "job_id": job["id"],
+                    "model": result.get("model"),
                     "accelerated": accelerated,
                     "processing_seconds": job["processing_seconds"],
                     "duration": result.get("duration"),
@@ -106,6 +115,7 @@ def main() -> None:
     report = {
         "kind": args.kind,
         "device": args.device,
+        "model": args.model,
         "repeat": args.repeat,
         "baseline_median_seconds": baseline_median,
         "accelerated_median_seconds": accelerated_median,

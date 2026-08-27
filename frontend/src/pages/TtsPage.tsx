@@ -13,9 +13,10 @@ import {
 import { api, artifactUrl, formatTime } from '../lib/api'
 import type {
   ComputeDevice,
+  AsrModelCapability,
   Job,
   ResultRevealRequest,
-  TtsControls,
+  TtsModelCapability,
   VoiceprintPerson,
 } from '../lib/types'
 import { JobMini } from '../components/JobMini'
@@ -42,8 +43,9 @@ type Props = {
   onSelect: (job: Job) => void
   gpuAvailable?: boolean
   voiceprints: VoiceprintPerson[]
+  asrModels: AsrModelCapability[]
+  ttsModels: TtsModelCapability[]
   ttsLanguages?: string[]
-  ttsControls?: TtsControls
   referenceLanguages?: string[]
   revealRequest?: ResultRevealRequest
   onRevealHandled: (token: number) => void
@@ -77,6 +79,36 @@ const fallbackReferenceLanguages = [
   'Spanish',
   'Italian',
 ]
+const fallbackTtsModels: TtsModelCapability[] = [{
+  id: 'qwen3-tts-0.6b',
+  name: 'Qwen3-TTS 0.6B',
+  default: true,
+  installed: true,
+  installation_state: 'installed',
+  voice_modes: ['preset', 'profile', 'inline_clone', 'voiceprint'],
+  compute_devices: [
+    { id: 'cpu', available: true, default: false, quantized: false, precision: 'FP32' },
+    { id: 'gpu', available: true, default: true, quantized: false, precision: 'BF16', minimum_memory_mib: 3840 },
+  ],
+  controls: {
+    instruction_voice_modes: [],
+    instruction_required_voice_modes: [],
+    max_instruction_chars: 1000,
+    speaking_rate_parameter: false,
+    pitch_parameter: false,
+    sampling_parameters: false,
+  },
+  checkpoints: [],
+}]
+const instructionExamples = [
+  '语速缓慢而沉稳',
+  '语速明快，节奏紧凑',
+  '音调偏高且起伏明显',
+  '低沉温柔地表达',
+  '带着开心和兴奋的情绪',
+  '用悲伤克制的语气说',
+  '用明显愤怒但吐字清晰的语气说',
+]
 
 export function TtsPage({
   jobs,
@@ -85,8 +117,9 @@ export function TtsPage({
   onSelect,
   gpuAvailable,
   voiceprints,
+  asrModels,
+  ttsModels,
   ttsLanguages = fallbackTtsLanguages,
-  ttsControls,
   referenceLanguages = fallbackReferenceLanguages,
   revealRequest,
   onRevealHandled,
@@ -97,6 +130,8 @@ export function TtsPage({
   const [referenceSource, setReferenceSource] =
     useState<ReferenceSource>('upload')
   const [referenceName, setReferenceName] = useState('')
+  const [referenceAsrModel,setReferenceAsrModel]=useState('qwen3-asr-0.6b')
+  const [referenceAsrDevice,setReferenceAsrDevice]=useState<ComputeDevice>('gpu')
   const [voices, setVoices] = useState<string[]>([
     'Vivian',
     'Serena',
@@ -151,16 +186,40 @@ export function TtsPage({
     () => Array.from(new Set(['Auto', ...referenceLanguages])),
     [referenceLanguages],
   )
-  const advancedControlsUnavailable =
-    !ttsControls ||
-    (ttsControls.instruction_voice_modes.length === 0 &&
-      !ttsControls.speaking_rate_parameter &&
-      !ttsControls.pitch_parameter &&
-      !ttsControls.sampling_parameters)
+  const availableTtsModels = ttsModels.length ? ttsModels : fallbackTtsModels
+  const selectedTtsModel =
+    availableTtsModels.find((item) => item.id === draft.model) ||
+    availableTtsModels.find((item) => item.default) ||
+    availableTtsModels[0]
+  const ttsGpu = selectedTtsModel?.compute_devices.find((item) => item.id === 'gpu')
+  const effectiveTtsDevice: ComputeDevice =
+    draft.computeDevice === 'gpu' &&
+    (ttsGpu?.available === false || gpuAvailable === false)
+      ? 'cpu'
+      : draft.computeDevice
+  const instructionSupported = Boolean(
+    selectedTtsModel?.controls.instruction_voice_modes.includes(draft.mode),
+  )
+  const instructionRequired = Boolean(
+    selectedTtsModel?.controls.instruction_required_voice_modes.includes(
+      draft.mode,
+    ),
+  )
+  const selectedReferenceModel=asrModels.find(item=>item.id===referenceAsrModel)||asrModels.find(item=>item.default)
+  const referenceGpu=selectedReferenceModel?.compute_devices.find(item=>item.id==='gpu')
+  const effectiveReferenceDevice:ComputeDevice=referenceAsrDevice==='gpu'&&(referenceGpu?.available===false||gpuAvailable===false)?'cpu':referenceAsrDevice
 
   useEffect(() => {
     saveTtsContent(content)
   }, [content])
+  useEffect(() => {
+    if (selectedTtsModel && preferences.model !== selectedTtsModel.id)
+      setPreferences((current) => {
+        const next = { ...current, model: selectedTtsModel.id }
+        saveTtsPreferences(next)
+        return next
+      })
+  }, [preferences.model, selectedTtsModel])
   useEffect(() => {
     api
       .voices()
@@ -241,6 +300,38 @@ export function TtsPage({
     key: K,
     value: TtsContent[K],
   ) => setContent((current) => ({ ...current, [key]: value }))
+  const selectModel = (modelId: string) => {
+    const model = availableTtsModels.find((item) => item.id === modelId)
+    if (!model) return
+    const mode =
+      preferences.mode === 'voice_design' &&
+      !model.voice_modes.includes('voice_design')
+        ? 'preset'
+        : preferences.mode
+    const clearsInstruction = !model.controls.instruction_voice_modes.includes(mode)
+    setPreferences((current) => {
+      const next = { ...current, model: model.id, mode }
+      saveTtsPreferences(next)
+      return next
+    })
+    if (clearsInstruction && content.instruct) {
+      setContent((current) => ({ ...current, instruct: '' }))
+      setNotice('所选模型或音色模式不支持自然语言指令，已清空指令。')
+    }
+  }
+  const selectMode = (mode: TtsPreferences['mode']) => {
+    updatePreference('mode', mode)
+    if (!selectedTtsModel?.controls.instruction_voice_modes.includes(mode) && content.instruct) {
+      setContent((current) => ({ ...current, instruct: '' }))
+      setNotice('该音色模式不支持自然语言指令，已清空指令。')
+    }
+  }
+  const addInstructionExample = (example: string) =>
+    setContent((current) => {
+      if (current.instruct.includes(example)) return current
+      const separator = current.instruct.trim() ? '，' : ''
+      return { ...current, instruct: `${current.instruct.trim()}${separator}${example}` }
+    })
   const cancelActiveReference = async () => {
     if (referenceJob && ['queued', 'running'].includes(referenceJob.state))
       await api
@@ -249,10 +340,6 @@ export function TtsPage({
         .catch(() => undefined)
   }
   const analyzeReference = async (file: File) => {
-    if (draft.computeDevice === 'gpu' && gpuAvailable === false) {
-      setError('当前未检测到可用 GPU，请选择 CPU 后再分析参考音频。')
-      return false
-    }
     setReferenceBusy(true)
     setError('')
     setNotice('')
@@ -260,7 +347,8 @@ export function TtsPage({
       await cancelActiveReference()
       const data = new FormData()
       data.set('file', file)
-      data.set('compute_device', draft.computeDevice)
+      data.set('model',referenceAsrModel)
+      data.set('compute_device', effectiveReferenceDevice)
       data.set('accelerate_single_task', String(draft.accelerateSingleTask))
       const job = await api.analyzeCloneReference(data)
       setReferenceName(file.name)
@@ -323,8 +411,12 @@ export function TtsPage({
       setError('请输入需要合成的文本。')
       return
     }
-    if (draft.computeDevice === 'gpu' && gpuAvailable === false) {
-      setError('当前未检测到可用 GPU，请选择 CPU。')
+    if (!selectedTtsModel?.installed) {
+      setError('所选 TTS 模型尚未完整安装。')
+      return
+    }
+    if (instructionRequired && !draft.instruct.trim()) {
+      setError('音色设计需要填写音色与表达指令。')
       return
     }
     if (
@@ -348,14 +440,20 @@ export function TtsPage({
     try {
       const data = new FormData()
       data.set('text', draft.text)
+      data.set('model', selectedTtsModel.id)
       data.set('language', draft.language)
       data.set('response_format', 'wav')
       data.set('display_name', draft.text.slice(0, 18) || '语音合成')
-      data.set('compute_device', draft.computeDevice)
+      data.set('compute_device', effectiveTtsDevice)
       data.set('accelerate_single_task', String(draft.accelerateSingleTask))
       if (draft.mode === 'preset') {
         data.set('voice_mode', 'preset')
         data.set('speaker', draft.speaker)
+        if (instructionSupported && draft.instruct.trim())
+          data.set('instruct', draft.instruct.trim())
+      } else if (draft.mode === 'voice_design') {
+        data.set('voice_mode', 'voice_design')
+        data.set('instruct', draft.instruct.trim())
       } else if (draft.cloneSource === 'voiceprint') {
         data.set('voice_mode', 'voiceprint')
         data.set('voiceprint_sample_id', sample!.id)
@@ -378,6 +476,7 @@ export function TtsPage({
     clearTtsPreferences()
     saveTtsPreferences(next)
     setPreferences(next)
+    setContent((current) => ({ ...current, instruct: '' }))
     setNotice('已恢复 TTS 默认配置。')
     setError('')
   }
@@ -389,20 +488,20 @@ export function TtsPage({
           <div>
             <h1 tabIndex={-1}>语音合成</h1>
             <p>
-              {draft.computeDevice === 'cpu'
+              {effectiveTtsDevice === 'cpu'
                 ? 'CPU 全精度离线生成，音质优先'
                 : 'GPU 原生精度加速，无量化'}
             </p>
           </div>
           <div className="section-actions">
             <span className="performance-badge">
-              {draft.computeDevice === 'cpu'
+              {effectiveTtsDevice === 'cpu'
                 ? draft.accelerateSingleTask
                   ? 'CPU · FP32 · SDPA · AUTO BATCH'
                   : 'CPU · FP32 · SDPA · BATCH 1'
                 : draft.accelerateSingleTask
                   ? 'GPU · BF16 · SDPA · AUTO BATCH'
-                  : 'GPU · BF16 · SDPA · ADAPTIVE BATCH 1–2'}
+                  : 'GPU · BF16 · SDPA · BATCH 1'}
             </span>
             <button
               className="reset-settings"
@@ -427,7 +526,7 @@ export function TtsPage({
             aria-controls="tts-mode-content"
             tabIndex={draft.mode === 'preset' ? 0 : -1}
             className={draft.mode === 'preset' ? 'active' : ''}
-            onClick={() => updatePreference('mode', 'preset')}
+            onClick={() => selectMode('preset')}
           >
             预置音色
           </button>
@@ -438,16 +537,33 @@ export function TtsPage({
             aria-controls="tts-mode-content"
             tabIndex={draft.mode === 'inline_clone' ? 0 : -1}
             className={draft.mode === 'inline_clone' ? 'active' : ''}
-            onClick={() => updatePreference('mode', 'inline_clone')}
+            onClick={() => selectMode('inline_clone')}
           >
             声音克隆
           </button>
+          {selectedTtsModel?.voice_modes.includes('voice_design') ? (
+            <button
+              id="tts-mode-voice-design"
+              role="tab"
+              aria-selected={draft.mode === 'voice_design'}
+              aria-controls="tts-mode-content"
+              tabIndex={draft.mode === 'voice_design' ? 0 : -1}
+              className={draft.mode === 'voice_design' ? 'active' : ''}
+              onClick={() => selectMode('voice_design')}
+            >
+              音色设计
+            </button>
+          ) : null}
         </div>
         <div
           id="tts-mode-content"
           role="tabpanel"
           aria-labelledby={
-            draft.mode === 'preset' ? 'tts-mode-preset' : 'tts-mode-clone'
+            draft.mode === 'preset'
+              ? 'tts-mode-preset'
+              : draft.mode === 'voice_design'
+                ? 'tts-mode-voice-design'
+                : 'tts-mode-clone'
           }
         >
           <label className="text-editor">
@@ -492,6 +608,23 @@ export function TtsPage({
           ) : null}
           <div className="two-cols">
             <label>
+              TTS 模型
+              <select
+                aria-label="TTS 模型"
+                value={selectedTtsModel?.id || draft.model}
+                onChange={(event) => selectModel(event.target.value)}
+              >
+                {availableTtsModels.map((model) => (
+                  <option key={model.id} value={model.id} disabled={!model.installed}>
+                    {model.name}{model.default ? '（默认）' : ''}{model.installed ? '' : '（未安装）'}
+                  </option>
+                ))}
+              </select>
+              <small className="device-hint">
+                1.7B 提供指令控制与音色设计；0.6B 启动更快。
+              </small>
+            </label>
+            <label>
               输出语种
               <select
                 value={draft.language}
@@ -507,7 +640,9 @@ export function TtsPage({
                 已知语种时显式选择；未知或混合语种使用 Auto。
               </small>
             </label>
-            {draft.mode === 'preset' ? (
+          </div>
+          {draft.mode === 'preset' ? (
+            <div className="two-cols">
               <label>
                 音色
                 <select
@@ -522,7 +657,9 @@ export function TtsPage({
                   ))}
                 </select>
               </label>
-            ) : draft.cloneSource === 'voiceprint' ? (
+            </div>
+          ) : draft.mode === 'inline_clone' && draft.cloneSource === 'voiceprint' ? (
+            <div className="two-cols">
               <label>
                 声纹人员
                 <select
@@ -551,8 +688,8 @@ export function TtsPage({
                   )}
                 </select>
               </label>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
           {draft.mode === 'inline_clone' && draft.cloneSource === 'upload' ? (
             <section
               className="clone-reference-panel"
@@ -574,6 +711,16 @@ export function TtsPage({
                     <Trash2 />
                   </button>
                 ) : null}
+              </div>
+              <div className="sample-options reference-asr-options">
+                <select aria-label="克隆参考 ASR 模型" value={referenceAsrModel} disabled={referenceBusy||microphoneActive} onChange={event=>setReferenceAsrModel(event.target.value)}>
+                  {(asrModels.length?asrModels:[{id:'qwen3-asr-0.6b',name:'Qwen3-ASR 0.6B',installed:true} as AsrModelCapability]).map(item=><option key={item.id} value={item.id} disabled={!item.installed}>{item.name}{item.installed?'':'（未安装）'}</option>)}
+                </select>
+                <select aria-label="克隆参考 ASR 计算设备" value={effectiveReferenceDevice} disabled={referenceBusy||microphoneActive} onChange={event=>setReferenceAsrDevice(event.target.value as ComputeDevice)}>
+                  <option value="gpu" disabled={gpuAvailable===false||referenceGpu?.available===false}>GPU</option>
+                  <option value="cpu">CPU</option>
+                </select>
+                {referenceAsrDevice==='gpu'&&effectiveReferenceDevice==='cpu'?<small className="device-hint">{referenceGpu?.unavailable_reason||'当前模型自动使用 CPU。'}</small>:null}
               </div>
               <div
                 className="sample-source-tabs"
@@ -861,11 +1008,45 @@ export function TtsPage({
               ) : null}
             </label>
           ) : null}
+          {instructionSupported ? (
+            <section className="tts-instruction-panel" aria-label="TTS 高级指令">
+              <label>
+                {draft.mode === 'voice_design' ? '音色与表达指令' : '风格与表达指令（可选）'}
+                <textarea
+                  name="instruct"
+                  className="short"
+                  value={draft.instruct}
+                  maxLength={selectedTtsModel.controls.max_instruction_chars}
+                  placeholder={
+                    draft.mode === 'voice_design'
+                      ? '例如：温暖成熟的女性声音，音调略低，语速舒缓，带着克制的喜悦。'
+                      : '例如：语速稍慢，用温柔而开心的语气说。'
+                  }
+                  onChange={(event) => updateContent('instruct', event.target.value)}
+                />
+                <small>
+                  {draft.instruct.length} / {selectedTtsModel.controls.max_instruction_chars}；
+                  语速、音调和情绪均通过自然语言描述，不是数值参数。
+                </small>
+              </label>
+              <div className="instruction-examples" aria-label="指令示例">
+                {instructionExamples.map((example) => (
+                  <button
+                    key={example}
+                    type="button"
+                    onClick={() => addInstructionExample(example)}
+                  >
+                    {example}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
           <label className="device-control">
             计算设备
             <select
               aria-label="TTS 计算设备"
-              value={draft.computeDevice}
+              value={effectiveTtsDevice}
               onChange={(event) =>
                 updatePreference(
                   'computeDevice',
@@ -873,14 +1054,20 @@ export function TtsPage({
                 )
               }
             >
-              <option value="gpu" disabled={gpuAvailable === false}>
-                GPU · BF16{gpuAvailable === false ? '（不可用）' : '（默认）'}
+              <option value="gpu" disabled={gpuAvailable === false || ttsGpu?.available === false}>
+                GPU · BF16{gpuAvailable === false || ttsGpu?.available === false ? '（不可用）' : '（默认）'}
               </option>
               <option value="cpu">CPU · FP32</option>
             </select>
-            <small className="device-hint">
-              参考 ASR 与 TTS 使用当前设备；GPU 不可用时不会静默回退。
-            </small>
+            {draft.computeDevice === 'gpu' && effectiveTtsDevice === 'cpu' ? (
+              <small className="device-hint">
+                {ttsGpu?.unavailable_reason || '所选模型无法使用当前 GPU，本次自动使用 CPU。'}
+              </small>
+            ) : (
+              <small className="device-hint">
+                API 显式请求不可用 GPU 时返回 503；页面会按模型能力改用 CPU。
+              </small>
+            )}
           </label>
           <div className="acceleration-control">
             <label>
@@ -914,7 +1101,8 @@ export function TtsPage({
               busy ||
               referenceBusy ||
               !draft.text.trim() ||
-              (draft.computeDevice === 'gpu' && gpuAvailable === false) ||
+              !selectedTtsModel?.installed ||
+              (instructionRequired && !draft.instruct.trim()) ||
               (draft.mode === 'inline_clone' &&
                 draft.cloneSource === 'upload' &&
                 !referenceReady)
@@ -927,16 +1115,20 @@ export function TtsPage({
           <div className="quality-note">
             <b>本地质量策略</b>
             <span>
-              官方 0.6B 权重 · 无量化 ·{' '}
-              {draft.computeDevice === 'cpu'
+              官方 {selectedTtsModel?.name.replace('Qwen3-TTS ', '') || '0.6B'} 权重 · 无量化 ·{' '}
+              {effectiveTtsDevice === 'cpu'
                 ? 'CPU FP32；兼容性优先。'
                 : 'GPU BF16；官方原生精度加速。'}
             </span>
-            {advancedControlsUnavailable ? (
+            {!instructionSupported ? (
               <small className="tts-control-note">
-                当前 0.6B 根据文本语义和标点自动处理韵律；不提供独立语速、音高、风格或情绪参数。
+                当前模型与音色模式根据文本语义和标点自动处理韵律，不接受自然语言高级指令。
               </small>
-            ) : null}
+            ) : (
+              <small className="tts-control-note">
+                当前使用官方自然语言指令控制；独立语速、音高与底层采样参数仍保持关闭。
+              </small>
+            )}
           </div>
         </div>
       </section>
@@ -951,7 +1143,8 @@ export function TtsPage({
             <div>
               <b>{selected.display_name}</b>
               <span>
-                {selected.result.speaker || '克隆音色'} ·{' '}
+                {selected.result.speaker || (selected.request.voice_mode === 'voice_design' ? '设计音色' : '克隆音色')} ·{' '}
+                {selected.result.model_name || selected.result.model || (selected.request.model as string | undefined) || 'Qwen3-TTS 0.6B'} ·{' '}
                 {selected.result.duration}s ·{' '}
                 {(
                   selected.result.compute_device ||
@@ -962,6 +1155,9 @@ export function TtsPage({
                   .toUpperCase()}{' '}
                 {selected.result.precision || ''}
               </span>
+              {selected.result.instruct ? (
+                <small className="tts-result-instruction">指令：{selected.result.instruct}</small>
+              ) : null}
             </div>
             {selected.result.artifacts?.[0] ? (
               <AudioTransport

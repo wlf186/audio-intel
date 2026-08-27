@@ -2,19 +2,24 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
+import logging
 import math
+import os
 from pathlib import Path
 from typing import Any
 
 from audio_intel.performance import lower_batch_size
-from audio_intel.progress import ThrottledProgress
+from audio_intel.progress import ThrottledProgress, progress_snapshot_path
 from audio_intel.utils import atomic_json
 
 
 ASR_INITIAL_OUTPUT_TOKENS_PER_SECOND = 3.0
 ASR_ENCODER_PROGRESS_SHARE = 0.20
+ASR_MODEL_LOAD_PROGRESS_SHARE = 0.03
 MAX_IN_FLIGHT_BATCH_PROGRESS = 0.95
+
+
+logger = logging.getLogger(__name__)
 
 
 def _progress(
@@ -22,13 +27,25 @@ def _progress(
     *, stage_progress: float | None = None, unit: str = "audio_chunk",
     basis: str = "observed", activity: dict[str, Any] | None = None,
 ) -> None:
-    path = payload.get("progress_path")
-    if path:
-        atomic_json(Path(path), {
-            "stage": stage, "completed": completed, "total": total,
-            "stage_progress": stage_progress, "unit": unit,
-            "basis": basis, "activity": activity,
-        })
+    base_path = payload.get("progress_path")
+    if base_path:
+        sequence = int(payload.get("_progress_sequence", 0)) + 1
+        payload["_progress_sequence"] = sequence
+        snapshot_path = progress_snapshot_path(Path(base_path), sequence)
+        try:
+            atomic_json(snapshot_path, {
+                "stage": stage, "completed": completed, "total": total,
+                "stage_progress": stage_progress, "unit": unit,
+                "basis": basis, "activity": activity,
+            })
+        except OSError:
+            if not payload.get("_progress_warning_emitted"):
+                logger.warning(
+                    "Unable to publish ASR progress snapshot %s; inference will continue",
+                    snapshot_path,
+                    exc_info=True,
+                )
+                payload["_progress_warning_emitted"] = True
 
 
 def _module_layers(model: Any, path: tuple[str, ...]) -> list[Any]:
@@ -75,22 +92,35 @@ def transcribe(payload: dict[str, Any]) -> dict[str, Any]:
     dtype = torch.float32 if compute_device == "cpu" else torch.bfloat16
     device_map = "cpu" if compute_device == "cpu" else "cuda:0"
     target_batch_size = max(1, int(payload.get("batch_size", 1)))
+    chunks = list(payload["chunks"])
+    _progress(
+        payload, "transcription", 0, len(chunks), stage_progress=0.0,
+        basis="estimated", activity={
+            "sequence": 1, "current": 0, "unit": "model_load", "basis": "estimated",
+        },
+    )
     model = Qwen3ASRModel.from_pretrained(
         payload["model_path"], dtype=dtype, device_map=device_map,
         attn_implementation="sdpa", max_inference_batch_size=target_batch_size, max_new_tokens=1024,
         local_files_only=True,
     )
+    _progress(
+        payload, "transcription", 0, len(chunks),
+        stage_progress=ASR_MODEL_LOAD_PROGRESS_SHARE,
+        basis="estimated", activity={
+            "sequence": 1, "current": 1, "total": 1,
+            "unit": "model_load", "basis": "observed",
+        },
+    )
     output = []
     forced_language = None if payload.get("language") in {None, "", "Auto"} else payload["language"]
-    chunks = list(payload["chunks"])
     actual_sizes: list[int] = []
     fallbacks: list[dict[str, int]] = []
     index = 0
     batch_size = target_batch_size
-    activity_sequence = 0
+    activity_sequence = 1
     observed_output_tokens = 0
     observed_audio_seconds = 0.0
-    _progress(payload, "transcription", 0, len(chunks), stage_progress=0.0)
     while index < len(chunks):
         current = chunks[index:index + batch_size]
         activity_sequence += 1
@@ -110,9 +140,12 @@ def transcribe(payload: dict[str, Any]) -> dict[str, Any]:
         handles: list[Any] = []
 
         def emit(batch_fraction: float, current_count: int, total_count: int, unit: str, basis: str) -> None:
-            stage_progress = (
+            inference_progress = (
                 index + len(current) * min(MAX_IN_FLIGHT_BATCH_PROGRESS, batch_fraction)
             ) / max(len(chunks), 1)
+            stage_progress = ASR_MODEL_LOAD_PROGRESS_SHARE + (
+                1 - ASR_MODEL_LOAD_PROGRESS_SHARE
+            ) * inference_progress
             _progress(
                 payload, "transcription", index, len(chunks),
                 stage_progress=stage_progress, basis="estimated", activity={
@@ -186,7 +219,9 @@ def transcribe(payload: dict[str, Any]) -> dict[str, Any]:
         index += len(current)
         _progress(
             payload, "transcription", index, len(chunks),
-            stage_progress=index / max(len(chunks), 1),
+            stage_progress=ASR_MODEL_LOAD_PROGRESS_SHARE + (
+                1 - ASR_MODEL_LOAD_PROGRESS_SHARE
+            ) * index / max(len(chunks), 1),
         )
     return {
         "chunks": output,

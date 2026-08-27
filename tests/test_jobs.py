@@ -203,7 +203,7 @@ def test_historical_jobs_backfill_compute_device_names(tmp_path, monkeypatch) ->
     assert db_module.get_job(old_tts["id"])["request"]["compute_device_name"] == "CPU"
     assert db_module.get_job(named["id"])["request"]["compute_device_name"] == "Original GPU"
     with sqlite3.connect(local.database_path) as database:
-        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 6
+        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 7
 
 
 def test_schema_upgrade_reaches_voiceprints_without_a_gpu(tmp_path, monkeypatch) -> None:
@@ -218,7 +218,7 @@ def test_schema_upgrade_reaches_voiceprints_without_a_gpu(tmp_path, monkeypatch)
     db_module.init_db()
 
     with sqlite3.connect(local.database_path) as database:
-        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 6
+        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 7
         assert database.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='voiceprint_people'"
         ).fetchone()[0] == 1

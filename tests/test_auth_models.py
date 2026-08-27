@@ -10,7 +10,11 @@ from fastapi.testclient import TestClient
 import audio_intel.api as api_module
 import audio_intel.db as db_module
 from audio_intel.config import settings
-from audio_intel.model_registry import model_installation, model_manifest, target_ready
+from audio_intel.model_registry import (
+    asr_models, default_asr_model, default_tts_model, model_installation,
+    resolve_asr_model, resolve_tts_checkpoint, resolve_tts_model,
+    model_manifest, target_ready, tts_models,
+)
 import scripts.download_models as download_models
 
 
@@ -33,6 +37,38 @@ def test_model_marker_requires_the_expected_revision(tmp_path) -> None:
         path.write_bytes(b"present")
     assert model_installation(models_dir, model)["state"] == "installed"
     assert not target_ready(models_dir, "asr")
+
+
+def test_asr_manifest_pins_both_public_models_and_split_large_weights() -> None:
+    models = asr_models()
+    assert [item["public_id"] for item in models] == ["qwen3-asr-0.6b", "qwen3-asr-1.7b"]
+    assert default_asr_model()["public_id"] == "qwen3-asr-0.6b"
+    large = resolve_asr_model("Qwen/Qwen3-ASR-1.7B")
+    assert large is not None
+    assert large["revision"] == "7278e1e70fe206f11671096ffdd38061171dd6e5"
+    assert large["minimum_gpu_memory_mib"] == 7936
+    assert large["required_files"][-3:] == [
+        "model-00002-of-00002.safetensors",
+        "model.safetensors.index.json",
+        "tokenizer_config.json",
+    ]
+
+
+def test_tts_manifest_groups_pinned_checkpoints_by_public_model() -> None:
+    models = tts_models()
+    assert [item["public_id"] for item in models] == ["qwen3-tts-0.6b", "qwen3-tts-1.7b"]
+    assert default_tts_model()["public_id"] == "qwen3-tts-0.6b"
+    large = resolve_tts_model("Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign")
+    assert large is not None
+    assert large["minimum_gpu_memory_mib"] == 7936
+    assert large["batch_penalty_steps"] == 2
+    assert set(large["checkpoints"]) == {"base", "custom_voice", "voice_design"}
+    assert resolve_tts_checkpoint(large, "voice_design")["revision"] == (
+        "5ecdb67327fd37bb2e042aab12ff7391903235d3"
+    )
+    assert resolve_tts_checkpoint(large, "inline_clone")["revision"] == (
+        "fd4b254389122332181a7c3db7f27e918eec64e3"
+    )
 
 
 def test_huggingface_download_writes_revision_marker(tmp_path, monkeypatch) -> None:
