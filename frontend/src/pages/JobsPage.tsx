@@ -2,6 +2,7 @@ import {useEffect,useMemo,useRef,useState} from 'react'
 import {Check,Copy,Eye,LoaderCircle,RotateCcw,Trash2,XCircle} from 'lucide-react'
 import {api,size} from '../lib/api'
 import type {Job} from '../lib/types'
+import {progressPresentation} from '../lib/jobs'
 
 const filterLabels:Record<string,string>={all:'全部',asr:'ASR',tts:'TTS',succeeded:'已完成',failed:'失败'}
 const stateLabels:Record<string,string>={queued:'等待处理',running:'正在处理',succeeded:'已完成',failed:'失败',cancelled:'已取消'}
@@ -123,7 +124,8 @@ export function JobsPage({jobs,refresh,openJob,onJobUpdated}:{jobs:Job[];refresh
    const stopping=job.state==='running'&&(job.stage==='cancelling'||cancellingIds.has(job.id))
    const device=deviceName(job)
    const estimate=queueEstimate(job)
-   const stageLabel=stopping?'正在释放计算资源':(job.progress_detail?.stage_code||job.stage.replaceAll('_',' '))
+   const live=progressPresentation(job)
+   const stageLabel=stopping?'正在释放计算资源':live.stage
    return <div className={`table-row ${selected.has(job.id)?'selected':''}`} key={job.id}>
     <span className="select-cell"><input type="checkbox" aria-label={`选择任务 ${job.display_name}`} checked={selected.has(job.id)} disabled={!canDelete||busy} title={canDelete?'选择任务':'运行中的任务需先取消'} onChange={()=>toggle(job.id)}/></span>
     <span className="job-name"><b>{job.display_name}</b><small className="job-meta"><span className="job-id" title={`完整任务 ID：${job.id}`}>任务 ID：{job.id.slice(0,12)}…</span><button type="button" className={`copy-job-id ${copiedId===job.id?'copied':''}`} aria-label={`${copiedId===job.id?'已复制':'复制'}完整任务 ID ${job.id}`} title={copiedId===job.id?'已复制完整任务 ID':'复制完整任务 ID'} onClick={()=>void copyJobId(job.id)}>{copiedId===job.id?<Check/>:<Copy/>}</button><span aria-hidden="true">·</span><span>{device}</span><span aria-hidden="true">·</span><i>{elapsed(job,now)}</i></small></span>
@@ -131,7 +133,7 @@ export function JobsPage({jobs,refresh,openJob,onJobUpdated}:{jobs:Job[];refresh
     <span className={`status ${job.state}`}>{stopping?'正在安全停止':stateLabels[job.state]}</span>
     <span>{new Date(job.created_at).toLocaleString()}</span>
     <span className="elapsed">{elapsed(job,now)}<small>{(job.attempts||0)>1?`${job.attempts} 次尝试`:'实际处理'}</small></span>
-    <span>{Math.round(job.progress*100)}% · {stageLabel}{estimate?<small className="queue-estimate">{estimate}</small>:null}</span>
+    <span>{live.percent}%{live.estimated?' 估算':''} · {stageLabel}{live.detail?<small className="progress-activity">{live.detail}</small>:null}{estimate?<small className="queue-estimate">{estimate}</small>:null}</span>
     <span className="actions">{job.state==='succeeded'?<button title="查看结果" onClick={()=>openJob(job)}><Eye/></button>:null}{['queued','running'].includes(job.state)?<button title={stopping?'正在安全停止':'取消任务'} aria-label={stopping?`正在安全停止 ${job.display_name}`:undefined} disabled={stopping} onClick={()=>void cancelJob(job)}>{stopping?<LoaderCircle className="spin"/>:<XCircle/>}</button>:null}{['failed','cancelled'].includes(job.state)?<button title="重试" onClick={()=>void act(()=>api.retry(job.id))}><RotateCcw/></button>:null}{canDelete?<button title="永久删除" disabled={busy} onClick={()=>void remove([job.id])}><Trash2/></button>:null}</span>
    </div>
   })}</div>

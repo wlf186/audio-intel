@@ -515,16 +515,16 @@ def run_stage(
         [sys.executable, "-m", "asr.stage", operation, str(input_path), str(output_path)],
         env=environment,
     )
-    last_progress: tuple[int, int] | None = None
+    last_progress = ""
     try:
         while process.poll() is None:
             if progress_callback is not None and progress_path.is_file():
                 try:
                     snapshot = json.loads(progress_path.read_text(encoding="utf-8"))
-                    current = (int(snapshot["completed"]), int(snapshot["total"]))
-                    if current != last_progress:
-                        progress_callback(*current)
-                        last_progress = current
+                    marker = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
+                    if marker != last_progress:
+                        progress_callback(snapshot)
+                        last_progress = marker
                 except (OSError, ValueError, KeyError, json.JSONDecodeError):
                     pass
             time.sleep(0.2)
@@ -547,12 +547,18 @@ def run_model_stage(
 ) -> dict[str, Any]:
     payload["compute_device"] = compute_device
     end_progress = 0.68 if operation == "transcribe" else 0.88
-    def report(completed: int, total: int) -> None:
-        ratio = completed / total if total else 1.0
+    def report(snapshot: dict[str, Any]) -> None:
+        completed = int(snapshot["completed"])
+        total = int(snapshot["total"])
+        ratio = snapshot.get("stage_progress")
+        ratio = float(ratio) if ratio is not None else completed / total if total else 1.0
         context.progress(
             progress + (end_progress - progress) * ratio,
             f"qwen3_{'asr' if operation == 'transcribe' else 'forced_alignment'}_{compute_device}",
             completed, total,
+            stage_progress=ratio, unit=str(snapshot.get("unit") or "audio_chunk"),
+            basis=str(snapshot.get("basis") or "observed"),
+            activity=snapshot.get("activity"),
         )
     if compute_device == "cpu":
         return run_stage(operation, payload, directory, report)

@@ -42,5 +42,6 @@ def test_dynamic_stage_is_normalized_for_consumers() -> None:
     })
     assert detail == {
         "stage_code": "synthesis", "stage_progress": 3 / 8,
-        "current": 3, "total": 8, "unit": "batch",
+        "basis": "observed", "current": 3, "total": 8,
+        "unit": "text_chunk", "activity": None,
     }

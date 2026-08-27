@@ -154,14 +154,14 @@ The stream immediately emits `event: job`, continues on changes, and closes at a
 
 - `state`: `queued → running → succeeded|failed|cancelled`。ASR 与 TTS 使用独立的 FIFO 队列。
 - 排队任务的 `queue.position` 从 1 开始，表示同类 FIFO 队列中的位置；任务运行后该字段为 `null`。`GET /api/v1/queue` 返回容量、准入预留和磁盘余量。ASR/TTS 队列彼此独立。
-- `progress` 是 `0–1` 的整体检查点；`progress_detail.stage_code` 是稳定阶段，`current/total` 在可计数阶段给出批次进度。
+- `progress` 是单调的 `0–1` 最佳整体进度；`progress_detail.stage_code` 是稳定阶段。`basis=estimated` 表示阶段百分比包含估算，`current/total/unit` 是已确认阶段单元，`activity` 是当前推理调用的 codec 帧、输出 token 或模型层活动。活动约每 0.5 秒最多持久化一次，不能作为 SLA。
 - `estimate` 使用相同设备、模式和任务特征的本机历史。少于 5 个有效样本时为 `warming_up`；可用后返回区间、样本数和置信度，不能作为 SLA。
 - SSE `/api/v1/events` 与 `/api/v1/jobs/{id}/events` 共享一次本地数据库快照并向客户端分发；没有事件 ID 或历史重放。断线后重连，并以首个快照或支持 ETag 的任务状态接口校准。轮询间隔可参考 `poll_after_seconds`。
 - `GET /api/v1/jobs` 的 `count` 是本页数量，不是任务总数。
 - 运行任务请求取消后仍保持 `state=running`，但 `stage=cancelling`；只有完整执行进程树退出后才进入终态 `cancelled`。结果接口在任务成功前返回 `409`。
 
 - ASR and TTS have separate FIFO queues. Queue positions are one-based within each kind.
-- ETA ranges are advisory local-history estimates, never an SLA. SSE has no replay; reconnect and reconcile through the ETag-enabled status endpoint.
+- Progress is monotonic and best-effort. Inspect `progress_detail.basis` before presenting it as exact; `activity` describes the current model call and may itself have an estimated total. ETA ranges are advisory local-history estimates, never an SLA. SSE has no replay; reconnect and reconcile through the ETag-enabled status endpoint.
 
 ## 重要注意事项 / Important notes
 

@@ -316,7 +316,8 @@ def idempotent_job(
 def public_job(job: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
     internal = {
         "request", "queue_seq", "stage_code", "stage_current", "stage_total",
-        "input_duration_seconds",
+        "input_duration_seconds", "progress_basis", "stage_progress", "stage_unit",
+        "progress_activity",
     }
     result = {key: value for key, value in job.items() if key not in internal}
     as_of = utcnow()
@@ -1363,8 +1364,8 @@ def create_app() -> FastAPI:
         "/api/v1/jobs/{job_id}", response_model=JobResponse, response_model_exclude_unset=True,
         tags=[JOB_TAG], summary="查询任务状态与进度 / Get job status and progress",
         description=bilingual(
-            "可靠轮询入口。`queue.position` 返回同类任务中的排队位置，`progress_detail` 提供稳定阶段代码和批次进度，`estimate` 是基于本机历史样本的区间估计；成功后出现 `result_url`。支持 `If-None-Match`。",
-            "Canonical polling endpoint. `queue.position` is the position within the same job kind, `progress_detail` supplies stable stage and batch progress, and `estimate` is a range learned from local history. `result_url` appears after success. Supports `If-None-Match`.",
+            "可靠轮询入口。`queue.position` 返回同类任务中的排队位置。`progress` 是单调的最佳整体进度；`progress_detail.basis=estimated` 表示含估算，`activity` 提供当前推理调用的模型活动。`estimate` 是基于本机历史样本的区间估计；成功后出现 `result_url`。支持 `If-None-Match`。",
+            "Canonical polling endpoint. `queue.position` is the position within the same job kind. `progress` is monotonic and best-effort; `progress_detail.basis=estimated` marks an estimate, while `activity` describes the current model call. `estimate` is a range learned from local history. `result_url` appears after success. Supports `If-None-Match`.",
         ),
         operation_id="getJob", responses={**conditional_job_responses(), **AUTH_RESPONSES, **NOT_FOUND_RESPONSE},
     )

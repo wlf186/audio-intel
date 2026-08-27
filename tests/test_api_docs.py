@@ -98,6 +98,12 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     ]
     progress = schema["components"]["schemas"]["JobResponse"]["properties"]["progress"]
     assert progress["minimum"] == 0 and progress["maximum"] == 1
+    assert "best-effort" in progress["description"]
+    progress_detail = schema["components"]["schemas"]["JobProgressDetail"]["properties"]
+    assert progress_detail["basis"]["$ref"].endswith("/ProgressBasis")
+    assert progress_detail["activity"]["anyOf"][0]["$ref"].endswith("/JobProgressActivity")
+    activity = schema["components"]["schemas"]["JobProgressActivity"]["properties"]
+    assert {"sequence", "current", "total", "unit", "basis", "updated_at"} <= set(activity)
     assert "EventSnapshot" in schema["components"]["schemas"]
     assert "EventJobResponse" in schema["components"]["schemas"]
     assert "AdmissionProblemDetail" in schema["components"]["schemas"]

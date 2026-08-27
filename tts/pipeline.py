@@ -13,6 +13,7 @@ from typing import Any, Iterator
 from audio_intel.config import settings
 from audio_intel.gpu import compute_device_name, gpu_lease
 from audio_intel.performance import lower_batch_size, resolve_acceleration
+from audio_intel.progress import ThrottledProgress
 from audio_intel.utils import waveform_peaks
 from audio_intel.worker import JobContext
 
@@ -22,6 +23,9 @@ GPU_TTS_BATCH_SIZE = 2
 GPU_TTS_MIN_TOTAL_MIB = 3500
 GPU_TTS_MIN_EFFECTIVE_FREE_MIB = 1100
 MAX_CLONE_REFERENCE_SECONDS = 15.0
+TTS_CODEC_FRAMES_PER_SECOND = 12.5
+TTS_INITIAL_CODEC_FRAMES_PER_TEXT_TOKEN = 4.5
+MAX_IN_FLIGHT_BATCH_PROGRESS = 0.95
 
 
 def aligner_python() -> Path:
@@ -122,12 +126,13 @@ def _generate_tts_batch(
     request: dict[str, Any],
     texts: list[str],
     clone_prompt: Any,
+    progress_callback: Any | None = None,
 ) -> tuple[list[Any], int]:
     batched = len(texts) > 1
     text: str | list[str] = texts if batched else texts[0]
     language = request.get("language") or "Auto"
     decode_context = _sequential_speech_decode(model) if batched else nullcontext()
-    with decode_context:
+    with _observe_tts_decode(model, progress_callback), decode_context:
         if request["voice_mode"] == "preset":
             return model.generate_custom_voice(
                 text=text,
@@ -142,6 +147,44 @@ def _generate_tts_batch(
             voice_clone_prompt=clone_prompt,
             non_streaming_mode=True,
         )
+
+
+@contextmanager
+def _observe_tts_decode(model: Any, callback: Any | None) -> Iterator[None]:
+    if callback is None:
+        yield
+        return
+    talker = getattr(getattr(model, "model", None), "talker", None)
+    register = getattr(talker, "register_forward_hook", None)
+    if not callable(register):
+        yield
+        return
+
+    def observe(_module: Any, _args: Any, output: Any) -> None:
+        step = getattr(output, "generation_step", None)
+        if isinstance(step, int) and step >= 0:
+            callback(step + 1)
+
+    handle = register(observe)
+    try:
+        yield
+    finally:
+        handle.remove()
+
+
+def _tts_text_token_counts(model: Any, texts: list[str]) -> list[int]:
+    try:
+        prompt = int(model.processor(
+            text=model._build_assistant_text(""), return_tensors="pt", padding=True,
+        )["input_ids"].shape[-1])
+        return [
+            max(1, int(model.processor(
+                text=model._build_assistant_text(text), return_tensors="pt", padding=True,
+            )["input_ids"].shape[-1]) - prompt)
+            for text in texts
+        ]
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return [max(1, len(text)) for text in texts]
 
 
 def encode(path: Path, audio: Any, rate: int, output_format: str) -> Path:
@@ -220,12 +263,16 @@ def _process_loaded(
         configured_batch_size = GPU_TTS_BATCH_SIZE
     actual_batch_sizes: list[int] = []
     fallbacks: list[dict[str, int]] = []
+    token_counts = _tts_text_token_counts(model, chunks) if model is not None else [max(1, len(text)) for text in chunks]
+    observed_codec_frames = 0.0
+    observed_text_tokens = 0
+    activity_sequence = 0
     index = 0
+    context.progress(
+        0.15, f"synthesizing_1_of_{len(chunks)}", 0, len(chunks),
+        stage_progress=0.0, unit="text_chunk",
+    )
     while index < len(chunks):
-        context.progress(
-            0.15 + 0.72 * index / max(len(chunks), 1),
-            f"synthesizing_{index + 1}_of_{len(chunks)}", index, len(chunks),
-        )
         batch_size = min(configured_batch_size, len(chunks) - index)
         if (
             not acceleration["requested"] and compute_device == "gpu" and batch_size > 1
@@ -233,6 +280,29 @@ def _process_loaded(
         ):
             batch_size = 1
         texts = chunks[index:index + batch_size]
+        current_token_counts = token_counts[index:index + batch_size]
+        frames_per_token = (
+            observed_codec_frames / observed_text_tokens
+            if observed_text_tokens else TTS_INITIAL_CODEC_FRAMES_PER_TEXT_TOKEN
+        )
+        expected_frames = max(1, math.ceil(max(current_token_counts) * frames_per_token))
+        activity_sequence += 1
+
+        def emit_activity(payload: dict[str, Any]) -> None:
+            current = int(payload["current"])
+            batch_fraction = min(MAX_IN_FLIGHT_BATCH_PROGRESS, current / expected_frames)
+            stage_progress = (index + len(texts) * batch_fraction) / max(len(chunks), 1)
+            context.progress(
+                0.15 + 0.72 * stage_progress,
+                f"synthesizing_{index + 1}_of_{len(chunks)}", index, len(chunks),
+                stage_progress=stage_progress, unit="text_chunk", basis="estimated",
+                activity={
+                    "sequence": activity_sequence, "current": current,
+                    "total": expected_frames, "unit": "codec_frame", "basis": "estimated",
+                },
+            )
+
+        reporter = ThrottledProgress(emit_activity)
         if settings.mock_mode:
             generated = []
             for text in texts:
@@ -240,7 +310,10 @@ def _process_loaded(
                 generated.append(audio)
         else:
             try:
-                generated, rate = _generate_tts_batch(model, request, texts, clone_prompt)
+                generated, rate = _generate_tts_batch(
+                    model, request, texts, clone_prompt,
+                    progress_callback=lambda current: reporter.report({"current": current}),
+                )
             except Exception as exc:
                 if torch_module is None or not isinstance(exc, torch_module.OutOfMemoryError):
                     raise
@@ -263,6 +336,16 @@ def _process_loaded(
             waveforms.extend(np.asarray(audio, dtype=np.float32) for audio in generated)
         actual_batch_sizes.append(len(texts))
         index += len(texts)
+        observed_text_tokens += sum(current_token_counts)
+        observed_codec_frames += sum(
+            len(audio) / max(rate, 1) * TTS_CODEC_FRAMES_PER_SECOND for audio in generated
+        )
+        completed_stage_progress = index / max(len(chunks), 1)
+        context.progress(
+            0.15 + 0.72 * completed_stage_progress,
+            f"synthesizing_{min(index + 1, len(chunks))}_of_{len(chunks)}", index, len(chunks),
+            stage_progress=completed_stage_progress, unit="text_chunk",
+        )
     if settings.mock_mode:
         silence = [0.0] * int(rate * 0.18)
         merged = []
@@ -274,8 +357,8 @@ def _process_loaded(
         silence = np.zeros(int(rate * 0.18), dtype=np.float32)
         merged = np.concatenate([part for index, item in enumerate(waveforms) for part in ((silence,) if index else ()) + (item,)])
     output_format = request.get("response_format", "wav")
-    path = encode(context.output_dir / f"speech.{output_format}", merged, rate, output_format)
     context.progress(0.94, "writing_audio")
+    path = encode(context.output_dir / f"speech.{output_format}", merged, rate, output_format)
     mime = {"wav": "audio/wav", "flac": "audio/flac", "mp3": "audio/mpeg"}[output_format]
     return {
         "duration": round(len(merged) / rate, 3), "sample_rate": rate, "format": output_format,

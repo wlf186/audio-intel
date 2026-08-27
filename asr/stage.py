@@ -3,19 +3,49 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import math
 from pathlib import Path
 from typing import Any
 
 from audio_intel.performance import lower_batch_size
+from audio_intel.progress import ThrottledProgress
 from audio_intel.utils import atomic_json
 
 
-def _progress(payload: dict[str, Any], stage: str, completed: int, total: int) -> None:
+ASR_INITIAL_OUTPUT_TOKENS_PER_SECOND = 3.0
+ASR_ENCODER_PROGRESS_SHARE = 0.20
+MAX_IN_FLIGHT_BATCH_PROGRESS = 0.95
+
+
+def _progress(
+    payload: dict[str, Any], stage: str, completed: int, total: int,
+    *, stage_progress: float | None = None, unit: str = "audio_chunk",
+    basis: str = "observed", activity: dict[str, Any] | None = None,
+) -> None:
     path = payload.get("progress_path")
     if path:
         atomic_json(Path(path), {
             "stage": stage, "completed": completed, "total": total,
+            "stage_progress": stage_progress, "unit": unit,
+            "basis": basis, "activity": activity,
         })
+
+
+def _module_layers(model: Any, path: tuple[str, ...]) -> list[Any]:
+    current = model
+    for name in path:
+        current = getattr(current, name, None)
+        if current is None:
+            return []
+    try:
+        return list(current)
+    except TypeError:
+        return []
+
+
+def _remove_hooks(handles: list[Any]) -> None:
+    for handle in handles:
+        handle.remove()
 
 
 def _clear_cuda(torch_module: Any) -> None:
@@ -57,9 +87,72 @@ def transcribe(payload: dict[str, Any]) -> dict[str, Any]:
     fallbacks: list[dict[str, int]] = []
     index = 0
     batch_size = target_batch_size
-    _progress(payload, "transcription", 0, len(chunks))
+    activity_sequence = 0
+    observed_output_tokens = 0
+    observed_audio_seconds = 0.0
+    _progress(payload, "transcription", 0, len(chunks), stage_progress=0.0)
     while index < len(chunks):
         current = chunks[index:index + batch_size]
+        activity_sequence += 1
+        durations = [
+            max(0.0, float(item.get("end", 1.0)) - float(item.get("start", 0.0)))
+            for item in current
+        ]
+        tokens_per_second = (
+            observed_output_tokens / observed_audio_seconds
+            if observed_audio_seconds else ASR_INITIAL_OUTPUT_TOKENS_PER_SECOND
+        )
+        expected_tokens = max(1, math.ceil(max(durations, default=0.0) * tokens_per_second))
+        audio_layers = _module_layers(model, ("model", "thinker", "audio_tower", "layers"))
+        audio_layer_total = max(1, len(audio_layers) * len(current))
+        audio_layer_current = 0
+        thinker_calls = 0
+        handles: list[Any] = []
+
+        def emit(batch_fraction: float, current_count: int, total_count: int, unit: str, basis: str) -> None:
+            stage_progress = (
+                index + len(current) * min(MAX_IN_FLIGHT_BATCH_PROGRESS, batch_fraction)
+            ) / max(len(chunks), 1)
+            _progress(
+                payload, "transcription", index, len(chunks),
+                stage_progress=stage_progress, basis="estimated", activity={
+                    "sequence": activity_sequence, "current": current_count,
+                    "total": total_count, "unit": unit, "basis": basis,
+                },
+            )
+
+        encoder_reporter = ThrottledProgress(
+            lambda item: emit(
+                ASR_ENCODER_PROGRESS_SHARE * int(item["current"]) / audio_layer_total,
+                int(item["current"]), audio_layer_total, "model_layer", "observed",
+            )
+        )
+        token_reporter = ThrottledProgress(
+            lambda item: emit(
+                ASR_ENCODER_PROGRESS_SHARE
+                + (MAX_IN_FLIGHT_BATCH_PROGRESS - ASR_ENCODER_PROGRESS_SHARE)
+                * min(1.0, int(item["current"]) / expected_tokens),
+                int(item["current"]), expected_tokens, "output_token", "estimated",
+            )
+        )
+
+        def audio_hook(_module: Any, _args: Any, _output: Any) -> None:
+            nonlocal audio_layer_current
+            audio_layer_current += 1
+            encoder_reporter.report({"current": audio_layer_current})
+
+        def thinker_hook(_module: Any, _args: Any, _output: Any) -> None:
+            nonlocal thinker_calls
+            thinker_calls += 1
+            generated = max(0, thinker_calls - 1)
+            if generated:
+                token_reporter.report({"current": generated})
+
+        for layer in audio_layers:
+            handles.append(layer.register_forward_hook(audio_hook))
+        thinker = getattr(getattr(model, "model", None), "thinker", None)
+        if callable(getattr(thinker, "register_forward_hook", None)):
+            handles.append(thinker.register_forward_hook(thinker_hook))
         try:
             audio_input = [item["path"] for item in current]
             context_input = [payload.get("context", "")] * len(current)
@@ -79,13 +172,22 @@ def transcribe(payload: dict[str, Any]) -> dict[str, Any]:
             if compute_device == "gpu":
                 _clear_cuda(torch)
             continue
+        finally:
+            _remove_hooks(handles)
         actual_sizes.append(len(current))
         output.extend(
             {**item, "text": result.text.strip(), "language": result.language or forced_language or "Unknown"}
             for item, result in zip(current, results)
         )
+        generated_tokens = max(0, thinker_calls - 1)
+        if generated_tokens:
+            observed_output_tokens += generated_tokens
+            observed_audio_seconds += max(durations, default=0.0)
         index += len(current)
-        _progress(payload, "transcription", index, len(chunks))
+        _progress(
+            payload, "transcription", index, len(chunks),
+            stage_progress=index / max(len(chunks), 1),
+        )
     return {
         "chunks": output,
         "acceleration": _stage_acceleration("transcription", target_batch_size, actual_sizes, fallbacks),
@@ -114,9 +216,40 @@ def align(payload: dict[str, Any]) -> dict[str, Any]:
     fallbacks: list[dict[str, int]] = []
     offset = 0
     batch_size = target_batch_size
-    _progress(payload, "alignment", 0, len(pending))
+    activity_sequence = 0
+    _progress(payload, "alignment", 0, len(pending), stage_progress=0.0)
     while offset < len(pending):
         current = pending[offset:offset + batch_size]
+        activity_sequence += 1
+        audio_layers = _module_layers(model, ("model", "thinker", "audio_tower", "layers"))
+        text_layers = _module_layers(model, ("model", "thinker", "model", "layers"))
+        layer_total = max(1, len(audio_layers) * len(current) + len(text_layers))
+        layer_current = 0
+        handles: list[Any] = []
+
+        def emit_alignment(item: dict[str, Any]) -> None:
+            current_layers = int(item["current"])
+            batch_fraction = MAX_IN_FLIGHT_BATCH_PROGRESS * min(1.0, current_layers / layer_total)
+            stage_progress = (
+                offset + len(current) * batch_fraction
+            ) / max(len(pending), 1)
+            _progress(
+                payload, "alignment", offset, len(pending),
+                stage_progress=stage_progress, basis="estimated", activity={
+                    "sequence": activity_sequence, "current": current_layers,
+                    "total": layer_total, "unit": "model_layer", "basis": "observed",
+                },
+            )
+
+        reporter = ThrottledProgress(emit_alignment)
+
+        def layer_hook(_module: Any, _args: Any, _output: Any) -> None:
+            nonlocal layer_current
+            layer_current += 1
+            reporter.report({"current": layer_current})
+
+        for layer in [*audio_layers, *text_layers]:
+            handles.append(layer.register_forward_hook(layer_hook))
         try:
             audio_input = [item["path"] for _, item in current]
             text_input = [item["text"] for _, item in current]
@@ -135,6 +268,8 @@ def align(payload: dict[str, Any]) -> dict[str, Any]:
             if compute_device == "gpu":
                 _clear_cuda(torch)
             continue
+        finally:
+            _remove_hooks(handles)
         actual_sizes.append(len(current))
         for (index, item), result in zip(current, results):
             words = [
@@ -144,7 +279,10 @@ def align(payload: dict[str, Any]) -> dict[str, Any]:
             ]
             output[index] = {**item, "words": words}
         offset += len(current)
-        _progress(payload, "alignment", offset, len(pending))
+        _progress(
+            payload, "alignment", offset, len(pending),
+            stage_progress=offset / max(len(pending), 1),
+        )
     return {
         "chunks": [item for item in output if item is not None],
         "acceleration": _stage_acceleration("alignment", target_batch_size, actual_sizes, fallbacks),

@@ -19,7 +19,8 @@ def stage_details(job: dict[str, Any]) -> dict[str, Any]:
     match = _SYNTHESIS_STAGE.match(raw)
     if match:
         code = "synthesis"
-        current, total = int(match.group(1)), int(match.group(2))
+        if not isinstance(current, int) or not isinstance(total, int):
+            current, total = int(match.group(1)), int(match.group(2))
     elif raw.startswith("qwen3_asr_"):
         code = "transcription"
     elif raw.startswith("qwen3_forced_alignment_") or raw.startswith("aligning_clone_reference_"):
@@ -36,15 +37,22 @@ def stage_details(job: dict[str, Any]) -> dict[str, Any]:
         code = "waiting_for_gpu"
     elif not code:
         code = raw
-    stage_progress = None
-    if isinstance(current, int) and isinstance(total, int) and total > 0:
+    stage_progress = job.get("stage_progress")
+    if stage_progress is None and isinstance(current, int) and isinstance(total, int) and total > 0:
         stage_progress = max(0.0, min(1.0, current / total))
+    unit = job.get("stage_unit")
+    if unit is None and current is not None and total is not None:
+        unit = "text_chunk" if code == "synthesis" else (
+            "audio_chunk" if code in {"transcription", "alignment"} else "item"
+        )
     return {
         "stage_code": code,
         "stage_progress": stage_progress,
+        "basis": str(job.get("progress_basis") or "observed"),
         "current": current,
         "total": total,
-        "unit": "batch" if current is not None and total is not None else None,
+        "unit": unit,
+        "activity": job.get("progress_activity"),
     }
 
 

@@ -102,9 +102,27 @@ def test_stage_progress_persists_stable_codes_and_timings(tmp_path, monkeypatch)
     db_module.init_db()
     job = db_module.create_job("tts", "progress", {"text": "one two"})
     db_module.claim_job("tts", "worker")
-    updated = db_module.update_job_progress(job["id"], .4, "synthesizing_1_of_2", "synthesis", 1, 2)
+    updated = db_module.update_job_progress(
+        job["id"], .4, "synthesizing_1_of_2", "synthesis", 0, 2,
+        stage_progress=.35, stage_unit="text_chunk", progress_basis="estimated",
+        activity={
+            "sequence": 1, "current": 9, "total": 20,
+            "unit": "codec_frame", "basis": "estimated",
+        },
+    )
     assert updated["stage_code"] == "synthesis"
-    assert updated["stage_current"] == 1 and updated["stage_total"] == 2
+    assert updated["stage_current"] == 0 and updated["stage_total"] == 2
+    assert updated["stage_progress"] == .35
+    assert updated["stage_unit"] == "text_chunk"
+    assert updated["progress_basis"] == "estimated"
+    assert updated["progress_activity"]["current"] == 9
+    assert updated["progress_activity"]["updated_at"]
+    monotonic = db_module.update_job_progress(
+        job["id"], .3, "synthesizing_1_of_2", "synthesis", 0, 2,
+        stage_progress=.2, stage_unit="text_chunk", progress_basis="estimated",
+    )
+    assert monotonic["progress"] == .4
+    assert monotonic["stage_progress"] == .35
     db_module.update_job_progress(job["id"], .9, "writing_audio", "writing_output")
     db_module.finish_job(job["id"], "succeeded", stage="completed", progress=1)
     with sqlite3.connect(local.database_path) as database:
@@ -114,6 +132,10 @@ def test_stage_progress_persists_stable_codes_and_timings(tmp_path, monkeypatch)
         ).fetchall()
     assert [row[0] for row in rows] == ["synthesis", "writing_output"]
     assert all(row[1] is not None for row in rows)
+
+    with sqlite3.connect(local.database_path) as database:
+        columns = {row[1] for row in database.execute("PRAGMA table_info(jobs)")}
+    assert {"progress_basis", "stage_progress", "stage_unit", "progress_activity_json"} <= columns
 
 
 def test_cancel_request_is_immediate_and_idempotent(tmp_path, monkeypatch) -> None:
@@ -154,7 +176,7 @@ def test_historical_jobs_backfill_compute_device_names(tmp_path, monkeypatch) ->
     assert db_module.get_job(old_tts["id"])["request"]["compute_device_name"] == "CPU"
     assert db_module.get_job(named["id"])["request"]["compute_device_name"] == "Original GPU"
     with sqlite3.connect(local.database_path) as database:
-        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 5
+        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 6
 
 
 def test_schema_upgrade_reaches_voiceprints_without_a_gpu(tmp_path, monkeypatch) -> None:
@@ -169,7 +191,7 @@ def test_schema_upgrade_reaches_voiceprints_without_a_gpu(tmp_path, monkeypatch)
     db_module.init_db()
 
     with sqlite3.connect(local.database_path) as database:
-        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 5
+        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 6
         assert database.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='voiceprint_people'"
         ).fetchone()[0] == 1

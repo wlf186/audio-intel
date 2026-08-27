@@ -417,7 +417,7 @@ test('task duration, single/multi/select-all and partial batch deletion are inte
   {id:'asr-completed',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'已完成转写',created_at:now,updated_at:now,started_at:now,finished_at:now,processing_seconds:3661,processing_as_of:now,attempts:1,compute_device:'gpu',compute_device_name:'NVIDIA RTX A1000 Laptop GPU',request:{compute_device:'gpu',compute_device_name:'NVIDIA RTX A1000 Laptop GPU'},result:{compute_device:'gpu',compute_device_name:'NVIDIA RTX A1000 Laptop GPU'}},
   {id:'asr-queued',kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'排队转写',created_at:now,updated_at:now,processing_seconds:0,processing_as_of:now,attempts:0,request:{compute_device:'cpu'}},
   {id:'tts-failed',kind:'tts',state:'failed',stage:'failed',progress:.4,display_name:'失败合成',created_at:now,updated_at:now,started_at:now,finished_at:now,processing_seconds:61,processing_as_of:now,attempts:2,request:{compute_device:'cpu'}},
-  {id:'tts-running',kind:'tts',state:'running',stage:'synthesizing',progress:.5,display_name:'运行中合成',created_at:now,updated_at:now,started_at:now,processing_seconds:5,processing_as_of:now,attempts:1,request:{compute_device:'gpu'}},
+  {id:'tts-running',kind:'tts',state:'running',stage:'synthesizing',progress:.537,display_name:'运行中合成',created_at:now,updated_at:now,started_at:now,processing_seconds:5,processing_as_of:now,attempts:1,request:{compute_device:'gpu'},progress_detail:{stage_code:'synthesis',stage_progress:.537,basis:'estimated',current:1,total:3,unit:'text_chunk',activity:{sequence:2,current:41,total:90,unit:'codec_frame',basis:'estimated',updated_at:now}}},
  ]
  let submitted:string[]=[]
  await page.route('**/api/v1/jobs',route=>route.request().method()==='GET'?route.fulfill({json:{items:jobs}}):route.fallback())
@@ -431,6 +431,8 @@ test('task duration, single/multi/select-all and partial batch deletion are inte
  await expect(page.locator('.elapsed').filter({hasText:'01:01:01'})).toBeVisible()
  await expect(page.locator('.elapsed').filter({hasText:'未开始'})).toBeVisible()
  await expect(page.getByLabel('选择任务 运行中合成')).toBeDisabled()
+ await expect(page.getByText('54% 估算')).toBeVisible()
+ await expect(page.getByText('当前批次 41/90 codec 帧（总量估算）')).toBeVisible()
  const header=page.getByLabel('全选当前筛选任务')
  await page.getByLabel('选择任务 已完成转写').check()
  expect(await header.evaluate((element:HTMLInputElement)=>element.indeterminate)).toBe(true)

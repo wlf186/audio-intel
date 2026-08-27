@@ -60,16 +60,22 @@ class JobContext:
     def progress(
         self, value: float, stage: str,
         completed: int | None = None, total: int | None = None,
+        *, stage_progress: float | None = None, unit: str | None = None,
+        basis: str = "observed", activity: dict[str, Any] | None = None,
     ) -> None:
         snapshot = get_job(self.job_id)
         if snapshot and snapshot.get("cancel_requested"):
             raise JobCancelled("Job cancellation requested")
         detail = stage_details({
             "stage": stage, "stage_current": completed, "stage_total": total,
+            "stage_progress": stage_progress, "stage_unit": unit,
+            "progress_basis": basis, "progress_activity": activity,
         })
         update_job_progress(
             self.job_id, max(0.01, min(float(value), 0.99)), stage,
             detail["stage_code"], completed, total,
+            stage_progress=detail["stage_progress"], stage_unit=detail["unit"],
+            progress_basis=detail["basis"], activity=detail["activity"],
         )
         upsert_worker(
             self.worker_id, self.job["kind"], self.worker_pid, "busy", self.job_id,

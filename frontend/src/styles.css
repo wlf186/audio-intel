@@ -120,8 +120,9 @@ select:focus{border-color:var(--cyan)}
 .job-mini b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}
 .job-mini em{font-style:normal;color:var(--cyan);margin-left:auto;font:10px ui-monospace,monospace}
 .job-mini p{margin:6px 0;color:#879492;font-size:10px}
+.progress-activity{display:block;margin:4px 0;color:#7fa7a2;font:9px ui-monospace,monospace;line-height:1.45}
 .progress{display:block;height:3px;background:#020405;overflow:hidden}
-.progress i{display:block;height:100%;background:var(--cyan)}
+.progress i{display:block;height:100%;background:var(--cyan);transition:width .45s linear}
 
 .result-panel{min-width:0;display:flex;flex-direction:column;overflow:hidden;background:#070b0ced;position:relative}
 .result-head{min-height:70px;display:flex;align-items:center;gap:20px;padding:15px 20px;border-bottom:1px solid var(--line);background:linear-gradient(100deg,#0b1213,#070b0c)}

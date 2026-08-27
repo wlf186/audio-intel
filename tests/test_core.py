@@ -10,6 +10,7 @@ import numpy as np
 
 from audio_intel.config import settings
 from audio_intel.performance import cpu_batch_size, gpu_batch_size, lower_batch_size
+from audio_intel.progress import ThrottledProgress
 from audio_intel.utils import safe_filename, timecode, waveform_peaks
 from asr import pipeline as asr_pipeline
 from asr import stage as asr_stage
@@ -21,6 +22,19 @@ def test_utilities() -> None:
     assert safe_filename("../访谈 录音?.wav") == "访谈_录音_.wav"
     assert timecode(3723.456) == "01:02:03.456"
     assert waveform_peaks([0, -0.5, 0.2, 1], 2) == [0.5, 1.0]
+
+
+def test_model_progress_is_throttled_and_boundary_can_be_forced(monkeypatch) -> None:
+    emitted = []
+    clock = iter((1.0, 1.1, 1.7, 1.8))
+    monkeypatch.setattr("audio_intel.progress.time.monotonic", lambda: next(clock))
+    reporter = ThrottledProgress(emitted.append, interval_seconds=.5)
+
+    assert reporter.report({"current": 1})
+    assert not reporter.report({"current": 2})
+    assert reporter.report({"current": 2})
+    assert reporter.report({"current": 3}, force=True)
+    assert [item["current"] for item in emitted] == [1, 2, 3]
 
 
 def test_single_task_acceleration_hardware_tiers() -> None:
@@ -50,18 +64,51 @@ def test_asr_stage_batches_in_order_and_falls_back_after_oom(monkeypatch) -> Non
         def empty_cache(cls) -> None:
             cls.cleared += 1
 
+    class HookHandle:
+        def __init__(self, hooks, hook) -> None:
+            self.hooks = hooks
+            self.hook = hook
+
+        def remove(self) -> None:
+            self.hooks.remove(self.hook)
+
+    class HookModule:
+        def __init__(self) -> None:
+            self.hooks = []
+
+        def register_forward_hook(self, hook):
+            self.hooks.append(hook)
+            return HookHandle(self.hooks, hook)
+
+        def forward(self) -> None:
+            for hook in list(self.hooks):
+                hook(self, (), None)
+
     class FakeModel:
         max_inference_batch_size = 4
 
+        def __init__(self) -> None:
+            self.audio_layers = [HookModule(), HookModule()]
+            self.thinker = HookModule()
+            self.thinker.audio_tower = SimpleNamespace(layers=self.audio_layers)
+            self.model = SimpleNamespace(thinker=self.thinker)
+
         def transcribe(self, *, audio, **_kwargs):
+            for layer in self.audio_layers:
+                layer.forward()
+            self.thinker.forward()
+            self.thinker.forward()
             if len(audio) > 2:
                 raise OutOfMemoryError("simulated")
             return [SimpleNamespace(text=f" text-{path} ", language="Chinese") for path in audio]
 
     class FakeFactory:
+        model = None
+
         @staticmethod
         def from_pretrained(*_args, **_kwargs):
-            return FakeModel()
+            FakeFactory.model = FakeModel()
+            return FakeFactory.model
 
     fake_torch = SimpleNamespace(
         float32="float32", bfloat16="bfloat16", cuda=FakeCuda,
@@ -83,6 +130,8 @@ def test_asr_stage_batches_in_order_and_falls_back_after_oom(monkeypatch) -> Non
         "effective_batch_size": 2, "fallbacks": [{"from": 4, "to": 2}],
     }
     assert FakeCuda.cleared == 1
+    assert not FakeFactory.model.thinker.hooks
+    assert all(not layer.hooks for layer in FakeFactory.model.audio_layers)
 
 
 def test_tts_sentence_chunking_preserves_text() -> None:
@@ -404,6 +453,37 @@ def test_tts_batch_uses_sequential_decoder_and_restores_it() -> None:
     assert model.arguments["language"] == ["Chinese", "Chinese"]
 
 
+def test_tts_decode_observer_reports_frames_and_removes_hook_after_error() -> None:
+    class Handle:
+        def __init__(self, owner) -> None:
+            self.owner = owner
+
+        def remove(self) -> None:
+            self.owner.hook = None
+
+    class Talker:
+        hook = None
+
+        def register_forward_hook(self, hook):
+            self.hook = hook
+            return Handle(self)
+
+    talker = Talker()
+    model = SimpleNamespace(model=SimpleNamespace(talker=talker))
+    observed = []
+
+    try:
+        with tts_pipeline._observe_tts_decode(model, observed.append):
+            talker.hook(None, None, SimpleNamespace(generation_step=0))
+            talker.hook(None, None, SimpleNamespace(generation_step=4))
+            raise RuntimeError("generation failed")
+    except RuntimeError:
+        pass
+
+    assert observed == [1, 5]
+    assert talker.hook is None
+
+
 def test_tts_acceleration_retries_current_batch_after_oom(tmp_path, monkeypatch) -> None:
     class OutOfMemoryError(RuntimeError):
         pass
@@ -416,8 +496,10 @@ def test_tts_acceleration_retries_current_batch_after_oom(tmp_path, monkeypatch)
     monkeypatch.setattr(tts_pipeline, "settings", replace(settings, mock_mode=False))
     calls: list[int] = []
 
-    def generate(_model, _request, texts, _prompt):
+    def generate(_model, _request, texts, _prompt, progress_callback=None):
         calls.append(len(texts))
+        if progress_callback:
+            progress_callback(1)
         if len(texts) > 2:
             raise OutOfMemoryError("simulated")
         return [np.zeros(240, dtype=np.float32) for _ in texts], 24000
@@ -429,7 +511,7 @@ def test_tts_acceleration_retries_current_batch_after_oom(tmp_path, monkeypatch)
 
     monkeypatch.setattr(tts_pipeline, "_generate_tts_batch", generate)
     monkeypatch.setattr(tts_pipeline, "encode", encode)
-    context = SimpleNamespace(output_dir=tmp_path / "output", progress=lambda *_: None)
+    context = SimpleNamespace(output_dir=tmp_path / "output", progress=lambda *_, **__: None)
     request = {"voice_mode": "preset", "response_format": "wav", "compute_device_name": "CPU"}
 
     result = tts_pipeline._process_loaded(

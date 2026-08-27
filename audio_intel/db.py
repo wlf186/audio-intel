@@ -232,6 +232,19 @@ def init_db() -> None:
             )
             db.execute("UPDATE jobs SET queue_seq=rowid WHERE queue_seq=0")
             db.execute("UPDATE schema_meta SET version=5 WHERE version<5")
+        version = db.execute("SELECT MIN(version) FROM schema_meta").fetchone()[0]
+        if version < 6:
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(jobs)").fetchall()}
+            additions = {
+                "progress_basis": "TEXT NOT NULL DEFAULT 'observed'",
+                "stage_progress": "REAL",
+                "stage_unit": "TEXT",
+                "progress_activity_json": "TEXT",
+            }
+            for name, declaration in additions.items():
+                if name not in columns:
+                    db.execute(f"ALTER TABLE jobs ADD COLUMN {name} {declaration}")
+            db.execute("UPDATE schema_meta SET version=6 WHERE version<6")
         db.execute(
             """CREATE TABLE IF NOT EXISTS queue_sequence (
                singleton INTEGER PRIMARY KEY CHECK(singleton=1),value INTEGER NOT NULL)"""
@@ -246,7 +259,7 @@ def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
     item = dict(row)
-    for field in ("request_json", "result_json", "details_json"):
+    for field in ("request_json", "result_json", "details_json", "progress_activity_json"):
         if field in item:
             raw = item.pop(field)
             item[field.removesuffix("_json")] = json.loads(raw) if raw else None
@@ -372,12 +385,15 @@ def update_job(job_id: str, **values: Any) -> dict[str, Any] | None:
         "state", "progress", "stage", "result_json", "error_code", "error_message",
         "cancel_requested", "worker_id", "heartbeat_at", "started_at", "finished_at", "attempts",
         "queue_seq", "stage_code", "stage_current", "stage_total", "input_duration_seconds",
+        "progress_basis", "stage_progress", "stage_unit", "progress_activity_json",
     }
     changes: dict[str, Any] = {key: value for key, value in values.items() if key in allowed}
     if "state" in changes and changes["state"] not in JOB_STATES:
         raise ValueError("Invalid job state")
     if "result_json" in changes and not isinstance(changes["result_json"], str):
         changes["result_json"] = json.dumps(changes["result_json"], ensure_ascii=False)
+    if "progress_activity_json" in changes and not isinstance(changes["progress_activity_json"], str):
+        changes["progress_activity_json"] = json.dumps(changes["progress_activity_json"], ensure_ascii=False)
     changes["updated_at"] = utcnow()
     assignment = ",".join(f"{key}=?" for key in changes)
     with connect() as db:
@@ -392,18 +408,25 @@ def update_job_progress(
     stage_code: str,
     stage_current: int | None = None,
     stage_total: int | None = None,
+    stage_progress: float | None = None,
+    stage_unit: str | None = None,
+    progress_basis: str = "observed",
+    activity: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    if progress_basis not in {"observed", "estimated"}:
+        raise ValueError("progress_basis must be observed or estimated")
     now = utcnow()
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
         row = db.execute(
-            "SELECT attempts,stage_code FROM jobs WHERE id=?", (job_id,)
+            "SELECT attempts,stage_code,progress,stage_progress FROM jobs WHERE id=?", (job_id,)
         ).fetchone()
         if row is None:
             db.execute("ROLLBACK")
             return None
         attempt = max(1, int(row["attempts"] or 1))
-        if row["stage_code"] != stage_code:
+        stage_changed = row["stage_code"] != stage_code
+        if stage_changed:
             previous = db.execute(
                 """SELECT sequence,started_at FROM job_stage_timings
                    WHERE job_id=? AND attempt=? AND finished_at IS NULL
@@ -430,10 +453,25 @@ def update_job_progress(
                    ) VALUES(?,?,?,?,?)""",
                 (job_id, attempt, sequence, stage_code, now),
             )
+        progress = round(max(float(row["progress"] or 0), max(0.0, min(float(progress), 0.99))), 4)
+        if stage_progress is None and stage_current is not None and stage_total:
+            stage_progress = stage_current / stage_total
+        if stage_progress is not None:
+            stage_progress = max(0.0, min(float(stage_progress), 1.0))
+            if not stage_changed and row["stage_progress"] is not None:
+                stage_progress = max(float(row["stage_progress"]), stage_progress)
+            stage_progress = round(stage_progress, 4)
+        if activity is not None:
+            activity = {**activity, "updated_at": activity.get("updated_at") or now}
+        activity_json = json.dumps(activity, ensure_ascii=False) if activity is not None else None
         db.execute(
             """UPDATE jobs SET progress=?,stage=?,stage_code=?,stage_current=?,stage_total=?,
+               stage_progress=?,stage_unit=?,progress_basis=?,progress_activity_json=?,
                heartbeat_at=?,updated_at=? WHERE id=?""",
-            (progress, stage, stage_code, stage_current, stage_total, now, now, job_id),
+            (
+                progress, stage, stage_code, stage_current, stage_total, stage_progress,
+                stage_unit, progress_basis, activity_json, now, now, job_id,
+            ),
         )
         db.execute("COMMIT")
     return get_job(job_id)
@@ -456,7 +494,12 @@ def finish_job(job_id: str, state: str, **values: Any) -> dict[str, Any] | None:
         if row is None:
             db.execute("ROLLBACK")
             return None
-        changes.update({"state": state, "finished_at": now, "updated_at": now})
+        changes.update({
+            "state": state, "finished_at": now, "updated_at": now,
+            "progress_basis": "observed", "stage_progress": 1.0 if state == "succeeded" else None,
+            "stage_current": None, "stage_total": None, "stage_unit": None,
+            "progress_activity_json": None,
+        })
         changes["stage_code"] = state
         assignment = ",".join(f"{key}=?" for key in changes)
         db.execute(
@@ -496,7 +539,8 @@ def claim_job(kind: str, worker_id: str) -> dict[str, Any] | None:
             return None
         db.execute(
             "UPDATE jobs SET state='running',stage='starting',stage_code='starting',progress=0.01,"
-            "stage_current=NULL,stage_total=NULL,worker_id=?,heartbeat_at=?,"
+            "stage_current=NULL,stage_total=NULL,stage_progress=NULL,stage_unit=NULL,"
+            "progress_basis='observed',progress_activity_json=NULL,worker_id=?,heartbeat_at=?,"
             "started_at=?,finished_at=NULL,attempts=attempts+1,updated_at=? WHERE id=?",
             (worker_id, now, now, now, row["id"]),
         )
@@ -515,13 +559,17 @@ def request_cancel(job_id: str) -> dict[str, Any] | None:
         if row["state"] == "queued":
             db.execute(
                 """UPDATE jobs SET state='cancelled',stage='cancelled',cancel_requested=1,
-                   stage_code='cancelled',finished_at=?,updated_at=? WHERE id=? AND state='queued'""",
+                   stage_code='cancelled',progress_basis='observed',stage_progress=NULL,
+                   stage_current=NULL,stage_total=NULL,stage_unit=NULL,progress_activity_json=NULL,
+                   finished_at=?,updated_at=? WHERE id=? AND state='queued'""",
                 (now, now, job_id),
             )
         elif row["state"] == "running":
             db.execute(
                 """UPDATE jobs SET cancel_requested=1,stage='cancelling',updated_at=?
-                   ,stage_code='cancelling' WHERE id=? AND state='running'""",
+                   ,stage_code='cancelling',progress_basis='observed',stage_progress=NULL,
+                   stage_current=NULL,stage_total=NULL,stage_unit=NULL,progress_activity_json=NULL
+                   WHERE id=? AND state='running'""",
                 (now, job_id),
             )
         db.execute("COMMIT")
@@ -539,6 +587,7 @@ def retry_job(job_id: str) -> dict[str, Any] | None:
         db.execute(
             """UPDATE jobs SET state='queued',stage='queued',stage_code='queued',progress=0,
                stage_current=NULL,stage_total=NULL,result_json=NULL,error_code=NULL,error_message=NULL,
+               stage_progress=NULL,stage_unit=NULL,progress_basis='observed',progress_activity_json=NULL,
                cancel_requested=0,worker_id=NULL,heartbeat_at=NULL,started_at=NULL,finished_at=NULL,
                queue_seq=?,updated_at=? WHERE id=?""",
             (_next_queue_seq(db), utcnow(), job_id),

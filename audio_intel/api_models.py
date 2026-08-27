@@ -59,6 +59,11 @@ class EstimateConfidence(str, Enum):
     high = "high"
 
 
+class ProgressBasis(str, Enum):
+    observed = "observed"
+    estimated = "estimated"
+
+
 class ProblemDetail(PublicModel):
     type: str = Field("about:blank", description="问题类型 URI / Problem type URI")
     title: str = Field(description="简短错误标题 / Short error title")
@@ -305,12 +310,23 @@ class JobQueueStatus(PublicModel):
     waiting_for: QueueWaitReason | None = Field(default=None, description="当前等待 worker 或全局 GPU 锁 / Currently waiting for a worker or the global GPU lock")
 
 
+class JobProgressActivity(PublicModel):
+    sequence: int = Field(ge=1, description="当前阶段内推理调用序号；OOM 重试会递增 / Inference-call sequence within the stage; increments on OOM retry")
+    current: int = Field(ge=0, description="已观测的当前模型活动量 / Observed model activity count")
+    total: int | None = Field(default=None, ge=1, description="预计或已知的当前调用总量 / Estimated or known total for the current call")
+    unit: str = Field(description="codec_frame、output_token 或 model_layer")
+    basis: ProgressBasis = Field(description="total 及其比例是实测还是估算 / Whether total and its ratio are observed or estimated")
+    updated_at: str = Field(description="活动计数更新时间 / Activity counter update time")
+
+
 class JobProgressDetail(PublicModel):
     stage_code: str = Field(description="稳定但可扩展的阶段代码 / Stable but extensible stage code")
     stage_progress: float | None = Field(default=None, ge=0, le=1)
-    current: int | None = Field(default=None, description="可计数阶段的当前批次 / Current item in a countable stage")
-    total: int | None = Field(default=None, description="可计数阶段的总批次 / Total items in a countable stage")
-    unit: str | None = Field(default=None, description="当前计数单位，现为 batch / Counting unit, currently batch")
+    basis: ProgressBasis = Field(ProgressBasis.observed, description="阶段百分比是确认值还是最佳估算 / Whether stage percentage is confirmed or best-effort")
+    current: int | None = Field(default=None, description="已确认完成的阶段单元数 / Confirmed completed stage units")
+    total: int | None = Field(default=None, description="阶段单元总数 / Total stage units")
+    unit: str | None = Field(default=None, description="text_chunk、audio_chunk 或其他可扩展单位 / Extensible unit such as text_chunk or audio_chunk")
+    activity: JobProgressActivity | None = Field(default=None, description="当前推理调用的细粒度模型活动 / Fine-grained activity for the current inference call")
 
 
 class JobEstimate(PublicModel):
@@ -327,7 +343,7 @@ class JobResponse(PublicModel):
     id: str
     kind: JobKind
     state: JobState
-    progress: float = Field(ge=0, le=1, description="阶段性进度 0–1；不是剩余时间承诺 / Stage progress from 0 to 1; not an ETA")
+    progress: float = Field(ge=0, le=1, description="单调的最佳任务进度 0–1；细粒度阶段可能为估算，查看 progress_detail.basis / Monotonic best-effort progress from 0 to 1; inspect progress_detail.basis for estimated stages")
     stage: str = Field(description="当前流水线阶段 / Current pipeline stage")
     display_name: str
     request: dict[str, Any]

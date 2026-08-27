@@ -58,6 +58,13 @@ curl -I https://modelscope.cn
 - ETA 只使用本机同类历史任务。少于 5 个有效样本时 `estimate.state` 为 `warming_up`，没有剩余时间属于预期行为；可用后的区间也只是建议，不是 SLA。
 - 单任务 SSE 使用 `/api/v1/jobs/{job_id}/events`，全局快照使用 `/api/v1/events`。两者都没有历史重放；断线后重新连接，并用收到的首个快照或任务状态接口校准。
 - 无法使用 SSE 时按响应中的 `poll_after_seconds` 轮询 `status_url`，保存响应 `ETag` 并在后续请求发送 `If-None-Match`；`304` 表示任务和同类队列上下文未变化。
+
+## 推理进度显示“估算”或短暂停顿
+
+- `progress` 保证不会倒退，但不是模型承诺的精确剩余比例。TTS codec 帧总量和 ASR 输出 token 总量只能在完成前估算，因此 `progress_detail.basis=estimated` 属于正常状态。
+- `progress_detail.current/total` 表示已确认完成的文本或音频分块；`activity` 表示当前推理调用内部的模型活动。`activity.sequence` 在新批次或 OOM 降批重试时递增，消费方应按整个任务快照替换显示，不要自行累计。
+- 模型活动最多约每 0.5 秒持久化一次，极短任务可能只显示阶段边界。GPU 同步、音频编码、SSE/轮询传输也可能造成短暂停顿；任务完成时会以确认值收敛到 100%。
+- 需要更及时的页面/API 更新时优先使用单任务 SSE；轮询客户端应遵循 `poll_after_seconds`，不应为追求动画效果高频请求数据库。
 - 浏览器原生 `EventSource` 不能附加自定义 Authorization Header。项目同源页面使用 HttpOnly 会话 Cookie；外部浏览器应用应通过同源后端代理，服务端客户端可直接发送 Bearer Header。
 
 ## 执行中任务取消后仍显示正在停止
