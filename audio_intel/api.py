@@ -45,6 +45,7 @@ from .db import (
     get_voiceprint_sample,
     init_db,
     list_jobs,
+    list_jobs_page,
     list_voices,
     list_voiceprint_people,
     list_voiceprint_samples,
@@ -68,7 +69,8 @@ from .api_docs import (
     ADMISSION_RESPONSE, API_DESCRIPTION, AUTH_RESPONSES, BINARY_SCHEMA, CONFLICT_RESPONSE,
     IDEMPOTENCY_RESPONSES, conditional_job_responses, idempotency_replay_response,
     NOT_FOUND_RESPONSE, OPENAPI_TAGS, OPTIONAL_IDEMPOTENCY_RESPONSES, SERVICE_RESPONSE, TOO_LARGE_RESPONSE,
-    VALIDATION_RESPONSE, bilingual, problem_response, sse_response,
+    TTS_CONTROL_VALIDATION_RESPONSE, VALIDATION_RESPONSE, bilingual, problem_response, sse_response,
+    enrich_openapi_schema,
 )
 from .api_models import (
     AdmissionProblemDetail, AuthSessionResponse, BatchDeleteResponse, CapabilitiesResponse,
@@ -91,6 +93,10 @@ TTS_LANGUAGES = [
     "French", "Russian", "Portuguese", "Spanish", "Italian",
 ]
 TTS_LANGUAGE_BY_KEY = {language.lower(): language for language in TTS_LANGUAGES}
+TTS_UNSUPPORTED_INSTRUCTION_DETAIL = (
+    "Style instructions are not supported by the installed Qwen3-TTS 0.6B models; "
+    "omit this field or send an empty value"
+)
 SINGLE_TASK_ACCELERATION_DEFAULT = True
 ALIGNER_LANGUAGES = [
     "Chinese", "English", "Cantonese", "French", "German", "Italian",
@@ -120,6 +126,7 @@ OPTIONAL_IDEMPOTENCY_KEY_DESCRIPTION = (
 IDEMPOTENCY_KEY_SCHEMA = {
     "minLength": 8, "maxLength": 128,
     "pattern": r"^[A-Za-z0-9._~:+-]{8,128}$",
+    "example": "550e8400-e29b-41d4-a716-446655440000",
 }
 EVENT_SNAPSHOT_JOB_LIMIT = 100
 EVENT_SNAPSHOT_POLL_SECONDS = 0.5
@@ -549,6 +556,7 @@ def create_app() -> FastAPI:
                 "deepLinking": True, "displayRequestDuration": True, "filter": True,
                 "persistAuthorization": False, "showExtensions": True,
                 "showCommonExtensions": True, "validatorUrl": None,
+                "docExpansion": "none", "defaultModelsExpandDepth": 1,
             },
         )
         response.headers.update({
@@ -692,6 +700,12 @@ def create_app() -> FastAPI:
                 "formats": ["wav", "flac", "mp3"],
                 "compute_devices": compute_capabilities("gpu"),
                 "single_task_acceleration": {"supported": True, "default": SINGLE_TASK_ACCELERATION_DEFAULT},
+                "controls": {
+                    "instruction_voice_modes": [],
+                    "speaking_rate_parameter": False,
+                    "pitch_parameter": False,
+                    "sampling_parameters": False,
+                },
             },
             "limits": {
                 "max_upload_bytes": settings.max_upload_bytes,
@@ -765,12 +779,12 @@ def create_app() -> FastAPI:
         response: Response,
         file: UploadFile = File(..., description="待转写音频或视频 / Audio or video to transcribe"),
         language: str = Form("Auto", description="识别语言；Auto 可检测其他语种，但只有公开清单支持字词对齐 / Recognition language; Auto may detect other languages, while only the public list supports word alignment", json_schema_extra={"enum": ASR_LANGUAGES}),
-        speaker_count: str = Form("auto", description="auto 或 1–15 / auto or an integer from 1 to 15"),
+        speaker_count: str = Form("auto", description="auto 或 1–15 / auto or an integer from 1 to 15", json_schema_extra={"enum": ["auto", *[str(value) for value in range(1, 16)]]}),
         diarize: bool = Form(True, description="启用说话人分离 / Enable speaker diarization"),
         align: bool = Form(True, description="返回支持语言的精确时间戳 / Produce precise timestamps for supported languages"),
         context: str = Form("", description="识别上下文提示 / Recognition context hint"),
         export_formats: str = Form("json,srt,vtt,txt", description="逗号分隔：json,srt,vtt,txt / Comma-separated export formats"),
-        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
+        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         use_voiceprint_library: bool = Form(True, description="用声纹库匹配并命名说话人 / Match and label speakers from the voiceprint library"),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="启用质量中性的单任务自动批处理 / Enable quality-neutral single-job auto-batching"),
         idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
@@ -826,7 +840,7 @@ def create_app() -> FastAPI:
     async def analyze_tts_clone_reference(
         response: Response,
         file: UploadFile = File(..., description="单人干净参考音频或录音容器 / Clean single-speaker audio or recording container"),
-        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
+        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
         idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
@@ -866,24 +880,29 @@ def create_app() -> FastAPI:
             "Four modes: `preset` uses `speaker`; `profile` uses `voice_profile_id`; `inline_clone` preferably uses a successful `reference_job_id`, while `reference_audio` plus exact `reference_text` remains supported; `voiceprint` requires a concrete eligible sample ID. `language` always means the target text language.",
         ),
         operation_id="submitTtsJob",
-        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TOO_LARGE_RESPONSE, **TTS_CONTROL_VALIDATION_RESPONSE, **SERVICE_RESPONSE},
     )
     async def submit_tts(
         response: Response,
-        text: str = Form(..., description="需要合成的文本 / Text to synthesize"),
-        language: str = Form("Auto", description="输出文本语种；已知时应显式指定 / Target text language; specify it when known"),
-        voice_mode: str = Form("preset", description="preset、profile、inline_clone 或 voiceprint"),
+        text: str = Form(..., description="需要合成的文本 / Text to synthesize", json_schema_extra={"minLength": 1, "maxLength": settings.max_tts_chars}),
+        language: str = Form("Auto", description="输出文本语种；已知时应显式指定 / Target text language; specify it when known", json_schema_extra={"enum": TTS_LANGUAGES}),
+        voice_mode: str = Form("preset", description="preset、profile、inline_clone 或 voiceprint", json_schema_extra={"enum": ["preset", "profile", "inline_clone", "voiceprint"]}),
         speaker: str | None = Form(None, description="preset 模式的官方音色 / Official speaker for preset mode"),
         voice_profile_id: str | None = Form(None, description="profile 模式的声音档案 ID / Voice profile ID for profile mode"),
         voiceprint_sample_id: str | None = Form(None, description="voiceprint 模式的具体可用样本 ID / Concrete eligible sample ID for voiceprint mode"),
         reference_audio: UploadFile | None = File(None, description="inline_clone 模式参考音频 / Reference audio for inline_clone"),
         reference_text: str | None = Form(None, description="必须与参考音频逐字一致 / Must exactly match the reference audio"),
         reference_job_id: str | None = Form(None, description="自动参考分析成功后的 ASR 任务 ID / Successful automatic reference-analysis ASR job ID"),
-        reference_language: str | None = Form(None, description="参考音频语种；省略时使用分析结果 / Reference audio language; defaults to the analysis result"),
-        instruct: str = Form("", description="预置音色风格指令 / Style instruction for preset voice"),
-        response_format: str = Form("wav", description="wav、flac 或 mp3"),
+        reference_language: str | None = Form(None, description="参考音频语种；省略时使用分析结果 / Reference audio language; defaults to the analysis result", json_schema_extra={"enum": ALIGNER_LANGUAGES}),
+        instruct: str = Form(
+            "",
+            description="已弃用；当前 0.6B 模型不支持风格指令，只能省略或传空值 / Deprecated; the current 0.6B models do not support style instructions, so omit it or send an empty value",
+            deprecated=True,
+            json_schema_extra={"maxLength": 0},
+        ),
+        response_format: str = Form("wav", description="wav、flac 或 mp3", json_schema_extra={"enum": ["wav", "flac", "mp3"]}),
         display_name: str = Form("语音合成", description="任务显示名称 / Job display name"),
-        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback"),
+        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="启用质量中性的单任务自动批处理 / Enable quality-neutral single-job auto-batching"),
         idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
@@ -899,6 +918,9 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail="voice_mode must be preset, profile, inline_clone or voiceprint")
         if response_format not in {"wav", "flac", "mp3"}:
             raise HTTPException(status_code=422, detail="response_format must be wav, flac or mp3")
+        if instruct.strip():
+            raise HTTPException(status_code=422, detail=TTS_UNSUPPORTED_INSTRUCTION_DETAIL)
+        instruct = ""
         request_data: dict[str, Any] = {
             "text": clean_text, "language": language, "voice_mode": voice_mode,
             "speaker": speaker, "voice_profile_id": voice_profile_id, "reference_text": reference_text,
@@ -1345,20 +1367,25 @@ def create_app() -> FastAPI:
         "/api/v1/jobs", response_model=JobListResponse, response_model_exclude_unset=True,
         tags=[JOB_TAG], summary="列出任务 / List jobs",
         description=bilingual(
-            "按创建时间倒序分页。`count` 仅是本页数量；队列实际消费按任务类型分别以创建时间 FIFO。",
-            "Paginated newest-first. `count` is only the page size; ASR and TTS workers consume their separate queues FIFO by creation time.",
+            "按创建时间稳定倒序分页。`count` 是本页数量，`total` 是筛选后的总数；队列实际消费按任务类型分别 FIFO。",
+            "Stably paginated newest-first. `count` is the page count and `total` is the filtered total; ASR and TTS workers consume separate FIFO queues.",
         ),
         operation_id="listJobs", responses={**AUTH_RESPONSES, **VALIDATION_RESPONSE},
     )
     def jobs(
         kind: str | None = Query(None, description="可选 asr 或 tts / Optional asr or tts"),
         state: str | None = Query(None, description="queued、running、succeeded、failed 或 cancelled"),
+        q: str | None = Query(None, max_length=128, description="任务 ID 或显示名称的字面子串 / Literal substring of job ID or display name"),
         limit: int = Query(100, ge=1, le=500, description="每页 1–500 / Page size from 1 to 500"),
         offset: int = Query(0, ge=0, description="分页偏移 / Page offset"),
         _: None = Depends(require_api_key),
     ) -> JobListResponse:
-        items = public_jobs(list_jobs(kind, state, limit, offset))
-        return {"items": items, "count": len(items), "limit": limit, "offset": offset}
+        rows, total = list_jobs_page(kind, state, q, limit, offset)
+        items = public_jobs(rows)
+        return {
+            "items": items, "count": len(items), "total": total,
+            "limit": limit, "offset": offset, "has_more": offset + len(items) < total,
+        }
 
     @app.get(
         "/api/v1/jobs/{job_id}", response_model=JobResponse, response_model_exclude_unset=True,
@@ -1370,7 +1397,12 @@ def create_app() -> FastAPI:
         operation_id="getJob", responses={**conditional_job_responses(), **AUTH_RESPONSES, **NOT_FOUND_RESPONSE},
     )
     def job_status(
-        job_id: str, request: Request, response: Response,
+        job_id: str, response: Response,
+        if_none_match: str | None = Header(
+            None, alias="If-None-Match",
+            description="上次响应的 ETag；匹配时返回 304 / ETag from the previous response; returns 304 when unchanged",
+            json_schema_extra={"example": '"0123456789abcdef01234567"'},
+        ),
         _: None = Depends(require_api_key),
     ) -> Any:
         job = job_or_404(job_id)
@@ -1383,7 +1415,7 @@ def create_app() -> FastAPI:
             for item in context["jobs"] if item["kind"] == job["kind"]
         ], separators=(",", ":"))
         etag = f'"{hashlib.sha256(marker.encode()).hexdigest()[:24]}"'
-        if request.headers.get("if-none-match") == etag:
+        if if_none_match == etag:
             return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
         response.headers.update({"ETag": etag, "Cache-Control": "no-cache"})
         return public_job(job, context)
@@ -1490,15 +1522,23 @@ def create_app() -> FastAPI:
         description=bilingual("仅 ASR 任务可用，支持 `Range` 和 `206 Partial Content`；`download=true` 强制附件下载。", "ASR only. Supports Range and `206 Partial Content`; `download=true` forces attachment download."),
         operation_id="getJobSource",
         responses={
-            200: {"description": "完整媒体 / Full media", "content": {"audio/*": {"schema": BINARY_SCHEMA}, "video/*": {"schema": BINARY_SCHEMA}}},
-            206: {"description": "部分媒体 / Partial media", "headers": {"Content-Range": {"schema": {"type": "string"}}}, "content": {"application/octet-stream": {"schema": BINARY_SCHEMA}}},
-            416: problem_response("Range 超出文件范围 / Requested range is not satisfiable", 416),
+            200: {"description": "完整媒体 / Full media", "headers": {"Accept-Ranges": {"schema": {"type": "string", "example": "bytes"}}, "Content-Length": {"schema": {"type": "integer"}}}, "content": {"audio/*": {"schema": BINARY_SCHEMA}, "video/*": {"schema": BINARY_SCHEMA}}},
+            206: {"description": "部分媒体 / Partial media", "headers": {"Accept-Ranges": {"schema": {"type": "string", "example": "bytes"}}, "Content-Length": {"schema": {"type": "integer"}}, "Content-Range": {"schema": {"type": "string", "example": "bytes 0-1048575/4194304"}}}, "content": {"application/octet-stream": {"schema": BINARY_SCHEMA}}},
+            416: {**problem_response("Range 超出文件范围 / Requested range is not satisfiable", 416), "headers": {"Content-Range": {"schema": {"type": "string", "example": "bytes */4194304"}}}},
             **AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE,
         },
     )
     def job_source(
-        job_id: str, download: bool = Query(False, description="作为附件下载 / Download as an attachment"), _: None = Depends(require_api_key),
+        job_id: str,
+        download: bool = Query(False, description="作为附件下载 / Download as an attachment"),
+        range_header: str | None = Header(
+            None, alias="Range",
+            description="可选单段字节范围 / Optional single byte range",
+            json_schema_extra={"example": "bytes=0-1048575"},
+        ),
+        _: None = Depends(require_api_key),
     ) -> FileResponse:
+        del range_header  # Starlette FileResponse reads Range directly from the ASGI request scope.
         job = job_or_404(job_id)
         if job["kind"] != "asr":
             raise HTTPException(status_code=409, detail="Only ASR jobs have a source recording")
@@ -1674,7 +1714,7 @@ def create_app() -> FastAPI:
         ).json_schema(ref_template="#/components/schemas/{model}")
         schema.setdefault("components", {}).setdefault("schemas", {}).update(extra.get("$defs", {}))
         schema["servers"] = [{"url": "/", "description": "当前本地服务 / Current local service"}]
-        app.openapi_schema = schema
+        app.openapi_schema = enrich_openapi_schema(schema)
         return schema
 
     app.openapi = local_openapi  # type: ignore[method-assign]
@@ -1872,7 +1912,7 @@ def add_openai_routes(app: FastAPI) -> None:
             500: problem_response("内部合成任务失败 / Internal speech job failed", 500),
             504: problem_response("兼容接口等待超时 / Compatibility wait timed out", 504),
             **AUTH_RESPONSES, **OPTIONAL_IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE,
-            **VALIDATION_RESPONSE, **SERVICE_RESPONSE,
+            **TTS_CONTROL_VALIDATION_RESPONSE, **SERVICE_RESPONSE,
         },
     )
     async def openai_speech(
@@ -1890,10 +1930,13 @@ def add_openai_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=422, detail="input is required")
         if payload.response_format not in {"wav", "flac", "mp3"}:
             raise HTTPException(status_code=422, detail="response_format must be wav, flac or mp3")
+        instructions = str(payload.model_dump().get("instructions") or "")
+        if instructions.strip():
+            raise HTTPException(status_code=422, detail=TTS_UNSUPPORTED_INSTRUCTION_DETAIL)
         language = validate_tts_language(payload.language)
         voice = payload.voice
         request_data: dict[str, Any] = {
-            "text": text, "language": language, "instruct": payload.instructions,
+            "text": text, "language": language, "instruct": "",
             "response_format": payload.response_format, "compute_device": compute_device,
             "compute_device_name": compute_device_name,
             "accelerate_single_task": accelerate_single_task,

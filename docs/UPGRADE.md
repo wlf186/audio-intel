@@ -27,6 +27,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - ASR/TTS 新提交默认都使用 GPU；TTS 输出语种默认由 `Chinese` 改为 `Auto`。已有浏览器偏好保持不变，无 GPU 的 API 消费方需显式传 `compute_device=cpu`，依赖固定中文默认值的消费方需显式传 `language=Chinese`。
 - 一次性 TTS 克隆参考新增 `/api/v1/tts/clone-references` 分析端点和 `reference_job_id` 提交方式。分析任务会保留在 ASR 任务记录中，旧的 `reference_audio` + `reference_text` 请求继续兼容。
 - ASR 页面、声纹样本入库和 Capabilities 现在统一公开 `Auto + 11` 种支持字词级对齐的语言。原生 ASR、OpenAI 转写和声纹入库显式传入清单外语言时由运行期失败或透传改为同步 `422`；`Auto` 检测到其他模型语种时仍成功返回句段级时间戳。
+- **不兼容变更：** 当前固定的 Qwen3-TTS 0.6B Base/CustomVoice 不支持风格或情绪指令。原生 TTS 的 `instruct` 和 OpenAI 兼容 TTS 的 `instructions` 已弃用，非空值由过去的静默忽略改为在创建任务前返回 `422`；现有客户端必须删除该参数或发送空值，并从 `/api/v1/capabilities.tts.controls` 判断实际控制能力。此项不涉及数据库迁移。
 - **不兼容变更：** 原生异步 ASR、TTS、TTS 克隆参考分析和声纹样本上传现在强制要求 `Idempotency-Key`。现有客户端必须为每次逻辑提交生成 8–128 字符的键，并在超时、断线或 `429` 后复用；相同键改变请求会返回 `409`。`429` 的分类和恢复步骤见 [故障排查](TROUBLESHOOTING.md#api-提交返回-429)。
 - 新增同类队列位置、稳定阶段/细粒度进度、本机历史 ETA 区间、`GET /api/v1/queue`、单任务 SSE 和 ETag 条件轮询。TTS 解码与 ASR 推理的顶层 `progress` 现在会持续变化；`progress_detail.basis=estimated` 时百分比是最佳估算，`activity` 提供当前调用的模型活动。新增响应字段是兼容性扩展，但使用严格反序列化模型的客户端需要先允许这些字段。ETA 是热身后才出现的建议区间，不是 SLA。
 - ASR/TTS 页面参数现在分别保存在浏览器 localStorage，并提供页面级“恢复默认配置”；清除站点数据后会恢复默认。TTS 文本仅保留在 sessionStorage，文件和未确认的麦克风录音不会持久化。

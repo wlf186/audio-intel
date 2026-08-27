@@ -362,7 +362,11 @@ def get_job(job_id: str) -> dict[str, Any] | None:
         return _decode(db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone())
 
 
-def list_jobs(kind: str | None = None, state: str | None = None, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+def _job_filters(
+    kind: str | None = None,
+    state: str | None = None,
+    query: str | None = None,
+) -> tuple[str, list[Any]]:
     where: list[str] = []
     params: list[Any] = []
     if kind:
@@ -371,13 +375,47 @@ def list_jobs(kind: str | None = None, state: str | None = None, limit: int = 10
     if state:
         where.append("state=?")
         params.append(state)
-    clause = f"WHERE {' AND '.join(where)}" if where else ""
+    if query and query.strip():
+        escaped = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        where.append(
+            "(id COLLATE NOCASE LIKE ? ESCAPE '\\' "
+            "OR display_name COLLATE NOCASE LIKE ? ESCAPE '\\')"
+        )
+        params.extend((pattern, pattern))
+    return (f"WHERE {' AND '.join(where)}" if where else ""), params
+
+
+def list_jobs(kind: str | None = None, state: str | None = None, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    clause, params = _job_filters(kind, state)
     with connect() as db:
         rows = db.execute(
-            f"SELECT * FROM jobs {clause} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            f"SELECT * FROM jobs {clause} ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
             (*params, min(max(limit, 1), 500), max(offset, 0)),
         ).fetchall()
     return [_decode(row) for row in rows]  # type: ignore[misc]
+
+
+def list_jobs_page(
+    kind: str | None = None,
+    state: str | None = None,
+    query: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> tuple[list[dict[str, Any]], int]:
+    """Return one stable newest-first page and its filtered total from one read snapshot."""
+    clause, params = _job_filters(kind, state, query)
+    safe_limit = min(max(limit, 1), 500)
+    safe_offset = max(offset, 0)
+    with connect() as db:
+        db.execute("BEGIN")
+        total = int(db.execute(f"SELECT COUNT(*) FROM jobs {clause}", params).fetchone()[0])
+        rows = db.execute(
+            f"SELECT * FROM jobs {clause} ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
+            (*params, safe_limit, safe_offset),
+        ).fetchall()
+        db.execute("COMMIT")
+    return [_decode(row) for row in rows], total  # type: ignore[misc]
 
 
 def update_job(job_id: str, **values: Any) -> dict[str, Any] | None:

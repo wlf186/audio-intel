@@ -45,6 +45,12 @@ curl -I https://modelscope.cn
 .runtime/api/bin/python scripts/benchmark_single_task_acceleration.py tts --device gpu --repeat 3
 ```
 
+## TTS 提交因 instruct 或 instructions 返回 422
+
+- 当前固定的 Qwen3-TTS 0.6B Base/CustomVoice 不支持自然语言风格、情绪或韵律指令，也没有独立语速、音高或公开采样参数；非空 `instruct` / `instructions` 会在任务创建前被拒绝，而不是静默忽略。
+- 删除该字段或发送空值后重试；不要通过改写标点之外的隐藏参数猜测模型控制能力。
+- 消费方应读取受保护的 `GET /api/v1/capabilities`，以 `tts.controls` 为准决定是否显示或发送高级控制项。当前返回空的 `instruction_voice_modes`，其余控制能力均为 `false`。
+
 ## API 提交返回 429
 
 - `submission_concurrency_limited` 表示同时落盘的提交过多，通常按 `Retry-After` 等待约 1 秒即可。

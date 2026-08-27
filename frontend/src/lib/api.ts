@@ -1,4 +1,4 @@
-import type {AuthSession,BatchDeleteResult,Capabilities,Health,Job,JobResult,Probe,VoiceprintPerson,VoiceprintSample} from './types'
+import type {AuthSession,BatchDeleteResult,Capabilities,Health,Job,JobListQuery,JobListResponse,JobResult,Probe,VoiceprintPerson,VoiceprintSample} from './types'
 
 export class HttpError extends Error{status:number;retryAfter?:number;constructor(status:number,message:string,retryAfter?:number){super(message);this.status=status;this.retryAfter=retryAfter}}
 export async function request<T>(path:string,init:RequestInit={}):Promise<T>{
@@ -6,6 +6,7 @@ export async function request<T>(path:string,init:RequestInit={}):Promise<T>{
   const response=await fetch(path,{...init,headers,credentials:'same-origin'}); if(!response.ok){const body=await response.json().catch(()=>({detail:response.statusText,retry_after_seconds:undefined}));if(response.status===401)window.dispatchEvent(new Event('audio-intel:unauthorized'));const retryAfter=Number(response.headers.get('Retry-After')||body.retry_after_seconds)||undefined;const detail=body.detail||body.title||`HTTP ${response.status}`;throw new HttpError(response.status,retryAfter?`${detail}；请在 ${retryAfter} 秒后重试。`:detail,retryAfter)}
   if(response.status===204)return undefined as T; return response.json()
 }
+function queryString(values:JobListQuery){const params=new URLSearchParams();for(const [key,value] of Object.entries(values)){if(value!==undefined&&value!=='')params.set(key,String(value))}const encoded=params.toString();return encoded?`?${encoded}`:''}
 const pendingSubmissionKeys=new Map<string,string>()
 function formSignature(path:string,data:FormData){
   const values=[...data.entries()].map(([name,value])=>[name,typeof value==='string'?value:{name:value.name,size:value.size,type:value.type,lastModified:value.lastModified}] as const)
@@ -24,7 +25,7 @@ export const api={
   auth:()=>request<AuthSession>('/api/v1/auth/session'),
   login:(key:string)=>request<void>('/api/v1/auth/session',{method:'POST',headers:{Authorization:`Bearer ${key}`}}),
   logout:()=>request<void>('/api/v1/auth/session',{method:'DELETE'}),
-  jobs:(query='')=>request<{items:Job[]}>(`/api/v1/jobs${query}`),
+  jobs:(query:JobListQuery={})=>request<JobListResponse>(`/api/v1/jobs${queryString(query)}`),
   job:(id:string)=>request<Job>(`/api/v1/jobs/${id}`),
   system:()=>request<Health>('/api/v1/system'),
   capabilities:()=>request<Capabilities>('/api/v1/capabilities'),

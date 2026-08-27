@@ -96,6 +96,27 @@ def test_queue_admission_etag_and_position(tmp_path, monkeypatch) -> None:
     assert unchanged.status_code == 304 and unchanged.content == b""
 
 
+def test_job_list_returns_filtered_total_and_has_more(tmp_path, monkeypatch) -> None:
+    local = replace(
+        settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
+        enabled_services=frozenset({"asr", "tts"}), min_free_disk_bytes=0,
+    )
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    with TestClient(api_module.create_app()) as client:
+        db_module.create_job("asr", "alpha meeting", {"input_path": "one"}, "job-alpha")
+        db_module.create_job("tts", "beta speech", {"text": "two"}, "job-beta")
+        db_module.create_job("tts", "gamma speech", {"text": "three"}, "job-gamma")
+        first = client.get("/api/v1/jobs", params={"limit": 2, "offset": 0}).json()
+        second = client.get("/api/v1/jobs", params={"limit": 2, "offset": 2}).json()
+        filtered = client.get("/api/v1/jobs", params={"kind": "tts", "q": "speech"}).json()
+
+    assert first["count"] == 2 and first["total"] == 3 and first["has_more"] is True
+    assert second["count"] == 1 and second["total"] == 3 and second["has_more"] is False
+    assert filtered["count"] == filtered["total"] == 2
+    assert all(item["kind"] == "tts" for item in filtered["items"])
+
+
 def test_terminal_per_job_sse_emits_snapshot_and_closes(tmp_path, monkeypatch) -> None:
     local = replace(
         settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
@@ -137,6 +158,11 @@ def test_api_queues_asr_and_validates_tts(tmp_path, monkeypatch) -> None:
         partial = client.get(response.json()["source_url"], headers={"Range": "bytes=0-3"})
         assert partial.status_code == 206
         assert partial.content == b"RIFF"
+        assert partial.headers["accept-ranges"] == "bytes"
+        assert partial.headers["content-range"].startswith("bytes 0-3/")
+        unsatisfied = client.get(response.json()["source_url"], headers={"Range": "bytes=999-1000"})
+        assert unsatisfied.status_code == 416
+        assert unsatisfied.headers["content-range"].startswith("bytes */")
         download = client.get(response.json()["source_url"] + "?download=true")
         assert "attachment" in download.headers["content-disposition"]
         tts_job = db_module.create_job("tts", "speech", {"text": "test"})
@@ -182,6 +208,43 @@ def test_api_queues_asr_and_validates_tts(tmp_path, monkeypatch) -> None:
         assert capabilities["limits"]["max_queued_tts"] == 5
         assert capabilities["asr"]["single_task_acceleration"] == {"supported": True, "default": True}
         assert capabilities["tts"]["single_task_acceleration"] == {"supported": True, "default": True}
+        assert capabilities["tts"]["controls"] == {
+            "instruction_voice_modes": [],
+            "speaking_rate_parameter": False,
+            "pitch_parameter": False,
+            "sampling_parameters": False,
+        }
+
+
+def test_tts_rejects_unsupported_style_instructions_before_job_creation(tmp_path, monkeypatch) -> None:
+    local = replace(
+        settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
+        enabled_services=frozenset({"tts"}), min_free_disk_bytes=0,
+    )
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    monkeypatch.setattr(
+        api_module, "gpu_snapshot",
+        lambda *_: {"name": "Test GPU", "memory_used_mib": 0, "memory_total_mib": 4096, "utilization": 0},
+    )
+    with TestClient(api_module.create_app()) as client:
+        whitespace = client.post(
+            "/api/v1/tts/jobs", headers=idem(),
+            data={"text": "test", "voice_mode": "preset", "speaker": "Vivian", "instruct": "   "},
+        )
+        before = client.get("/api/v1/jobs", params={"kind": "tts"}).json()["total"]
+        rejected = client.post(
+            "/api/v1/tts/jobs", headers=idem(),
+            data={"text": "test", "voice_mode": "preset", "speaker": "Vivian", "instruct": "Very happy."},
+        )
+        after = client.get("/api/v1/jobs", params={"kind": "tts"}).json()["total"]
+
+    assert whitespace.status_code == 202
+    assert whitespace.json()["request"]["instruct"] == ""
+    assert rejected.status_code == 422
+    assert "0.6B models" in rejected.json()["detail"]
+    assert before == after == 1
+    assert not list(local.jobs_dir.glob("*/input/*"))
 
 
 def test_asr_public_languages_are_normalized_and_rejected_before_job_creation(tmp_path, monkeypatch) -> None:
@@ -321,8 +384,14 @@ def test_openai_compatible_acceleration_defaults_and_explicit_opt_out(tmp_path, 
             "/v1/audio/speech",
             json={"input": "test", "voice": "Vivian", "accelerate_single_task": False},
         )
+        rejected_tts = client.post(
+            "/v1/audio/speech",
+            json={"input": "test", "voice": "Vivian", "instructions": "Speak slowly."},
+        )
 
     assert [response.status_code for response in (omitted_asr, disabled_asr, omitted_tts, disabled_tts)] == [200, 200, 200, 200]
+    assert rejected_tts.status_code == 422
+    assert "0.6B models" in rejected_tts.json()["detail"]
     assert omitted_asr.headers["x-job-id"]
     assert omitted_tts.headers["x-job-id"]
     assert [request["accelerate_single_task"] for _, request in captured] == [True, False, True, False]

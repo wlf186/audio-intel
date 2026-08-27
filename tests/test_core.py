@@ -7,6 +7,7 @@ import sys
 import wave
 
 import numpy as np
+import pytest
 
 from audio_intel.config import settings
 from audio_intel.performance import cpu_batch_size, gpu_batch_size, lower_batch_size
@@ -451,6 +452,13 @@ def test_tts_batch_uses_sequential_decoder_and_restores_it() -> None:
     assert model.tokenizer.batch_sizes == [1, 1]
     assert model.tokenizer.decode == original_decode
     assert model.arguments["language"] == ["Chinese", "Chinese"]
+
+
+def test_tts_worker_rejects_legacy_nonempty_instruction_before_model_loading() -> None:
+    context = SimpleNamespace(job={"request": {"instruct": "Very happy."}})
+
+    with pytest.raises(ValueError, match="0.6B models"):
+        tts_pipeline.process_job(context)
 
 
 def test_tts_decode_observer_reports_frames_and_removes_hook_after_error() -> None:

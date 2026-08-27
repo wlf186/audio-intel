@@ -111,26 +111,30 @@ run/          监督器 PID 与执行器身份元数据
 ## 原生异步 API
 
 ```bash
+BASE_URL=http://127.0.0.1:20810
+ASR_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
 # ASR
 curl -F file=@meeting.wav \
   -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
-  -H "Idempotency-Key: $(uuidgen)" \
+  -H "Idempotency-Key: $ASR_KEY" \
   -F language=Auto -F speaker_count=auto \
   -F diarize=true -F align=true -F use_voiceprint_library=true \
   -F compute_device=gpu -F accelerate_single_task=true \
-  http://127.0.0.1:20810/api/v1/asr/jobs
+  "$BASE_URL/api/v1/asr/jobs"
 
 # TTS 预置音色
+TTS_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
 curl -F text='你好，这是本地语音。' \
   -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
-  -H "Idempotency-Key: $(uuidgen)" \
+  -H "Idempotency-Key: $TTS_KEY" \
   -F language=Chinese -F voice_mode=preset -F speaker=Vivian \
   -F response_format=wav -F compute_device=gpu -F accelerate_single_task=true \
-  http://127.0.0.1:20810/api/v1/tts/jobs
+  "$BASE_URL/api/v1/tts/jobs"
 
-# 查询任务及结果
-curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/v1/jobs/JOB_ID
-curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/v1/jobs/JOB_ID/result
+# 按 status_url / poll_after_seconds 轮询到 succeeded 后才能读取 result_url。
+# 完整的错误处理、429 重试、克隆、Python、Node 与 SSE 示例见本地 /docs。
+curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" "$BASE_URL/api/v1/jobs/JOB_ID"
+curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" "$BASE_URL/api/v1/jobs/JOB_ID/result"
 
 # 批量永久删除任务（排队任务会先原子取消，运行中任务会逐项拒绝）
 curl -H 'Content-Type: application/json' \
@@ -164,6 +168,10 @@ curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/
 - `GET /v1/models` 与 OpenAI 兼容音频端点
 
 上述四个原生异步提交端点（ASR、TTS、克隆参考分析、声纹样本上传）都必须发送 8–128 字符的 `Idempotency-Key`。每次逻辑提交生成一个新键；超时、断线或 `429` 后必须用原键重试。首次接受返回 `202`，相同请求重放返回原任务和 `200`，同键更改请求返回 `409`。`429` 会同时返回稳定错误码、`Retry-After` 和当前容量信息。
+
+`GET /api/v1/jobs` 支持 `kind`、`state`、`q`、`limit`、`offset` 服务端分页，始终按 `created_at DESC, id DESC` 稳定排序；`count` 是本页数量，`total` 是筛选后的任务总数，`has_more` 表示是否还有下一页。
+
+当前 TTS 使用的 Qwen3-TTS 12Hz 0.6B Base/CustomVoice 会根据文本语义和标点自然生成韵律，但不支持自然语言风格/情绪指令，也没有独立语速或音高参数。消费方应读取 `/api/v1/capabilities.tts.controls`，不要把模型内部固定的 `temperature`、`top_k`、`top_p`、`repetition_penalty` 采样配置当作语义控制。原生 `instruct` 与 OpenAI 兼容 `instructions` 是弃用兼容字段；省略或传空值可正常生成，非空值会在任务创建前返回 `422`，不会再被静默忽略。
 
 排队任务响应中的 `queue.position` 是同类 FIFO 队列中从 1 开始的位置，任务开始运行后为 `null`。`progress` 是单调的最佳整体进度；TTS 解码和 ASR 模型推理期间会按约 0.5 秒的最小写入间隔细化。消费方必须查看 `progress_detail.basis`：`estimated` 表示百分比包含最佳估算，不能当作精确完成量；`current/total/unit` 是已确认的阶段单元，`activity` 则描述当前推理调用的 `codec_frame`、`output_token` 或 `model_layer` 活动，其中 `activity.basis` 单独说明活动总量是否估算。`estimate` 在至少积累 5 个本机相近历史样本后返回耗时区间和置信度，它只是建议，不是 SLA。SSE 断线时应重新连接并用任务状态接口校准，也可按 `poll_after_seconds` 轮询并使用 ETag/`If-None-Match`。`processing_seconds` 是累计实际处理耗时，不包含排队等待，并会跨失败重试累加；运行中任务配合 `processing_as_of` 可实时显示。`compute_device` 返回 `cpu` 或 `gpu`，`compute_device_name` 返回任务提交/执行时持久化的具体设备名；GPU 名称动态取自实际 `cuda:0`，不会因以后更换硬件而改写历史记录。ASR/TTS worker 使用常驻监督器管理可复用的任务执行进程；取消先等待短暂的协作退出，随后在必要时终止当前任务的完整进程树，确认 GPU 与文件锁释放后才进入“已取消”。默认协作等待 1 秒，可通过 `AUDIO_INTEL_CANCEL_GRACE_SECONDS` 调整。永久删除会清理任务输入、输出、错误文件、临时目录和 SQLite 记录，并在批次结束后执行安全擦除、WAL 截断与数据库压缩。
 

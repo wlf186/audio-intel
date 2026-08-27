@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import ast
+import re
+import subprocess
 
 from fastapi.testclient import TestClient
 
@@ -42,6 +45,7 @@ def test_swagger_is_fully_local_and_protected_by_csp(tmp_path, monkeypatch) -> N
         assert "validator.swagger.io" not in response.text
         assert '"validatorUrl": null' in response.text
         assert "connect-src 'self'" in response.headers["content-security-policy"]
+        assert '"docExpansion": "none"' in response.text
         assert client.get("/docs-assets/swagger-ui.css").text == "/* local swagger css */"
         assert "SwaggerUIBundle" in client.get("/docs-assets/swagger-ui-bundle.js").text
 
@@ -121,6 +125,30 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     assert speech_schema["language"]["default"] == "Auto"
     assert speech_schema["compute_device"]["default"] == "gpu"
     assert speech_schema["accelerate_single_task"]["default"] is True
+    assert speech_schema["instructions"]["deprecated"] is True
+    assert speech_schema["instructions"]["maxLength"] == 0
+    controls_schema = schema["components"]["schemas"]["TtsControlCapability"]["properties"]
+    assert set(controls_schema) == {
+        "instruction_voice_modes", "speaking_rate_parameter", "pitch_parameter", "sampling_parameters",
+    }
+    expected_controls = {
+        "instruction_voice_modes": [],
+        "speaking_rate_parameter": False,
+        "pitch_parameter": False,
+        "sampling_parameters": False,
+    }
+    assert schema["components"]["schemas"]["TtsControlCapability"]["example"] == expected_controls
+    assert schema["components"]["schemas"]["TtsCapability"]["example"]["controls"] == expected_controls
+    assert schema["components"]["schemas"]["CapabilitiesResponse"]["example"]["tts"]["controls"] == expected_controls
+    tts_body_ref = schema["paths"]["/api/v1/tts/jobs"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"]
+    tts_body = schema["components"]["schemas"][tts_body_ref.rsplit("/", 1)[-1]]
+    assert tts_body["properties"]["instruct"]["deprecated"] is True
+    assert tts_body["properties"]["instruct"]["maxLength"] == 0
+    for path in ("/api/v1/tts/jobs", "/v1/audio/speech"):
+        unsupported = schema["paths"][path]["post"]["responses"]["422"]["content"]["application/problem+json"]["examples"]["unsupported_instruction"]["value"]
+        assert unsupported["status"] == 422
+        assert unsupported["code"] == "http_422"
+        assert "0.6B models" in unsupported["detail"]
     assert schema["components"]["schemas"]["AsrCapability"]["properties"]["default_language"]["type"] == "string"
     for path in (
         "/api/v1/asr/jobs",
@@ -147,6 +175,20 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     assert "304" in job_status
     assert {"ETag", "Cache-Control"} <= set(job_status["200"]["headers"])
     assert {"ETag", "Cache-Control"} <= set(job_status["304"]["headers"])
+    status_parameters = schema["paths"]["/api/v1/jobs/{job_id}"]["get"]["parameters"]
+    if_none_match = next(item for item in status_parameters if item["name"] == "If-None-Match")
+    assert if_none_match["in"] == "header" and if_none_match["required"] is False
+    source_operation = schema["paths"]["/api/v1/jobs/{job_id}/source"]["get"]
+    range_parameter = next(item for item in source_operation["parameters"] if item["name"] == "Range")
+    assert range_parameter["in"] == "header" and range_parameter["required"] is False
+    assert {"Accept-Ranges", "Content-Length"} <= set(source_operation["responses"]["200"]["headers"])
+    assert {"Accept-Ranges", "Content-Length", "Content-Range"} <= set(source_operation["responses"]["206"]["headers"])
+    list_operation = schema["paths"]["/api/v1/jobs"]["get"]
+    query = next(item for item in list_operation["parameters"] if item["name"] == "q")
+    query_string = next(item for item in query["schema"]["anyOf"] if item.get("type") == "string")
+    assert query_string["maxLength"] == 128
+    list_properties = schema["components"]["schemas"]["JobListResponse"]["properties"]
+    assert {"items", "count", "total", "limit", "offset", "has_more"} <= set(list_properties)
     assert schema["components"]["schemas"]["EstimateState"]["enum"] == ["warming_up", "ready"]
     assert schema["components"]["schemas"]["EstimateConfidence"]["enum"] == ["low", "medium", "high"]
     assert schema["components"]["schemas"]["QueueWaitReason"]["enum"] == ["worker", "gpu"]
@@ -197,3 +239,34 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         ref.rsplit("/", 1)[-1]
         for ref in refs if ref.startswith("#/components/schemas/")
     } - names
+
+    for name, definition in schema["components"]["schemas"].items():
+        if name in {"HTTPValidationError", "ValidationError"}:
+            continue
+        assert all(property_schema.get("description") for property_schema in definition.get("properties", {}).values()), name
+
+    request_media = [
+        media
+        for methods in schema["paths"].values()
+        for method, operation in methods.items() if method in HTTP_METHODS
+        for media in operation.get("requestBody", {}).get("content", {}).values()
+    ]
+    assert request_media and all(media.get("examples") for media in request_media)
+    assert set(schema["paths"]["/api/v1/tts/jobs"]["post"]["requestBody"]["content"]["multipart/form-data"]["examples"]) >= {"preset", "inline_clone", "voiceprint"}
+
+
+def test_documentation_code_blocks_are_self_contained_and_syntactically_valid() -> None:
+    from audio_intel.api_docs import API_DESCRIPTION
+
+    bash_blocks = re.findall(r"```bash\n(.*?)```", API_DESCRIPTION, re.S)
+    python_blocks = re.findall(r"```python\n(.*?)```", API_DESCRIPTION, re.S)
+    javascript_blocks = re.findall(r"```javascript\n(.*?)```", API_DESCRIPTION, re.S)
+    assert bash_blocks and python_blocks and javascript_blocks
+    for block in bash_blocks:
+        assert "BASE_URL=" in block
+        subprocess.run(["bash", "-n"], input=block, text=True, check=True)
+    for block in python_blocks:
+        ast.parse(block)
+        assert "api_key =" in block
+    for block in javascript_blocks:
+        subprocess.run(["node", "--input-type=module", "--check"], input=block, text=True, check=True)

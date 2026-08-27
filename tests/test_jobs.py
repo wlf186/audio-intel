@@ -96,6 +96,33 @@ def test_concurrent_idempotent_creates_return_one_job(tmp_path, monkeypatch) -> 
     assert len(db_module.list_jobs()) == 1
 
 
+def test_job_history_page_is_stable_counted_and_searches_literals(tmp_path, monkeypatch) -> None:
+    local = local_settings(tmp_path)
+    install_settings(local, monkeypatch)
+    db_module.init_db()
+    jobs = [
+        db_module.create_job("asr", "普通任务", {"input_path": "one"}, "job-a"),
+        db_module.create_job("tts", "包含 100% 字样", {"text": "two"}, "job-b"),
+        db_module.create_job("tts", "包含下划线_字样", {"text": "three"}, "job-c"),
+    ]
+    with sqlite3.connect(local.database_path) as database:
+        database.execute(
+            "UPDATE jobs SET created_at='2026-08-27T12:00:00+00:00'",
+        )
+
+    first_page, total = db_module.list_jobs_page(limit=2)
+    second_page, repeated_total = db_module.list_jobs_page(limit=2, offset=2)
+    assert [job["id"] for job in first_page + second_page] == ["job-c", "job-b", "job-a"]
+    assert total == repeated_total == 3
+
+    percent, percent_total = db_module.list_jobs_page(query="%")
+    underscore, underscore_total = db_module.list_jobs_page(query="_")
+    filtered, filtered_total = db_module.list_jobs_page(kind="tts", state="queued", query="包含")
+    assert [job["id"] for job in percent] == [jobs[1]["id"]] and percent_total == 1
+    assert [job["id"] for job in underscore] == [jobs[2]["id"]] and underscore_total == 1
+    assert [job["id"] for job in filtered] == ["job-c", "job-b"] and filtered_total == 2
+
+
 def test_stage_progress_persists_stable_codes_and_timings(tmp_path, monkeypatch) -> None:
     local = local_settings(tmp_path)
     install_settings(local, monkeypatch)

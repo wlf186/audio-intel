@@ -113,6 +113,33 @@ class AccelerationCapability(PublicModel):
     default: bool
 
 
+class TtsControlCapability(PublicModel):
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "example": {
+                "instruction_voice_modes": [],
+                "speaking_rate_parameter": False,
+                "pitch_parameter": False,
+                "sampling_parameters": False,
+            }
+        },
+    )
+
+    instruction_voice_modes: list[VoiceMode] = Field(
+        description="支持自然语言风格、情绪和韵律指令的音色模式 / Voice modes supporting natural-language style, emotion, and prosody instructions",
+    )
+    speaking_rate_parameter: bool = Field(
+        description="公共 API 是否提供独立语速参数 / Whether the public API exposes a dedicated speaking-rate parameter",
+    )
+    pitch_parameter: bool = Field(
+        description="公共 API 是否提供独立音高参数 / Whether the public API exposes a dedicated pitch parameter",
+    )
+    sampling_parameters: bool = Field(
+        description="公共 API 是否开放底层采样参数 / Whether the public API exposes low-level sampling parameters",
+    )
+
+
 class SpeakerCountCapability(PublicModel):
     min: int
     max: int
@@ -143,6 +170,7 @@ class TtsCapability(PublicModel):
     formats: list[str]
     compute_devices: list[ComputeCapability]
     single_task_acceleration: AccelerationCapability
+    controls: TtsControlCapability
 
 
 class ApiLimits(PublicModel):
@@ -394,10 +422,12 @@ class QueueResponse(PublicModel):
 
 
 class JobListResponse(PublicModel):
-    items: list[JobResponse]
+    items: list[JobResponse] = Field(description="当前分页中的任务，按创建时间稳定倒序 / Jobs in the current page, stably ordered newest-first")
     count: int = Field(description="本页返回数量，不是全库总数 / Number returned on this page, not a total")
-    limit: int
-    offset: int
+    total: int = Field(ge=0, description="当前筛选条件下的任务总数 / Total jobs matching the current filters")
+    limit: int = Field(ge=1, le=500, description="当前每页上限 / Current page-size limit")
+    offset: int = Field(ge=0, description="当前分页偏移 / Current page offset")
+    has_more: bool = Field(description="当前页后是否还有匹配任务 / Whether more matching jobs follow this page")
 
 
 class EventJobResponse(JobResponse):
@@ -541,7 +571,12 @@ class OpenAISpeechRequest(PublicModel):
             ]
         },
     )
-    instructions: str = Field("", description="预置音色风格指令 / Preset voice style instruction")
+    instructions: str = Field(
+        "",
+        description="已弃用；当前 0.6B 模型不支持风格指令，只能省略或传空值 / Deprecated; the current 0.6B models do not support style instructions, so omit it or send an empty value",
+        deprecated=True,
+        json_schema_extra={"maxLength": 0},
+    )
     compute_device: str = Field(
         "gpu", description="计算设备；GPU 不可用时返回 503 / Compute device; unavailable GPU returns 503",
         json_schema_extra={"enum": ["gpu", "cpu"]},

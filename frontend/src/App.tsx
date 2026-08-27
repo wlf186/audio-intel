@@ -1,7 +1,7 @@
-import {useCallback,useEffect,useRef,useState} from 'react'
+import {useCallback,useEffect,useMemo,useRef,useState} from 'react'
 import {AppShell,type Page} from './components/AppShell'
 import {api} from './lib/api'
-import type {AuthSession,Capabilities,Health,Job,JobResult,ResultRevealRequest,VoiceprintPerson} from './lib/types'
+import type {AuthSession,Capabilities,Health,Job,JobHistoryQuery,JobResult,ResultRevealRequest,VoiceprintPerson} from './lib/types'
 import {AsrPage} from './pages/AsrPage'
 import {TtsPage} from './pages/TtsPage'
 import {JobsPage} from './pages/JobsPage'
@@ -12,6 +12,7 @@ import {newestJobsFirst} from './lib/jobs'
 
 const pages=new Set<Page>(['asr','tts','voiceprints','jobs','system'])
 const jobLimit=100
+const initialJobHistoryQuery:JobHistoryQuery={kind:'all',state:'all',search:'',limit:25,offset:0}
 function pageFromHash():Page{const value=location.hash.slice(1) as Page;return pages.has(value)?value:'asr'}
 function sameJobSnapshot(current:Job,next:Job){return current.updated_at===next.updated_at&&current.state===next.state&&current.stage===next.stage&&current.progress===next.progress&&current.attempts===next.attempts&&current.error_message===next.error_message&&current.started_at===next.started_at&&current.finished_at===next.finished_at}
 
@@ -27,12 +28,15 @@ export default function App(){
  const [authError,setAuthError]=useState('')
  const [eventsConnected,setEventsConnected]=useState(false)
  const [selected,setSelected]=useState<Partial<Record<Job['kind'],string>>>({})
+ const [pinnedJobs,setPinnedJobs]=useState<Partial<Record<Job['kind'],Job>>>({})
+ const [jobHistoryQuery,setJobHistoryQuery]=useState<JobHistoryQuery>(initialJobHistoryQuery)
  const [reveal,setReveal]=useState<(ResultRevealRequest&{kind:Job['kind']})>()
  const refreshSequence=useRef(0)
  const revealSequence=useRef(0)
  const refreshVoiceprints=useCallback(async()=>{const response=await api.voiceprints();setVoiceprints(response.items)},[])
  const authenticated=auth?.authenticated===true
  const mergeJobs=useCallback((items:Job[])=>setJobs(current=>{const previous=new Map(current.map(job=>[job.id,job]));const merged=newestJobsFirst(items).map(job=>{const existing=previous.get(job.id);return existing&&sameJobSnapshot(existing,job)?existing:job});return merged.length===current.length&&merged.every((job,index)=>job===current[index])?current:merged}),[])
+ const workspaceJobs=useMemo(()=>newestJobsFirst([...jobs,...Object.values(pinnedJobs).filter((job):job is Job=>Boolean(job)&&!jobs.some(item=>item.id===job.id))]),[jobs,pinnedJobs])
  const refreshJobs=useCallback(async()=>{if(!authenticated)return;const sequence=++refreshSequence.current;try{const response=await api.jobs();if(sequence===refreshSequence.current){mergeJobs(response.items);setConnectionError('')}}catch(error){if(sequence===refreshSequence.current)setConnectionError((error as Error).message)}},[authenticated,mergeJobs])
  const refreshSystem=useCallback(async()=>{if(!authenticated)return;try{setHealth(await api.system());setSystemError('')}catch(error){setSystemError((error as Error).message)}},[authenticated])
  const refresh=useCallback(async()=>{await Promise.all([refreshJobs(),refreshSystem()])},[refreshJobs,refreshSystem])
@@ -46,19 +50,20 @@ export default function App(){
  useEffect(()=>{if(!hasPendingVoiceprint)return;const timer=setInterval(()=>void refreshVoiceprints(),2000);return()=>clearInterval(timer)},[hasPendingVoiceprint,refreshVoiceprints])
  useEffect(()=>{const onHash=()=>setPage(pageFromHash());addEventListener('hashchange',onHash);return()=>removeEventListener('hashchange',onHash)},[])
  const navigate=(next:Page)=>{setPage(next);if(location.hash!==`#${next}`)location.hash=next}
- const openJob=(job:Job)=>{if(job.state==='succeeded'){setSelected(current=>({...current,[job.kind]:job.id}));setReveal({kind:job.kind,jobId:job.id,token:++revealSequence.current});navigate(job.kind)}else navigate('jobs')}
+ const openJob=(job:Job)=>{if(job.state==='succeeded'){setPinnedJobs(current=>({...current,[job.kind]:job}));setSelected(current=>({...current,[job.kind]:job.id}));setReveal({kind:job.kind,jobId:job.id,token:++revealSequence.current});navigate(job.kind)}else navigate('jobs')}
  const onRevealHandled=useCallback((token:number)=>setReveal(current=>current?.token===token?undefined:current),[])
  const onJobSubmitted=useCallback((job:Job)=>{refreshSequence.current+=1;setJobs(current=>newestJobsFirst([job,...current.filter(item=>item.id!==job.id)]).slice(0,jobLimit));setConnectionError('')},[])
- const onJobUpdated=useCallback((snapshot:Job)=>setJobs(current=>current.map(job=>job.id===snapshot.id?snapshot:job)),[])
- const onJobResultUpdated=useCallback((jobId:string,result:JobResult)=>setJobs(current=>current.map(job=>job.id===jobId?{...job,result,updated_at:new Date().toISOString()}:job)),[])
+ const onJobUpdated=useCallback((snapshot:Job)=>{setJobs(current=>current.map(job=>job.id===snapshot.id?snapshot:job));setPinnedJobs(current=>current[snapshot.kind]?.id===snapshot.id?{...current,[snapshot.kind]:snapshot}:current)},[])
+ const onJobResultUpdated=useCallback((jobId:string,result:JobResult)=>{const updatedAt=new Date().toISOString();setJobs(current=>current.map(job=>job.id===jobId?{...job,result,updated_at:updatedAt}:job));setPinnedJobs(current=>{const entry=Object.values(current).find(job=>job?.id===jobId);return entry?{...current,[entry.kind]:{...entry,result,updated_at:updatedAt}}:current})},[])
+ const onJobsRemoved=useCallback((ids:string[])=>{const removed=new Set(ids);setJobs(current=>current.filter(job=>!removed.has(job.id)));setPinnedJobs(current=>{const next={...current};for(const kind of ['asr','tts'] as const)if(next[kind]&&removed.has(next[kind]!.id))delete next[kind];return next});setSelected(current=>{const next={...current};for(const kind of ['asr','tts'] as const)if(next[kind]&&removed.has(next[kind]!))delete next[kind];return next})},[])
  const gpuAvailable=health?Boolean(health.hardware.gpu):undefined
  const login=async(key:string)=>{await api.login(key);setAuth({required:true,authenticated:true});setAuthError('')}
- const logout=async()=>{await api.logout();setJobs([]);setHealth(undefined);setSystemError('');setCapabilities(undefined);setVoiceprints([]);setAuth({required:true,authenticated:false})}
+ const logout=async()=>{await api.logout();setJobs([]);setPinnedJobs({});setSelected({});setHealth(undefined);setSystemError('');setCapabilities(undefined);setVoiceprints([]);setAuth({required:true,authenticated:false})}
  return <><AppShell page={page} setPage={navigate} health={health} systemError={systemError} connectionError={connectionError} authRequired={auth?.required&&authenticated} onLogout={()=>void logout()}>
-  {page==='asr'?<AsrPage jobs={jobs} onJobSubmitted={onJobSubmitted} onJobResultUpdated={onJobResultUpdated} selectedJobId={selected.asr} onSelect={openJob} gpuAvailable={gpuAvailable} maxSpeakers={capabilities?.asr.speaker_count.max||15} asrLanguages={capabilities?.asr.languages} alignerLanguages={capabilities?.asr.aligner_languages} voiceprints={voiceprints} refreshVoiceprints={refreshVoiceprints} revealRequest={reveal?.kind==='asr'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
-  {page==='tts'?<TtsPage jobs={jobs} onJobSubmitted={onJobSubmitted} selectedJobId={selected.tts} onSelect={openJob} gpuAvailable={gpuAvailable} voiceprints={voiceprints} ttsLanguages={capabilities?.tts?.languages} referenceLanguages={capabilities?.asr.aligner_languages} revealRequest={reveal?.kind==='tts'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
+  {page==='asr'?<AsrPage jobs={workspaceJobs} onJobSubmitted={onJobSubmitted} onJobResultUpdated={onJobResultUpdated} selectedJobId={selected.asr} onSelect={openJob} gpuAvailable={gpuAvailable} maxSpeakers={capabilities?.asr.speaker_count.max||15} asrLanguages={capabilities?.asr.languages} alignerLanguages={capabilities?.asr.aligner_languages} voiceprints={voiceprints} refreshVoiceprints={refreshVoiceprints} revealRequest={reveal?.kind==='asr'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
+  {page==='tts'?<TtsPage jobs={workspaceJobs} onJobSubmitted={onJobSubmitted} selectedJobId={selected.tts} onSelect={openJob} gpuAvailable={gpuAvailable} voiceprints={voiceprints} ttsLanguages={capabilities?.tts?.languages} ttsControls={capabilities?.tts?.controls} referenceLanguages={capabilities?.asr.aligner_languages} revealRequest={reveal?.kind==='tts'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
   {page==='voiceprints'?<VoiceprintsPage people={voiceprints} refresh={refreshVoiceprints} onJobSubmitted={onJobSubmitted} gpuAvailable={gpuAvailable} asrLanguages={capabilities?.asr.languages}/>:null}
-  {page==='jobs'?<JobsPage jobs={jobs} refresh={refresh} openJob={openJob} onJobUpdated={onJobUpdated}/>:null}
+  {page==='jobs'?<JobsPage liveJobs={jobs} query={jobHistoryQuery} setQuery={setJobHistoryQuery} refreshRecentJobs={refreshJobs} openJob={openJob} onJobUpdated={onJobUpdated} onJobsRemoved={onJobsRemoved}/>:null}
   {page==='system'?<SystemPage health={health} systemError={systemError}/>:null}
  </AppShell>{!auth||!authenticated?<AuthGate loading={!auth&&!authError} error={authError} onLogin={login}/>:null}</>
 }

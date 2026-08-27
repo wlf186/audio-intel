@@ -26,6 +26,9 @@ MAX_CLONE_REFERENCE_SECONDS = 15.0
 TTS_CODEC_FRAMES_PER_SECOND = 12.5
 TTS_INITIAL_CODEC_FRAMES_PER_TEXT_TOKEN = 4.5
 MAX_IN_FLIGHT_BATCH_PROGRESS = 0.95
+UNSUPPORTED_INSTRUCTION_DETAIL = (
+    "Style instructions are not supported by the installed Qwen3-TTS 0.6B models"
+)
 
 
 def aligner_python() -> Path:
@@ -212,6 +215,8 @@ def encode(path: Path, audio: Any, rate: int, output_format: str) -> Path:
 
 def process_job(context: JobContext) -> dict[str, Any]:
     request = context.job["request"]
+    if str(request.get("instruct") or "").strip():
+        raise ValueError(UNSUPPORTED_INSTRUCTION_DETAIL)
     compute_device = request.get("compute_device", "cpu")
     chunks = split_text(request["text"])
     acceleration = resolve_acceleration(bool(request.get("accelerate_single_task", False)), compute_device)
