@@ -347,7 +347,7 @@ test('navigation and mobile layout render without overflow',async({page})=>{
  }
  await expect(page.getByRole('link',{name:'打开 API 文档'})).toBeVisible()
  await page.getByRole('button',{name:'系统状态'}).click()
- await expect(page.getByRole('heading',{name:'系统状态'})).toBeVisible()
+ await expect(page.getByRole('heading',{name:'系统状态',exact:true})).toBeVisible()
  await page.setViewportSize({width:390,height:844})
  await page.goto('/#tts')
  await expect(page.getByRole('heading',{name:'语音合成'})).toBeVisible()
@@ -368,7 +368,7 @@ test('navigation and mobile layout render without overflow',async({page})=>{
  await page.evaluate(()=>window.scrollTo(0,120))
  await expect.poll(()=>page.locator('.app-shell>header').evaluate(element=>Math.round(element.getBoundingClientRect().top))).toBe(0)
  await mobileNavigation.getByRole('button',{name:'系统状态'}).click()
- await expect(page.getByRole('heading',{name:'系统状态'})).toBeVisible()
+ await expect(page.getByRole('heading',{name:'系统状态',exact:true})).toBeVisible()
  await expect(page.getByRole('link',{name:'API 文档'})).toBeVisible()
  await page.screenshot({path:'/tmp/audio-intel-after-mobile.png',fullPage:false})
 })
@@ -390,7 +390,7 @@ test('mobile job pagination stays in flow and preserves the six-item app navigat
  await expect(page.getByText('任务 26',{exact:true})).toBeVisible()
  await expect(pagination).toContainText('第 2 / 2 页')
  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'系统状态'}).click()
- await expect(page.getByRole('heading',{name:'系统状态'})).toBeVisible()
+ await expect(page.getByRole('heading',{name:'系统状态',exact:true})).toBeVisible()
  expect(errors).toEqual([])
 })
 
@@ -435,6 +435,18 @@ test('ASR and TTS preferences persist independently and reset per page',async({p
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.route('**/api/v1/capabilities',async route=>{
+  const response=await route.fetch()
+  const body=await response.json()
+  const useGpuByDefault=(devices:Array<{id:string;available:boolean;default:boolean}>)=>{
+   for(const device of devices){device.available=true;device.default=device.id==='gpu'}
+  }
+  useGpuByDefault(body.asr.compute_devices)
+  useGpuByDefault(body.asr.models.find((model:{default:boolean})=>model.default).compute_devices)
+  useGpuByDefault(body.tts.compute_devices)
+  useGpuByDefault(body.tts.model_capabilities.find((model:{default:boolean})=>model.default).compute_devices)
+  await route.fulfill({response,json:body})
+ })
  await page.goto('/#asr')
  await page.evaluate(()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('audio-intel:asr-preferences:v1','{broken');localStorage.setItem('audio-intel:tts-preferences:v1','{broken')})
  await page.reload()
@@ -598,7 +610,7 @@ test('voiceprint samples support upload and previewed microphone recording',asyn
   await route.fulfill({status:202,json:{sample:{id:`sample_${submission}`,person_id:'voice_recording',state:'pending',language:'Chinese',words:[],created_at:now,updated_at:now,tts_eligible:false,embedding_status:'pending'},job:{id:`voiceprint-job-${submission}`,kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'声纹样本入库 · 录音测试人员',created_at:now,request:{compute_device:'cpu'}}}})
  })
  await page.goto('/#voiceprints')
- await expect(page.getByRole('heading',{name:'声纹库'})).toBeVisible()
+ await expect(page.getByRole('heading',{name:'声纹库',exact:true})).toBeVisible()
  await expect(page.getByLabel('声纹样本语言').locator('option')).toHaveCount(12)
  await page.getByLabel('声纹样本语言').selectOption('Spanish')
  await page.getByLabel('声纹入库计算设备').selectOption('cpu')
@@ -1049,7 +1061,7 @@ test('voiceprint library sample can be explicitly selected for TTS clone',async(
  expect(submitted.body).toContain('voiceprint')
  expect(submitted.body).toContain('sample_long')
  await page.locator('nav').getByRole('button',{name:/声纹库/}).click()
- await expect(page.getByRole('heading',{name:'声纹库'})).toBeVisible()
+ await expect(page.getByRole('heading',{name:'声纹库',exact:true})).toBeVisible()
  await page.setViewportSize({width:390,height:844})
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
 })

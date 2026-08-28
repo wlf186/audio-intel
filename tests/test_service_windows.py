@@ -44,15 +44,25 @@ def _environment(tmp_path: Path, port: int | None = None) -> dict[str, str]:
 
 def _run_service(*args: str, env: dict[str, str], timeout: float = 45) -> subprocess.CompletedProcess[str]:
     command = [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", str(SERVICE), *args]
-    return subprocess.run(
+    process = subprocess.Popen(
         command,
         cwd=ROOT,
         env=env,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=timeout,
-        check=False,
     )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        subprocess.run(
+            ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+            capture_output=True, text=True, check=False, timeout=10,
+        )
+        stdout, stderr = process.communicate(timeout=10)
+        stderr += f"\nservice command timed out after {timeout} seconds"
+        return subprocess.CompletedProcess(command, 124, stdout, stderr)
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 def _read_pids(run_dir: Path) -> dict[str, int]:
