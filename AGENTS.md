@@ -12,7 +12,7 @@ Treat `models/`, `data/`, `cache/`, `tmp/`, `logs/`, `run/`, and `.runtime/` as 
 
 - `./service.sh setup all` installs project-local runtimes and downloads required models.
 - `./service.sh start all` starts the API, ASR worker, and TTS worker in the background on port 20810. Use `./service.sh run all` for a Linux foreground/container entrypoint; it is not a Windows action. Use `status`, `logs all`, and `stop all` for operations.
-- On native Windows 11, use `service.cmd` with the same actions and targets; see `docs/WINDOWS.md`.
+- On native Windows 11, use `service.cmd` with the same background actions and targets except for the Linux-only `run`; successful starts wait for API/worker readiness and stops must remove complete process trees. See `docs/WINDOWS.md`.
 - `.runtime/api/bin/python -m pytest -q` runs backend tests.
 - `.runtime/api/bin/python scripts/lock_dependencies.py --check` verifies Linux and Windows dependency locks.
 - `corepack pnpm@10.15.1 --dir frontend typecheck` checks TypeScript.
@@ -20,6 +20,7 @@ Treat `models/`, `data/`, `cache/`, `tmp/`, `logs/`, `run/`, and `.runtime/` as 
 - `corepack pnpm@10.15.1 --dir frontend test:e2e` runs Playwright against the local service.
 - `AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all` enables fast pipeline smoke testing without real inference.
 - `.runtime/api/bin/python -m pytest -q tests/test_service_script.py` checks isolated Linux foreground/background lifecycle behavior without touching the default service instance.
+- Native Windows CI runs `tests/test_service_windows.py` for isolated `start`/`restart`/`stop`, PID safety, and process-tree cleanup coverage.
 
 ## Coding Style & Naming Conventions
 

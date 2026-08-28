@@ -40,7 +40,9 @@ curl -fsS http://127.0.0.1:20810/api/v1/health
 ./service.sh run all
 ```
 
-`run` 会保持前台并转发停止信号，无需 systemd 或其他守护程序。构建容器时应先完成 `.runtime`、前端和模型准备，运行时为当前 UID 提供可写的数据、临时、缓存、日志和 `run` 目录；这些位置可用 `.env.example` 已有的 `AUDIO_INTEL_*_DIR` 变量指向挂载卷。端口仍为非特权的 `20810`，rootless 不需要额外脚本分支。容器重启策略由 Docker、Podman 或其他运行时负责。
+`run` 会保持前台并转发停止信号，无需 systemd 或其他守护程序。构建容器时应先完成 `.runtime`、前端和模型准备，运行时为当前 UID 提供可写的数据、临时、缓存、日志和 `run` 目录；这些位置可用 `.env.example` 已有的 `AUDIO_INTEL_*_DIR` 变量指向挂载卷。端口仍为非特权的 `20810`，rootless 不需要额外脚本分支。
+
+后台模式通过 `./service.sh restart all` 重启。前台模式应向当前 `run all` 进程发送 `SIGTERM`（交互终端可按 `Ctrl+C`），等待它清理完成后再执行 `./service.sh run all`；容器中直接使用 Docker、Podman 或编排器的重启操作。不要在另一个 shell 中对前台实例执行 `restart all`，也不要让容器的 `CMD` 使用后台 `start all`。容器重启策略由运行时负责。
 
 ASR 与 TTS GPU 能力均按所选模型判断：0.6B/1.7B 使用 `nvidia-smi` 报告的总显存门槛 3840/7936 MiB，而不是当前空闲显存。可从受保护的 `GET /api/v1/capabilities` 读取 `asr.models[].compute_devices` 和 `tts.model_capabilities[].compute_devices`；例如报告 8151 MiB 的 8 GiB 显卡可通过 1.7B 准入。准入门槛不排除其他 GPU 程序导致运行期 OOM，无 GPU 或显存不足时 API 消费方应显式选择 `compute_device=cpu`。
 
@@ -84,6 +86,8 @@ git pull --ff-only
 ./service.sh setup all
 ./service.sh restart all
 ```
+
+上例的 `restart all` 适用于后台模式。若部署入口为 `run all`，应让当前前台进程退出，再由终端或容器运行时重新启动它。
 
 不要复制 `.runtime/` 到另一台机器；在目标机器重新运行 setup。任务数据可按需要单独迁移。
 

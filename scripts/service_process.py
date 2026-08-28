@@ -10,6 +10,10 @@ from pathlib import Path
 
 import psutil
 
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from audio_intel.config import settings
 from audio_intel.db import list_workers
 
@@ -115,11 +119,12 @@ def _cleanup_executor(kind: str) -> list[int]:
 
 def cleanup(component: str, pid: int) -> int:
     remaining: list[int] = []
-    try:
-        if _matching_process(component, pid) is not None:
-            remaining.extend(_terminate_tree(pid))
-    except psutil.AccessDenied:
-        remaining.append(pid)
+    if pid > 0:
+        try:
+            if _matching_process(component, pid) is not None:
+                remaining.extend(_terminate_tree(pid))
+        except psutil.AccessDenied:
+            remaining.append(pid)
     if component in {"asr", "tts"}:
         remaining.extend(_cleanup_executor(component))
     remaining = sorted(set(remaining))
@@ -188,6 +193,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="action", required=True)
 
+    matches_parser = subparsers.add_parser("matches")
+    matches_parser.add_argument("component", choices=EXPECTED_COMMANDS)
+    matches_parser.add_argument("pid", type=int)
+
     cleanup_parser = subparsers.add_parser("cleanup")
     cleanup_parser.add_argument("component", choices=EXPECTED_COMMANDS)
     cleanup_parser.add_argument("pid", type=int)
@@ -204,6 +213,8 @@ def main() -> int:
     worker_parser.add_argument("timeout", type=float)
 
     args = parser.parse_args()
+    if args.action == "matches":
+        return 0 if _process_matches(args.component, args.pid) else 1
     if args.action == "cleanup":
         return cleanup(args.component, args.pid)
     if args.action == "wait-api":

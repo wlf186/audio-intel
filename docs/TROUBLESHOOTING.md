@@ -113,11 +113,13 @@ curl -I https://modelscope.cn
 - 页脚 `NET_LISTEN` 和受保护的 `/api/v1/system` 中 `bind` 字段会显示服务实际配置的监听地址与端口；`0.0.0.0` 表示监听所有网卡，不等同于必须通过该地址访问。
 - 默认端口可用 `ss -ltnp | grep 20810` 检查占用；若设置了 `AUDIO_INTEL_PORT`，请改查实际端口。
 - 查看 `logs/api.log`、`logs/asr.log`、`logs/tts.log`；PID 位于 `run/`。
-- 服务配置改变后使用 `./service.sh restart all`。
+- 由 `start all` 启动的后台服务在配置改变后使用 `./service.sh restart all`。
 
 若 `start`/`restart` 已显示启动成功，但执行命令结束后服务立即消失并由上游返回 `502`，通常是远程执行器或容器入口回收了命令的后台进程，而不是监听地址从 `0.0.0.0` 被修改。`nohup` 无法阻止外部按 process group 或 cgroup 清理进程。此类环境应让 `./service.sh run all` 持续保持为前台主进程；普通长期 shell 仍可继续使用 `start all`。
 
 rootless 本身不会导致该问题。确认当前 UID 对 `.env.example` 中配置的数据、缓存、日志和运行目录可写即可。不要为此在容器内加入 systemd；重启策略应交给容器运行时。
+
+前台模式不要从另一个终端执行 `restart all`：该命令会停止 `run all` 管理的子进程，前台管理进程随即退出，随后启动的后台进程还可能再次被执行器回收。交互终端应在原窗口按 `Ctrl+C`，确认退出后重新执行 `./service.sh run all`；Docker、Podman 或编排环境应直接重启容器，让运行时发送停止信号并重新执行入口命令。
 
 ## 浏览器麦克风无法录音
 

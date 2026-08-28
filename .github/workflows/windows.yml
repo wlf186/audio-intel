@@ -62,6 +62,8 @@ jobs:
         run: |
           service.cmd start all
           service.cmd status
+          service.cmd restart all
+          service.cmd status
           .runtime\api\Scripts\python.exe scripts\smoke_test.py
 
       - name: Browser checks

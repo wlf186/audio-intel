@@ -5,15 +5,18 @@ import os
 import signal
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
 
 import psutil
+import pytest
 
 
 ROOT = Path(__file__).resolve().parent.parent
 SERVICE = ROOT / "service.sh"
+pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="service.sh requires Linux /proc")
 
 
 def _unused_port() -> int:

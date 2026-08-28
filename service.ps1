@@ -9,40 +9,71 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RootDir = $PSScriptRoot
-$RunDir = Join-Path $RootDir "run"
-$LogDir = Join-Path $RootDir "logs"
 $RuntimeDir = Join-Path $RootDir ".runtime"
+$ServiceHelper = Join-Path $RootDir "scripts\service_process.py"
+$StartTimeoutSeconds = 20
+
+function Get-ProcessEnvironment {
+    param([string]$Name)
+    return [Environment]::GetEnvironmentVariable($Name, "Process")
+}
+
+function Set-ProcessEnvironment {
+    param([string]$Name, [string]$Value)
+    [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
+}
 
 function Set-DefaultEnvironment {
     param([string]$Name, [string]$Value)
-    $current = [Environment]::GetEnvironmentVariable($Name, "Process")
-    if ([string]::IsNullOrWhiteSpace($current)) {
-        [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
+    if ([string]::IsNullOrWhiteSpace((Get-ProcessEnvironment $Name))) {
+        Set-ProcessEnvironment $Name $Value
     }
 }
 
+function Resolve-ConfiguredPath {
+    param([string]$Name, [string]$Default)
+    $value = Get-ProcessEnvironment $Name
+    if ([string]::IsNullOrWhiteSpace($value)) { $value = $Default }
+    if (-not [IO.Path]::IsPathRooted($value)) { $value = Join-Path $RootDir $value }
+    return [IO.Path]::GetFullPath($value)
+}
+
+$DataDir = Resolve-ConfiguredPath "AUDIO_INTEL_DATA_DIR" "data"
+$TempDir = Resolve-ConfiguredPath "AUDIO_INTEL_TEMP_DIR" "tmp"
+$CacheDir = Resolve-ConfiguredPath "AUDIO_INTEL_CACHE_DIR" "cache"
+$LogDir = Resolve-ConfiguredPath "AUDIO_INTEL_LOG_DIR" "logs"
+$RunDir = Resolve-ConfiguredPath "AUDIO_INTEL_RUN_DIR" "run"
+$ModelsDir = Resolve-ConfiguredPath "AUDIO_INTEL_MODELS_DIR" "models"
+$FrontendDir = Resolve-ConfiguredPath "AUDIO_INTEL_FRONTEND_DIR" "frontend\dist"
+
 function Initialize-Environment {
-    $directories = @($RunDir, $LogDir, (Join-Path $RootDir "data"), (Join-Path $RootDir "tmp"), (Join-Path $RootDir "cache"), (Join-Path $RootDir "models"))
-    foreach ($directory in $directories) {
+    foreach ($directory in @($RunDir, $LogDir, $DataDir, $TempDir, $CacheDir, $ModelsDir)) {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
     }
 
     Set-DefaultEnvironment "PYTHONPATH" $RootDir
+    Set-DefaultEnvironment "PYTHONUNBUFFERED" "1"
     Set-DefaultEnvironment "AUDIO_INTEL_HOST" "0.0.0.0"
     Set-DefaultEnvironment "AUDIO_INTEL_PORT" "20810"
     Set-DefaultEnvironment "AUDIO_INTEL_MOCK_MODE" "0"
-    Set-DefaultEnvironment "HF_HOME" (Join-Path $RootDir "cache\huggingface")
-    Set-DefaultEnvironment "HUGGINGFACE_HUB_CACHE" (Join-Path $RootDir "cache\huggingface\hub")
-    Set-DefaultEnvironment "MODELSCOPE_CACHE" (Join-Path $RootDir "cache\modelscope")
-    Set-DefaultEnvironment "TORCH_HOME" (Join-Path $RootDir "cache\torch")
-    Set-DefaultEnvironment "XDG_CACHE_HOME" (Join-Path $RootDir "cache\xdg")
+    Set-ProcessEnvironment "AUDIO_INTEL_DATA_DIR" $DataDir
+    Set-ProcessEnvironment "AUDIO_INTEL_TEMP_DIR" $TempDir
+    Set-ProcessEnvironment "AUDIO_INTEL_CACHE_DIR" $CacheDir
+    Set-ProcessEnvironment "AUDIO_INTEL_LOG_DIR" $LogDir
+    Set-ProcessEnvironment "AUDIO_INTEL_RUN_DIR" $RunDir
+    Set-ProcessEnvironment "AUDIO_INTEL_MODELS_DIR" $ModelsDir
+    Set-ProcessEnvironment "AUDIO_INTEL_FRONTEND_DIR" $FrontendDir
+    Set-DefaultEnvironment "HF_HOME" (Join-Path $CacheDir "huggingface")
+    Set-DefaultEnvironment "HUGGINGFACE_HUB_CACHE" (Join-Path $CacheDir "huggingface\hub")
+    Set-DefaultEnvironment "MODELSCOPE_CACHE" (Join-Path $CacheDir "modelscope")
+    Set-DefaultEnvironment "TORCH_HOME" (Join-Path $CacheDir "torch")
+    Set-DefaultEnvironment "XDG_CACHE_HOME" (Join-Path $CacheDir "xdg")
     Set-DefaultEnvironment "HF_HUB_OFFLINE" "1"
     Set-DefaultEnvironment "TRANSFORMERS_OFFLINE" "1"
     Set-DefaultEnvironment "TOKENIZERS_PARALLELISM" "false"
-    $localTemp = Join-Path $RootDir "tmp"
-    Set-DefaultEnvironment "TMPDIR" $localTemp
-    Set-DefaultEnvironment "TMP" $localTemp
-    Set-DefaultEnvironment "TEMP" $localTemp
+    Set-DefaultEnvironment "TMPDIR" $TempDir
+    Set-DefaultEnvironment "TMP" $TempDir
+    Set-DefaultEnvironment "TEMP" $TempDir
 }
 
 function Get-RuntimePython {
@@ -55,24 +86,50 @@ function Get-PidPath {
     return Join-Path $RunDir "$Component.pid"
 }
 
-function Get-TrackedProcess {
+function Get-RawTrackedProcessId {
     param([string]$Component)
     $pidPath = Get-PidPath $Component
     if (-not (Test-Path $pidPath)) { return $null }
     try {
-        $trackedPid = [int](Get-Content -Path $pidPath -Raw).Trim()
-        $process = Get-Process -Id $trackedPid -ErrorAction Stop
-        $details = Get-CimInstance Win32_Process -Filter "ProcessId = $trackedPid" -ErrorAction SilentlyContinue
-        if ($null -ne $details -and -not [string]::IsNullOrWhiteSpace($details.CommandLine)) {
-            $expected = if ($Component -eq "api") { "audio_intel.api:app" } else { "audio_intel.worker $Component" }
-            if ($details.CommandLine -notlike "*$expected*") {
-                Remove-Item $pidPath -Force -ErrorAction SilentlyContinue
-                return $null
-            }
-        }
-        return $process
+        $trackedProcessId = [int](Get-Content -Path $pidPath -Raw).Trim()
+        if ($trackedProcessId -le 0) { throw "Invalid process id" }
+        return $trackedProcessId
     } catch {
         Remove-Item $pidPath -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+}
+
+function Test-ProcessIdentity {
+    param([string]$Component, [int]$ProcessId)
+    $apiPython = Get-RuntimePython "api"
+    if (Test-Path $apiPython) {
+        & $apiPython $ServiceHelper matches $Component $ProcessId | Out-Null
+        return $LASTEXITCODE -eq 0
+    }
+    try {
+        Get-Process -Id $ProcessId -ErrorAction Stop | Out-Null
+        $details = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop
+        if ($null -eq $details -or [string]::IsNullOrWhiteSpace($details.CommandLine)) { return $false }
+        $expected = if ($Component -eq "api") { "audio_intel.api:app" } else { "audio_intel.worker $Component" }
+        return $details.CommandLine -like "*$expected*"
+    } catch {
+        return $false
+    }
+}
+
+function Get-TrackedProcess {
+    param([string]$Component)
+    $trackedProcessId = Get-RawTrackedProcessId $Component
+    if ($null -eq $trackedProcessId) { return $null }
+    if (-not (Test-ProcessIdentity $Component $trackedProcessId)) {
+        Remove-Item (Get-PidPath $Component) -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+    try {
+        return Get-Process -Id $trackedProcessId -ErrorAction Stop
+    } catch {
+        Remove-Item (Get-PidPath $Component) -Force -ErrorAction SilentlyContinue
         return $null
     }
 }
@@ -84,7 +141,7 @@ function Test-Running {
 
 function Ensure-Ready {
     param([string]$Component)
-    if ($env:AUDIO_INTEL_MOCK_MODE -eq "1" -and $Component -ne "api") {
+    if ((Get-ProcessEnvironment "AUDIO_INTEL_MOCK_MODE") -eq "1" -and $Component -ne "api") {
         Ensure-Ready "api"
         return
     }
@@ -92,14 +149,18 @@ function Ensure-Ready {
     if (-not (Test-Path $python)) {
         & (Join-Path $RootDir "scripts\bootstrap.ps1") $Component
     }
-    $frontendReady = (Test-Path (Join-Path $RootDir "frontend\dist\index.html")) -and
-        (Test-Path (Join-Path $RootDir "frontend\dist\docs-assets\swagger-ui-bundle.js")) -and
-        (Test-Path (Join-Path $RootDir "frontend\dist\docs-assets\swagger-ui.css"))
+    $frontendReady = (Test-Path (Join-Path $FrontendDir "index.html")) -and
+        (Test-Path (Join-Path $FrontendDir "docs-assets\swagger-ui-bundle.js")) -and
+        (Test-Path (Join-Path $FrontendDir "docs-assets\swagger-ui.css"))
     if ($Component -eq "api" -and -not $frontendReady) {
         & (Join-Path $RootDir "scripts\bootstrap.ps1") "api"
+        $frontendReady = (Test-Path (Join-Path $FrontendDir "index.html")) -and
+            (Test-Path (Join-Path $FrontendDir "docs-assets\swagger-ui-bundle.js")) -and
+            (Test-Path (Join-Path $FrontendDir "docs-assets\swagger-ui.css"))
+        if (-not $frontendReady) { throw "Configured frontend directory is incomplete: $FrontendDir" }
     }
-    if ($env:AUDIO_INTEL_MOCK_MODE -ne "1" -and ($Component -eq "asr" -or $Component -eq "tts")) {
-        $ready = & (Get-RuntimePython $Component) -c "from audio_intel.config import settings; from audio_intel.model_registry import target_ready; raise SystemExit(0 if target_ready(settings.models_dir, '$Component') else 1)"
+    if ((Get-ProcessEnvironment "AUDIO_INTEL_MOCK_MODE") -ne "1" -and ($Component -eq "asr" -or $Component -eq "tts")) {
+        & (Get-RuntimePython $Component) -c "from audio_intel.config import settings; from audio_intel.model_registry import target_ready; raise SystemExit(0 if target_ready(settings.models_dir, '$Component') else 1)"
         $modelsReady = $LASTEXITCODE -eq 0
         $alignerReady = $Component -ne "tts" -or (Test-Path (Get-RuntimePython "aligner"))
         if (-not $modelsReady -or -not $alignerReady) {
@@ -110,8 +171,35 @@ function Ensure-Ready {
 
 function Write-RecentErrors {
     param([string]$Component)
-    $errorLog = Join-Path $LogDir "$Component.error.log"
-    if (Test-Path $errorLog) { Get-Content $errorLog -Tail 30 -ErrorAction SilentlyContinue }
+    foreach ($path in @((Join-Path $LogDir "$Component.log"), (Join-Path $LogDir "$Component.error.log"))) {
+        if (Test-Path $path) {
+            Write-Host "--- $path"
+            Get-Content $path -Tail 30 -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Wait-ComponentReady {
+    param([string]$Component, [int]$ProcessId)
+    $apiPython = Get-RuntimePython "api"
+    if ($Component -eq "api") {
+        & $apiPython $ServiceHelper wait-api $ProcessId (Get-ProcessEnvironment "AUDIO_INTEL_HOST") (Get-ProcessEnvironment "AUDIO_INTEL_PORT") $StartTimeoutSeconds
+    } else {
+        & $apiPython $ServiceHelper wait-worker $Component $ProcessId $StartTimeoutSeconds
+    }
+    if ($LASTEXITCODE -ne 0) { throw "$Component did not become ready" }
+}
+
+function Invoke-ProcessCleanup {
+    param([string]$Component, [int]$ProcessId)
+    $apiPython = Get-RuntimePython "api"
+    if (Test-Path $apiPython) {
+        & $apiPython $ServiceHelper cleanup $Component $ProcessId
+        return $LASTEXITCODE -eq 0
+    }
+    if (-not (Test-ProcessIdentity $Component $ProcessId)) { return $true }
+    & taskkill.exe /PID $ProcessId /T /F | Out-Null
+    return $LASTEXITCODE -eq 0 -or -not (Test-ProcessIdentity $Component $ProcessId)
 }
 
 function Start-One {
@@ -119,12 +207,12 @@ function Start-One {
     $existing = Get-TrackedProcess $Component
     if ($null -ne $existing) {
         Write-Host "$Component already running (pid $($existing.Id))"
-        return
+        return $false
     }
-    Ensure-Ready $Component
-    $python = if ($env:AUDIO_INTEL_MOCK_MODE -eq "1" -and $Component -ne "api") { Get-RuntimePython "api" } else { Get-RuntimePython $Component }
+
+    $python = if ((Get-ProcessEnvironment "AUDIO_INTEL_MOCK_MODE") -eq "1" -and $Component -ne "api") { Get-RuntimePython "api" } else { Get-RuntimePython $Component }
     $arguments = if ($Component -eq "api") {
-        @("-m", "uvicorn", "audio_intel.api:app", "--host", $env:AUDIO_INTEL_HOST, "--port", $env:AUDIO_INTEL_PORT)
+        @("-m", "uvicorn", "audio_intel.api:app", "--host", (Get-ProcessEnvironment "AUDIO_INTEL_HOST"), "--port", (Get-ProcessEnvironment "AUDIO_INTEL_PORT"))
     } else {
         @("-m", "audio_intel.worker", $Component)
     }
@@ -132,42 +220,41 @@ function Start-One {
     $errorLog = Join-Path $LogDir "$Component.error.log"
     $process = Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $RootDir -RedirectStandardOutput $outputLog -RedirectStandardError $errorLog -WindowStyle Hidden -PassThru
     Set-Content -Path (Get-PidPath $Component) -Value $process.Id -Encoding ASCII
-    Start-Sleep -Milliseconds 700
-    if ($process.HasExited) {
-        Remove-Item (Get-PidPath $Component) -Force -ErrorAction SilentlyContinue
+    try {
+        Wait-ComponentReady $Component $process.Id
+    } catch {
+        $cleanupSucceeded = Invoke-ProcessCleanup $Component $process.Id
+        if ($cleanupSucceeded) { Remove-Item (Get-PidPath $Component) -Force -ErrorAction SilentlyContinue }
         Write-RecentErrors $Component
+        if (-not $cleanupSucceeded) { throw "$Component failed to start and its process tree could not be cleaned completely; see $errorLog" }
         throw "$Component failed to start; see $errorLog"
     }
     Write-Host "started $Component (pid $($process.Id))"
+    return $true
 }
 
 function Stop-One {
     param([string]$Component)
-    $process = Get-TrackedProcess $Component
     $pidPath = Get-PidPath $Component
-    if ($null -eq $process) {
+    $trackedProcessId = Get-RawTrackedProcessId $Component
+    if ($null -eq $trackedProcessId) {
+        if ($Component -eq "asr" -or $Component -eq "tts") {
+            if (-not (Invoke-ProcessCleanup $Component 0)) { throw "failed to clean stale $Component executor" }
+        }
         Remove-Item $pidPath -Force -ErrorAction SilentlyContinue
         Write-Host "$Component is not running"
         return
     }
-    Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
-    try { Wait-Process -Id $process.Id -Timeout 6 -ErrorAction Stop } catch { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
-    Remove-Item $pidPath -Force -ErrorAction SilentlyContinue
-    Write-Host "stopped $Component"
-}
 
-function Wait-ForApi {
-    $url = "http://127.0.0.1:$($env:AUDIO_INTEL_PORT)/api/v1/health"
-    for ($attempt = 0; $attempt -lt 40; $attempt++) {
-        try {
-            Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 2 | Out-Null
-            return
-        } catch {
-            Start-Sleep -Milliseconds 500
-        }
+    $wasRunning = Test-ProcessIdentity $Component $trackedProcessId
+    if (-not (Invoke-ProcessCleanup $Component $trackedProcessId)) {
+        throw "failed to stop $Component completely"
     }
-    Write-RecentErrors "api"
-    throw "API did not become ready at $url"
+    if (Test-ProcessIdentity $Component $trackedProcessId) {
+        throw "failed to stop $Component completely"
+    }
+    Remove-Item $pidPath -Force -ErrorAction SilentlyContinue
+    if ($wasRunning) { Write-Host "stopped $Component" } else { Write-Host "$Component is not running" }
 }
 
 function Get-StartTargets {
@@ -181,39 +268,66 @@ function Get-StopTargets {
     return @($Target)
 }
 
+function Set-EnabledServices {
+    if (-not [string]::IsNullOrWhiteSpace((Get-ProcessEnvironment "AUDIO_INTEL_SERVICES"))) { return }
+    if ($Target -eq "asr") {
+        Set-ProcessEnvironment "AUDIO_INTEL_SERVICES" $(if (Test-Running "tts") { "asr,tts" } else { "asr" })
+    } elseif ($Target -eq "tts") {
+        Set-ProcessEnvironment "AUDIO_INTEL_SERVICES" $(if (Test-Running "asr") { "asr,tts" } else { "tts" })
+    } else {
+        Set-ProcessEnvironment "AUDIO_INTEL_SERVICES" "asr,tts"
+    }
+}
+
+function Invoke-Preflight {
+    foreach ($component in (Get-StartTargets)) { Ensure-Ready $component }
+}
+
+function Invoke-StopTargets {
+    $failures = @()
+    foreach ($component in (Get-StopTargets)) {
+        try {
+            Stop-One $component
+        } catch {
+            $failures += "$component`: $($_.Exception.Message)"
+            Write-Error $failures[-1] -ErrorAction Continue
+        }
+    }
+    if ($failures.Count -gt 0) { throw "One or more services failed to stop: $($failures -join '; ')" }
+}
+
+function Invoke-StartTargets {
+    param([bool]$RunPreflight = $true)
+    Set-EnabledServices
+    if ($RunPreflight) { Invoke-Preflight }
+    $started = @()
+    $preserveApi = ($Target -eq "asr" -or $Target -eq "tts") -and (Test-Running "api")
+    if ($preserveApi) { Stop-One "api" }
+    try {
+        foreach ($component in (Get-StartTargets)) {
+            if (Start-One $component) { $started += $component }
+        }
+    } catch {
+        $startError = $_
+        [array]::Reverse($started)
+        foreach ($component in $started) {
+            if ($component -eq "api" -and $preserveApi) { continue }
+            try { Stop-One $component } catch { Write-Error $_ -ErrorAction Continue }
+        }
+        throw $startError
+    }
+    Write-Host "Sandevistan-Audio: http://127.0.0.1:$((Get-ProcessEnvironment 'AUDIO_INTEL_PORT'))"
+}
+
 Initialize-Environment
 
 switch ($Action) {
-    "start" {
-        if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable("AUDIO_INTEL_SERVICES", "Process"))) {
-            if ($Target -eq "asr") {
-                $env:AUDIO_INTEL_SERVICES = if (Test-Running "tts") { "asr,tts" } else { "asr" }
-            } elseif ($Target -eq "tts") {
-                $env:AUDIO_INTEL_SERVICES = if (Test-Running "asr") { "asr,tts" } else { "tts" }
-            } else {
-                $env:AUDIO_INTEL_SERVICES = "asr,tts"
-            }
-        }
-        if (($Target -eq "asr" -or $Target -eq "tts") -and (Test-Running "api")) { Stop-One "api" }
-        foreach ($component in (Get-StartTargets)) { Start-One $component }
-        Wait-ForApi
-        Write-Host "Sandevistan-Audio: http://127.0.0.1:$($env:AUDIO_INTEL_PORT)"
-    }
-    "stop" { foreach ($component in (Get-StopTargets)) { Stop-One $component } }
+    "start" { Invoke-StartTargets }
+    "stop" { Invoke-StopTargets }
     "restart" {
-        foreach ($component in (Get-StopTargets)) { Stop-One $component }
-        if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable("AUDIO_INTEL_SERVICES", "Process"))) {
-            if ($Target -eq "asr") {
-                $env:AUDIO_INTEL_SERVICES = if (Test-Running "tts") { "asr,tts" } else { "asr" }
-            } elseif ($Target -eq "tts") {
-                $env:AUDIO_INTEL_SERVICES = if (Test-Running "asr") { "asr,tts" } else { "tts" }
-            } else {
-                $env:AUDIO_INTEL_SERVICES = "asr,tts"
-            }
-        }
-        if (($Target -eq "asr" -or $Target -eq "tts") -and (Test-Running "api")) { Stop-One "api" }
-        foreach ($component in (Get-StartTargets)) { Start-One $component }
-        Wait-ForApi
+        Invoke-Preflight
+        Invoke-StopTargets
+        Invoke-StartTargets $false
     }
     "status" {
         foreach ($component in @("api", "asr", "tts")) {
@@ -233,10 +347,6 @@ switch ($Action) {
         }
         Get-Content -Path $paths -Tail 120 -Wait
     }
-    "setup" {
-        & (Join-Path $RootDir "scripts\bootstrap.ps1") $Target
-    }
-    "doctor" {
-        & (Join-Path $RootDir "scripts\doctor.ps1")
-    }
+    "setup" { & (Join-Path $RootDir "scripts\bootstrap.ps1") $Target }
+    "doctor" { & (Join-Path $RootDir "scripts\doctor.ps1") }
 }

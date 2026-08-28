@@ -1,6 +1,6 @@
 # Windows 11 原生部署
 
-本文只适用于 **Windows 11 x64 原生环境**，不使用 WSL 或 Docker。项目提供 PowerShell 一键安装和运维脚本；模型、Python、缓存、日志、数据库和生成结果都保存在仓库目录内。
+本文只适用于 **Windows 11 x64 原生环境**，不使用 WSL 或 Docker。项目提供 PowerShell 一键安装和运维脚本；模型、Python、缓存、日志、数据库和生成结果默认保存在仓库目录内，也可通过环境变量覆盖运行目录。
 
 Windows 自动化会在 GitHub 的 Windows runner 上验证依赖解析、后端测试、前端构建和 mock 全链路。当前尚未在 Windows NVIDIA 实机上完成真实模型推理验收，因此不要把 CI 通过理解为 Windows GPU 性能或真实推理结果保证。
 
@@ -47,7 +47,9 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 .\service.cmd stop all
 ```
 
-`start asr` 和 `start tts` 都会同时确保 API 已启动。关闭 PowerShell 窗口不会主动停止后台进程。
+`start asr` 和 `start tts` 都会同时确保 API 已启动。启动命令会等待 API 健康检查和对应 worker 注册完成后才返回；失败时清理本次新建的进程。`restart all` 使用相同的就绪检查。关闭 PowerShell 窗口不会主动停止后台进程，Windows 不提供也不需要 Linux 的 `run` 前台动作。
+
+`stop` 会先校验 PID 对应的命令身份，再清理 supervisor、executor 和阶段子进程组成的完整进程树。陈旧或已经复用的 PID 不会被误杀；若仍有进程无法退出，命令返回非零而不会假报成功。
 
 ## 3. 代理与配置
 
@@ -71,6 +73,15 @@ $env:REQUESTS_CA_BUNDLE = 'C:\certs\company-ca.pem'
 ```powershell
 $env:AUDIO_INTEL_PORT = '20810'
 $env:AUDIO_INTEL_API_KEY = 'replace-with-a-long-random-value'
+.\service.cmd start all
+```
+
+数据、临时文件、缓存、日志、PID、模型和前端目录可使用 `.env.example` 中已有的变量覆盖；相对路径按仓库根目录解析。例如：
+
+```powershell
+$env:AUDIO_INTEL_DATA_DIR = 'D:\audio-intel-data'
+$env:AUDIO_INTEL_LOG_DIR = 'D:\audio-intel-state\logs'
+$env:AUDIO_INTEL_RUN_DIR = 'D:\audio-intel-state\run'
 .\service.cmd start all
 ```
 
@@ -139,6 +150,8 @@ Get-NetTCPConnection -LocalPort 20810 -ErrorAction SilentlyContinue
 ```
 
 本机访问不需要新增防火墙规则。局域网访问只应允许“专用网络”，并应配置 `AUDIO_INTEL_API_KEY`；不要把 20810 直接暴露到公网。远程页面在普通 HTTP 下可能无法获得麦克风权限，文件上传不受影响。
+
+如果 `start` 或 `restart` 返回失败，先查看 `logs\<组件>.log` 和 `logs\<组件>.error.log`。脚本只有在健康检查和 worker 注册成功后才报告启动完成；端口占用、运行时异常或 worker 未注册都会返回非零，并回滚本次新启动且没有既有服务依赖的组件。
 
 ### 内存不足、任务暂停或文件被占用
 

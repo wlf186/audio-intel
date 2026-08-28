@@ -56,6 +56,8 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 
 `run` 接收 `SIGTERM`/`SIGINT`，关闭完整 worker 进程树后退出；容器的 `CMD` 可直接使用 `./service.sh run all`。该模式不依赖 systemd，也不区分 rootless 或 rootful：只需运行用户对配置的数据、缓存、日志和 `run` 目录具有写权限。不要把 `run` 与已由 `start` 启动的组件混用。
 
+两种模式的重启方式不同：由 `start all` 启动的后台服务使用 `./service.sh restart all`；前台 `run all` 应在原终端按 `Ctrl+C` 后重新执行同一命令，容器中则由 Docker、Podman 或编排器重启容器。不要从另一个终端对正在运行的 `run all` 执行 `restart all`，否则前台管理进程会因其子进程被停止而退出，而新建的后台进程仍可能被当前执行器回收。
+
 需要代理时，在安装前导出标准代理变量；curl、uv、Hugging Face 与 ModelScope 会继承它们：
 
 ```bash
