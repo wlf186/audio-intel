@@ -271,7 +271,7 @@ The stream immediately emits `event: job`, continues on changes, and closes at a
 - 排队任务的 `queue.position` 从 1 开始，表示同类 FIFO 队列中的位置；任务运行后该字段为 `null`。`GET /api/v1/queue` 返回容量、准入预留和磁盘余量。ASR/TTS 队列彼此独立。
 - `progress` 是单调的 `0–1` 最佳整体进度；`progress_detail.stage_code` 是稳定阶段。`basis=estimated` 表示阶段百分比包含估算，`current/total/unit` 是已确认阶段单元，`activity` 是当前模型加载、codec 帧、输出 token 或模型层活动。模型实际提供细粒度活动时约每 0.5 秒最多持久化一次；`model_load` 只报告加载开始/完成边界，阻塞加载期间不保证心跳，所有进度都不能作为 SLA。
 - `estimate` 使用相同设备、模型、模式和任务特征的本机历史；ASR/TTS 的 0.6B/1.7B 分别热身。少于 5 个有效样本时为 `warming_up`；可用后返回区间、样本数和置信度，不能作为 SLA。
-- SSE `/api/v1/events` 与 `/api/v1/jobs/{id}/events` 共享一次本地数据库快照并向客户端分发；没有事件 ID 或历史重放。断线后重连，并以首个快照或支持 ETag 的任务状态接口校准。轮询间隔可参考 `poll_after_seconds`。
+- SSE `/api/v1/events` 与 `/api/v1/jobs/{job_id}/events` 共享一次本地数据库快照并向客户端分发；没有事件 ID 或历史重放。断线后重连，并以首个快照或支持 ETag 的任务状态接口校准。轮询间隔可参考 `poll_after_seconds`。
 - `GET /api/v1/jobs` 的 `count` 是本页数量，不是任务总数。
 - 运行任务请求取消后仍保持 `state=running`，但 `stage=cancelling`；只有完整执行进程树退出后才进入终态 `cancelled`。结果接口在任务成功前返回 `409`。
 
@@ -282,7 +282,7 @@ The stream immediately emits `event: job`, continues on changes, and closes at a
 
 - `compute_device=gpu` 不可用时返回 `503`，不会静默回退 CPU。ASR 使用 `asr.models[]`，TTS 使用 `tts.model_capabilities[]` 判断所选模型；`minimum_memory_mib` 与 `total_memory_mib` 都是总显存口径。
 - `hotword_list_ids` 是逗号分隔的本地词表 ID；未知 ID、超过选择上限或合并后超限返回 `422`。提交后的 `request.hotword_lists` 和结果 `hotword_context` 是快照，后续编辑或删除不会改写历史。
-- ASR 消费方应从 `/api/v1/capabilities.asr.languages` 读取可提交语种；不要把模型的全部识别语种误认为全部支持字词级时间戳。
+- ASR 消费方应从 `GET /api/v1/capabilities` 返回的 `asr.languages` 读取可提交语种；不要把模型的全部识别语种误认为全部支持字词级时间戳。
 - 删除操作要求 `purge=true` 且不可恢复；运行中任务必须先取消并等待终态。
 - 声纹克隆只能使用 `state=ready` 且 `tts_eligible=true` 的样本。OpenAI 兼容 TTS 目前仅支持预置音色和兼容 voice profile。
 - TTS 的 `language` 控制输出文本语种，`reference_language` 控制一次性克隆参考的转写/对齐语种；两者不是同一个参数。已知语种时显式填写可减少自动判断歧义。

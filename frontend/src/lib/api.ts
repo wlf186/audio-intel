@@ -1,9 +1,31 @@
 import type {AuthSession,BatchDeleteResult,Capabilities,Health,HotwordList,Job,JobListQuery,JobListResponse,JobResult,Probe,VoiceprintPerson,VoiceprintSample} from './types'
 
 export class HttpError extends Error{status:number;retryAfter?:number;constructor(status:number,message:string,retryAfter?:number){super(message);this.status=status;this.retryAfter=retryAfter}}
+function detailMessage(detail:unknown,status:number){
+  if(typeof detail==='string'&&detail.trim())return detail
+  if(Array.isArray(detail)){
+    const messages=detail.map(item=>{
+      if(typeof item==='string')return item
+      if(!item||typeof item!=='object')return ''
+      const entry=item as {msg?:unknown;loc?:unknown[]}
+      const location=Array.isArray(entry.loc)?entry.loc.filter(value=>value!=='body').join(' → '):''
+      const message=typeof entry.msg==='string'?entry.msg:''
+      return [location,message].filter(Boolean).join('：')
+    }).filter(Boolean)
+    if(messages.length)return messages.join('；')
+  }
+  if(detail&&typeof detail==='object'){
+    const entry=detail as {message?:unknown;title?:unknown}
+    if(typeof entry.message==='string')return entry.message
+    if(typeof entry.title==='string')return entry.title
+  }
+  return `请求失败（HTTP ${status}）`
+}
 export async function request<T>(path:string,init:RequestInit={}):Promise<T>{
   const headers=new Headers(init.headers)
-  const response=await fetch(path,{...init,headers,credentials:'same-origin'}); if(!response.ok){const body=await response.json().catch(()=>({detail:response.statusText,retry_after_seconds:undefined}));if(response.status===401)window.dispatchEvent(new Event('audio-intel:unauthorized'));const retryAfter=Number(response.headers.get('Retry-After')||body.retry_after_seconds)||undefined;const detail=body.detail||body.title||`HTTP ${response.status}`;throw new HttpError(response.status,retryAfter?`${detail}；请在 ${retryAfter} 秒后重试。`:detail,retryAfter)}
+  let response:Response
+  try{response=await fetch(path,{...init,headers,credentials:'same-origin'})}catch(cause){throw new Error(cause instanceof TypeError?'无法连接本地服务，请确认服务已启动后重试。':(cause as Error).message)}
+  if(!response.ok){const body=await response.json().catch(()=>({detail:response.statusText,retry_after_seconds:undefined}));if(response.status===401)window.dispatchEvent(new Event('audio-intel:unauthorized'));const retryAfter=Number(response.headers.get('Retry-After')||body.retry_after_seconds)||undefined;const detail=detailMessage(body.detail||body.title,response.status);throw new HttpError(response.status,retryAfter?`${detail}；请在 ${retryAfter} 秒后重试。`:detail,retryAfter)}
   if(response.status===204)return undefined as T; return response.json()
 }
 function queryString(values:JobListQuery){const params=new URLSearchParams();for(const [key,value] of Object.entries(values)){if(value!==undefined&&value!=='')params.set(key,String(value))}const encoded=params.toString();return encoded?`?${encoded}`:''}

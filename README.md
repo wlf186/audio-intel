@@ -60,7 +60,7 @@ Linux 详细步骤见 [安装与复原](docs/INSTALL.md)，Windows 原生部署�
 
 界面右上角的 `OFFLINE_MODE` 表示模型运行时是否启用离线加载，不表示服务只监听 `localhost`；页脚的 `DATA_LOCAL READY` 表示服务同时报告了离线模式和本地数据目录，`NET_LISTEN` 则动态显示 `/api/v1/system` 返回的实际监听地址与端口。健康检查尚未完成或服务失联时，这些位置会显示 `CHECKING`、`UNKNOWN` 或 `DISCONNECTED`，不会继续展示过期的监听地址。
 
-ASR 与 TTS 参数分别以轻量、带版本的 `localStorage` 配置保存在当前浏览器中，两个页面的“恢复默认配置”只重置本页参数，不会清除已选文件或正在编辑的文本。TTS 合成文本和参考文本只保留在当前 `sessionStorage` 会话，音频文件不会写入浏览器存储；清除站点数据或对应 localStorage 后会自动恢复默认配置，仅清理 HTTP 缓存通常不会删除这些偏好。
+ASR 与 TTS 参数分别以轻量、带版本的 `localStorage` 配置保存在当前浏览器中，两个页面的“恢复默认配置”只重置本页参数，不会清除已选文件或正在编辑的文本。TTS 合成文本、表达指令、参考文本和分析引用只保留在当前 `sessionStorage` 会话；热词库未保存的编辑草稿也只在当前标签页会话中保留，保存词表或点击“取消并清空”后即删除。音频文件不会写入浏览器存储；清除站点数据或对应存储项后会自动恢复默认配置，仅清理 HTTP 缓存通常不会删除这些偏好和草稿。
 
 ## 运行架构
 
@@ -86,7 +86,7 @@ ASR 公开支持 `Auto`，以及 Chinese、English、Cantonese、French、German
 
 ASR 默认使用 `qwen3-asr-0.6b`，也可在普通转写、TTS 克隆参考分析、声纹样本上传和 OpenAI 兼容转写中选择 `qwen3-asr-1.7b`。`setup asr/all` 会下载两个固定 revision；运行期只从本地模型目录离线加载。1.7B 的 CPU 路径始终可选。GPU 能力按 `nvidia-smi` 报告的总显存而不是当前空闲显存判断，并为驱动或硬件保留区预留 256 MiB 容差：1.7B 的 8 GiB 档门槛为 7936 MiB，0.6B 的 4 GiB 档门槛为 3840 MiB，因此报告 8151 MiB 的 8 GiB 显卡可选择 1.7B。该门槛只决定准入，其他 GPU 进程仍可能导致实际推理 OOM。显式 API GPU 请求不满足条件时返回 `503`，页面则显示原因并按 CPU 创建本次任务。1.7B 复用单任务自动批处理和 OOM 降档机制，并采用更保守的起始批次；当前 4 GiB RTX A1000 只能实机覆盖 0.6B GPU 路径，1.7B GPU 仍需在 8 GiB 设备上验收。
 
-“热词库”按场景保存多个本地词表，0.6B 与 1.7B 的接口和限制相同。普通 ASR 或 OpenAI 兼容转写可通过 `hotword_list_ids` 选择最多 8 个词表；留空表示不启用已保存词表。提交时会规范化、去重并生成 Qwen ASR 的 `Vocabulary: ...` 上下文，同时把词表内容快照写入任务，因此后续编辑或删除词表不会改变历史任务或幂等重放。一次性 `context` / `prompt` 会放在自动生成的 Vocabulary 段之前；克隆参考和声纹入库不使用热词。热词属于识别提示而不是强制词典，建议只放容易误识别的专有名词并保持词表聚焦，不能保证每个词都会命中。
+“热词库”按场景保存多个本地词表，0.6B 与 1.7B 的接口和限制相同。页面编辑器固定每行保存一个热词，按回车分隔；逗号和分号属于词条内容，不会作为分隔符。普通 ASR 或 OpenAI 兼容转写可通过 `hotword_list_ids` 选择最多 8 个词表；留空表示不启用已保存词表。提交时会规范化、去重并生成 Qwen ASR 的 `Vocabulary: ...` 上下文，同时把词表内容快照写入任务，因此后续编辑或删除词表不会改变历史任务或幂等重放。一次性 `context` / `prompt` 会放在自动生成的 Vocabulary 段之前；克隆参考和声纹入库不使用热词。热词属于识别提示而不是强制词典，建议只放容易误识别的专有名词并保持词表聚焦，不能保证每个词都会命中。
 
 ASR 与 TTS 默认都使用 GPU。两者均可按任务选择 `cpu` 或 `gpu`：CPU 使用 FP32，GPU 使用 BF16，不使用量化；GPU 任务通过项目内的全局锁串行执行，避免同时装载多个大模型。TTS 与 ASR 一样按 `nvidia-smi` 报告的总显存执行 3840/7936 MiB 准入；因此 8151 MiB 的 8 GiB 卡可选择 1.7B。API 显式请求不合格 GPU 时返回 `503`，页面会说明原因并将本次任务切到 CPU。ASR 的 FSMN-VAD 和 CAM++ 始终在 CPU 上运行，设备选项会同时切换 ASR 主模型和 ForcedAligner；GPU 模式下 CAM++ 会在 CPU 内部批处理，并与 GPU 识别和对齐重叠执行。自动说话人数会对低支持度的疑似拆分簇执行一次保守的整段声纹复核，只有滑窗和整段两个视角均有充分区分度时才合并；手动指定人数不受该复核影响。
 
@@ -166,21 +166,21 @@ curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/
 以下仅列出主要端点；完整且实时的接口定义以 `/docs` 和 `/openapi.json` 为准：
 
 - `POST /api/v1/asr/jobs`、`POST /api/v1/tts/clone-references`、`POST /api/v1/tts/jobs`
-- `GET|POST /api/v1/asr/hotword-lists`、`PATCH|DELETE /api/v1/asr/hotword-lists/{id}`
-- `GET /api/v1/jobs`、`GET /api/v1/jobs/{id}`
-- `GET /api/v1/queue`、`GET /api/v1/jobs/{id}/events`（单任务 SSE）
-- `POST /api/v1/jobs/{id}/cancel`、`POST /api/v1/jobs/{id}/retry`
-- `DELETE /api/v1/jobs/{id}?purge=true`
+- `GET|POST /api/v1/asr/hotword-lists`、`PATCH|DELETE /api/v1/asr/hotword-lists/{item_id}`
+- `GET /api/v1/jobs`、`GET /api/v1/jobs/{job_id}`、`GET /api/v1/jobs/{job_id}/result`
+- `GET /api/v1/queue`、`GET /api/v1/jobs/{job_id}/events`（单任务 SSE）
+- `POST /api/v1/jobs/{job_id}/cancel`、`POST /api/v1/jobs/{job_id}/retry`
+- `DELETE /api/v1/jobs/{job_id}?purge=true`
 - `POST /api/v1/jobs/batch-delete`（最多 100 个 ID，返回逐项结果与实际释放空间）
-- `GET /api/v1/jobs/{id}/artifacts/{name}`
-- `GET /api/v1/jobs/{id}/source`（ASR 原始音源；`?download=true` 强制下载）
-- `PATCH /api/v1/jobs/{id}/speakers/{speaker_id}`
-- `GET|POST /api/v1/voiceprints/people`、`PATCH|DELETE /api/v1/voiceprints/people/{id}`
-- `POST /api/v1/voiceprints/people/{id}/samples/from-asr`（同一说话人的段落分别入库）
-- `POST /api/v1/voiceprints/people/{id}/samples/upload`、`DELETE /api/v1/voiceprints/people/{id}/samples/{sample_id}`
+- `GET /api/v1/jobs/{job_id}/artifacts/{name}`
+- `GET /api/v1/jobs/{job_id}/source`（ASR 原始音源；`?download=true` 强制下载）
+- `PATCH /api/v1/jobs/{job_id}/speakers/{speaker_id}`
+- `GET|POST /api/v1/voiceprints/people`、`PATCH|DELETE /api/v1/voiceprints/people/{person_id}`
+- `POST /api/v1/voiceprints/people/{person_id}/samples/from-asr`（同一说话人的段落分别入库）
+- `POST /api/v1/voiceprints/people/{person_id}/samples/upload`、`DELETE /api/v1/voiceprints/people/{person_id}/samples/{sample_id}`
 - `GET /api/v1/voiceprints/samples/{sample_id}/audio`
-- `POST /api/v1/tts/voices`、`GET /api/v1/tts/voices`、`DELETE /api/v1/tts/voices/{id}`
-- `GET /api/v1/health`（公开最小探针）、`GET /api/v1/system`（详细且受保护）
+- `POST /api/v1/tts/voices`、`GET /api/v1/tts/voices`、`DELETE /api/v1/tts/voices/{voice_id}`
+- `GET /api/v1/health`（公开最小探针）、`GET /api/v1/system`（详细且受保护）、`GET /api/v1/capabilities`
 - `GET|POST|DELETE /api/v1/auth/session`
 - `GET /api/v1/events`（全局 SSE）
 - `GET /v1/models` 与 OpenAI 兼容音频端点
@@ -189,7 +189,7 @@ curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/
 
 `GET /api/v1/jobs` 支持 `kind`、`state`、`q`、`limit`、`offset` 服务端分页，始终按 `created_at DESC, id DESC` 稳定排序；`count` 是本页数量，`total` 是筛选后的任务总数，`has_more` 表示是否还有下一页。
 
-TTS 高级控制以 `/api/v1/capabilities.tts.model_capabilities[]` 为准：0.6B 不接受自然语言指令；1.7B CustomVoice 的预置音色可选 `instruct`，VoiceDesign 则必须用 `instruct` 描述声线、语速、音调、韵律和情绪；Base 克隆模式不接受指令。官方公共推理接口没有独立数值语速/音高参数，本项目也不开放 `temperature`、`top_k`、`top_p`、`repetition_penalty` 等固定采样项。OpenAI 兼容 `instructions` 仅覆盖 1.7B 预置音色；VoiceDesign 请使用原生异步接口。不支持的组合返回 `422`，不会静默忽略。
+TTS 高级控制以 `GET /api/v1/capabilities` 返回的 `tts.model_capabilities[]` 为准：0.6B 不接受自然语言指令；1.7B CustomVoice 的预置音色可选 `instruct`，VoiceDesign 则必须用 `instruct` 描述声线、语速、音调、韵律和情绪；Base 克隆模式不接受指令。官方公共推理接口没有独立数值语速/音高参数，本项目也不开放 `temperature`、`top_k`、`top_p`、`repetition_penalty` 等固定采样项。OpenAI 兼容 `instructions` 仅覆盖 1.7B 预置音色；VoiceDesign 请使用原生异步接口。不支持的组合返回 `422`，不会静默忽略。
 
 排队任务响应中的 `queue.position` 是同类 FIFO 队列中从 1 开始的位置，任务开始运行后为 `null`。`progress` 是单调的最佳整体进度；模型实际提供细粒度活动时，ASR 推理与 TTS 解码按约 0.5 秒的最小写入间隔持久化。模型加载只报告 `model_load` 的开始和完成边界，阻塞加载期间可能长时间没有新活动，服务不会伪造百分比或心跳。消费方必须查看 `progress_detail.basis`：`estimated` 表示百分比包含最佳估算，不能当作精确完成量；`current/total/unit` 是已确认的阶段单元，`activity` 则描述当前推理调用的 `model_load`、`codec_frame`、`output_token` 或 `model_layer` 活动，其中 `activity.basis` 单独说明活动总量是否估算。`estimate` 在至少积累 5 个相同模型、设备和相近任务特征的本机历史样本后返回耗时区间和置信度；0.6B 与 1.7B 分别热身，它只是建议，不是 SLA。SSE 断线时应重新连接并用任务状态接口校准，也可按 `poll_after_seconds` 轮询并使用 ETag/`If-None-Match`。`processing_seconds` 是累计实际处理耗时，不包含排队等待，并会跨失败重试累加；运行中任务配合 `processing_as_of` 可实时显示。`compute_device` 返回 `cpu` 或 `gpu`，`compute_device_name` 返回任务提交/执行时持久化的具体设备名；GPU 名称动态取自实际 `cuda:0`，不会因以后更换硬件而改写历史记录。ASR/TTS worker 使用常驻监督器管理可复用的任务执行进程；取消先等待短暂的协作退出，随后在必要时终止当前任务的完整进程树，确认 GPU 与文件锁释放后才进入“已取消”。默认协作等待 1 秒，可通过 `AUDIO_INTEL_CANCEL_GRACE_SECONDS` 调整。永久删除会清理任务输入、输出、错误文件、临时目录和 SQLite 记录，并在批次结束后执行安全擦除、WAL 截断与数据库压缩。
 

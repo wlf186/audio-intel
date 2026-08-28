@@ -11,13 +11,17 @@ import {
 } from 'lucide-react'
 import { useMicrophoneRecorder } from '../hooks/useMicrophoneRecorder'
 import { api, formatTime } from '../lib/api'
+import {ConfirmDialog} from '../components/ConfirmDialog'
+import {Modal} from '../components/Modal'
+import {ResourceStatePanel} from '../components/ResourceStatePanel'
 import { publicAsrLanguages } from '../lib/preferences'
-import type { AsrModelCapability, ComputeDevice, Job, VoiceprintPerson } from '../lib/types'
+import type { AsrModelCapability, ComputeDevice, Job, ResourceState, VoiceprintPerson } from '../lib/types'
 import { handleTabKeys } from '../lib/tabs'
 import { computeUnavailableReason } from '../lib/presentation'
 
 type Props = {
   people: VoiceprintPerson[]
+  state: ResourceState
   refresh: () => Promise<void>
   onJobSubmitted: (job: Job) => void
   gpuAvailable?: boolean
@@ -28,6 +32,7 @@ type SampleSource = 'upload' | 'record'
 
 export function VoiceprintsPage({
   people,
+  state,
   refresh,
   onJobSubmitted,
   gpuAvailable,
@@ -44,6 +49,9 @@ export function VoiceprintsPage({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [renameOpen,setRenameOpen]=useState(false)
+  const [renameValue,setRenameValue]=useState('')
+  const [confirmDelete,setConfirmDelete]=useState<'person'|string>()
   const fileRef = useRef<HTMLInputElement>(null)
   const recorder = useMicrophoneRecorder(30)
   const selected = useMemo(
@@ -88,22 +96,27 @@ export function VoiceprintsPage({
     })
   const rename = () => {
     if (!selected) return
-    const name = window.prompt('新的人员名称', selected.name)?.trim()
-    if (name)
-      void run(async () => {
-        await api.renameVoiceprintPerson(selected.id, name)
-        setNotice('人员名称已更新；历史任务名称保持不变。')
-      })
+    setRenameValue(selected.name)
+    setRenameOpen(true)
   }
+  const saveRename = () => {
+    if (!selected || !renameValue.trim()) return
+    void run(async () => {
+        await api.renameVoiceprintPerson(selected.id, renameValue.trim())
+        setNotice('人员名称已更新；历史任务名称保持不变。')
+        setRenameOpen(false)
+      })
+   }
   const removePerson = () => {
-    if (
-      !selected ||
-      !window.confirm(`永久删除 ${selected.name} 及其全部声纹样本？`)
-    )
-      return
+    if (!selected) return
+    setConfirmDelete('person')
+  }
+  const confirmRemovePerson = () => {
+    if(!selected)return
     void run(async () => {
       await api.removeVoiceprintPerson(selected.id)
       setSelectedId('')
+      setConfirmDelete(undefined)
       setNotice('人员及其声纹样本已删除。')
     })
   }
@@ -133,9 +146,14 @@ export function VoiceprintsPage({
     void recorder.start()
   }
   const removeSample = (sampleId: string) => {
-    if (!selected || !window.confirm('永久删除这个声纹样本？')) return
+    if (!selected)return
+    setConfirmDelete(sampleId)
+  }
+  const confirmRemoveSample = (sampleId:string) => {
+    if(!selected)return
     void run(async () => {
       await api.removeVoiceprintSample(selected.id, sampleId)
+      setConfirmDelete(undefined)
       setNotice('声纹样本已删除。')
     })
   }
@@ -183,7 +201,8 @@ export function VoiceprintsPage({
               <Plus />
             </button>
           </div>
-          {people.length ? (
+          <ResourceStatePanel state={state} loadingLabel="正在加载声纹人员…" errorLabel="声纹库加载失败。" retry={()=>void refresh()}/>
+          {state==='ready'&&people.length ? (
             people.map((person) => (
               <button
                 key={person.id}
@@ -198,7 +217,7 @@ export function VoiceprintsPage({
                 </span>
               </button>
             ))
-          ) : (
+          ) : state==='ready' ? (
             <div className="empty small">
               <Fingerprint />
               <p>
@@ -207,7 +226,7 @@ export function VoiceprintsPage({
                 可在这里创建，或从 ASR 段落加入
               </p>
             </div>
-          )}
+          ):null}
         </aside>
         <section className="samples-panel">
           {selected ? (
@@ -502,15 +521,17 @@ export function VoiceprintsPage({
                 )}
               </div>
             </>
-          ) : (
-            <div className="empty">
+          ) : state==='ready' ? (
+            <div className="empty voiceprint-guide">
               <Fingerprint />
               <h2>先创建一个人员</h2>
-              <p>人员可以拥有多个声纹样本。</p>
+              <p>在左侧输入人员名称并点击创建；之后可上传文件、直接录音，或从 ASR 结果加入样本。</p>
             </div>
-          )}
+          ):<div className="empty voiceprint-guide"><Fingerprint/><h2>正在准备声纹库</h2></div>}
         </section>
       </div>
+      {renameOpen&&selected?<Modal title="重命名人员" closeLabel="关闭重命名" onClose={()=>setRenameOpen(false)}><p>仅更新声纹库中的人员名称，历史任务快照保持不变。</p><label>人员名称<input value={renameValue} maxLength={80} onChange={event=>setRenameValue(event.target.value)}/></label><div className="modal-actions"><button className="button" disabled={busy} onClick={()=>setRenameOpen(false)}>取消</button><button className="primary" disabled={busy||!renameValue.trim()||renameValue.trim()===selected.name} onClick={saveRename}>保存名称</button></div></Modal>:null}
+      {confirmDelete&&selected?<ConfirmDialog title={confirmDelete==='person'?'删除人员':'删除声纹样本'} description={confirmDelete==='person'?`永久删除“${selected.name}”及其全部声纹样本？此操作不可恢复。`:'永久删除这个声纹样本？此操作不可恢复。'} confirmLabel="永久删除" danger busy={busy} onClose={()=>setConfirmDelete(undefined)} onConfirm={confirmDelete==='person'?confirmRemovePerson:()=>confirmRemoveSample(confirmDelete)}/>:null}
     </div>
   )
 }

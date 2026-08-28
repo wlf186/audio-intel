@@ -110,6 +110,7 @@ const instructionExamples = [
   '用悲伤克制的语气说',
   '用明显愤怒但吐字清晰的语气说',
 ]
+const languageLabels:Record<string,string>={Auto:'自动检测',Chinese:'中文',English:'英语',Cantonese:'粤语',Japanese:'日语',Korean:'韩语',German:'德语',French:'法语',Russian:'俄语',Portuguese:'葡萄牙语',Spanish:'西班牙语',Italian:'意大利语'}
 
 export function TtsPage({
   jobs,
@@ -133,17 +134,8 @@ export function TtsPage({
   const [referenceName, setReferenceName] = useState('')
   const [referenceAsrModel,setReferenceAsrModel]=useState('qwen3-asr-0.6b')
   const [referenceAsrDevice,setReferenceAsrDevice]=useState<ComputeDevice>('gpu')
-  const [voices, setVoices] = useState<string[]>([
-    'Vivian',
-    'Serena',
-    'Uncle_Fu',
-    'Dylan',
-    'Eric',
-    'Ryan',
-    'Aiden',
-    'Ono_Anna',
-    'Sohee',
-  ])
+  const [voices, setVoices] = useState<string[]>([])
+  const [voicesLoading,setVoicesLoading]=useState(true)
   const [busy, setBusy] = useState(false)
   const [referenceBusy, setReferenceBusy] = useState(false)
   const [error, setError] = useState('')
@@ -209,6 +201,7 @@ export function TtsPage({
   const selectedReferenceModel=asrModels.find(item=>item.id===referenceAsrModel)||asrModels.find(item=>item.default)
   const referenceGpu=selectedReferenceModel?.compute_devices.find(item=>item.id==='gpu')
   const effectiveReferenceDevice:ComputeDevice=referenceAsrDevice==='gpu'&&(referenceGpu?.available===false||gpuAvailable===false)?'cpu':referenceAsrDevice
+  const submitBlockReason=busy?'正在提交任务…':referenceBusy?'正在分析克隆参考…':!draft.text.trim()?'请输入需要合成的文本。':!selectedTtsModel?.installed?'所选 TTS 模型尚未完整安装。':instructionRequired&&!draft.instruct.trim()?'音色设计需要填写音色与表达指令。':draft.mode==='inline_clone'&&draft.cloneSource==='upload'&&(!referenceReady||!draft.refText.trim())?'请先完成参考音频自动识别，并确认识别文本。':draft.mode==='inline_clone'&&draft.cloneSource==='voiceprint'&&!sample?'请选择一个已完成转写的声纹样本。':''
 
   useEffect(() => {
     saveTtsContent(content)
@@ -224,8 +217,8 @@ export function TtsPage({
   useEffect(() => {
     api
       .voices()
-      .then((response) => setVoices(response.preset_speakers))
-      .catch((cause) => setError((cause as Error).message))
+      .then((response) => {setVoices(response.preset_speakers);setVoicesLoading(false)})
+      .catch((cause) => {setVoicesLoading(false);setError((cause as Error).message)})
   }, [])
   useEffect(() => {
     if (voices.length && !voices.includes(preferences.speaker))
@@ -466,6 +459,7 @@ export function TtsPage({
       }
       const job = await api.submitTts(data)
       onJobSubmitted(job)
+      setNotice('任务已提交，可在任务记录查看进度。')
     } catch (cause) {
       setError((cause as Error).message)
     } finally {
@@ -634,7 +628,7 @@ export function TtsPage({
                 }
               >
                 {ttsLanguages.map((language) => (
-                  <option key={language}>{language}</option>
+                  <option key={language} value={language}>{languageLabels[language]||language}</option>
                 ))}
               </select>
               <small className="device-hint">
@@ -653,6 +647,7 @@ export function TtsPage({
                     updatePreference('speaker', event.target.value)
                   }
                 >
+                  {voicesLoading?<option value={draft.speaker}>正在加载音色…</option>:null}
                   {voices.map((voice) => (
                     <option key={voice}>{voice}</option>
                   ))}
@@ -937,7 +932,7 @@ export function TtsPage({
                           }
                         >
                           {availableReferenceLanguages.map((language) => (
-                            <option key={language}>{language}</option>
+                            <option key={language} value={language}>{languageLabels[language]||language}</option>
                           ))}
                         </select>
                       </label>
@@ -1097,18 +1092,11 @@ export function TtsPage({
                 {notice}
               </p>
             ) : null}
+            {submitBlockReason&&!busy?<p id="tts-submit-reason" className="submit-block-reason" role="status">{submitBlockReason}</p>:null}
             <button
               className="primary synth"
-              disabled={
-                busy ||
-                referenceBusy ||
-                !draft.text.trim() ||
-                !selectedTtsModel?.installed ||
-                (instructionRequired && !draft.instruct.trim()) ||
-                (draft.mode === 'inline_clone' &&
-                  draft.cloneSource === 'upload' &&
-                  (!referenceReady || !draft.refText.trim()))
-              }
+              disabled={Boolean(submitBlockReason)}
+              aria-describedby={submitBlockReason?'tts-submit-reason':undefined}
               onClick={() => void submit()}
             >
               <Sparkles size={18} />

@@ -1,5 +1,6 @@
 export type JobState='queued'|'running'|'succeeded'|'failed'|'cancelled'
 export type ComputeDevice='cpu'|'gpu'
+export type ResourceState='loading'|'ready'|'error'
 export type ResultRevealRequest={jobId:string;token:number}
 export type Artifact={name:string;path:string;mime_type:string;size_bytes:number}
 export type Word={text:string;start:number;end:number;speaker?:string}
