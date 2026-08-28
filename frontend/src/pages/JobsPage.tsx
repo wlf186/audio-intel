@@ -3,6 +3,7 @@ import {Check,ChevronLeft,ChevronRight,ChevronsLeft,ChevronsRight,Copy,Eye,Loade
 import {api,size} from '../lib/api'
 import type {Job,JobHistoryQuery,JobListResponse,JobState} from '../lib/types'
 import {progressPresentation} from '../lib/jobs'
+import {formatLocalDateTime} from '../lib/presentation'
 
 const kindLabels:Record<JobHistoryQuery['kind'],string>={all:'全部',asr:'ASR',tts:'TTS'}
 const stateLabels:Record<JobState,string>={queued:'等待处理',running:'正在处理',succeeded:'已完成',failed:'失败',cancelled:'已取消'}
@@ -190,7 +191,7 @@ export function JobsPage({liveJobs,query,setQuery,refreshRecentJobs,openJob,onJo
     <span className="job-name"><b>{job.display_name}</b><small className="job-meta"><span className="job-id" title={`完整任务 ID：${job.id}`}>任务 ID：{job.id.slice(0,12)}…</span><button type="button" className={`copy-job-id ${copiedId===job.id?'copied':''}`} aria-label={`${copiedId===job.id?'已复制':'复制'}完整任务 ID ${job.id}`} title={copiedId===job.id?'已复制完整任务 ID':'复制完整任务 ID'} onClick={()=>void copyJobId(job.id)}>{copiedId===job.id?<Check/>:<Copy/>}</button><span aria-hidden="true">·</span><span>{device}</span></small></span>
     <span className="kind" data-label="类型">{job.kind.toUpperCase()}</span>
     <span className={`status ${job.state}`} data-label="状态">{stopping?'正在安全停止':stateLabels[job.state]}</span>
-    <span className="created" data-label="创建">{new Date(job.created_at).toLocaleString()}</span>
+    <span className="created" data-label="创建">{formatLocalDateTime(job.created_at)}</span>
     <span className="elapsed" data-label="耗时">{elapsed(job,now)}<small>{(job.attempts||0)>1?`${job.attempts} 次尝试`:'实际处理'}</small></span>
     <span className="job-progress-cell" data-label="进度"><span className="progress-summary">{live.percent}%{live.estimated?' 估算':''} · {stageLabel}</span>{['queued','running'].includes(job.state)?<progress max={100} value={live.percent} aria-label={`${job.display_name} 任务进度 ${live.percent}%`}/>:null}{live.detail?<small className="progress-activity">{live.detail}</small>:null}{estimate?<small className="queue-estimate">{estimate}</small>:null}</span>
     <span className="actions">{job.state==='succeeded'?<button title="查看结果" aria-label={`查看任务结果 ${job.display_name}`} onClick={()=>openJob(job)}><Eye/></button>:null}{['queued','running'].includes(job.state)?<button title={stopping?'正在安全停止':'取消任务'} aria-label={stopping?`正在安全停止 ${job.display_name}`:`取消任务 ${job.display_name}`} disabled={stopping} onClick={()=>void cancelJob(job)}>{stopping?<LoaderCircle className="spin"/>:<XCircle/>}</button>:null}{['failed','cancelled'].includes(job.state)?<button title="重试" aria-label={`重试任务 ${job.display_name}`} onClick={()=>void act(()=>api.retry(job.id))}><RotateCcw/></button>:null}{canDelete?<button title="永久删除" aria-label={`永久删除任务 ${job.display_name}`} disabled={busy} onClick={()=>void remove([job.id])}><Trash2/></button>:null}</span>

@@ -14,6 +14,7 @@ import { api, formatTime } from '../lib/api'
 import { publicAsrLanguages } from '../lib/preferences'
 import type { AsrModelCapability, ComputeDevice, Job, VoiceprintPerson } from '../lib/types'
 import { handleTabKeys } from '../lib/tabs'
+import { computeUnavailableReason } from '../lib/presentation'
 
 type Props = {
   people: VoiceprintPerson[]
@@ -394,7 +395,7 @@ export function VoiceprintsPage({
                   )}
                 </div>
               )}
-              <div className="sample-options">
+              <div className="sample-options voiceprint-sample-options">
                 <select aria-label="声纹入库 ASR 模型" value={model} disabled={busy||microphoneActive} onChange={event=>setModel(event.target.value)}>
                   {(asrModels.length?asrModels:[{id:'qwen3-asr-0.6b',name:'Qwen3-ASR 0.6B',installed:true} as AsrModelCapability]).map(item=><option key={item.id} value={item.id} disabled={!item.installed}>{item.name}{item.installed?'':'（未安装）'}</option>)}
                 </select>
@@ -423,7 +424,7 @@ export function VoiceprintsPage({
                   </option>
                   <option value="cpu">CPU</option>
                 </select>
-                {computeDevice==='gpu'&&effectiveComputeDevice==='cpu'?<small className="device-hint">{modelGpu?.unavailable_reason||'当前模型自动使用 CPU。'}</small>:null}
+                {computeDevice==='gpu'&&effectiveComputeDevice==='cpu'?<small className="device-hint">{computeUnavailableReason(modelGpu,'当前模型自动使用 CPU。')}</small>:null}
                 <button
                   className="primary"
                   disabled={

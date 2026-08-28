@@ -35,6 +35,7 @@ import {
 } from '../lib/preferences'
 import { progressPresentation, visibleWorkspaceJobs } from '../lib/jobs'
 import { handleTabKeys } from '../lib/tabs'
+import { computeUnavailableReason } from '../lib/presentation'
 
 type Props = {
   jobs: Job[]
@@ -720,7 +721,7 @@ export function TtsPage({
                   <option value="gpu" disabled={gpuAvailable===false||referenceGpu?.available===false}>GPU</option>
                   <option value="cpu">CPU</option>
                 </select>
-                {referenceAsrDevice==='gpu'&&effectiveReferenceDevice==='cpu'?<small className="device-hint">{referenceGpu?.unavailable_reason||'当前模型自动使用 CPU。'}</small>:null}
+                {referenceAsrDevice==='gpu'&&effectiveReferenceDevice==='cpu'?<small className="device-hint">{computeUnavailableReason(referenceGpu,'当前模型自动使用 CPU。')}</small>:null}
               </div>
               <div
                 className="sample-source-tabs"
@@ -1061,7 +1062,7 @@ export function TtsPage({
             </select>
             {draft.computeDevice === 'gpu' && effectiveTtsDevice === 'cpu' ? (
               <small className="device-hint">
-                {ttsGpu?.unavailable_reason || '所选模型无法使用当前 GPU，本次自动使用 CPU。'}
+                {computeUnavailableReason(ttsGpu,'所选模型无法使用当前 GPU，本次自动使用 CPU。')}
               </small>
             ) : (
               <small className="device-hint">
@@ -1085,33 +1086,35 @@ export function TtsPage({
               text="按 CPU 核心与可用内存或 GPU 显存自动提高任务内部批次。长文本收益更明显；不改变模型、精度或解码方式，内存不足时会自动回退。"
             />
           </div>
-          {error ? (
-            <p className="error" role="alert">
-              {error}
-            </p>
-          ) : null}
-          {notice ? (
-            <p className="notice" role="status">
-              {notice}
-            </p>
-          ) : null}
-          <button
-            className="primary synth"
-            disabled={
-              busy ||
-              referenceBusy ||
-              !draft.text.trim() ||
-              !selectedTtsModel?.installed ||
-              (instructionRequired && !draft.instruct.trim()) ||
-              (draft.mode === 'inline_clone' &&
-                draft.cloneSource === 'upload' &&
-                !referenceReady)
-            }
-            onClick={() => void submit()}
-          >
-            <Sparkles size={18} />
-            {busy ? '正在提交…' : '生成语音'}
-          </button>
+          <div className="submission-actions">
+            {error ? (
+              <p className="error" role="alert">
+                {error}
+              </p>
+            ) : null}
+            {notice ? (
+              <p className="notice" role="status">
+                {notice}
+              </p>
+            ) : null}
+            <button
+              className="primary synth"
+              disabled={
+                busy ||
+                referenceBusy ||
+                !draft.text.trim() ||
+                !selectedTtsModel?.installed ||
+                (instructionRequired && !draft.instruct.trim()) ||
+                (draft.mode === 'inline_clone' &&
+                  draft.cloneSource === 'upload' &&
+                  (!referenceReady || !draft.refText.trim()))
+              }
+              onClick={() => void submit()}
+            >
+              <Sparkles size={18} />
+              {busy ? '正在提交…' : '生成语音'}
+            </button>
+          </div>
           <div className="quality-note">
             <b>本地质量策略</b>
             <span>

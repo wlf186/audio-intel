@@ -92,7 +92,7 @@ test('TTS 1.7B exposes VoiceDesign instructions and applies the model GPU gate',
  const baseControls={speaking_rate_parameter:false,pitch_parameter:false,sampling_parameters:false,max_instruction_chars:1000}
  const models=[
   {id:'qwen3-tts-0.6b',name:'Qwen3-TTS 0.6B',default:true,installed:true,installation_state:'installed',voice_modes:['preset','profile','inline_clone','voiceprint'],compute_devices:[{id:'cpu',precision:'FP32',available:true,default:false,quantized:false},{id:'gpu',precision:'BF16',available:true,default:true,quantized:false,minimum_memory_mib:3840,total_memory_mib:4096}],controls:{...baseControls,instruction_voice_modes:[],instruction_required_voice_modes:[]},checkpoints:[]},
-  {id:'qwen3-tts-1.7b',name:'Qwen3-TTS 1.7B',default:false,installed:true,installation_state:'installed',voice_modes:['preset','profile','inline_clone','voiceprint','voice_design'],compute_devices:[{id:'cpu',precision:'FP32',available:true,default:true,quantized:false},{id:'gpu',precision:'BF16',available:false,default:false,quantized:false,minimum_memory_mib:7936,total_memory_mib:4096,unavailable_reason:'This model requires at least 7936 MiB total GPU memory; detected 4096 MiB'}],controls:{...baseControls,instruction_voice_modes:['preset','voice_design'],instruction_required_voice_modes:['voice_design']},checkpoints:[]},
+  {id:'qwen3-tts-1.7b',name:'Qwen3-TTS 1.7B',default:false,installed:true,installation_state:'installed',voice_modes:['preset','profile','inline_clone','voiceprint','voice_design'],compute_devices:[{id:'cpu',precision:'FP32',available:true,default:true,quantized:false},{id:'gpu',precision:'BF16',available:false,default:false,quantized:false,minimum_memory_mib:7936,total_memory_mib:4096,unavailable_reason_code:'insufficient_gpu_memory',unavailable_reason:'This model requires at least 7936 MiB total GPU memory; detected 4096 MiB'}],controls:{...baseControls,instruction_voice_modes:['preset','voice_design'],instruction_required_voice_modes:['voice_design']},checkpoints:[]},
  ]
  await routeJobList(page,route=>route.fulfill({json:{items:[],count:0,total:0,limit:100,offset:0,has_more:false}}))
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,aligner_languages:['Chinese']},tts:{default_model:'qwen3-tts-0.6b',model_capabilities:models,languages:['Auto','Chinese'],default_language:'Auto',preset_speaker_native_languages:{Vivian:'Chinese'},controls:models[0].controls},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
@@ -100,7 +100,7 @@ test('TTS 1.7B exposes VoiceDesign instructions and applies the model GPU gate',
  await page.goto('/#tts')
  await page.getByLabel('TTS 模型').selectOption('qwen3-tts-1.7b')
  await expect(page.getByLabel('TTS 计算设备')).toHaveValue('cpu')
- await expect(page.getByText(/requires at least 7936 MiB/)).toBeVisible()
+ await expect(page.getByText(/至少需要 7936 MiB 显存.*4096 MiB/)).toBeVisible()
  await page.getByRole('tab',{name:'音色设计'}).click()
  await page.getByLabel('合成文本').fill('欢迎收听今天的节目。')
  const submit=page.getByRole('button',{name:'生成语音'})
@@ -179,17 +179,20 @@ test('ASR model routing and task-scoped hotword selection are explicit',async({p
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  const models=[
   {id:'qwen3-asr-0.6b',name:'Qwen3-ASR-0.6B',revision:'r1',installed:true,installation_state:'installed',default:true,compute_devices:[{id:'cpu',precision:'FP32',available:true,default:false,quantized:false},{id:'gpu',precision:'BF16',available:true,default:true,quantized:false,minimum_memory_mib:3840,total_memory_mib:4096}]},
-  {id:'qwen3-asr-1.7b',name:'Qwen3-ASR-1.7B',revision:'r2',installed:true,installation_state:'installed',default:false,compute_devices:[{id:'cpu',precision:'FP32',available:true,default:true,quantized:false},{id:'gpu',precision:'BF16',available:false,default:false,quantized:false,minimum_memory_mib:7936,total_memory_mib:4096,unavailable_reason:'This model requires at least 7936 MiB total GPU memory; detected 4096 MiB'}]},
+  {id:'qwen3-asr-1.7b',name:'Qwen3-ASR-1.7B',revision:'r2',installed:true,installation_state:'installed',default:false,compute_devices:[{id:'cpu',precision:'FP32',available:true,default:true,quantized:false},{id:'gpu',precision:'BF16',available:false,default:false,quantized:false,minimum_memory_mib:7936,total_memory_mib:4096,unavailable_reason_code:'insufficient_gpu_memory',unavailable_reason:'This model requires at least 7936 MiB total GPU memory; detected 4096 MiB'}]},
  ]
  const hotword={id:'hotwords_medical',name:'医疗术语',terms:['量子','Qwen'],term_count:2,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}
- await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{model:'Qwen3-ASR-0.6B',default_model:'qwen3-asr-0.6b',models,hotword_library:{supported:true,max_lists:100,max_terms_per_list:200,max_selected_lists:8,max_selected_terms:500,max_prompt_chars:8000,max_name_chars:80,max_term_chars:64},speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,languages:['Auto','Chinese'],aligner_languages:['Chinese']},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
- await page.route('**/api/v1/asr/hotword-lists',route=>route.fulfill({json:{items:[hotword],count:1}}))
+ const overflowHotword={id:'hotwords_project',name:'项目代号',terms:['Sandevistan'],term_count:1,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{model:'Qwen3-ASR-0.6B',default_model:'qwen3-asr-0.6b',models,hotword_library:{supported:true,max_lists:100,max_terms_per_list:200,max_selected_lists:8,max_selected_terms:500,max_prompt_chars:30,max_name_chars:80,max_term_chars:64},speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,languages:['Auto','Chinese'],aligner_languages:['Chinese']},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
+ await page.route('**/api/v1/asr/hotword-lists',route=>route.fulfill({json:{items:[hotword,overflowHotword],count:2}}))
  await page.route('**/api/v1/asr/jobs',async route=>{submitted=(await route.request().postDataBuffer())?.toString()||'';await route.fulfill({status:202,json:{id:'model-hotword-job',kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'model.wav',created_at:new Date().toISOString(),request:{model:'qwen3-asr-1.7b',compute_device:'cpu'}}})})
  await page.goto('/#asr')
  await page.getByLabel('ASR 模型').selectOption('qwen3-asr-1.7b')
  await expect(page.getByLabel('ASR 计算设备')).toHaveValue('cpu')
- await expect(page.getByText(/requires at least 7936 MiB/)).toBeVisible()
+ await expect(page.getByText(/至少需要 7936 MiB 显存.*4096 MiB/)).toBeVisible()
  await page.getByRole('checkbox',{name:/医疗术语/}).check()
+ await expect(page.getByRole('checkbox',{name:/项目代号/})).toBeDisabled()
+ await expect(page.getByRole('checkbox',{name:/项目代号/}).locator('..')).toHaveAttribute('title',/提示词不能超过 30 个字符/)
  await page.locator('input[type=file]').setInputFiles({name:'model.wav',mimeType:'audio/wav',buffer:testWave()})
  await page.getByRole('button',{name:'开始转写'}).click()
  await expect.poll(()=>submitted).toContain('qwen3-asr-1.7b')
@@ -214,9 +217,19 @@ test('hotword library supports create and mobile layout without overflow',async(
  await page.goto('/#hotwords')
  await expect(page.getByRole('heading',{name:'热词库'})).toBeVisible()
  await page.getByLabel('场景名称').fill('项目代号')
- await page.getByLabel('热词').fill('Sandevistan\n量子\nSandevistan')
+ await page.locator('.hotword-editor textarea').fill('超'.repeat(65))
+ await expect(page.getByText(/单个热词不能超过 64 个字符/)).toBeVisible()
+ await expect(page.getByRole('button',{name:'保存词表'})).toBeDisabled()
+ await page.locator('.hotword-editor textarea').fill('Sandevistan\n量子\nSandevistan')
  await page.getByRole('button',{name:'保存词表'}).click()
  await expect(page.getByText('项目代号')).toBeVisible()
+ await page.getByRole('button',{name:'编辑 项目代号'}).click()
+ const editor=page.locator('.hotword-editor')
+ const nameBox=await page.getByLabel('场景名称').boundingBox()
+ const termsBox=await page.locator('.hotword-editor textarea').boundingBox()
+ const editorBox=await editor.boundingBox()
+ expect(nameBox!.width).toBeGreaterThan(editorBox!.width*.8)
+ expect(termsBox!.width).toBeGreaterThan(editorBox!.width*.8)
  await page.setViewportSize({width:390,height:844})
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
  expect(errors).toEqual([])
@@ -253,14 +266,26 @@ test('Auto-detected languages outside the aligner list explain segment-only time
 })
 
 test('navigation and mobile layout render without overflow',async({page})=>{
+ await page.setViewportSize({width:1440,height:900})
  await page.goto('/#jobs')
  await expect(page.getByRole('heading',{name:'任务记录'})).toBeVisible()
  await expect(page.locator('.filter')).toBeVisible()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(1440)
+ for(const button of await page.getByRole('navigation',{name:'主导航'}).getByRole('button').all()){
+  const box=await button.boundingBox();expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(1440)
+ }
+ await expect(page.getByRole('link',{name:'打开 API 文档'})).toBeVisible()
  await page.getByRole('button',{name:'系统状态'}).click()
  await expect(page.getByRole('heading',{name:'系统状态'})).toBeVisible()
  await page.setViewportSize({width:390,height:844})
  await page.goto('/#tts')
  await expect(page.getByRole('heading',{name:'语音合成'})).toBeVisible()
+ const mobileNavigation=page.getByRole('navigation',{name:'主导航'})
+ await expect(mobileNavigation.getByRole('button')).toHaveCount(6)
+ for(const button of await mobileNavigation.getByRole('button').all()){
+  const box=await button.boundingBox();const viewportHeight=await page.evaluate(()=>window.innerHeight);expect(box!.y).toBeGreaterThanOrEqual(0);expect(box!.y+box!.height).toBeLessThanOrEqual(viewportHeight+1)
+ }
+ await expect(mobileNavigation.locator('.nav-label-short')).toHaveText(['转写','合成','热词','声纹','任务','系统'])
  await page.getByRole('button',{name:'查看单任务加速说明'}).focus()
  const tooltip=page.getByRole('tooltip')
  await expect(tooltip).toBeVisible()
@@ -269,7 +294,67 @@ test('navigation and mobile layout render without overflow',async({page})=>{
  expect((tooltipBox?.x||0)+(tooltipBox?.width||0)).toBeLessThanOrEqual(390)
  const width=await page.evaluate(()=>document.documentElement.scrollWidth)
  expect(width).toBeLessThanOrEqual(390)
+ await page.evaluate(()=>window.scrollTo(0,120))
+ await expect.poll(()=>page.locator('.app-shell>header').evaluate(element=>Math.round(element.getBoundingClientRect().top))).toBe(0)
+ await mobileNavigation.getByRole('button',{name:'系统状态'}).click()
+ await expect(page.getByRole('heading',{name:'系统状态'})).toBeVisible()
+ await expect(page.getByRole('link',{name:'API 文档'})).toBeVisible()
  await page.screenshot({path:'/tmp/audio-intel-after-mobile.png',fullPage:false})
+})
+
+test('mobile job pagination stays in flow and preserves the six-item app navigation',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ const createdAt='2026-08-27T10:42:05Z'
+ const jobs=Array.from({length:30},(_,index)=>({id:`job-${String(index+1).padStart(3,'0')}`,kind:index%2?'tts':'asr',state:'succeeded',stage:'completed',progress:1,display_name:`任务 ${index+1}`,created_at:createdAt,processing_seconds:index+1,request:{compute_device:'cpu'}}))
+ await routeJobList(page,route=>{const url=new URL(route.request().url());const limit=Number(url.searchParams.get('limit')||25);const offset=Number(url.searchParams.get('offset')||0);const items=jobs.slice(offset,offset+limit);return route.fulfill({json:{items,count:items.length,total:jobs.length,limit,offset,has_more:offset+limit<jobs.length}})})
+ await page.setViewportSize({width:390,height:844})
+ await page.goto('/#jobs')
+ await expect(page.getByText('任务 1',{exact:true})).toBeVisible()
+ await expect(page.locator('.created').first()).not.toContainText(/AM|PM/)
+ const pagination=page.getByRole('navigation',{name:'任务分页'})
+ await pagination.scrollIntoViewIfNeeded()
+ await pagination.getByRole('button',{name:'下一页'}).click()
+ await expect(page.getByText('任务 26',{exact:true})).toBeVisible()
+ await expect(pagination).toContainText('第 2 / 2 页')
+ await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'系统状态'}).click()
+ await expect(page.getByRole('heading',{name:'系统状态'})).toBeVisible()
+ expect(errors).toEqual([])
+})
+
+test('desktop submit actions remain visible and voiceprint model controls reflow cleanly',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ const now=new Date().toISOString()
+ await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[{id:'voice_layout',name:'布局测试',sample_count:0,samples:[],created_at:now,updated_at:now}]}}))
+ const expectInsideMain=async(name:string)=>{const button=page.getByRole('button',{name});await expect(button).toBeVisible();expect(await button.evaluate(element=>{const box=element.getBoundingClientRect();const main=element.closest('main')!.getBoundingClientRect();return box.top>=main.top&&box.bottom<=main.bottom})).toBe(true)}
+ await page.setViewportSize({width:1440,height:900})
+ await page.goto('/#asr')
+ await expectInsideMain('开始转写')
+ await page.goto('/#tts')
+ await expectInsideMain('生成语音')
+ await page.setViewportSize({width:1024,height:820})
+ await expectInsideMain('生成语音')
+ await page.goto('/#voiceprints')
+ const controls=[page.getByLabel('声纹入库 ASR 模型'),page.getByLabel('声纹样本语言'),page.getByLabel('声纹入库计算设备'),page.getByRole('button',{name:'自动转写并入库'})]
+ const rows=await Promise.all(controls.map(control=>control.evaluate(element=>Math.round(element.getBoundingClientRect().top))))
+ expect(new Set(rows).size).toBeLessThanOrEqual(2)
+ await page.setViewportSize({width:390,height:844})
+ await page.goto('/#tts')
+ await expect(page.locator('.submission-actions')).toHaveCSS('position','static')
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ expect(errors).toEqual([])
+})
+
+test('system worker state and heartbeat use Chinese local presentation',async({page})=>{
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',version:'test',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[{id:'asr-worker',kind:'asr',state:'idle',heartbeat_at:'2026-08-27T10:42:05Z'}],hardware:{},models:[],storage:{data:'/tmp/data'}}}))
+ await page.goto('/#system')
+ const worker=page.locator('.worker-list')
+ await expect(worker).toContainText('空闲')
+ await expect(worker).not.toContainText('2026-08-27T10:42:05Z')
+ await expect(page.getByRole('link',{name:'API 文档',exact:true})).toHaveAttribute('href','/docs')
 })
 
 test('ASR and TTS preferences persist independently and reset per page',async({page})=>{
@@ -819,9 +904,12 @@ test('one-off TTS clone references are auto-analyzed, editable and recoverable',
  await expect(page.getByLabel('自动识别文本（可修正）')).toHaveValue('自动识别的录音文本。',{timeout:8000})
  expect(analysisBodies[1]).toContain('voiceprint-recording-')
  expect(analysisBodies[1]).toContain('.webm')
- await page.getByLabel('自动识别文本（可修正）').fill('人工核对后的准确文本。')
- await page.getByLabel('参考音频语种').selectOption('Chinese')
+ const referenceText=page.getByLabel('自动识别文本（可修正）')
+ await referenceText.fill('')
  await page.locator('.text-editor textarea').fill('这是需要生成的内容。')
+ await expect(page.getByRole('button',{name:'生成语音'})).toBeDisabled()
+ await referenceText.fill('人工核对后的准确文本。')
+ await page.getByLabel('参考音频语种').selectOption('Chinese')
  await page.getByRole('button',{name:'生成语音'}).click()
  expect(ttsBody).toContain('reference_job_id')
  expect(ttsBody).toContain('reference-analysis-2')
