@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 import sys
@@ -307,7 +308,7 @@ def test_tts_uses_dedicated_aligner_runtime(monkeypatch) -> None:
     assert expected in tts_pipeline.aligner_python().parts
     assert "aligner" in tts_pipeline.aligner_python().parts
     monkeypatch.setenv("AUDIO_INTEL_ALIGNER_PYTHON", "/opt/audio-intel/aligner-python")
-    assert str(tts_pipeline.aligner_python()) == "/opt/audio-intel/aligner-python"
+    assert tts_pipeline.aligner_python() == Path("/opt/audio-intel/aligner-python")
 
 
 def test_asr_merge_and_exports(tmp_path, monkeypatch) -> None:
@@ -438,6 +439,7 @@ def test_asr_gpu_overlaps_batched_diarization(tmp_path, monkeypatch) -> None:
     local = replace(settings, temp_dir=tmp_path / "tmp", data_dir=tmp_path / "data", mock_mode=False)
     local.ensure_directories()
     monkeypatch.setattr(asr_pipeline, "settings", local)
+    monkeypatch.setattr(asr_pipeline, "model_installation", lambda *_: {"installed": True})
     monkeypatch.setattr(asr_pipeline, "decode_audio", lambda *_: ([0.0] * 32000, 16000))
     monkeypatch.setattr(asr_pipeline, "run_vad", lambda *_: [{"start": 0.0, "end": 2.0}])
     chunks = [{"index": 0, "path": "chunk.wav", "start": 0.0, "end": 2.0}]
@@ -481,6 +483,7 @@ def test_asr_segment_mode_aligns_multi_speaker_text_internally(tmp_path, monkeyp
     local = replace(settings, temp_dir=tmp_path / "tmp", data_dir=tmp_path / "data", mock_mode=False)
     local.ensure_directories()
     monkeypatch.setattr(asr_pipeline, "settings", local)
+    monkeypatch.setattr(asr_pipeline, "model_installation", lambda *_: {"installed": True})
     monkeypatch.setattr(asr_pipeline, "decode_audio", lambda *_: ([0.0] * 32000, 16000))
     monkeypatch.setattr(asr_pipeline, "run_vad", lambda *_: [{"start": 0.0, "end": 2.0}])
     chunks = [{"index": 0, "path": "chunk.wav", "start": 0.0, "end": 2.0}]
@@ -537,6 +540,7 @@ def test_asr_auto_detection_outside_aligner_languages_returns_segments(tmp_path,
     local = replace(settings, temp_dir=tmp_path / "tmp", data_dir=tmp_path / "data", mock_mode=False)
     local.ensure_directories()
     monkeypatch.setattr(asr_pipeline, "settings", local)
+    monkeypatch.setattr(asr_pipeline, "model_installation", lambda *_: {"installed": True})
     monkeypatch.setattr(asr_pipeline, "decode_audio", lambda *_: ([0.0] * 32000, 16000))
     monkeypatch.setattr(asr_pipeline, "run_vad", lambda *_: [{"start": 0.0, "end": 2.0}])
     chunks = [{"index": 0, "path": "chunk.wav", "start": 0.0, "end": 2.0}]

@@ -58,7 +58,7 @@ def test_check_reports_changed_or_missing_lock(
     monkeypatch.setattr(lock_dependencies, "compile_lock", fake_compile)
     monkeypatch.setattr(sys, "argv", ["lock_dependencies.py", "--check"])
 
-    with pytest.raises(SystemExit, match="requirements-lock/linux/api.txt"):
+    with pytest.raises(SystemExit, match=r"requirements-lock[\\/]linux[\\/]api\.txt"):
         lock_dependencies.main()
 
 

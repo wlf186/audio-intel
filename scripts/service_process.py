@@ -45,6 +45,16 @@ def _process_matches(component: str, pid: int) -> bool:
         return False
 
 
+def _process_tree_pids(component: str, pid: int) -> set[int]:
+    try:
+        root = _matching_process(component, pid)
+        if root is None:
+            return set()
+        return {root.pid, *(child.pid for child in root.children(recursive=True))}
+    except psutil.AccessDenied:
+        return {pid}
+
+
 def _alive(processes: list[psutil.Process]) -> list[psutil.Process]:
     alive = []
     for process in processes:
@@ -168,7 +178,8 @@ def wait_worker(kind: str, pid: int, timeout: float) -> int:
     deadline = time.monotonic() + timeout
     last_error = "worker registration was not found"
     while time.monotonic() < deadline:
-        if not _process_matches(kind, pid):
+        process_tree_pids = _process_tree_pids(kind, pid)
+        if not process_tree_pids:
             print(f"{kind} process exited before becoming ready", file=sys.stderr)
             return 1
         try:
@@ -176,7 +187,7 @@ def wait_worker(kind: str, pid: int, timeout: float) -> int:
                 (
                     item
                     for item in list_workers()
-                    if item["kind"] == kind and int(item["pid"]) == pid
+                    if item["kind"] == kind and int(item["pid"]) in process_tree_pids
                 ),
                 None,
             )

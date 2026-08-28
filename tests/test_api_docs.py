@@ -355,9 +355,12 @@ def test_documentation_code_blocks_are_self_contained_and_syntactically_valid() 
     assert bash_blocks and python_blocks and javascript_blocks
     for block in bash_blocks:
         assert "BASE_URL=" in block
-        subprocess.run(["bash", "-n"], input=block, text=True, check=True)
+        subprocess.run(["bash", "-n"], input=block, text=True, encoding="utf-8", check=True)
     for block in python_blocks:
         ast.parse(block)
         assert "api_key =" in block
     for block in javascript_blocks:
-        subprocess.run(["node", "--input-type=module", "--check"], input=block, text=True, check=True)
+        subprocess.run(
+            ["node", "--input-type=module", "--check"],
+            input=block, text=True, encoding="utf-8", check=True,
+        )
