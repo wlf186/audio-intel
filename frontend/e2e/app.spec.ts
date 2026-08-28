@@ -144,6 +144,55 @@ test('TTS draft and clone mode survive background polling',async({page})=>{
  expect(errors).toEqual([])
 })
 
+test('one-off clone reference model controls use the available width',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ const models=[
+  {id:'qwen3-asr-0.6b',name:'Qwen3-ASR-0.6B',revision:'r1',installed:true,installation_state:'installed',default:true,compute_devices:[{id:'cpu',precision:'FP32',available:true,default:false,quantized:false},{id:'gpu',precision:'BF16',available:true,default:true,quantized:false,minimum_memory_mib:3840,total_memory_mib:4096}]},
+  {id:'qwen3-asr-1.7b',name:'Qwen3-ASR-1.7B',revision:'r2',installed:true,installation_state:'installed',default:false,compute_devices:[{id:'cpu',precision:'FP32',available:true,default:true,quantized:false},{id:'gpu',precision:'BF16',available:false,default:false,quantized:false,minimum_memory_mib:7936,total_memory_mib:4096,unavailable_reason_code:'insufficient_gpu_memory',unavailable_reason:'This model requires at least 7936 MiB total GPU memory; detected 4096 MiB'}]},
+ ]
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{gpu:{available:true}},models:[],storage:{data:'/tmp/data'}}}))
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{default_model:'qwen3-asr-0.6b',models,speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,aligner_languages:['Chinese','English']},tts:{languages:['Auto','Chinese','English'],default_language:'Auto',preset_speaker_native_languages:{Vivian:'Chinese'}},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
+ await page.goto('/#tts')
+ await page.getByRole('tab',{name:'声音克隆'}).click()
+ const panel=page.getByRole('region',{name:'一次性克隆参考'})
+ const model=page.getByLabel('克隆参考 ASR 模型')
+ const device=page.getByLabel('克隆参考 ASR 计算设备')
+ await expect(model.locator('option')).toHaveText(['Qwen3-ASR-0.6B','Qwen3-ASR-1.7B'])
+ await device.selectOption('cpu')
+ await expect(device).toHaveValue('cpu')
+ await device.selectOption('gpu')
+ await model.selectOption('qwen3-asr-1.7b')
+ await expect(device).toHaveValue('cpu')
+ const hint=panel.locator('.device-hint')
+ await expect(hint).toContainText(/至少需要 7936 MiB 显存.*4096 MiB/)
+ const expectInline=async(width:number,height:number)=>{
+  await page.setViewportSize({width,height})
+  await panel.scrollIntoViewIfNeeded()
+  const panelBox=await panel.boundingBox();const modelBox=await model.boundingBox();const deviceBox=await device.boundingBox();const hintBox=await hint.boundingBox()
+  expect(Math.abs(modelBox!.y-deviceBox!.y)).toBeLessThan(2)
+  expect(modelBox!.width).toBeGreaterThan(deviceBox!.width*2)
+  expect(modelBox!.x).toBeGreaterThanOrEqual(panelBox!.x)
+  expect(deviceBox!.x+deviceBox!.width).toBeLessThanOrEqual(panelBox!.x+panelBox!.width)
+  expect(hintBox!.y).toBeGreaterThanOrEqual(modelBox!.y+modelBox!.height)
+  expect(hintBox!.width).toBeGreaterThan(deviceBox!.width*2)
+ }
+ await expectInline(1440,900)
+ await panel.screenshot({path:'/tmp/audio-intel-clone-controls-desktop.png'})
+ await expectInline(1024,820)
+ await page.setViewportSize({width:390,height:844})
+ await panel.scrollIntoViewIfNeeded()
+ const mobileModelBox=await model.boundingBox();const mobileDeviceBox=await device.boundingBox();const mobilePanelBox=await panel.boundingBox()
+ expect(Math.abs(mobileModelBox!.x-mobileDeviceBox!.x)).toBeLessThan(2)
+ expect(Math.abs(mobileModelBox!.width-mobileDeviceBox!.width)).toBeLessThan(2)
+ expect(mobileDeviceBox!.y).toBeGreaterThanOrEqual(mobileModelBox!.y+mobileModelBox!.height)
+ expect(mobileModelBox!.width).toBeGreaterThan(mobilePanelBox!.width*.8)
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await panel.screenshot({path:'/tmp/audio-intel-clone-controls-mobile.png'})
+ expect(errors).toEqual([])
+})
+
 test('ASR playback, seek and transcript search are interactive',async({page})=>{
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
@@ -206,32 +255,47 @@ test('ASR model routing and task-scoped hotword selection are explicit',async({p
 test('hotword library supports create and mobile layout without overflow',async({page})=>{
  const errors:string[]=[]
  let items:any[]=[]
+ let submittedTerms:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{hotword_library:{supported:true,max_lists:1,max_terms_per_list:200,max_selected_lists:8,max_selected_terms:500,max_prompt_chars:8000,max_name_chars:80,max_term_chars:64},speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,aligner_languages:['Chinese']},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
  await page.route('**/api/v1/asr/hotword-lists*',async route=>{
   if(route.request().method()==='POST'){
-   const body=route.request().postDataJSON();items=[{id:'hotwords_project',name:body.name,terms:body.terms,term_count:body.terms.length,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}]
+   const body=route.request().postDataJSON() as {name:string;terms:string[]};submittedTerms=body.terms;items=[{id:'hotwords_project',name:body.name,terms:body.terms,term_count:body.terms.length,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}]
    await route.fulfill({status:201,json:items[0]})
   }else await route.fulfill({json:{items,count:items.length}})
  })
  await page.goto('/#hotwords')
  await expect(page.getByRole('heading',{name:'热词库'})).toBeVisible()
+ await expect(page.getByRole('heading',{name:'新建词表'})).toBeVisible()
+ await expect(page.getByRole('button',{name:'新建词表'})).toHaveCount(0)
  await page.getByLabel('场景名称').fill('项目代号')
  await page.locator('.hotword-editor textarea').fill('超'.repeat(65))
  await expect(page.getByText(/单个热词不能超过 64 个字符/)).toBeVisible()
  await expect(page.getByRole('button',{name:'保存词表'})).toBeDisabled()
- await page.locator('.hotword-editor textarea').fill('Sandevistan\n量子\nSandevistan')
+ await page.locator('.hotword-editor textarea').fill('Sandevistan,Quantum;Project\n量子\nSandevistan,Quantum;Project')
  await page.getByRole('button',{name:'保存词表'}).click()
+ expect(submittedTerms).toEqual(['Sandevistan,Quantum;Project','量子'])
  await expect(page.getByText('项目代号')).toBeVisible()
+ await expect(page.getByText('最多只能创建 1 个词表')).toBeVisible()
+ await expect(page.getByRole('button',{name:'保存词表'})).toBeDisabled()
  await page.getByRole('button',{name:'编辑 项目代号'}).click()
+ await expect(page.locator('.hotword-editor textarea')).toHaveValue('Sandevistan,Quantum;Project\n量子')
+ await expect(page.getByText('逗号和分号会保留在词内')).toBeVisible()
  const editor=page.locator('.hotword-editor')
  const nameBox=await page.getByLabel('场景名称').boundingBox()
  const termsBox=await page.locator('.hotword-editor textarea').boundingBox()
  const editorBox=await editor.boundingBox()
  expect(nameBox!.width).toBeGreaterThan(editorBox!.width*.8)
  expect(termsBox!.width).toBeGreaterThan(editorBox!.width*.8)
+ await page.screenshot({path:'/tmp/audio-intel-hotwords-desktop.png',fullPage:false})
+ await page.getByRole('button',{name:'取消编辑'}).click()
+ await expect(page.getByRole('heading',{name:'新建词表'})).toBeVisible()
+ await expect(page.getByLabel('场景名称')).toHaveValue('')
+ await expect(page.locator('.hotword-editor textarea')).toHaveValue('')
  await page.setViewportSize({width:390,height:844})
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/audio-intel-hotwords-mobile.png',fullPage:false})
  expect(errors).toEqual([])
 })
 
