@@ -11,7 +11,7 @@ Treat `models/`, `data/`, `cache/`, `tmp/`, `logs/`, `run/`, and `.runtime/` as 
 ## Build, Test, and Development Commands
 
 - `./service.sh setup all` installs project-local runtimes and downloads required models.
-- `./service.sh start all` starts the API, ASR worker, and TTS worker on port 20810. Use `status`, `logs all`, and `stop all` for operations.
+- `./service.sh start all` starts the API, ASR worker, and TTS worker in the background on port 20810. Use `./service.sh run all` for a Linux foreground/container entrypoint; it is not a Windows action. Use `status`, `logs all`, and `stop all` for operations.
 - On native Windows 11, use `service.cmd` with the same actions and targets; see `docs/WINDOWS.md`.
 - `.runtime/api/bin/python -m pytest -q` runs backend tests.
 - `.runtime/api/bin/python scripts/lock_dependencies.py --check` verifies Linux and Windows dependency locks.
@@ -19,6 +19,7 @@ Treat `models/`, `data/`, `cache/`, `tmp/`, `logs/`, `run/`, and `.runtime/` as 
 - `corepack pnpm@10.15.1 --dir frontend build` creates the production UI in `frontend/dist/`.
 - `corepack pnpm@10.15.1 --dir frontend test:e2e` runs Playwright against the local service.
 - `AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all` enables fast pipeline smoke testing without real inference.
+- `.runtime/api/bin/python -m pytest -q tests/test_service_script.py` checks isolated Linux foreground/background lifecycle behavior without touching the default service instance.
 
 ## Coding Style & Naming Conventions
 

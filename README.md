@@ -1,6 +1,6 @@
 # Sandevistan-Audio
 
-面向单机离线使用的 ASR、说话人分离、精确时间戳与 TTS 服务。前端和后端默认统一监听 `0.0.0.0:20810`，可通过 `AUDIO_INTEL_HOST` 和 `AUDIO_INTEL_PORT` 修改；模型、缓存、输入、结果、数据库、日志和 Python 运行时均固定在项目目录内。
+面向单机离线使用的 ASR、说话人分离、精确时间戳与 TTS 服务。前端和后端默认统一监听 `0.0.0.0:20810`，可通过 `AUDIO_INTEL_HOST` 和 `AUDIO_INTEL_PORT` 修改；模型、缓存、输入、结果、数据库、日志和 Python 运行时默认位于项目目录，也可用 `.env.example` 中的目录变量覆盖。
 
 ## 快速复原
 
@@ -47,6 +47,14 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 ./service.sh logs all
 ./service.sh stop all
 ```
+
+`start` 会在当前 Linux 环境中后台运行服务，适合普通终端和能够保留后台进程的启动环境。容器入口、远程命令执行器或其他可能在命令结束后回收后台进程的环境应改用前台模式：
+
+```bash
+./service.sh run all
+```
+
+`run` 接收 `SIGTERM`/`SIGINT`，关闭完整 worker 进程树后退出；容器的 `CMD` 可直接使用 `./service.sh run all`。该模式不依赖 systemd，也不区分 rootless 或 rootful：只需运行用户对配置的数据、缓存、日志和 `run` 目录具有写权限。不要把 `run` 与已由 `start` 启动的组件混用。
 
 需要代理时，在安装前导出标准代理变量；curl、uv、Hugging Face 与 ModelScope 会继承它们：
 

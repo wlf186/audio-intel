@@ -115,6 +115,10 @@ curl -I https://modelscope.cn
 - 查看 `logs/api.log`、`logs/asr.log`、`logs/tts.log`；PID 位于 `run/`。
 - 服务配置改变后使用 `./service.sh restart all`。
 
+若 `start`/`restart` 已显示启动成功，但执行命令结束后服务立即消失并由上游返回 `502`，通常是远程执行器或容器入口回收了命令的后台进程，而不是监听地址从 `0.0.0.0` 被修改。`nohup` 无法阻止外部按 process group 或 cgroup 清理进程。此类环境应让 `./service.sh run all` 持续保持为前台主进程；普通长期 shell 仍可继续使用 `start all`。
+
+rootless 本身不会导致该问题。确认当前 UID 对 `.env.example` 中配置的数据、缓存、日志和运行目录可写即可。不要为此在容器内加入 systemd；重启策略应交给容器运行时。
+
 ## 浏览器麦克风无法录音
 
 - 浏览器麦克风要求安全上下文。本机请使用 `http://localhost:<端口>` 或 `http://127.0.0.1:<端口>`；通过局域网 IP 远程访问时应在反向代理配置 HTTPS，普通 HTTP 通常会被浏览器拒绝。
