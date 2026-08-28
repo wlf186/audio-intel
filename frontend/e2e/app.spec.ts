@@ -435,6 +435,12 @@ test('ASR and TTS preferences persist independently and reset per page',async({p
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.route('**/api/v1/system',async route=>{
+  const response=await route.fetch()
+  const body=await response.json()
+  body.hardware={...body.hardware,gpu:{...body.hardware?.gpu,available:true}}
+  await route.fulfill({response,json:body})
+ })
  await page.route('**/api/v1/capabilities',async route=>{
   const response=await route.fetch()
   const body=await response.json()

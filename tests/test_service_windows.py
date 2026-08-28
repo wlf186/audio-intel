@@ -5,6 +5,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -44,25 +45,28 @@ def _environment(tmp_path: Path, port: int | None = None) -> dict[str, str]:
 
 def _run_service(*args: str, env: dict[str, str], timeout: float = 45) -> subprocess.CompletedProcess[str]:
     command = [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", str(SERVICE), *args]
-    process = subprocess.Popen(
-        command,
-        cwd=ROOT,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    try:
-        stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        subprocess.run(
-            ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
-            capture_output=True, text=True, check=False, timeout=10,
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file, tempfile.TemporaryFile(
+        mode="w+", encoding="utf-8",
+    ) as stderr_file:
+        process = subprocess.Popen(
+            command, cwd=ROOT, env=env, stdout=stdout_file, stderr=stderr_file, text=True,
         )
-        stdout, stderr = process.communicate(timeout=10)
+        timed_out = False
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            subprocess.run(
+                ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True, text=True, check=False, timeout=10,
+            )
+            process.wait(timeout=10)
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout, stderr = stdout_file.read(), stderr_file.read()
+    if timed_out:
         stderr += f"\nservice command timed out after {timeout} seconds"
-        return subprocess.CompletedProcess(command, 124, stdout, stderr)
-    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    return subprocess.CompletedProcess(command, 124 if timed_out else process.returncode, stdout, stderr)
 
 
 def _read_pids(run_dir: Path) -> dict[str, int]:
