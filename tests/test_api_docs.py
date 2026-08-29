@@ -191,8 +191,13 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     }
     assert "scenario hotword library" in asr_capability["hotword_library"]["description"]
     hotword_list = schema["components"]["schemas"]["HotwordListResponse"]["properties"]
+    assert hotword_list["kind"]["$ref"].endswith("/HotwordListKind")
     assert "first-occurrence order" in hotword_list["terms"]["description"]
     assert "Number of terms" in hotword_list["term_count"]["description"]
+    voiceprint_person = schema["components"]["schemas"]["VoiceprintPersonResponse"]["properties"]
+    assert {"note", "include_in_hotword_library"} <= set(voiceprint_person)
+    voiceprint_match = schema["components"]["schemas"]["VoiceprintMatch"]["properties"]
+    assert "note" in voiceprint_match
     result_properties = schema["components"]["schemas"]["JobResultResponse"]["properties"]
     assert {"model", "model_name", "model_revision", "hotword_context"} <= set(result_properties)
     hotword_context = schema["components"]["schemas"]["HotwordContextResponse"]["properties"]
@@ -295,8 +300,12 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     assert "NFKC" in hotword_create["description"]
     assert "project_terms" in hotword_create["requestBody"]["content"]["application/json"]["examples"]
     hotword_patch = schema["paths"]["/api/v1/asr/hotword-lists/{item_id}"]["patch"]
-    assert "completely replaces" in hotword_patch["description"]
+    assert "System lists return `403`" in hotword_patch["description"]
     assert "replace_terms" in hotword_patch["requestBody"]["content"]["application/json"]["examples"]
+    person_create = schema["paths"]["/api/v1/voiceprints/people"]["post"]
+    assert "person_with_note" in person_create["requestBody"]["content"]["application/json"]["examples"]
+    person_patch = schema["paths"]["/api/v1/voiceprints/people/{person_id}"]["patch"]
+    assert "disable_name_hotword" in person_patch["requestBody"]["content"]["application/json"]["examples"]
     assert "8151 MiB" in schema["info"]["description"]
     assert "recognition hints" in schema["info"]["description"]
 

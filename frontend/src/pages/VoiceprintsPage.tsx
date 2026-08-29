@@ -23,6 +23,7 @@ type Props = {
   people: VoiceprintPerson[]
   state: ResourceState
   refresh: () => Promise<void>
+  refreshPeopleAndHotwords: () => Promise<void>
   onJobSubmitted: (job: Job) => void
   gpuAvailable?: boolean
   asrModels: AsrModelCapability[]
@@ -34,13 +35,13 @@ export function VoiceprintsPage({
   people,
   state,
   refresh,
+  refreshPeopleAndHotwords,
   onJobSubmitted,
   gpuAvailable,
   asrModels,
   asrLanguages = publicAsrLanguages,
 }: Props) {
   const [selectedId, setSelectedId] = useState('')
-  const [newName, setNewName] = useState('')
   const [source, setSource] = useState<SampleSource>('upload')
   const [file, setFile] = useState<File>()
   const [language, setLanguage] = useState('Auto')
@@ -49,8 +50,10 @@ export function VoiceprintsPage({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [renameOpen,setRenameOpen]=useState(false)
-  const [renameValue,setRenameValue]=useState('')
+  const [editorMode,setEditorMode]=useState<'create'|'edit'>()
+  const [personName,setPersonName]=useState('')
+  const [personNote,setPersonNote]=useState('')
+  const [includeInHotwordLibrary,setIncludeInHotwordLibrary]=useState(true)
   const [confirmDelete,setConfirmDelete]=useState<'person'|string>()
   const fileRef = useRef<HTMLInputElement>(null)
   const recorder = useMicrophoneRecorder(30)
@@ -71,13 +74,13 @@ export function VoiceprintsPage({
     if (fileRef.current) fileRef.current.value = ''
     recorder.discard()
   }, [selected?.id, recorder.discard])
-  const run = async (action: () => Promise<void>) => {
+  const run = async (action: () => Promise<void>, refreshAction=refresh) => {
     setBusy(true)
     setError('')
     setNotice('')
     try {
       await action()
-      await refresh()
+      await refreshAction()
       return true
     } catch (cause) {
       setError((cause as Error).message)
@@ -86,27 +89,31 @@ export function VoiceprintsPage({
       setBusy(false)
     }
   }
-  const create = () =>
-    void run(async () => {
-      if (!newName.trim()) throw new Error('请输入人员名称。')
-      const person = await api.addVoiceprintPerson(newName.trim())
-      setSelectedId(person.id)
-      setNewName('')
-      setNotice('人员已创建。')
-    })
-  const rename = () => {
-    if (!selected) return
-    setRenameValue(selected.name)
-    setRenameOpen(true)
+  const openCreate = () => {
+    setPersonName('')
+    setPersonNote('')
+    setIncludeInHotwordLibrary(true)
+    setEditorMode('create')
   }
-  const saveRename = () => {
-    if (!selected || !renameValue.trim()) return
+  const openEdit = () => {
+    if (!selected) return
+    setPersonName(selected.name)
+    setPersonNote(selected.note||'')
+    setIncludeInHotwordLibrary(selected.include_in_hotword_library)
+    setEditorMode('edit')
+  }
+  const savePerson = () => {
+    if (!personName.trim()||personNote.trim().length>20) return
+    const editing=editorMode==='edit'&&selected
     void run(async () => {
-        await api.renameVoiceprintPerson(selected.id, renameValue.trim())
-        setNotice('人员名称已更新；历史任务名称保持不变。')
-        setRenameOpen(false)
-      })
-   }
+      const person=editing
+        ?await api.updateVoiceprintPerson(editing.id,personName.trim(),personNote.trim()||null,includeInHotwordLibrary)
+        :await api.addVoiceprintPerson(personName.trim(),personNote.trim()||null,includeInHotwordLibrary)
+      setSelectedId(person.id)
+      setEditorMode(undefined)
+      setNotice(editing?'人员资料已更新；历史任务标签保持不变。':'人员已创建。')
+    },refreshPeopleAndHotwords)
+  }
   const removePerson = () => {
     if (!selected) return
     setConfirmDelete('person')
@@ -118,7 +125,7 @@ export function VoiceprintsPage({
       setSelectedId('')
       setConfirmDelete(undefined)
       setNotice('人员及其声纹样本已删除。')
-    })
+    },refreshPeopleAndHotwords)
   }
   const submitSample = async (sampleFile: File, kind: SampleSource) => {
     if (!selected) return
@@ -185,22 +192,9 @@ export function VoiceprintsPage({
       ) : null}
       <div className="voiceprint-layout">
         <aside className="people-panel">
-          <div className="create-person">
-            <input
-              value={newName}
-              maxLength={80}
-              placeholder="新人员名称"
-              disabled={busy || microphoneActive}
-              onChange={(event) => setNewName(event.target.value)}
-            />
-            <button
-              aria-label="创建声纹人员"
-              disabled={busy || microphoneActive || !newName.trim()}
-              onClick={create}
-            >
-              <Plus />
-            </button>
-          </div>
+          <button className="create-person-button" disabled={busy||microphoneActive} onClick={openCreate}>
+            <Plus size={17}/>新建人员
+          </button>
           <ResourceStatePanel state={state} loadingLabel="正在加载声纹人员…" errorLabel="声纹库加载失败。" retry={()=>void refresh()}/>
           {state==='ready'&&people.length ? (
             people.map((person) => (
@@ -213,7 +207,9 @@ export function VoiceprintsPage({
                 <Fingerprint />
                 <span>
                   <b>{person.name}</b>
+                  {person.note?<em>{person.note}</em>:null}
                   <small>{person.sample_count} 个样本</small>
+                  <small>{person.include_in_hotword_library?'已加入人名热词':'未加入人名热词'}</small>
                 </span>
               </button>
             ))
@@ -234,16 +230,16 @@ export function VoiceprintsPage({
               <header>
                 <div>
                   <h2>{selected.name}</h2>
+                  {selected.note?<p className="person-note">{selected.note}</p>:null}
                   <p>
-                    {selected.sample_count} 个独立样本 ·
-                    人员改名不会修改历史任务
+                    {selected.sample_count} 个独立样本 · {selected.include_in_hotword_library?'同步到“声纹库人名”':'不加入人名热词'} · 人员资料修改不会重写历史任务
                   </p>
                 </div>
                 <button
                   className="icon-button"
-                  aria-label={`重命名人员 ${selected.name}`}
+                  aria-label={`编辑人员 ${selected.name}`}
                   disabled={busy || microphoneActive}
-                  onClick={rename}
+                  onClick={openEdit}
                 >
                   <Pencil />
                 </button>
@@ -530,7 +526,7 @@ export function VoiceprintsPage({
           ):<div className="empty voiceprint-guide"><Fingerprint/><h2>正在准备声纹库</h2></div>}
         </section>
       </div>
-      {renameOpen&&selected?<Modal title="重命名人员" closeLabel="关闭重命名" onClose={()=>setRenameOpen(false)}><p>仅更新声纹库中的人员名称，历史任务快照保持不变。</p><label>人员名称<input value={renameValue} maxLength={80} onChange={event=>setRenameValue(event.target.value)}/></label><div className="modal-actions"><button className="button" disabled={busy} onClick={()=>setRenameOpen(false)}>取消</button><button className="primary" disabled={busy||!renameValue.trim()||renameValue.trim()===selected.name} onClick={saveRename}>保存名称</button></div></Modal>:null}
+      {editorMode?<Modal title={editorMode==='create'?'新建声纹人员':'编辑声纹人员'} closeLabel="关闭人员编辑" onClose={()=>setEditorMode(undefined)}><p>名字会用于声纹匹配标签；备注最多 20 字。后续修改不会重写历史任务。</p><label>名字（必填）<input value={personName} maxLength={80} autoFocus onChange={event=>setPersonName(event.target.value)}/></label><label>备注（选填）<input value={personNote} maxLength={20} placeholder="例如：外号、手机号、公司名称" onChange={event=>setPersonNote(event.target.value)}/><small>{personNote.trim().length} / 20 字</small></label><label className="toggle-label person-hotword-toggle"><input type="checkbox" checked={includeInHotwordLibrary} onChange={event=>setIncludeInHotwordLibrary(event.target.checked)}/><span>加入热词库</span><small>开启后，名字会自动同步到系统词表“声纹库人名”。</small></label><div className="modal-actions"><button className="button" disabled={busy} onClick={()=>setEditorMode(undefined)}>取消</button><button className="primary" disabled={busy||!personName.trim()||personNote.trim().length>20} onClick={savePerson}>{busy?'正在保存…':'保存人员'}</button></div></Modal>:null}
       {confirmDelete&&selected?<ConfirmDialog title={confirmDelete==='person'?'删除人员':'删除声纹样本'} description={confirmDelete==='person'?`永久删除“${selected.name}”及其全部声纹样本？此操作不可恢复。`:'永久删除这个声纹样本？此操作不可恢复。'} confirmLabel="永久删除" danger busy={busy} onClose={()=>setConfirmDelete(undefined)} onConfirm={confirmDelete==='person'?confirmRemovePerson:()=>confirmRemoveSample(confirmDelete)}/>:null}
     </div>
   )

@@ -284,7 +284,7 @@ test('hotword library supports create and mobile layout without overflow',async(
  await page.getByRole('button',{name:'保存词表'}).click()
  expect(submittedTerms).toEqual(['Sandevistan,Quantum;Project','量子'])
  await expect(page.getByText('项目代号')).toBeVisible()
- await expect(page.getByText('最多只能创建 1 个词表')).toBeVisible()
+ await expect(page.getByText(/最多只能创建 1 个自定义词表/)).toBeVisible()
  await expect(page.getByRole('button',{name:'保存词表'})).toBeDisabled()
  await page.getByRole('button',{name:'编辑 项目代号'}).click()
  await expect(page.locator('.hotword-editor textarea')).toHaveValue('Sandevistan,Quantum;Project\n量子')
@@ -303,6 +303,51 @@ test('hotword library supports create and mobile layout without overflow',async(
  await page.setViewportSize({width:390,height:844})
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
  await page.screenshot({path:'/tmp/audio-intel-hotwords-mobile.png',fullPage:false})
+ expect(errors).toEqual([])
+})
+
+test('voiceprint metadata synchronizes a read-only system hotword list',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ const now=new Date().toISOString()
+ let people:any[]=[]
+ let system={id:'hotwords_voiceprint_people',name:'声纹库人名',kind:'system',terms:[] as string[],term_count:0,created_at:now,updated_at:now}
+ let submitted:any
+ await routeJobList(page,route=>route.fulfill({json:{items:[],count:0,total:0,limit:100,offset:0,has_more:false}}))
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{hotword_library:{supported:true,max_lists:100,max_terms_per_list:200,max_selected_lists:8,max_selected_terms:500,max_prompt_chars:8000,max_name_chars:80,max_term_chars:64},speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,aligner_languages:['Chinese']},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
+ await page.route('**/api/v1/voiceprints/people',async route=>{
+  if(route.request().method()==='POST'){
+   submitted=route.request().postDataJSON()
+   const person={id:'voice_zhang',name:submitted.name,note:submitted.note,include_in_hotword_library:submitted.include_in_hotword_library,sample_count:0,samples:[],created_at:now,updated_at:now}
+   people=[person]
+   system={...system,terms:[person.name],term_count:1,updated_at:new Date().toISOString()}
+   await route.fulfill({status:201,json:person})
+  }else await route.fulfill({json:{items:people}})
+ })
+ await page.route('**/api/v1/asr/hotword-lists',route=>route.fulfill({json:{items:[system],count:1}}))
+ await page.goto('/#voiceprints')
+ await page.getByRole('button',{name:'新建人员'}).click()
+ const dialog=page.getByRole('dialog',{name:'新建声纹人员'})
+ await dialog.getByLabel('名字（必填）').fill('张三')
+ await dialog.getByLabel('备注（选填）').fill('研发一部')
+ await expect(dialog.getByRole('checkbox',{name:'加入热词库'})).toBeChecked()
+ await dialog.getByRole('button',{name:'保存人员'}).click()
+ expect(submitted).toEqual({name:'张三',note:'研发一部',include_in_hotword_library:true})
+ await expect(page.locator('.samples-panel .person-note')).toHaveText('研发一部')
+ await expect(page.getByText('已加入人名热词')).toBeVisible()
+ await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'热词库'}).click()
+ const systemList=page.locator('.hotword-list article').filter({hasText:'声纹库人名'})
+ await expect(systemList).toBeVisible()
+ await expect(systemList.getByText('系统',{exact:true})).toBeVisible()
+ await expect(page.getByRole('button',{name:'编辑 声纹库人名'})).toHaveCount(0)
+ await expect(page.getByRole('button',{name:'删除 声纹库人名'})).toHaveCount(0)
+ await page.getByRole('button',{name:'查看 声纹库人名'}).click()
+ await expect(page.getByLabel('场景名称')).toBeDisabled()
+ await expect(page.locator('.hotword-editor textarea')).toHaveValue('张三')
+ await expect(page.getByText('此词表由系统维护')).toBeVisible()
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
  expect(errors).toEqual([])
 })
 
@@ -928,9 +973,9 @@ test('ASR speaker limit, filter, rename and voiceprint segment enrollment are in
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  const now='2026-08-25T12:00:00+00:00'
- const result={text:'尼克发言。凯文回答。',language:'Chinese',duration:4,timestamp_precision:'word_or_character',speakers:[{id:'Speaker_0',label:'尼克杨',label_source:'manual'},{id:'Speaker_1',label:'Speaker 1',label_source:'default'}],segments:[{id:0,start:0,end:2,speaker:'Speaker_0',speaker_label:'尼克杨',text:'尼克发言。',words:[{text:'尼克发言',start:.2,end:1.6}]},{id:1,start:2,end:4,speaker:'Speaker_1',speaker_label:'Speaker 1',text:'凯文回答。',words:[{text:'凯文回答',start:2.2,end:3.6}]}],waveform:[.2,.4],artifacts:[]}
+ const result={text:'尼克发言。凯文回答。',language:'Chinese',duration:4,timestamp_precision:'word_or_character',speakers:[{id:'Speaker_0',label:'尼克杨（研发一部）',label_source:'voiceprint',voiceprint_match:{person_id:'voice_nick',name:'尼克杨',note:'研发一部',score:.82}},{id:'Speaker_1',label:'Speaker 1',label_source:'default'}],segments:[{id:0,start:0,end:2,speaker:'Speaker_0',speaker_label:'尼克杨（研发一部）',text:'尼克发言。',words:[{text:'尼克发言',start:.2,end:1.6}]},{id:1,start:2,end:4,speaker:'Speaker_1',speaker_label:'Speaker 1',text:'凯文回答。',words:[{text:'凯文回答',start:2.2,end:3.6}]}],waveform:[.2,.4],artifacts:[]}
  const job={id:'asr-speaker-tools',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'meeting.wav',created_at:now,updated_at:now,request:{compute_device:'cpu'},result}
- const people=[{id:'voice_nick',name:'尼克杨',sample_count:1,created_at:now,updated_at:now,samples:[{id:'sample_nick',person_id:'voice_nick',state:'ready',language:'Chinese',transcript:'已有样本',words:[],duration:5,created_at:now,updated_at:now,tts_eligible:true,embedding_status:'ready',audio_url:'/sample.wav'}]}]
+ const people=[{id:'voice_nick',name:'尼克杨',note:'研发一部',include_in_hotword_library:true,sample_count:1,created_at:now,updated_at:now,samples:[{id:'sample_nick',person_id:'voice_nick',state:'ready',language:'Chinese',transcript:'已有样本',words:[],duration:5,created_at:now,updated_at:now,tts_eligible:true,embedding_status:'ready',audio_url:'/sample.wav'}]}]
  let enrollment:{job_id:string;segment_ids:number[]}|undefined
  await routeJobList(page,route=>route.fulfill({json:{items:[job]}}))
  await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{data:'/tmp/data'}}}))
@@ -943,6 +988,7 @@ test('ASR speaker limit, filter, rename and voiceprint segment enrollment are in
  await expect(page.getByLabel('说话人数').locator('option')).toHaveCount(16)
  await expect(page.getByLabel('说话人数').locator('option').last()).toHaveText('15')
  await page.getByLabel('按说话人过滤').selectOption('Speaker_0')
+ await expect(page.locator('.segments .speaker-identity small')).toHaveText('（研发一部）')
  await page.getByLabel('选择片段 1').check()
  await page.getByLabel('按说话人过滤').selectOption('Speaker_1')
  await expect(page.getByLabel('段落选择操作')).toHaveCount(0)

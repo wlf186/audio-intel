@@ -29,9 +29,9 @@ ASR 默认模型为 `qwen3-asr-0.6b`，也可选择 `qwen3-asr-1.7b`。消费方
 
 The default ASR model is `qwen3-asr-0.6b`; `qwen3-asr-1.7b` is also available. Read `asr.models[].compute_devices` for model-scoped device eligibility. GPU admission uses reported total memory, not current free memory. The 0.6B/1.7B thresholds are 3840/7936 MiB, so an 8151 MiB 8 GiB GPU is eligible for 1.7B. Admission does not guarantee that unrelated GPU use cannot cause an OOM. An explicit unavailable GPU request returns `503` and never changes to CPU automatically.
 
-两个 ASR 模型都可使用本地热词库。一次最多选择 8 个词表；留空禁用已保存词表。服务会规范化并去重词条，把 `Vocabulary: ...` 追加到一次性 `context`/`prompt`，并在提交时保存不可变词表快照。热词是识别提示而非强制词典，不保证每次命中；克隆参考分析和声纹样本入库不使用热词。
+两个 ASR 模型都可使用本地热词库。只读系统词表“声纹库人名”自动同步已开启“加入热词库”的声纹人员名字，但与自定义词表一样需要显式选择。一次最多选择 8 个词表；留空禁用已保存词表。服务会规范化并去重词条，把 `Vocabulary: ...` 追加到一次性 `context`/`prompt`，并在提交时保存不可变词表快照。热词是识别提示而非强制词典；克隆参考分析和声纹样本入库不使用热词。
 
-Both ASR models support the local hotword library. Select up to eight lists, or leave the field empty to disable stored lists. The service normalizes and deduplicates terms, appends a `Vocabulary: ...` section to a one-off `context`/`prompt`, and stores immutable list snapshots at submission. Hotwords are recognition hints, not a forced dictionary; clone-reference analysis and voiceprint imports do not use them.
+Both ASR models support the local hotword library. The read-only `声纹库人名` system list synchronizes opted-in voiceprint person names, but still requires explicit selection. Select up to eight lists, or leave the field empty to disable stored lists. The service stores immutable list snapshots at submission. Hotwords are recognition hints; clone-reference analysis and voiceprint imports do not use them.
 
 TTS 默认模型组为 `qwen3-tts-0.6b`，也可选择 `qwen3-tts-1.7b`。逐模型能力位于 `tts.model_capabilities[]`；GPU 总显存门槛同样为 3840/7936 MiB。1.7B 的预置音色支持可选自然语言 `instruct`，`voice_design` 用必填指令描述音色、语速、音调、韵律和情绪；Base 克隆模式不支持指令。官方没有独立数值语速或音高参数，底层采样配置也不公开。消费方必须按所选模型的 `controls` 决定显示和发送哪些字段。
 
@@ -281,7 +281,8 @@ The stream immediately emits `event: job`, continues on changes, and closes at a
 ## 重要注意事项 / Important notes
 
 - `compute_device=gpu` 不可用时返回 `503`，不会静默回退 CPU。ASR 使用 `asr.models[]`，TTS 使用 `tts.model_capabilities[]` 判断所选模型；`minimum_memory_mib` 与 `total_memory_mib` 都是总显存口径。
-- `hotword_list_ids` 是逗号分隔的本地词表 ID；未知 ID、超过选择上限或合并后超限返回 `422`。提交后的 `request.hotword_lists` 和结果 `hotword_context` 是快照，后续编辑或删除不会改写历史。
+- `hotword_list_ids` 是逗号分隔的本地词表 ID；系统词表也必须显式选择。未知 ID、空系统词表或合并后超限返回 `422`。提交后的词表内容是不可变快照。
+- 声纹人员名字必填，备注选填且最多 20 字。“加入热词库”默认开启，只控制名字是否进入系统人名词表，不影响声纹匹配或 TTS。新 ASR 匹配把名字和备注快照保存为“名字（备注）”。
 - ASR 消费方应从 `GET /api/v1/capabilities` 返回的 `asr.languages` 读取可提交语种；不要把模型的全部识别语种误认为全部支持字词级时间戳。
 - 删除操作要求 `purge=true` 且不可恢复；运行中任务必须先取消并等待终态。
 - 声纹克隆只能使用 `state=ready` 且 `tts_eligible=true` 的样本。OpenAI 兼容 TTS 目前仅支持预置音色和兼容 voice profile。
@@ -677,6 +678,12 @@ REQUEST_EXAMPLES: dict[tuple[str, str], dict[str, dict[str, Any]]] = {
     ("/api/v1/asr/hotword-lists/{item_id}", "patch"): {
         "replace_terms": {"summary": "完整替换词条 / Replace all terms", "value": {"terms": ["Qwen3-ASR", "ForcedAligner"]}},
     },
+    ("/api/v1/voiceprints/people", "post"): {
+        "person_with_note": {"summary": "创建带备注的人员 / Create a person with a note", "value": {"name": "张三", "note": "研发一部", "include_in_hotword_library": True}},
+    },
+    ("/api/v1/voiceprints/people/{person_id}", "patch"): {
+        "disable_name_hotword": {"summary": "更新备注并停止人名同步 / Update note and disable name sync", "value": {"note": "13800000000", "include_in_hotword_library": False}},
+    },
     ("/v1/audio/transcriptions", "post"): {
         "hotwords": {"summary": "兼容转写与本地热词 / Compatible transcription with local hotwords", "value": {"file": "meeting.wav", "model": "qwen3-asr-1.7b", "prompt": "项目会议", "hotword_list_ids": "hotwords_0123456789abcdef", "language": "Auto", "response_format": "verbose_json", "compute_device": "cpu"}},
     },
@@ -696,7 +703,7 @@ JOB_EXAMPLES = {
 }
 
 RESULT_EXAMPLES = {
-    "asr": {"summary": "ASR 结果 / ASR result", "value": {"text": "欢迎使用本地转写。", "language": "Chinese", "duration": 3.2, "timestamp_precision": "word_or_character", "model": "qwen3-asr-1.7b", "model_name": "Qwen3-ASR-1.7B", "model_revision": "7278e1e70fe206f11671096ffdd38061171dd6e5", "hotword_context": {"enabled": True, "list_ids": ["hotwords_0123456789abcdef"], "list_names": ["项目代号"], "term_count": 2}, "segments": [], "speakers": [], "artifacts": []}},
+    "asr": {"summary": "ASR 结果 / ASR result", "value": {"text": "欢迎使用本地转写。", "language": "Chinese", "duration": 3.2, "timestamp_precision": "word_or_character", "model": "qwen3-asr-1.7b", "model_name": "Qwen3-ASR-1.7B", "model_revision": "7278e1e70fe206f11671096ffdd38061171dd6e5", "hotword_context": {"enabled": True, "list_ids": ["hotwords_voiceprint_people"], "list_names": ["声纹库人名"], "term_count": 2}, "segments": [{"id": 0, "start": 0, "end": 3.2, "speaker": "Speaker_0", "speaker_label": "张三（研发一部）", "text": "欢迎使用本地转写。", "words": []}], "speakers": [{"id": "Speaker_0", "label": "张三（研发一部）", "label_source": "voiceprint", "voiceprint_match": {"person_id": "voice_0123456789abcdef", "name": "张三", "note": "研发一部", "score": 0.82}}], "artifacts": []}},
     "tts": {"summary": "TTS 结果 / TTS result", "value": {"duration": 1.8, "format": "wav", "sample_rate": 24000, "voice_mode": "preset", "speaker": "Vivian", "model": "qwen3-tts-1.7b", "model_name": "Qwen3-TTS-12Hz-1.7B-CustomVoice", "model_revision": "0c0e3051f131929182e2c023b9537f8b1c68adfe", "instruct": "温柔、安心地说，语速稍慢。", "compute_device": "gpu", "precision": "BF16", "quantized": False, "artifacts": []}},
 }
 

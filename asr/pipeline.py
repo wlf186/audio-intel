@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import html
 import logging
 import math
 import os
@@ -220,6 +221,7 @@ def _match_voiceprints(
 
     person_ids: list[str] = []
     person_names: list[str] = []
+    person_notes: list[str | None] = []
     person_vectors: list[Any] = []
     indexed_samples = 0
     skipped_samples = 0
@@ -254,6 +256,7 @@ def _match_voiceprints(
             center /= max(float(np.linalg.norm(center)), np.finfo(np.float32).eps)
             person_ids.append(person["id"])
             person_names.append(person["name"])
+            person_notes.append(person.get("note"))
             person_vectors.append(center)
     if not person_vectors:
         status = "empty" if not skipped_samples else "degraded"
@@ -267,10 +270,13 @@ def _match_voiceprints(
     for row, column in zip(rows, columns):
         score = float(scores[row, column])
         if score >= VOICEPRINT_COSINE_THRESHOLD:
-            matches[f"Speaker_{int(row)}"] = {
+            match = {
                 "person_id": person_ids[column], "name": person_names[column],
                 "score": round(score, 4),
             }
+            if person_notes[column]:
+                match["note"] = person_notes[column]
+            matches[f"Speaker_{int(row)}"] = match
     return matches, {
         "status": "matched" if matches else "no_match", "indexed_samples": indexed_samples,
         "skipped_samples": skipped_samples, "matched_speakers": len(matches),
@@ -757,7 +763,11 @@ def assemble(
     labels = {}
     for speaker_id in ordered_speakers:
         match = matches.get(speaker_id)
-        label = match["name"] if match else speaker_id.replace("_", " ")
+        label = (
+            f"{match['name']}（{match['note']}）" if match and match.get("note")
+            else match["name"] if match
+            else speaker_id.replace("_", " ")
+        )
         labels[speaker_id] = label
         payload = {
             "id": speaker_id, "label": label,
@@ -792,7 +802,11 @@ def write_asr_exports(job_id: str, result: dict[str, Any], formats: list[str]) -
     if "srt" in formats:
         add("transcript.srt", "\n\n".join(f"{i}\n{timecode(x['start'], ',')} --> {timecode(x['end'], ',')}\n{x['speaker_label']}: {x['text']}" for i, x in enumerate(result["segments"], 1)), "application/x-subrip")
     if "vtt" in formats:
-        add("transcript.vtt", "WEBVTT\n\n" + "\n\n".join(f"{timecode(x['start'])} --> {timecode(x['end'])}\n<v {x['speaker_label']}>{x['text']}" for x in result["segments"]), "text/vtt")
+        add("transcript.vtt", "WEBVTT\n\n" + "\n\n".join(
+            f"{timecode(x['start'])} --> {timecode(x['end'])}\n"
+            f"<v {html.escape(x['speaker_label'], quote=False)}>{x['text']}"
+            for x in result["segments"]
+        ), "text/vtt")
     result["artifacts"] = artifacts
     return result
 

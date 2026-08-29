@@ -379,14 +379,34 @@ def test_asr_voiceprint_match_changes_labels_without_changing_speaker_ids() -> N
     diarization = [{"start": 0.0, "end": 2.0, "speaker": "Speaker_0"}]
     result = asr_pipeline.assemble(
         chunks, diarization, 2.0, False,
-        voiceprint_matches={"Speaker_0": {"person_id": "voice_nick", "name": "尼克杨", "score": .72}},
+        voiceprint_matches={"Speaker_0": {"person_id": "voice_nick", "name": "尼克杨", "note": "产品部", "score": .72}},
     )
     assert result["segments"][0]["speaker"] == "Speaker_0"
-    assert result["segments"][0]["speaker_label"] == "尼克杨"
+    assert result["segments"][0]["speaker_label"] == "尼克杨（产品部）"
     assert result["speakers"] == [{
-        "id": "Speaker_0", "label": "尼克杨", "label_source": "voiceprint",
-        "voiceprint_match": {"person_id": "voice_nick", "name": "尼克杨", "score": .72},
+        "id": "Speaker_0", "label": "尼克杨（产品部）", "label_source": "voiceprint",
+        "voiceprint_match": {"person_id": "voice_nick", "name": "尼克杨", "note": "产品部", "score": .72},
     }]
+
+
+def test_asr_voiceprint_note_label_is_written_to_all_exports(tmp_path, monkeypatch) -> None:
+    local = replace(settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp")
+    local.ensure_directories()
+    monkeypatch.setattr(asr_pipeline, "settings", local)
+    result = asr_pipeline.assemble(
+        [{"start": 0.0, "end": 1.0, "text": "你好", "language": "Chinese"}],
+        [{"start": 0.0, "end": 1.0, "speaker": "Speaker_0"}],
+        1.0, False,
+        voiceprint_matches={"Speaker_0": {
+            "person_id": "voice_nick", "name": "尼克杨", "note": "研发&平台", "score": .8,
+        }},
+    )
+    asr_pipeline.write_asr_exports("note-label", result, ["json", "srt", "vtt", "txt"])
+    output = local.jobs_dir / "note-label" / "output"
+    assert "尼克杨（研发&平台）" in (output / "transcript.json").read_text()
+    assert "尼克杨（研发&平台）" in (output / "transcript.srt").read_text()
+    assert "尼克杨（研发&平台）" in (output / "transcript.txt").read_text()
+    assert "<v 尼克杨（研发&amp;平台）>" in (output / "transcript.vtt").read_text()
 
 
 def test_asr_auto_speaker_refinement_finds_split_stable_speaker() -> None:

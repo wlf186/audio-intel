@@ -44,6 +44,11 @@ class VoiceprintSampleState(str, Enum):
     failed = "failed"
 
 
+class HotwordListKind(str, Enum):
+    custom = "custom"
+    system = "system"
+
+
 class QueueWaitReason(str, Enum):
     worker = "worker"
     gpu = "gpu"
@@ -205,8 +210,8 @@ class TtsModelCapability(PublicModel):
 
 class HotwordLibraryCapability(PublicModel):
     supported: bool = Field(description="是否支持本地 ASR 热词库 / Whether the local ASR hotword library is supported")
-    max_lists: int = Field(description="最多可保存的词表数 / Maximum number of stored lists")
-    max_terms_per_list: int = Field(description="单个词表最多词条数 / Maximum terms per list")
+    max_lists: int = Field(description="最多可保存的自定义词表数；系统词表不计入 / Maximum custom lists; system lists are excluded")
+    max_terms_per_list: int = Field(description="单个自定义词表最多词条数 / Maximum terms per custom list")
     max_selected_lists: int = Field(description="单次 ASR 最多选择的词表数 / Maximum lists selected for one ASR request")
     max_selected_terms: int = Field(description="单次 ASR 合并后最多唯一词条数 / Maximum unique merged terms for one ASR request")
     max_prompt_chars: int = Field(
@@ -349,6 +354,7 @@ class WordResponse(PublicModel):
 class VoiceprintMatch(PublicModel):
     person_id: str
     name: str
+    note: str | None = None
     score: float
 
 
@@ -605,6 +611,8 @@ class VoiceprintSampleResponse(PublicModel):
 class VoiceprintPersonResponse(PublicModel):
     id: str
     name: str
+    note: str | None = Field(None, description="人员备注，最多 20 字 / Optional person note, maximum 20 characters")
+    include_in_hotword_library: bool = Field(description="名字是否同步到系统人名热词表 / Whether the name is synchronized to the system name hotword list")
     created_at: str
     updated_at: str
     sample_count: int
@@ -627,7 +635,8 @@ class VoiceprintUploadResponse(PublicModel):
 class HotwordListResponse(PublicModel):
     id: str
     name: str
-    terms: list[str] = Field(description="规范化并按首次出现顺序保存的热词 / Normalized hotword terms stored in first-occurrence order")
+    kind: HotwordListKind = Field(description="词表来源；system 词表只读 / List source; system lists are read-only")
+    terms: list[str] = Field(description="自定义词表按首次出现顺序保存；系统人名词表按规范化名称排序 / Custom terms preserve first-occurrence order; system person names use normalized-name order")
     term_count: int = Field(description="当前词表中的热词数量 / Number of terms in the current list")
     created_at: str
     updated_at: str

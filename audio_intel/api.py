@@ -28,6 +28,8 @@ from . import __version__
 from .config import settings
 from .gpu import COMPUTE_DEVICES, cached_gpu_snapshot, gpu_snapshot
 from .db import (
+    MAX_VOICEPRINT_NOTE_CHARS,
+    ReadOnlyHotwordListError,
     create_hotword_list,
     create_job,
     create_job_idempotent,
@@ -55,11 +57,11 @@ from .db import (
     list_voiceprint_samples,
     list_workers,
     person_name_key,
-    rename_voiceprint_person,
     request_cancel,
     retry_job,
     update_job,
     update_hotword_list,
+    update_voiceprint_person,
     update_voiceprint_sample,
     utcnow,
     IdempotencyConflict,
@@ -170,8 +172,16 @@ class BatchDeleteRequest(BaseModel):
     purge: bool = Field(False, description="必须明确为 true，删除不可恢复 / Must be true; deletion is irreversible")
 
 
-class PersonNameRequest(BaseModel):
+class VoiceprintPersonCreateRequest(BaseModel):
     name: str = Field(description="人员显示名称，规范化后必须唯一 / Display name, unique after normalization")
+    note: str | None = Field(None, description=f"可选单行备注，规范化后最多 {MAX_VOICEPRINT_NOTE_CHARS} 字 / Optional single-line note")
+    include_in_hotword_library: bool = Field(True, description="是否同步到系统人名热词表 / Whether to sync the name to the system hotword list")
+
+
+class VoiceprintPersonUpdateRequest(BaseModel):
+    name: str | None = Field(None, description="新的人员显示名称 / New display name")
+    note: str | None = Field(None, description=f"新备注；null 或空白用于清除，最多 {MAX_VOICEPRINT_NOTE_CHARS} 字 / New note; null or blank clears it")
+    include_in_hotword_library: bool | None = Field(None, description="是否同步到系统人名热词表 / Whether to sync the name to the system hotword list")
 
 
 class AddAsrSamplesRequest(BaseModel):
@@ -417,7 +427,9 @@ def public_voiceprint_sample(sample: dict[str, Any]) -> dict[str, Any]:
 def public_voiceprint_person(person: dict[str, Any]) -> dict[str, Any]:
     samples = [public_voiceprint_sample(sample) for sample in person.get("samples", [])]
     return {
-        "id": person["id"], "name": person["name"], "created_at": person["created_at"],
+        "id": person["id"], "name": person["name"], "note": person.get("note"),
+        "include_in_hotword_library": bool(person.get("include_in_hotword_library", True)),
+        "created_at": person["created_at"],
         "updated_at": person["updated_at"], "sample_count": len(samples), "samples": samples,
     }
 
@@ -647,7 +659,8 @@ def validate_tts_instruction(model: dict[str, Any], voice_mode: str, value: str)
 
 def public_hotword_list(item: dict[str, Any]) -> dict[str, Any]:
     return {
-        "id": item["id"], "name": item["name"], "terms": item["terms"],
+        "id": item["id"], "name": item["name"], "kind": item.get("kind", "custom"),
+        "terms": item["terms"],
         "term_count": len(item["terms"]), "created_at": item["created_at"],
         "updated_at": item["updated_at"],
     }
@@ -680,6 +693,8 @@ def hotword_request_data(
             selected.append(item)
     if missing:
         raise HTTPException(status_code=422, detail=f"Unknown hotword list IDs: {', '.join(missing)}")
+    if any(item.get("kind") == "system" and not item.get("terms") for item in selected):
+        raise HTTPException(status_code=422, detail="The selected system hotword list is empty")
     try:
         effective, term_count = compile_hotword_context(context, selected)
     except ValueError as exc:
@@ -1033,8 +1048,8 @@ def create_app() -> FastAPI:
         response_model_exclude_unset=True, tags=[ASR_TAG],
         summary="读取 ASR 热词库 / List ASR hotword lists",
         description=bilingual(
-            "列出本地按场景维护的热词词表。提交 ASR 时通过 `hotword_list_ids` 选择；选择顺序不表示识别权重。",
-            "List locally managed, scenario-specific hotword lists. Select them through `hotword_list_ids` when submitting ASR; selection order does not imply recognition weight.",
+            "列出本地词表，包括只读系统词表“声纹库人名”。提交 ASR 时仍需通过 `hotword_list_ids` 显式选择；选择顺序不表示识别权重。",
+            "List local vocabularies, including the read-only system list `声纹库人名`. Select every list explicitly through `hotword_list_ids`; selection order does not imply recognition weight.",
         ),
         operation_id="listAsrHotwordLists", responses={**AUTH_RESPONSES},
     )
@@ -1047,8 +1062,8 @@ def create_app() -> FastAPI:
         response_model=HotwordListResponse, response_model_exclude_unset=True,
         tags=[ASR_TAG], summary="创建 ASR 热词词表 / Create an ASR hotword list",
         description=bilingual(
-            "创建名称唯一的本地热词词表。名称在 NFKC、空白折叠和大小写无关规范化后唯一；空词条会移除，等价重复词保留首次形式。具体上限读取 `/api/v1/capabilities` 的 `asr.hotword_library`。",
-            "Create a uniquely named local hotword list. Names are unique after NFKC normalization, whitespace folding, and case folding. Empty terms are removed and equivalent duplicates preserve their first display form. Read limits from `asr.hotword_library` in `/api/v1/capabilities`.",
+            "创建名称唯一的自定义热词词表。名称在 NFKC、空白折叠和大小写无关规范化后唯一；“声纹库人名”为系统保留名称。空词条会移除，等价重复词保留首次形式。",
+            "Create a uniquely named custom hotword list. Names are unique after NFKC normalization, whitespace folding, and case folding; `声纹库人名` is reserved for the system list. Empty terms are removed and equivalent duplicates preserve their first display form.",
         ),
         operation_id="createAsrHotwordList",
         responses={**AUTH_RESPONSES, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
@@ -1072,8 +1087,8 @@ def create_app() -> FastAPI:
         response_model_exclude_unset=True, tags=[ASR_TAG],
         summary="更新 ASR 热词词表 / Update an ASR hotword list",
         description=bilingual(
-            "至少提供 `name` 或 `terms`；提供 `terms` 时完整替换原词条。已提交任务保存不可变快照，不受后续更新影响。",
-            "Provide at least `name` or `terms`; when supplied, `terms` completely replaces the previous entries. Submitted jobs keep immutable snapshots and are unaffected by later updates.",
+            "仅自定义词表可更新；至少提供 `name` 或 `terms`。系统词表返回 `403`。已提交任务保存不可变快照。",
+            "Only custom lists can be updated; provide `name` or `terms`. System lists return `403`. Submitted jobs keep immutable snapshots.",
         ),
         operation_id="updateAsrHotwordList",
         responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
@@ -1084,6 +1099,8 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         try:
             item = update_hotword_list(item_id, name=payload.name, terms=payload.terms)
+        except ReadOnlyHotwordListError as exc:
+            raise ApiProblem(403, "system_hotword_list_read_only", str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except sqlite3.IntegrityError as exc:
@@ -1095,12 +1112,16 @@ def create_app() -> FastAPI:
     @app.delete(
         "/api/v1/asr/hotword-lists/{item_id}", status_code=204, tags=[ASR_TAG],
         summary="删除 ASR 热词词表 / Delete an ASR hotword list",
-        description=bilingual("删除词表；已提交任务保留自己的不可变快照。", "Delete the list while submitted jobs retain their immutable snapshots."),
+        description=bilingual("删除自定义词表；系统词表返回 `403`。已提交任务保留不可变快照。", "Delete a custom list; system lists return `403`. Submitted jobs retain immutable snapshots."),
         operation_id="deleteAsrHotwordList",
         responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE},
     )
     def remove_hotword_list(item_id: str, _: None = Depends(require_api_key)) -> Response:
-        if not delete_hotword_list(item_id):
+        try:
+            deleted = delete_hotword_list(item_id)
+        except ReadOnlyHotwordListError as exc:
+            raise ApiProblem(403, "system_hotword_list_read_only", str(exc)) from exc
+        if not deleted:
             raise HTTPException(status_code=404, detail="Hotword list not found")
         return Response(status_code=204)
 
@@ -1494,7 +1515,7 @@ def create_app() -> FastAPI:
         "/api/v1/voiceprints/people", response_model=VoiceprintPeopleResponse,
         response_model_exclude_unset=True, tags=[VOICEPRINT_TAG],
         summary="列出声纹人员和样本 / List voiceprint people and samples",
-        description=bilingual("人员响应内嵌全部样本；TTS 只应选择 `state=ready` 且 `tts_eligible=true` 的样本。", "Each person embeds all samples; TTS clients must select a sample with `state=ready` and `tts_eligible=true`."),
+        description=bilingual("人员响应包含名字、可选备注、“加入热词库”开关及全部样本；TTS 只应选择可用样本。", "Each person includes its name, optional note, hotword-library switch, and samples; TTS clients must select an eligible sample."),
         operation_id="listVoiceprintPeople", responses={**AUTH_RESPONSES},
     )
     def voiceprint_people(_: None = Depends(require_api_key)) -> VoiceprintPeopleResponse:
@@ -1504,15 +1525,19 @@ def create_app() -> FastAPI:
         "/api/v1/voiceprints/people", status_code=201, response_model=VoiceprintPersonResponse,
         response_model_exclude_unset=True, tags=[VOICEPRINT_TAG],
         summary="创建声纹人员 / Create voiceprint person",
-        description=bilingual("名称经过 Unicode 和空白规范化后必须唯一。", "The name must be unique after Unicode and whitespace normalization."),
+        description=bilingual("名字必填且规范化后唯一；备注选填、最多 20 字；人名热词同步默认开启。", "The normalized name is required and unique; the optional note is limited to 20 characters; name-hotword synchronization defaults on."),
         operation_id="createVoiceprintPerson",
         responses={**AUTH_RESPONSES, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
     )
     def add_voiceprint_person(
-        payload: PersonNameRequest, _: None = Depends(require_api_key),
+        payload: VoiceprintPersonCreateRequest, _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         try:
-            return public_voiceprint_person(create_voiceprint_person(payload.name))
+            return public_voiceprint_person(create_voiceprint_person(
+                payload.name,
+                note=payload.note,
+                include_in_hotword_library=payload.include_in_hotword_library,
+            ))
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="A voiceprint person with this name already exists") from exc
         except ValueError as exc:
@@ -1521,16 +1546,27 @@ def create_app() -> FastAPI:
     @app.patch(
         "/api/v1/voiceprints/people/{person_id}", response_model=VoiceprintPersonResponse,
         response_model_exclude_unset=True, tags=[VOICEPRINT_TAG],
-        summary="重命名声纹人员 / Rename voiceprint person",
-        description=bilingual("只更新声纹库名称；已完成任务中的说话人名称是历史快照，不会被改写。", "Only the library name changes; speaker names in completed jobs are historical snapshots and are not rewritten."),
+        summary="更新声纹人员 / Update voiceprint person",
+        description=bilingual("更新名字、备注或人名热词开关；已完成任务中的匹配标签与备注是历史快照，不会被改写。", "Update the name, note, or name-hotword switch; completed-job labels and notes are historical snapshots and are not rewritten."),
         operation_id="updateVoiceprintPerson",
         responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
     )
     def edit_voiceprint_person(
-        person_id: str, payload: PersonNameRequest, _: None = Depends(require_api_key),
+        person_id: str, payload: VoiceprintPersonUpdateRequest,
+        _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
+        fields = payload.model_fields_set
+        if not fields:
+            raise HTTPException(status_code=422, detail="At least one person field must be provided")
+        values: dict[str, Any] = {}
+        if "name" in fields:
+            values["name"] = payload.name
+        if "note" in fields:
+            values["note"] = payload.note
+        if "include_in_hotword_library" in fields:
+            values["include_in_hotword_library"] = payload.include_in_hotword_library
         try:
-            person = rename_voiceprint_person(person_id, payload.name)
+            person = update_voiceprint_person(person_id, **values)
         except sqlite3.IntegrityError as exc:
             raise HTTPException(status_code=409, detail="A voiceprint person with this name already exists") from exc
         except ValueError as exc:
