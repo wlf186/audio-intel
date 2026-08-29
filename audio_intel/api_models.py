@@ -501,15 +501,13 @@ class JobEstimate(PublicModel):
     updated_at: str = Field(description="估计基准时间 / Estimate reference time")
 
 
-class JobResponse(PublicModel):
+class JobSummaryResponse(PublicModel):
     id: str
     kind: JobKind
     state: JobState
     progress: float = Field(ge=0, le=1, description="单调的最佳任务进度 0–1；细粒度阶段可能为估算，查看 progress_detail.basis / Monotonic best-effort progress from 0 to 1; inspect progress_detail.basis for estimated stages")
     stage: str = Field(description="当前流水线阶段 / Current pipeline stage")
     display_name: str
-    request: dict[str, Any]
-    result: JobResultResponse | None = None
     error_code: str | None = None
     error_message: str | None = None
     cancel_requested: bool = False
@@ -531,6 +529,11 @@ class JobResponse(PublicModel):
     progress_detail: JobProgressDetail | None = None
     estimate: JobEstimate | None = None
     poll_after_seconds: int | None = None
+
+
+class JobResponse(JobSummaryResponse):
+    request: dict[str, Any]
+    result: JobResultResponse | None = None
 
 
 class QueueKindResponse(PublicModel):
@@ -556,7 +559,7 @@ class QueueResponse(PublicModel):
 
 
 class JobListResponse(PublicModel):
-    items: list[JobResponse] = Field(description="当前分页中的任务，按创建时间稳定倒序 / Jobs in the current page, stably ordered newest-first")
+    items: list[JobSummaryResponse] = Field(description="当前分页中的任务摘要，按创建时间稳定倒序；完整 request/result 仅由单任务接口返回 / Job summaries in the current page, stably ordered newest-first; full request/result are returned only by the per-job endpoint")
     count: int = Field(description="本页返回数量，不是全库总数 / Number returned on this page, not a total")
     total: int = Field(ge=0, description="当前筛选条件下的任务总数 / Total jobs matching the current filters")
     limit: int = Field(ge=1, le=500, description="当前每页上限 / Current page-size limit")
@@ -671,7 +674,13 @@ class BatchDeleteResponse(PublicModel):
 
 
 class EventSnapshot(PublicModel):
-    jobs: list[EventJobResponse]
+    jobs: list[JobSummaryResponse]
+    workers: list[WorkerResponse]
+
+
+class EventUpdate(PublicModel):
+    jobs: list[JobSummaryResponse]
+    removed_job_ids: list[str]
     workers: list[WorkerResponse]
 
 

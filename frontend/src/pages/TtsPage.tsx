@@ -15,6 +15,8 @@ import type {
   ComputeDevice,
   AsrModelCapability,
   Job,
+  JobDetailResource,
+  JobSummary,
   ResultRevealRequest,
   TtsModelCapability,
   VoiceprintPerson,
@@ -38,10 +40,12 @@ import { handleTabKeys } from '../lib/tabs'
 import { computeUnavailableReason } from '../lib/presentation'
 
 type Props = {
-  jobs: Job[]
+  jobs: JobSummary[]
+  jobDetails: Record<string, JobDetailResource>
+  loadJobDetail: (job: JobSummary, force?: boolean) => void
   onJobSubmitted: (job: Job) => void
   selectedJobId?: string
-  onSelect: (job: Job) => void
+  onSelect: (job: JobSummary) => void
   gpuAvailable?: boolean
   voiceprints: VoiceprintPerson[]
   asrModels: AsrModelCapability[]
@@ -114,6 +118,8 @@ const languageLabels:Record<string,string>={Auto:'自动检测',Chinese:'中文'
 
 export function TtsPage({
   jobs,
+  jobDetails,
+  loadJobDetail,
   onJobSubmitted,
   selectedJobId,
   onSelect,
@@ -147,13 +153,14 @@ export function TtsPage({
     () => jobs.filter((job) => job.kind === 'tts'),
     [jobs],
   )
-  const selected =
+  const selectedSummary =
     ttsJobs.find(
       (job) => job.id === selectedJobId && job.state === 'succeeded',
     ) || ttsJobs.find((job) => job.state === 'succeeded')
+  const selected = selectedSummary ? jobDetails[selectedSummary.id]?.job : undefined
   const visibleJobs = useMemo(
-    () => visibleWorkspaceJobs(ttsJobs, selected?.id),
-    [ttsJobs, selected?.id],
+    () => visibleWorkspaceJobs(ttsJobs, selectedSummary?.id),
+    [ttsJobs, selectedSummary?.id],
   )
   const draft = { ...preferences, ...content }
   const person =
@@ -164,11 +171,12 @@ export function TtsPage({
     eligibleSamples.find((item) => item.id === draft.sampleId) ||
     eligibleSamples[0]
   const referenceJob = jobs.find((job) => job.id === draft.refJobId)
+  const referenceDetail = referenceJob ? jobDetails[referenceJob.id]?.job : undefined
   const referenceProgress = referenceJob
     ? progressPresentation(referenceJob)
     : undefined
   const referenceReady =
-    referenceJob?.state === 'succeeded' && Boolean(referenceJob.result?.text)
+    referenceJob?.state === 'succeeded' && Boolean(referenceDetail?.result?.text)
   const microphoneActive =
     recorder.phase === 'requesting' || recorder.phase === 'recording'
   const elapsed = Math.min(
@@ -249,21 +257,27 @@ export function TtsPage({
       })
   }, [sample, draft.sampleId])
   useEffect(() => {
-    if (referenceJob?.state !== 'succeeded' || !referenceJob.result?.text)
+    if (selectedSummary) loadJobDetail(selectedSummary)
+  }, [loadJobDetail, selectedSummary])
+  useEffect(() => {
+    if (referenceJob?.state === 'succeeded') loadJobDetail(referenceJob)
+  }, [loadJobDetail, referenceJob])
+  useEffect(() => {
+    if (referenceJob?.state !== 'succeeded' || !referenceDetail?.result?.text)
       return
     setContent((current) =>
       current.refJobId !== referenceJob.id || current.refText
         ? current
         : {
             ...current,
-            refText: referenceJob.result?.text || '',
-            refLanguage: referenceJob.result?.language || 'Auto',
+            refText: referenceDetail.result?.text || '',
+            refLanguage: referenceDetail.result?.language || 'Auto',
           },
     )
   }, [
     referenceJob?.id,
-    referenceJob?.result?.language,
-    referenceJob?.result?.text,
+    referenceDetail?.result?.language,
+    referenceDetail?.result?.text,
     referenceJob?.state,
   ])
   useEffect(() => {
@@ -921,6 +935,17 @@ export function TtsPage({
                       </button>
                     </>
                   ) : null}
+                  {referenceJob.state === 'succeeded' && jobDetails[referenceJob.id]?.state === 'loading' ? (
+                    <p className="notice" role="status">正在加载参考音频识别结果…</p>
+                  ) : null}
+                  {referenceJob.state === 'succeeded' && jobDetails[referenceJob.id]?.state === 'error' ? (
+                    <div role="alert">
+                      <p className="error">{jobDetails[referenceJob.id]?.error || '参考识别结果加载失败。'}</p>
+                      <button className="button secondary" onClick={() => loadJobDetail(referenceJob, true)}>
+                        <RefreshCw size={15} />重新加载结果
+                      </button>
+                    </div>
+                  ) : null}
                   {referenceReady ? (
                     <div className="clone-analysis-result">
                       <label>
@@ -947,7 +972,7 @@ export function TtsPage({
                           placeholder="请核对文本与参考音频逐字一致。"
                         />
                       </label>
-                      {referenceJob.result?.artifacts?.some(
+                      {referenceDetail?.result?.artifacts?.some(
                         (item) => item.name === 'reference.wav',
                       ) ? (
                         <audio
@@ -1129,7 +1154,18 @@ export function TtsPage({
         data-module="RENDER_QUEUE / Q_02"
       >
         <h2>当前合成结果</h2>
-        {selected?.result ? (
+        {selectedSummary && jobDetails[selectedSummary.id]?.state === 'loading' ? (
+          <div className="empty small" role="status">
+            <Sparkles />
+            <p>正在按需加载完整合成结果…</p>
+          </div>
+        ) : selectedSummary && jobDetails[selectedSummary.id]?.state === 'error' ? (
+          <div className="empty small" role="alert">
+            <Sparkles />
+            <p>{jobDetails[selectedSummary.id]?.error || '合成结果加载失败。'}</p>
+            <button onClick={() => loadJobDetail(selectedSummary, true)}>重新加载</button>
+          </div>
+        ) : selected?.result ? (
           <div className="audio-card">
             <div>
               <b>{selected.display_name}</b>
@@ -1184,7 +1220,7 @@ export function TtsPage({
           <JobMini
             key={job.id}
             job={job}
-            isSelected={job.id === selected?.id}
+            isSelected={job.id === selectedSummary?.id}
             onOpen={(item) => item.state === 'succeeded' && onSelect(item)}
           />
         ))}

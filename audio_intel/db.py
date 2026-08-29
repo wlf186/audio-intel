@@ -611,11 +611,21 @@ def _job_filters(
     return (f"WHERE {' AND '.join(where)}" if where else ""), params
 
 
+JOB_SUMMARY_COLUMNS = ",".join((
+    "id", "kind", "state", "progress", "stage", "display_name", "request_json",
+    "error_code", "error_message", "cancel_requested", "attempts", "worker_id",
+    "heartbeat_at", "processing_seconds", "created_at", "started_at", "finished_at",
+    "updated_at", "queue_seq", "stage_code", "stage_current", "stage_total",
+    "input_duration_seconds", "progress_basis", "stage_progress", "stage_unit",
+    "progress_activity_json",
+))
+
+
 def list_jobs(kind: str | None = None, state: str | None = None, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
     clause, params = _job_filters(kind, state)
     with connect() as db:
         rows = db.execute(
-            f"SELECT * FROM jobs {clause} ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
+            f"SELECT {JOB_SUMMARY_COLUMNS} FROM jobs {clause} ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
             (*params, min(max(limit, 1), 500), max(offset, 0)),
         ).fetchall()
     return [_decode(row) for row in rows]  # type: ignore[misc]
@@ -636,11 +646,20 @@ def list_jobs_page(
         db.execute("BEGIN")
         total = int(db.execute(f"SELECT COUNT(*) FROM jobs {clause}", params).fetchone()[0])
         rows = db.execute(
-            f"SELECT * FROM jobs {clause} ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
+            f"SELECT {JOB_SUMMARY_COLUMNS} FROM jobs {clause} ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
             (*params, safe_limit, safe_offset),
         ).fetchall()
         db.execute("COMMIT")
     return [_decode(row) for row in rows], total  # type: ignore[misc]
+
+
+def touch_job_heartbeat(job_id: str, heartbeat_at: str | None = None) -> None:
+    """Record executor liveness without changing the task's semantic version."""
+    with connect() as db:
+        db.execute(
+            "UPDATE jobs SET heartbeat_at=? WHERE id=?",
+            (heartbeat_at or utcnow(), job_id),
+        )
 
 
 def update_job(job_id: str, **values: Any) -> dict[str, Any] | None:
@@ -957,6 +976,29 @@ def list_workers() -> list[dict[str, Any]]:
                ORDER BY worker.kind"""
         ).fetchall()
     return [_decode(row) for row in rows]  # type: ignore[misc]
+
+
+def event_revision(job_limit: int = 100) -> dict[str, Any]:
+    """Return the small, heartbeat-free version vector for the global event stream."""
+    with connect() as db:
+        jobs = db.execute(
+            "SELECT id,updated_at FROM jobs ORDER BY created_at DESC,id DESC LIMIT ?",
+            (min(max(job_limit, 1), 500),),
+        ).fetchall()
+        workers = db.execute(
+            """SELECT worker.id,worker.kind,worker.pid,worker.state,
+                      worker.current_job_id,worker.details_json
+               FROM workers AS worker
+               WHERE worker.id = (
+                   SELECT latest.id FROM workers AS latest
+                   WHERE latest.kind = worker.kind
+                   ORDER BY latest.heartbeat_at DESC, latest.id DESC LIMIT 1
+               ) ORDER BY worker.kind"""
+        ).fetchall()
+    return {
+        "jobs": [tuple(row) for row in jobs],
+        "workers": [tuple(row) for row in workers],
+    }
 
 
 def create_voiceprint_person(

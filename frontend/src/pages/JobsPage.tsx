@@ -1,7 +1,7 @@
 import {useCallback,useEffect,useMemo,useRef,useState,type Dispatch,type SetStateAction} from 'react'
 import {Check,ChevronLeft,ChevronRight,ChevronsLeft,ChevronsRight,Copy,Eye,LoaderCircle,RotateCcw,Search,Trash2,XCircle} from 'lucide-react'
 import {api,size} from '../lib/api'
-import type {Job,JobHistoryQuery,JobListResponse,JobState} from '../lib/types'
+import type {JobHistoryQuery,JobListResponse,JobState,JobSummary} from '../lib/types'
 import {progressPresentation} from '../lib/jobs'
 import {formatLocalDateTime} from '../lib/presentation'
 import {ConfirmDialog} from '../components/ConfirmDialog'
@@ -18,22 +18,22 @@ function formatDuration(seconds:number){
  return `${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(remaining).padStart(2,'0')}`
 }
 
-function elapsed(job:Job,now:number){
+function elapsed(job:JobSummary,now:number){
  let seconds=job.processing_seconds||0
  if(job.state==='running'&&job.processing_as_of)seconds+=Math.max(0,(now-Date.parse(job.processing_as_of))/1000)
  if(seconds<1&&!job.started_at)return '未开始'
  return formatDuration(seconds)
 }
 
-function deviceName(job:Job){
- const saved=job.compute_device_name||job.result?.compute_device_name||String(job.request.compute_device_name||'')
+function deviceName(job:JobSummary){
+ const saved=job.compute_device_name||''
  if(saved)return saved
- const device=job.compute_device||job.result?.compute_device||job.request.compute_device||(job.kind==='asr'?'gpu':'cpu')
+ const device=job.compute_device||(job.kind==='asr'?'gpu':'cpu')
  return device==='cpu'?'CPU':'GPU'
 }
 
 function compactSeconds(value:number){if(value<60)return `${Math.max(1,Math.round(value))}秒`;if(value<3600)return `${Math.max(1,Math.round(value/60))}分钟`;return `${(value/3600).toFixed(1)}小时`}
-function queueEstimate(job:Job){
+function queueEstimate(job:JobSummary){
  const parts:string[]=[]
  if(job.state==='queued'&&job.queue?.position)parts.push(`队列 ${job.queue.position}/${job.queue.depth}`)
  if(job.queue?.waiting_for==='gpu')parts.push('等待 GPU')
@@ -43,7 +43,7 @@ function queueEstimate(job:Job){
  return parts.join(' · ')
 }
 
-function matchesQuery(job:Job,query:JobHistoryQuery){
+function matchesQuery(job:JobSummary,query:JobHistoryQuery){
  if(query.kind!=='all'&&job.kind!==query.kind)return false
  if(query.state!=='all'&&job.state!==query.state)return false
  const search=query.search.trim().toLocaleLowerCase()
@@ -68,13 +68,13 @@ async function copyText(value:string){
 }
 
 type Props={
- liveJobs:Job[]
+ liveJobs:JobSummary[]
  liveJobsReady:boolean
  query:JobHistoryQuery
  setQuery:Dispatch<SetStateAction<JobHistoryQuery>>
  refreshRecentJobs:()=>Promise<void>
- openJob:(job:Job)=>void
- onJobUpdated:(job:Job)=>void
+ openJob:(job:JobSummary)=>void
+ onJobUpdated:(job:JobSummary)=>void
  onJobsRemoved:(ids:string[])=>void
 }
 
@@ -140,8 +140,8 @@ export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJob
  const copyJobId=async(id:string)=>{try{await copyText(id);setCopiedId(id);if(copyResetTimer.current!==undefined)clearTimeout(copyResetTimer.current);copyResetTimer.current=window.setTimeout(()=>setCopiedId(current=>current===id?'':current),2000)}catch{setError(current=>[current,`无法自动复制任务 ID，请手动复制：${id}`].filter(Boolean).join('；'))}}
  const refreshAll=async()=>{await Promise.all([requestPage(),refreshRecentJobs()])}
  const act=async(operation:()=>Promise<unknown>)=>{setError('');setNotice('');try{await operation();await refreshAll()}catch(cause){setError((cause as Error).message)}}
- const updateSnapshot=(snapshot:Job)=>{setPage(current=>current?{...current,items:current.items.map(job=>job.id===snapshot.id?snapshot:job)}:current);onJobUpdated(snapshot)}
- const cancelJob=async(job:Job)=>{
+ const updateSnapshot=(snapshot:JobSummary)=>{setPage(current=>current?{...current,items:current.items.map(job=>job.id===snapshot.id?snapshot:job)}:current);onJobUpdated(snapshot)}
+ const cancelJob=async(job:JobSummary)=>{
   setError('');setNotice('');setCancellingIds(current=>new Set(current).add(job.id))
   try{
    let snapshot=await api.cancel(job.id)

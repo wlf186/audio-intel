@@ -1,8 +1,8 @@
-import type {Job} from './types'
+import type {JobSummary} from './types'
 
 export const workspaceJobLimit=5
 
-export function newestJobsFirst(jobs:readonly Job[]):Job[]{
+export function newestJobsFirst<T extends JobSummary>(jobs:readonly T[]):T[]{
  return [...jobs].sort((left,right)=>{
   const leftTime=Date.parse(left.created_at)
   const rightTime=Date.parse(right.created_at)
@@ -10,7 +10,7 @@ export function newestJobsFirst(jobs:readonly Job[]):Job[]{
  })
 }
 
-export function visibleWorkspaceJobs(jobs:readonly Job[],selectedJobId?:string):Job[]{
+export function visibleWorkspaceJobs<T extends JobSummary>(jobs:readonly T[],selectedJobId?:string):T[]{
  const recent=jobs.slice(0,workspaceJobLimit)
  if(!selectedJobId||recent.some(job=>job.id===selectedJobId))return recent
  const selected=jobs.find(job=>job.id===selectedJobId)
@@ -26,7 +26,7 @@ const stageLabels:Record<string,string>={
 }
 const unitLabels:Record<string,string>={text_chunk:'文本分块',audio_chunk:'音频分块',codec_frame:'codec 帧',output_token:'输出 token',model_layer:'模型层',item:'处理单元',batch:'批次'}
 
-export function progressPresentation(job:Job){
+export function progressPresentation(job:JobSummary){
  const detail=job.progress_detail
  const estimated=detail?.basis==='estimated'
  const stageCode=detail?.stage_code||job.stage

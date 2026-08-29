@@ -76,7 +76,7 @@ curl -I https://modelscope.cn
 ## ETA 尚未出现或 SSE 断线
 
 - ETA 只使用本机相同模型、设备、模式和相近任务特征的历史任务；ASR 与 TTS 的 0.6B/1.7B 都分别热身。少于 5 个有效样本时 `estimate.state` 为 `warming_up`，切换模型后暂时没有剩余时间属于预期行为；可用后的区间也只是建议，不是 SLA。
-- 单任务 SSE 使用 `/api/v1/jobs/{job_id}/events`，全局快照使用 `/api/v1/events`。两者都没有历史重放；断线后重新连接，并用收到的首个快照或任务状态接口校准。
+- 单任务 SSE 使用 `/api/v1/jobs/{job_id}/events`。全局 `/api/v1/events` 连接后发送一次任务摘要 `snapshot`，随后只发送语义 `update` 和轻量 `heartbeat`；两者都没有历史重放，断线后以首帧或任务状态接口校准。
 - 无法使用 SSE 时按响应中的 `poll_after_seconds` 轮询 `status_url`，保存响应 `ETag` 并在后续请求发送 `If-None-Match`；`304` 表示任务和同类队列上下文未变化。
 
 ## 推理进度显示“估算”或短暂停顿
@@ -85,6 +85,8 @@ curl -I https://modelscope.cn
 - `progress_detail.current/total` 表示已确认完成的文本或音频分块；`activity` 表示当前推理调用内部的模型活动。`activity.sequence` 在新批次或 OOM 降批重试时递增，消费方应按整个任务快照替换显示，不要自行累计。
 - 模型实际产生细粒度活动时，服务最多约每 0.5 秒持久化一次；这不是固定心跳，极短任务或阻塞调用可能只显示阶段边界。GPU 同步、音频编码、SSE/轮询传输也可能造成短暂停顿；任务完成时会以确认值收敛到 100%。
 - 需要更及时的页面/API 更新时优先使用单任务 SSE；轮询客户端应遵循 `poll_after_seconds`，不应为追求动画效果高频请求数据库。
+
+若仅打开首页也出现异常下行流量，先检查浏览器 Network 中 `/api/v1/events`：空闲 30 秒内不应重复出现 `snapshot`/`update`，只应有约两条 `{}` 心跳。列表和全局事件都不应包含 `request`/`result`；完整结果只应在打开成功任务时由 `/api/v1/jobs/{job_id}` 获取一次。若这些约束失效，应视为契约回归，而不是调大心跳间隔掩盖。
 - 浏览器原生 `EventSource` 不能附加自定义 Authorization Header。项目同源页面使用 HttpOnly 会话 Cookie；外部浏览器应用应通过同源后端代理，服务端客户端可直接发送 Bearer Header。
 
 ## 执行中任务取消后仍显示正在停止

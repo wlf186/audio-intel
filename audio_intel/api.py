@@ -41,6 +41,7 @@ from .db import (
     delete_voice_record,
     delete_voiceprint_person_record,
     delete_voiceprint_sample_record,
+    event_revision,
     find_voiceprint_person,
     find_idempotent_job,
     get_hotword_list,
@@ -91,7 +92,7 @@ from .api_docs import (
 )
 from .api_models import (
     AdmissionProblemDetail, AuthSessionResponse, BatchDeleteResponse, CapabilitiesResponse,
-    EventJobResponse, EventSnapshot,
+    EventJobResponse, EventSnapshot, EventUpdate,
     HealthResponse, JobListResponse, JobResponse, JobResultResponse, OpenAIModelList, QueueResponse,
     OpenAISpeechRequest, OpenAITranscription, OpenAIVerboseTranscription, ProblemDetail, SystemResponse,
     VoiceListResponse, VoiceProfileResponse, VoiceprintPeopleResponse,
@@ -369,7 +370,10 @@ def public_job(job: dict[str, Any], context: dict[str, Any] | None = None) -> di
         "progress_activity",
     }
     result = {key: value for key, value in job.items() if key not in internal}
-    as_of = utcnow()
+    as_of = (
+        job.get("heartbeat_at") or job.get("updated_at") or job.get("started_at")
+        or job.get("finished_at") or job.get("created_at") or utcnow()
+    )
     processing_seconds = float(job.get("processing_seconds") or 0)
     if job.get("state") == "running" and job.get("started_at"):
         processing_seconds += max(
@@ -403,9 +407,45 @@ def public_job(job: dict[str, Any], context: dict[str, Any] | None = None) -> di
     return result
 
 
-def public_jobs(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def public_job_summary(job: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
+    result = public_job(job, context)
+    result.pop("request", None)
+    result.pop("result", None)
+    return result
+
+
+def public_jobs(items: list[dict[str, Any]], *, summary: bool = False) -> list[dict[str, Any]]:
     context = queue_context(include_history=any(item.get("state") in {"queued", "running"} for item in items))
-    return [public_job(item, context) for item in items]
+    render = public_job_summary if summary else public_job
+    return [render(item, context) for item in items]
+
+
+def event_semantic_key(snapshot: dict[str, Any]) -> dict[str, Any]:
+    ignored_job_fields = {"heartbeat_at", "processing_seconds", "processing_as_of"}
+    jobs = [
+        {key: value for key, value in job.items() if key not in ignored_job_fields}
+        for job in snapshot.get("jobs", [])
+    ]
+    workers = [
+        {key: value for key, value in worker.items() if key != "heartbeat_at"}
+        for worker in snapshot.get("workers", [])
+    ]
+    return {"jobs": jobs, "workers": workers}
+
+
+def event_delta(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any] | None:
+    previous_jobs = {item["id"]: item for item in previous.get("jobs", [])}
+    current_jobs = {item["id"]: item for item in current.get("jobs", [])}
+    changed = [
+        item for item in current.get("jobs", [])
+        if event_semantic_key({"jobs": [previous_jobs.get(item["id"], {})]})["jobs"]
+        != event_semantic_key({"jobs": [item]})["jobs"]
+    ]
+    removed = [job_id for job_id in previous_jobs if job_id not in current_jobs]
+    workers_changed = event_semantic_key({"workers": previous.get("workers", [])})["workers"] != event_semantic_key({"workers": current.get("workers", [])})["workers"]
+    if not changed and not removed and not workers_changed:
+        return None
+    return {"jobs": changed, "removed_job_ids": removed, "workers": current.get("workers", [])}
 
 
 def public_voiceprint_sample(sample: dict[str, Any]) -> dict[str, Any]:
@@ -779,9 +819,10 @@ def create_app() -> FastAPI:
         settings.min_free_disk_bytes,
     )
     app.state.event_hub = SnapshotHub(lambda: {
-        "jobs": public_jobs(list_jobs(limit=EVENT_SNAPSHOT_JOB_LIMIT)),
+        "jobs": public_jobs(list_jobs(limit=EVENT_SNAPSHOT_JOB_LIMIT), summary=True),
         "workers": list_workers(),
-    }, poll_seconds=EVENT_SNAPSHOT_POLL_SECONDS)
+    }, poll_seconds=EVENT_SNAPSHOT_POLL_SECONDS, semantic_key=event_semantic_key,
+       revision_loader=lambda: event_revision(EVENT_SNAPSHOT_JOB_LIMIT))
 
     @app.middleware("http")
     async def submission_admission(request: Request, call_next: Any) -> Response:
@@ -1040,6 +1081,7 @@ def create_app() -> FastAPI:
                 "sse": True, "global_url": "/api/v1/events",
                 "per_job_url_template": "/api/v1/jobs/{job_id}/events",
                 "heartbeat_seconds": EVENT_HEARTBEAT_SECONDS, "history_replay": False,
+                "global_mode": "summary_delta",
             },
         }
 
@@ -1821,7 +1863,7 @@ def create_app() -> FastAPI:
         _: None = Depends(require_api_key),
     ) -> JobListResponse:
         rows, total = list_jobs_page(kind, state, q, limit, offset)
-        items = public_jobs(rows)
+        items = public_jobs(rows, summary=True)
         return {
             "items": items, "count": len(items), "total": total,
             "limit": limit, "offset": offset, "has_more": offset + len(items) < total,
@@ -2050,28 +2092,47 @@ def create_app() -> FastAPI:
 
     @app.get(
         "/api/v1/events", response_class=StreamingResponse, tags=[JOB_TAG],
-        summary="订阅任务和 worker 快照 / Stream job and worker snapshots",
+        summary="订阅任务摘要和 worker 增量 / Stream job-summary and worker deltas",
         description=bilingual(
-            f"SSE 在最近最多 {EVENT_SNAPSHOT_JOB_LIMIT} 个任务或 worker 发生变化时发送 `snapshot`；约每 {EVENT_SNAPSHOT_POLL_SECONDS:g} 秒检查，空闲 {EVENT_HEARTBEAT_SECONDS} 秒后发送 `heartbeat`。无事件 ID、断点续传或历史重放。",
-            f"SSE emits `snapshot` when the latest {EVENT_SNAPSHOT_JOB_LIMIT} jobs or workers change, checks about every {EVENT_SNAPSHOT_POLL_SECONDS:g} seconds, and emits `heartbeat` after {EVENT_HEARTBEAT_SECONDS} idle seconds. There are no event IDs, resume tokens, or replay.",
+            f"连接后发送最近最多 {EVENT_SNAPSHOT_JOB_LIMIT} 个任务摘要的 `snapshot`；之后仅在业务状态变化时发送 `update`（含变更摘要与 removed_job_ids）。空闲约 {EVENT_HEARTBEAT_SECONDS} 秒发送轻量 `heartbeat`。完整 request/result 仅由单任务接口返回；无历史重放。",
+            f"Sends an initial `snapshot` of up to {EVENT_SNAPSHOT_JOB_LIMIT} job summaries, followed by `update` events only for semantic changes (changed summaries plus removed_job_ids). A lightweight `heartbeat` is sent about every {EVENT_HEARTBEAT_SECONDS} idle seconds. Full request/result remain per-job only; history is not replayed.",
         ),
         operation_id="streamEvents",
         responses={
-            200: sse_response("snapshot", "EventSnapshot", '{"jobs":[],"workers":[]}'),
+            200: {
+                **sse_response("snapshot", "EventSnapshot", '{"jobs":[],"workers":[]}'),
+                "x-event-data-schemas": {
+                    "snapshot": {"$ref": "#/components/schemas/EventSnapshot"},
+                    "update": {"$ref": "#/components/schemas/EventUpdate"},
+                    "heartbeat": {"type": "object", "maxProperties": 0},
+                },
+            },
             **AUTH_RESPONSES,
         },
     )
     async def events(_: None = Depends(require_api_key)) -> StreamingResponse:
         async def stream() -> AsyncIterator[str]:
             queue = await app.state.event_hub.subscribe()
+            previous: dict[str, Any] | None = None
+            heartbeat_deadline = time.monotonic() + EVENT_HEARTBEAT_SECONDS
             try:
                 while True:
+                    timeout = max(0, heartbeat_deadline - time.monotonic())
                     try:
-                        snapshot = await asyncio.wait_for(queue.get(), timeout=EVENT_HEARTBEAT_SECONDS)
-                        payload = json.dumps(snapshot, ensure_ascii=False)
-                        yield f"event: snapshot\ndata: {payload}\n\n"
+                        snapshot = await asyncio.wait_for(queue.get(), timeout=timeout)
+                        if previous is None:
+                            yield f"event: snapshot\ndata: {json.dumps(snapshot, ensure_ascii=False)}\n\n"
+                            previous = snapshot
+                            heartbeat_deadline = time.monotonic() + EVENT_HEARTBEAT_SECONDS
+                            continue
+                        update = event_delta(previous, snapshot)
+                        previous = snapshot
+                        if update is not None:
+                            yield f"event: update\ndata: {json.dumps(update, ensure_ascii=False)}\n\n"
+                            heartbeat_deadline = time.monotonic() + EVENT_HEARTBEAT_SECONDS
                     except asyncio.TimeoutError:
                         yield "event: heartbeat\ndata: {}\n\n"
+                        heartbeat_deadline = time.monotonic() + EVENT_HEARTBEAT_SECONDS
             finally:
                 await app.state.event_hub.unsubscribe(queue)
         return StreamingResponse(
@@ -2097,6 +2158,7 @@ def create_app() -> FastAPI:
         async def stream() -> AsyncIterator[str]:
             queue = await app.state.event_hub.subscribe()
             last = ""
+            heartbeat_deadline = time.monotonic() + EVENT_HEARTBEAT_SECONDS
             try:
                 while True:
                     current = get_job(job_id)
@@ -2107,12 +2169,16 @@ def create_app() -> FastAPI:
                     if encoded != last:
                         yield f"event: job\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
                         last = encoded
+                        heartbeat_deadline = time.monotonic() + EVENT_HEARTBEAT_SECONDS
                     if current["state"] in {"succeeded", "failed", "cancelled"}:
                         return
                     try:
-                        await asyncio.wait_for(queue.get(), timeout=EVENT_HEARTBEAT_SECONDS)
+                        await asyncio.wait_for(
+                            queue.get(), timeout=max(0, heartbeat_deadline - time.monotonic()),
+                        )
                     except asyncio.TimeoutError:
                         yield "event: heartbeat\ndata: {}\n\n"
+                        heartbeat_deadline = time.monotonic() + EVENT_HEARTBEAT_SECONDS
             finally:
                 await app.state.event_hub.unsubscribe(queue)
         return StreamingResponse(
@@ -2149,7 +2215,7 @@ def create_app() -> FastAPI:
             return app.openapi_schema
         schema = default_openapi()
         extra = TypeAdapter(
-            AdmissionProblemDetail | ProblemDetail | EventJobResponse | EventSnapshot
+            AdmissionProblemDetail | ProblemDetail | EventJobResponse | EventSnapshot | EventUpdate
             | OpenAITranscription | OpenAIVerboseTranscription
         ).json_schema(ref_template="#/components/schemas/{model}")
         schema.setdefault("components", {}).setdefault("schemas", {}).update(extra.get("$defs", {}))

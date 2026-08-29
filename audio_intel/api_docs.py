@@ -247,6 +247,28 @@ Cross-origin browser calls are not enabled by default. Use same-origin browser s
 </details>
 
 <details>
+<summary><strong>SSE：全局摘要增量 / Stream global summary deltas</strong></summary>
+
+```javascript
+const jobs = new Map()
+const events = new EventSource('/api/v1/events')
+events.addEventListener('snapshot', event => {
+  jobs.clear()
+  for (const job of JSON.parse(event.data).jobs) jobs.set(job.id, job)
+})
+events.addEventListener('update', event => {
+  const delta = JSON.parse(event.data)
+  for (const id of delta.removed_job_ids) jobs.delete(id)
+  for (const job of delta.jobs) jobs.set(job.id, job)
+})
+```
+
+全局事件只含任务摘要；打开某个成功任务时再请求 `/api/v1/jobs/{job_id}`。`heartbeat` 的数据恒为 `{}`，不应触发列表或详情刷新。
+
+Global events contain summaries only. Fetch `/api/v1/jobs/{job_id}` when opening a completed task. A `heartbeat` always contains `{}` and must not trigger list or detail refreshes.
+</details>
+
+<details>
 <summary><strong>SSE：跟踪单个任务 / Stream one job</strong></summary>
 
 ```bash
@@ -271,8 +293,8 @@ The stream immediately emits `event: job`, continues on changes, and closes at a
 - 排队任务的 `queue.position` 从 1 开始，表示同类 FIFO 队列中的位置；任务运行后该字段为 `null`。`GET /api/v1/queue` 返回容量、准入预留和磁盘余量。ASR/TTS 队列彼此独立。
 - `progress` 是单调的 `0–1` 最佳整体进度；`progress_detail.stage_code` 是稳定阶段。`basis=estimated` 表示阶段百分比包含估算，`current/total/unit` 是已确认阶段单元，`activity` 是当前模型加载、codec 帧、输出 token 或模型层活动。模型实际提供细粒度活动时约每 0.5 秒最多持久化一次；`model_load` 只报告加载开始/完成边界，阻塞加载期间不保证心跳，所有进度都不能作为 SLA。
 - `estimate` 使用相同设备、模型、模式和任务特征的本机历史；ASR/TTS 的 0.6B/1.7B 分别热身。少于 5 个有效样本时为 `warming_up`；可用后返回区间、样本数和置信度，不能作为 SLA。
-- SSE `/api/v1/events` 与 `/api/v1/jobs/{job_id}/events` 共享一次本地数据库快照并向客户端分发；没有事件 ID 或历史重放。断线后重连，并以首个快照或支持 ETag 的任务状态接口校准。轮询间隔可参考 `poll_after_seconds`。
-- `GET /api/v1/jobs` 的 `count` 是本页数量，不是任务总数。
+- 全局 SSE `/api/v1/events` 首帧为摘要 `snapshot`，随后只发送语义 `update`（变更任务、`removed_job_ids`、当前 worker）和空闲 `heartbeat`；单任务 `/api/v1/jobs/{job_id}/events` 保持完整任务契约。两者都没有事件 ID或历史重放。
+- `GET /api/v1/jobs` 只返回摘要，不含 `request`/`result`；`count` 是本页数量，不是任务总数。完整详情按需读取 `GET /api/v1/jobs/{job_id}`。
 - 运行任务请求取消后仍保持 `state=running`，但 `stage=cancelling`；只有完整执行进程树退出后才进入终态 `cancelled`。结果接口在任务成功前返回 `409`。
 
 - ASR and TTS have separate FIFO queues. Queue positions are one-based within each kind. Progress is monotonic and best-effort. Fine-grained activity is persisted at most about every 0.5 seconds when the model exposes it; `model_load` reports start/end boundaries only and does not promise a heartbeat during a blocking load.
@@ -790,7 +812,7 @@ def _capabilities_example() -> dict[str, Any]:
         },
         "events": {
             "sse": True, "global_url": "/api/v1/events", "per_job_url_template": "/api/v1/jobs/{job_id}/events",
-            "heartbeat_seconds": 15, "history_replay": False,
+            "heartbeat_seconds": 15, "history_replay": False, "global_mode": "summary_delta",
         },
     }
 

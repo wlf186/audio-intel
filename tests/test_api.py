@@ -117,6 +117,77 @@ def test_job_list_returns_filtered_total_and_has_more(tmp_path, monkeypatch) -> 
     assert all(item["kind"] == "tts" for item in filtered["items"])
 
 
+def test_job_list_is_summary_only_while_detail_keeps_large_result(tmp_path, monkeypatch) -> None:
+    local = replace(
+        settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
+        enabled_services=frozenset({"asr"}), min_free_disk_bytes=0,
+    )
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    with TestClient(api_module.create_app()) as client:
+        job = db_module.create_job("asr", "large", {"input_path": "one", "compute_device": "cpu"})
+        large_text = "结果" * 500_000
+        db_module.finish_job(
+            job["id"], "succeeded", stage="completed", progress=1,
+            result_json={"text": large_text, "compute_device": "cpu"},
+        )
+        listing = client.get("/api/v1/jobs")
+        detail = client.get(f"/api/v1/jobs/{job['id']}")
+
+    summary = listing.json()["items"][0]
+    assert "request" not in summary and "result" not in summary
+    assert len(listing.content) < 16_384
+    assert detail.json()["request"]["input_path"] == "one"
+    assert detail.json()["result"]["text"] == large_text
+
+
+def test_heartbeat_does_not_change_job_etag_or_semantic_event_version(tmp_path, monkeypatch) -> None:
+    local = replace(
+        settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
+        enabled_services=frozenset({"tts"}), min_free_disk_bytes=0,
+    )
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    with TestClient(api_module.create_app()) as client:
+        job = db_module.create_job("tts", "running", {"text": "hello", "compute_device": "cpu"})
+        db_module.claim_job("tts", "worker")
+        before = client.get(f"/api/v1/jobs/{job['id']}")
+        updated_at = before.json()["updated_at"]
+        before_key = api_module.event_semantic_key({
+            "jobs": api_module.public_jobs(db_module.list_jobs(), summary=True), "workers": [],
+        })
+        db_module.touch_job_heartbeat(job["id"])
+        unchanged = client.get(
+            f"/api/v1/jobs/{job['id']}", headers={"If-None-Match": before.headers["etag"]},
+        )
+        after_key = api_module.event_semantic_key({
+            "jobs": api_module.public_jobs(db_module.list_jobs(), summary=True), "workers": [],
+        })
+
+    assert unchanged.status_code == 304
+    assert db_module.get_job(job["id"])["updated_at"] == updated_at
+    assert before_key == after_key
+
+
+def test_global_event_delta_reports_changes_and_removals() -> None:
+    old = {
+        "jobs": [{"id": "one", "state": "queued", "heartbeat_at": "old"}, {"id": "gone", "state": "succeeded"}],
+        "workers": [{"id": "worker", "state": "idle", "heartbeat_at": "old"}],
+    }
+    heartbeat_only = {
+        "jobs": [{"id": "one", "state": "queued", "heartbeat_at": "new"}, {"id": "gone", "state": "succeeded"}],
+        "workers": [{"id": "worker", "state": "idle", "heartbeat_at": "new"}],
+    }
+    changed = {
+        "jobs": [{"id": "one", "state": "running", "heartbeat_at": "newer"}],
+        "workers": [{"id": "worker", "state": "busy", "heartbeat_at": "newer"}],
+    }
+    assert api_module.event_delta(old, heartbeat_only) is None
+    assert api_module.event_delta(heartbeat_only, changed) == {
+        "jobs": [changed["jobs"][0]], "removed_job_ids": ["gone"], "workers": changed["workers"],
+    }
+
+
 def test_terminal_per_job_sse_emits_snapshot_and_closes(tmp_path, monkeypatch) -> None:
     local = replace(
         settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",

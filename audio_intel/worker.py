@@ -17,7 +17,8 @@ import psutil
 from .config import settings
 from .db import (
     claim_job, finish_job, get_job, init_db, recover_stale, update_job,
-    update_job_progress, update_voiceprint_sample, upsert_worker, utcnow,
+    touch_job_heartbeat, update_job, update_job_progress, update_voiceprint_sample,
+    upsert_worker, utcnow,
 )
 from .observability import stage_details
 from .utils import atomic_json, read_json
@@ -339,7 +340,7 @@ def run(kind: str) -> None:
 
             now = time.monotonic()
             if now >= next_heartbeat:
-                update_job(current["id"], heartbeat_at=utcnow())
+                touch_job_heartbeat(current["id"])
                 upsert_worker(
                     worker_id, kind, worker_pid, "busy", current["id"],
                     {"stage": current["stage"], "executor_pid": process.pid},

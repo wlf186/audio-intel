@@ -33,6 +33,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - 原生 `instruct` 和 OpenAI 兼容 `instructions` 现在可用于 1.7B 预置音色；原生 1.7B VoiceDesign 必须提供 `instruct`。0.6B 和 Base 克隆仍拒绝非空指令。没有独立数值语速/音高或公共采样参数；客户端应按 `GET /api/v1/capabilities` 返回的 `tts.model_capabilities[]` 动态显示控制项，而不是只读取代表默认模型的 `tts.controls`。
 - TTS GPU 准入与 ASR 一致，0.6B/1.7B 使用 3840/7936 MiB 总显存门槛；Capabilities 与 TTS 结果新增模型组、checkpoint 和指令信息，均为兼容性扩展。此项不涉及数据库迁移。
 - **不兼容变更：** 原生异步 ASR、TTS、TTS 克隆参考分析和声纹样本上传现在强制要求 `Idempotency-Key`。现有客户端必须为每次逻辑提交生成 8–128 字符的键，并在超时、断线或 `429` 后复用；相同键改变请求会返回 `409`。`429` 的分类和恢复步骤见 [故障排查](TROUBLESHOOTING.md#api-提交返回-429)。
+- **不兼容变更：** `GET /api/v1/jobs` 与全局 `/api/v1/events` 现在只返回任务摘要，不再包含 `request`/`result`。全局 SSE 首帧仍为 `snapshot`，后续改为 `update`（仅变更任务、`removed_job_ids`、当前 worker）和空闲 `heartbeat`；Capabilities 以 `events.global_mode=summary_delta` 标识。依赖列表内完整结果、或把每个全局事件都按完整快照覆盖的客户端，必须改为按增量合并，并在确需详情时读取 `GET /api/v1/jobs/{job_id}`。单任务状态接口和单任务 SSE 仍返回完整契约。此变更不迁移数据库，也不改写历史任务。
 - 新增同类队列位置、稳定阶段/细粒度进度、本机历史 ETA 区间、`GET /api/v1/queue`、单任务 SSE 和 ETag 条件轮询。TTS 解码与 ASR 推理的顶层 `progress` 现在会持续变化；`progress_detail.basis=estimated` 时百分比是最佳估算，`activity` 提供当前调用的模型活动。新增响应字段是兼容性扩展，但使用严格反序列化模型的客户端需要先允许这些字段。ETA 是热身后才出现的建议区间，不是 SLA。
 - Windows 上的 ASR 子进程进度通信改为不可变编号快照，修复父进程读取进度时覆盖同一路径可能触发的 `PermissionError: [WinError 5]`。进度频率、API 和识别结果不变；TTS 仍直接写入任务进度，不使用该文件通信机制。
 - ASR/TTS 页面参数现在分别保存在浏览器 localStorage，并提供页面级“恢复默认配置”；清除站点数据后会恢复默认。ASR 与 TTS 偏好都迁移到包含 `model` 的 v2，未保存模型时仍使用 0.6B。TTS 文本、`instruct`、参考文本和分析引用仅保留在 sessionStorage；热词库未保存草稿同样只在当前标签页会话保留，保存或“取消并清空”后删除。文件和未确认的麦克风录音不会持久化。

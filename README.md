@@ -197,7 +197,9 @@ curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/
 
 上述四个原生异步提交端点（ASR、TTS、克隆参考分析、声纹样本上传）都必须发送 8–128 字符的 `Idempotency-Key`。每次逻辑提交生成一个新键；超时、断线或 `429` 后必须用原键重试。首次接受返回 `202`，相同请求重放返回原任务和 `200`，同键更改请求返回 `409`。`429` 会同时返回稳定错误码、`Retry-After` 和当前容量信息。
 
-`GET /api/v1/jobs` 支持 `kind`、`state`、`q`、`limit`、`offset` 服务端分页，始终按 `created_at DESC, id DESC` 稳定排序；`count` 是本页数量，`total` 是筛选后的任务总数，`has_more` 表示是否还有下一页。
+`GET /api/v1/jobs` 支持 `kind`、`state`、`q`、`limit`、`offset` 服务端分页，始终按 `created_at DESC, id DESC` 稳定排序；它只返回轻量任务摘要，不含 `request`/`result`。`count` 是本页数量，`total` 是筛选后的任务总数，`has_more` 表示是否还有下一页；需要完整请求快照和结果时再读取 `GET /api/v1/jobs/{job_id}`。
+
+全局 `/api/v1/events` 首帧为 `snapshot`（最近 100 条任务摘要与 worker），之后仅在业务状态变化时发送 `update`（变更摘要、`removed_job_ids` 和当前 worker）；空闲期间约 15 秒发送 `{}` 心跳。执行器存活心跳不会改变任务 `updated_at`、ETag 或触发全局业务更新。全局流不含完整结果，前端仅在打开成功任务时按需读取详情并缓存。
 
 TTS 高级控制以 `GET /api/v1/capabilities` 返回的 `tts.model_capabilities[]` 为准：0.6B 不接受自然语言指令；1.7B CustomVoice 的预置音色可选 `instruct`，VoiceDesign 则必须用 `instruct` 描述声线、语速、音调、韵律和情绪；Base 克隆模式不接受指令。官方公共推理接口没有独立数值语速/音高参数，本项目也不开放 `temperature`、`top_k`、`top_p`、`repetition_penalty` 等固定采样项。OpenAI 兼容 `instructions` 仅覆盖 1.7B 预置音色；VoiceDesign 请使用原生异步接口。不支持的组合返回 `422`，不会静默忽略。
 
