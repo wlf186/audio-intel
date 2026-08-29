@@ -69,6 +69,7 @@ async function copyText(value:string){
 
 type Props={
  liveJobs:Job[]
+ liveJobsReady:boolean
  query:JobHistoryQuery
  setQuery:Dispatch<SetStateAction<JobHistoryQuery>>
  refreshRecentJobs:()=>Promise<void>
@@ -77,7 +78,7 @@ type Props={
  onJobsRemoved:(ids:string[])=>void
 }
 
-export function JobsPage({liveJobs,query,setQuery,refreshRecentJobs,openJob,onJobUpdated,onJobsRemoved}:Props){
+export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJobs,openJob,onJobUpdated,onJobsRemoved}:Props){
  const [page,setPage]=useState<JobListResponse>()
  const [search,setSearch]=useState(query.search)
  const [selected,setSelected]=useState<Set<string>>(()=>new Set())
@@ -94,7 +95,7 @@ export function JobsPage({liveJobs,query,setQuery,refreshRecentJobs,openJob,onJo
  const selectAll=useRef<HTMLInputElement>(null)
  const copyResetTimer=useRef<number>(undefined)
  const requestSequence=useRef(0)
- const previousLiveIds=useRef(new Set(liveJobs.map(job=>job.id)))
+ const knownLiveIds=useRef<Set<string>|undefined>(undefined)
 
  const requestPage=useCallback(async()=>{
   const sequence=++requestSequence.current
@@ -117,11 +118,14 @@ export function JobsPage({liveJobs,query,setQuery,refreshRecentJobs,openJob,onJo
  useEffect(()=>{
   const liveById=new Map(liveJobs.map(job=>[job.id,job]))
   setPage(current=>current?{...current,items:current.items.map(job=>liveById.get(job.id)||job)}:current)
+  if(!liveJobsReady){knownLiveIds.current=undefined;return}
   const nextIds=new Set(liveJobs.map(job=>job.id))
-  const added=liveJobs.some(job=>!previousLiveIds.current.has(job.id)&&matchesQuery(job,query))
-  previousLiveIds.current=nextIds
+  const knownIds=knownLiveIds.current
+  if(!knownIds){knownLiveIds.current=nextIds;return}
+  const added=liveJobs.some(job=>!knownIds.has(job.id)&&matchesQuery(job,query))
+  for(const id of nextIds)knownIds.add(id)
   if(added)setHasNewJobs(true)
- },[liveJobs,query])
+ },[liveJobs,liveJobsReady,query])
 
  const items=page?.items||[]
  const eligible=useMemo(()=>items.filter(job=>job.state!=='running'),[items])

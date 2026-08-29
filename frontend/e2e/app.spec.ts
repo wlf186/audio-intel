@@ -230,18 +230,37 @@ test('ASR model routing and task-scoped hotword selection are explicit',async({p
   {id:'qwen3-asr-0.6b',name:'Qwen3-ASR-0.6B',revision:'r1',installed:true,installation_state:'installed',default:true,compute_devices:[{id:'cpu',precision:'FP32',available:true,default:false,quantized:false},{id:'gpu',precision:'BF16',available:true,default:true,quantized:false,minimum_memory_mib:3840,total_memory_mib:4096}]},
   {id:'qwen3-asr-1.7b',name:'Qwen3-ASR-1.7B',revision:'r2',installed:true,installation_state:'installed',default:false,compute_devices:[{id:'cpu',precision:'FP32',available:true,default:true,quantized:false},{id:'gpu',precision:'BF16',available:false,default:false,quantized:false,minimum_memory_mib:7936,total_memory_mib:4096,unavailable_reason_code:'insufficient_gpu_memory',unavailable_reason:'This model requires at least 7936 MiB total GPU memory; detected 4096 MiB'}]},
  ]
- const hotword={id:'hotwords_medical',name:'医疗术语',terms:['量子','Qwen'],term_count:2,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}
- const overflowHotword={id:'hotwords_project',name:'项目代号',terms:['Sandevistan'],term_count:1,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}
- await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{model:'Qwen3-ASR-0.6B',default_model:'qwen3-asr-0.6b',models,hotword_library:{supported:true,max_lists:100,max_terms_per_list:200,max_selected_lists:8,max_selected_terms:500,max_prompt_chars:30,max_name_chars:80,max_term_chars:64},speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,languages:['Auto','Chinese'],aligner_languages:['Chinese']},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
- await page.route('**/api/v1/asr/hotword-lists',route=>route.fulfill({json:{items:[hotword,overflowHotword],count:2}}))
+ const hotword={id:'hotwords_medical',name:'医疗术语',terms:['量子'],term_count:1,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}
+ const termOverflowHotword={id:'hotwords_team',name:'团队人名',terms:['Qwen','Whisper'],term_count:2,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}
+ const characterOverflowHotword={id:'hotwords_project',name:'项目代号',terms:['SandevistanProject'],term_count:1,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{model:'Qwen3-ASR-0.6B',default_model:'qwen3-asr-0.6b',models,hotword_library:{supported:true,max_lists:100,max_terms_per_list:200,max_selected_lists:8,max_selected_terms:2,max_prompt_chars:30,max_name_chars:80,max_term_chars:64},speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,languages:['Auto','Chinese'],aligner_languages:['Chinese']},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
+ await page.route('**/api/v1/asr/hotword-lists',route=>route.fulfill({json:{items:[hotword,termOverflowHotword,characterOverflowHotword],count:3}}))
  await page.route('**/api/v1/asr/jobs',async route=>{submitted=(await route.request().postDataBuffer())?.toString()||'';await route.fulfill({status:202,json:{id:'model-hotword-job',kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'model.wav',created_at:new Date().toISOString(),request:{model:'qwen3-asr-1.7b',compute_device:'cpu'}}})})
  await page.goto('/#asr')
  await page.getByLabel('ASR 模型').selectOption('qwen3-asr-1.7b')
  await expect(page.getByLabel('ASR 计算设备')).toHaveValue('cpu')
  await expect(page.getByText(/至少需要 7936 MiB 显存.*4096 MiB/)).toBeVisible()
  await page.getByRole('checkbox',{name:/医疗术语/}).check()
+ const termOverflow=page.getByRole('checkbox',{name:/团队人名/})
+ await expect(termOverflow).toBeDisabled()
+ await expect(page.getByText(/选择“团队人名”后将超出单次任务限制.*3 个唯一热词.*上限 2 个/)).toBeVisible()
  await expect(page.getByRole('checkbox',{name:/项目代号/})).toBeDisabled()
- await expect(page.getByRole('checkbox',{name:/项目代号/}).locator('..')).toHaveAttribute('title',/提示词不能超过 30 个字符/)
+ await expect(page.getByRole('checkbox',{name:/项目代号/}).locator('..')).toHaveAttribute('title',/提示字符.*上限 30 个/)
+ const characterIssueId=await page.getByRole('checkbox',{name:/项目代号/}).getAttribute('aria-describedby')
+ expect(characterIssueId).toBeTruthy()
+ await expect(page.locator(`#${characterIssueId}`)).toContainText(/提示字符.*上限 30 个/)
+ await page.screenshot({path:'/tmp/audio-intel-asr-hotword-limit-desktop.png',fullPage:false})
+ await page.setViewportSize({width:390,height:844})
+ await expect(page.getByText(/选择“项目代号”后将超出单次任务限制/)).toBeVisible()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/audio-intel-asr-hotword-limit-mobile.png',fullPage:false})
+ await page.setViewportSize({width:1440,height:900})
+ await termOverflow.evaluate(element=>{const checkbox=element as HTMLInputElement;checkbox.disabled=false;checkbox.click()})
+ await expect(page.getByRole('alert').filter({hasText:'当前热词选择已超出单次任务限制'})).toContainText(/3 个唯一热词.*上限 2 个/)
+ await expect(page.getByRole('button',{name:'开始转写'})).toBeDisabled()
+ await termOverflow.uncheck()
+ await expect(page.getByRole('alert').filter({hasText:'当前热词选择已超出单次任务限制'})).toHaveCount(0)
+ await expect(page.getByRole('button',{name:'开始转写'})).toBeEnabled()
  await page.locator('input[type=file]').setInputFiles({name:'model.wav',mimeType:'audio/wav',buffer:testWave()})
  await page.getByRole('button',{name:'开始转写'}).click()
  await expect.poll(()=>submitted).toContain('qwen3-asr-1.7b')
@@ -436,6 +455,60 @@ test('mobile job pagination stays in flow and preserves the six-item app navigat
  await expect(pagination).toContainText('第 2 / 2 页')
  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'系统状态'}).click()
  await expect(page.getByRole('heading',{name:'系统状态',exact:true})).toBeVisible()
+ expect(errors).toEqual([])
+})
+
+test('task history only reports jobs added after the live baseline is ready',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ const createdAt='2026-08-29T04:00:00Z'
+ const historical={id:'history-baseline',kind:'tts',state:'failed',stage:'failed',progress:1,display_name:'已有历史任务',created_at:createdAt,updated_at:createdAt,request:{compute_device:'cpu'}}
+ const updatedHistorical={...historical,state:'cancelled',stage:'cancelled',updated_at:'2026-08-29T04:01:00Z'}
+ const newJob={id:'actually-new-job',kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'真正新增任务',created_at:'2026-08-29T04:02:00Z',updated_at:'2026-08-29T04:02:00Z',request:{compute_device:'cpu'}}
+ let globalCalls=0
+ let initialGlobalReady=false
+ await page.route('**/api/v1/auth/session',route=>route.fulfill({json:{required:false,authenticated:true}}))
+ await routeJobList(page,async route=>{
+  const url=new URL(route.request().url())
+  const globalRequest=!url.searchParams.has('limit')
+  if(globalRequest){
+   globalCalls+=1
+   if(globalCalls===1)await new Promise(resolve=>setTimeout(resolve,250))
+   const items=globalCalls>=3?[newJob,updatedHistorical]:globalCalls===2?[updatedHistorical]:[historical]
+   initialGlobalReady=true
+   return route.fulfill({json:{items,count:items.length,total:items.length,limit:100,offset:0,has_more:false}})
+  }
+  const items=globalCalls>=3?[newJob,updatedHistorical]:globalCalls===2?[updatedHistorical]:[historical]
+  return route.fulfill({json:{items,count:items.length,total:items.length,limit:25,offset:0,has_more:false}})
+ })
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{data:'/tmp/data'}}}))
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
+ await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[]}}))
+ await page.route('**/api/v1/asr/hotword-lists',route=>route.fulfill({json:{items:[],count:0}}))
+
+ await page.goto('/#jobs')
+ await expect(page.getByText('已有历史任务',{exact:true})).toBeVisible()
+ await expect.poll(()=>initialGlobalReady).toBe(true)
+ await expect(page.getByRole('region',{name:'新任务提示'})).toHaveCount(0)
+
+ await expect.poll(()=>globalCalls,{timeout:7000}).toBeGreaterThanOrEqual(2)
+ await expect(page.locator('.table-row').filter({hasText:'已有历史任务'}).getByText('已取消',{exact:true})).toBeVisible()
+ await expect(page.getByRole('region',{name:'新任务提示'})).toHaveCount(0)
+
+ await expect.poll(()=>globalCalls,{timeout:7000}).toBeGreaterThanOrEqual(3)
+ const banner=page.getByRole('region',{name:'新任务提示'})
+ await expect(banner).toBeVisible()
+ await expect(page.getByText('真正新增任务',{exact:true})).toHaveCount(0)
+ await page.screenshot({path:'/tmp/audio-intel-new-job-banner-desktop.png',fullPage:false})
+
+ await page.setViewportSize({width:390,height:844})
+ await expect(banner).toBeVisible()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await banner.getByRole('button',{name:'返回第一页查看'}).click()
+ await expect(page.getByText('真正新增任务',{exact:true})).toBeVisible()
+ await expect(banner).toHaveCount(0)
+ await page.screenshot({path:'/tmp/audio-intel-new-job-banner-mobile.png',fullPage:false})
  expect(errors).toEqual([])
 })
 
