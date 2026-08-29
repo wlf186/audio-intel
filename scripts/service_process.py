@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import subprocess
 import sys
 import time
 import urllib.request
@@ -23,6 +24,30 @@ EXPECTED_COMMANDS = {
     "asr": ("-m", "audio_intel.worker", "asr"),
     "tts": ("-m", "audio_intel.worker", "tts"),
 }
+
+
+def launch_detached(log_path: Path, command: list[str]) -> int:
+    if command[:1] == ["--"]:
+        command = command[1:]
+    if not command:
+        print("Detached launch command is required", file=sys.stderr)
+        return 2
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("ab", buffering=0) as output:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                close_fds=True,
+            )
+    except OSError as exc:
+        print(f"Unable to launch detached process: {exc}", file=sys.stderr)
+        return 1
+    print(process.pid, flush=True)
+    return 0
 
 
 def _matching_process(component: str, pid: int) -> psutil.Process | None:
@@ -212,6 +237,10 @@ def main() -> int:
     cleanup_parser.add_argument("component", choices=EXPECTED_COMMANDS)
     cleanup_parser.add_argument("pid", type=int)
 
+    launch_parser = subparsers.add_parser("launch-detached")
+    launch_parser.add_argument("log_path", type=Path)
+    launch_parser.add_argument("command", nargs=argparse.REMAINDER)
+
     api_parser = subparsers.add_parser("wait-api")
     api_parser.add_argument("pid", type=int)
     api_parser.add_argument("host")
@@ -228,6 +257,8 @@ def main() -> int:
         return 0 if _process_matches(args.component, args.pid) else 1
     if args.action == "cleanup":
         return cleanup(args.component, args.pid)
+    if args.action == "launch-detached":
+        return launch_detached(args.log_path, args.command)
     if args.action == "wait-api":
         return wait_api(args.pid, args.host, args.port, args.timeout)
     return wait_worker(args.kind, args.pid, args.timeout)

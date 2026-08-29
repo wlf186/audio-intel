@@ -127,10 +127,15 @@ launch_component() {
   component_command "$component"
   if [[ "$mode" == "foreground" ]]; then
     "${COMPONENT_COMMAND[@]}" > >(tee -a "$log") 2> >(tee -a "$log" >&2) &
+    pid="$!"
   else
-    nohup "${COMPONENT_COMMAND[@]}" >>"$log" 2>&1 </dev/null &
+    pid="$("$ROOT_DIR/.runtime/api/bin/python" "$ROOT_DIR/scripts/service_process.py" \
+      launch-detached "$log" "${COMPONENT_COMMAND[@]}")" || return 1
   fi
-  pid="$!"
+  if [[ ! "$pid" =~ ^[1-9][0-9]*$ ]]; then
+    echo "invalid $component process id returned during launch: $pid" >&2
+    return 1
+  fi
   printf '%s\n' "$pid" > "$(pid_path "$component")"
   [[ "$mode" != "foreground" ]] || RUN_PIDS["$component"]="$pid"
 }
@@ -165,8 +170,14 @@ start_one() {
     echo "$component already running (pid $(read_pid "$component"))"
     return 0
   fi
-  launch_component "$component" "$mode"
-  pid="$(read_pid "$component")"
+  if ! launch_component "$component" "$mode"; then
+    echo "$component failed to launch; see $LOG_DIR/$component.log" >&2
+    return 1
+  fi
+  if ! pid="$(read_pid "$component")"; then
+    echo "$component launch did not produce a valid PID file" >&2
+    return 1
+  fi
   if ! wait_ready "$component"; then
     echo "$component failed to start; see $LOG_DIR/$component.log" >&2
     tail -n 30 "$LOG_DIR/$component.log" >&2 || true
@@ -251,10 +262,10 @@ rollback_started() {
 }
 
 start_action() {
-  local component preserve_api=0
+  local run_preflight="${1:-1}" component preserve_api=0
   STARTED_COMPONENTS=()
   configure_services
-  preflight
+  (( run_preflight == 0 )) || preflight
   if [[ "$TARGET" == "asr" || "$TARGET" == "tts" ]] && pid_alive api; then
     preserve_api=1
     stop_one api
@@ -267,6 +278,15 @@ start_action() {
     (( STARTED_NEW == 0 )) || STARTED_COMPONENTS+=("$component")
   done
   echo "Sandevistan-Audio: http://127.0.0.1:$AUDIO_INTEL_PORT"
+}
+
+restart_action() {
+  local -a targets
+  configure_services
+  preflight
+  read -r -a targets <<< "$(stop_targets)"
+  stop_list "${targets[@]}" || return 1
+  start_action 0
 }
 
 run_cleanup() {
@@ -329,7 +349,7 @@ case "$ACTION" in
     read -r -a targets <<< "$(stop_targets)"
     stop_list "${targets[@]}"
     ;;
-  restart) "$0" stop "$TARGET"; "$0" start "$TARGET" ;;
+  restart) restart_action ;;
   status)
     for component in api asr tts; do
       remove_stale_pid "$component"

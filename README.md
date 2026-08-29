@@ -48,7 +48,7 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 ./service.sh stop all
 ```
 
-`start` 会在当前 Linux 环境中后台运行服务，适合普通终端和能够保留后台进程的启动环境。容器入口、远程命令执行器或其他可能在命令结束后回收后台进程的环境应改用前台模式：
+`start` 会在 Linux 中将各组件作为独立会话和进程组后台运行，并在 API 和 worker 真正就绪后返回；关闭普通终端、调用脚本退出或上游仅清理启动命令所在进程组，不会连带停止服务。容器入口、需要前台监督的部署，或会在命令结束后回收整个 cgroup 的远程执行环境应改用前台模式：
 
 ```bash
 ./service.sh run all
@@ -56,7 +56,7 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 
 `run` 接收 `SIGTERM`/`SIGINT`，关闭完整 worker 进程树后退出；容器的 `CMD` 可直接使用 `./service.sh run all`。该模式不依赖 systemd，也不区分 rootless 或 rootful：只需运行用户对配置的数据、缓存、日志和 `run` 目录具有写权限。不要把 `run` 与已由 `start` 启动的组件混用。
 
-两种模式的重启方式不同：由 `start all` 启动的后台服务使用 `./service.sh restart all`；前台 `run all` 应在原终端按 `Ctrl+C` 后重新执行同一命令，容器中则由 Docker、Podman 或编排器重启容器。不要从另一个终端对正在运行的 `run all` 执行 `restart all`，否则前台管理进程会因其子进程被停止而退出，而新建的后台进程仍可能被当前执行器回收。
+两种模式的重启方式不同：由 `start all` 启动的后台服务使用 `./service.sh restart all`；该命令先完成启动预检，再停止旧进程树，任一组件未能完整停止时不会启动新实例。前台 `run all` 应在原终端按 `Ctrl+C` 后重新执行同一命令，容器中则由 Docker、Podman 或编排器重启容器。不要从另一个终端对正在运行的 `run all` 执行 `restart all`，否则前台管理进程会因其子进程被停止而退出；若所在平台会回收整个 cgroup，新建的后台进程仍属于同一生命周期并可能被回收。
 
 需要代理时，在安装前导出标准代理变量；curl、uv、Hugging Face 与 ModelScope 会继承它们：
 

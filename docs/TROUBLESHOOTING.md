@@ -115,12 +115,13 @@ curl -I https://modelscope.cn
 - 默认端口可用 `ss -ltnp | grep 20810` 检查占用；若设置了 `AUDIO_INTEL_PORT`，请改查实际端口。
 - 查看 `logs/api.log`、`logs/asr.log`、`logs/tts.log`；PID 位于 `run/`。
 - 由 `start all` 启动的后台服务在配置改变后使用 `./service.sh restart all`。
+- `restart` 会先执行启动预检，再停止目标的完整进程树；任一组件未能完整停止时命令返回非零，不会继续启动新实例。应先查看对应日志和残留 PID，不要反复执行重启。
 
-若 `start`/`restart` 已显示启动成功，但执行命令结束后服务立即消失并由上游返回 `502`，通常是远程执行器或容器入口回收了命令的后台进程，而不是监听地址从 `0.0.0.0` 被修改。`nohup` 无法阻止外部按 process group 或 cgroup 清理进程。此类环境应让 `./service.sh run all` 持续保持为前台主进程；普通长期 shell 仍可继续使用 `start all`。
+`start` 会为 API、ASR 和 TTS 分别创建独立会话和进程组，因此普通终端关闭、调用脚本退出或上游仅清理启动命令所在进程组后，服务应继续运行。若 `start`/`restart` 已显示成功，但命令结束后服务仍立即消失并由上游返回 `502`，通常是容器、systemd 或远程执行平台回收了整个 cgroup，而不是监听地址从 `0.0.0.0` 被修改。独立会话不能逃逸 cgroup 生命周期；此类环境应让 `./service.sh run all` 持续作为前台主进程，并由平台负责重启。
 
 rootless 本身不会导致该问题。确认当前 UID 对 `.env.example` 中配置的数据、缓存、日志和运行目录可写即可。不要为此在容器内加入 systemd；重启策略应交给容器运行时。
 
-前台模式不要从另一个终端执行 `restart all`：该命令会停止 `run all` 管理的子进程，前台管理进程随即退出，随后启动的后台进程还可能再次被执行器回收。交互终端应在原窗口按 `Ctrl+C`，确认退出后重新执行 `./service.sh run all`；Docker、Podman 或编排环境应直接重启容器，让运行时发送停止信号并重新执行入口命令。
+前台模式不要从另一个终端执行 `restart all`：该命令会停止 `run all` 管理的子进程，前台管理进程随即退出；若运行在受管 cgroup 中，随后启动的后台进程仍属于该 cgroup，也可能被平台回收。交互终端应在原窗口按 `Ctrl+C`，确认退出后重新执行 `./service.sh run all`；Docker、Podman 或编排环境应直接重启容器，让运行时发送停止信号并重新执行入口命令。
 
 ## 浏览器麦克风无法录音
 

@@ -34,7 +34,7 @@ curl -fsS http://127.0.0.1:20810/api/v1/health
 
 `setup all` 创建 `.runtime/api`、`.runtime/asr`、`.runtime/tts` 和 `.runtime/aligner`，构建 `frontend/dist`，并将模型下载到 `models/`。`setup asr/all` 下载固定 revision 的 Qwen3-ASR 0.6B 与 1.7B；`setup tts/all` 下载 Qwen3-TTS 0.6B/1.7B 的 Base、CustomVoice，以及 1.7B VoiceDesign。TTS 与 Qwen ASR 要求互斥的 Transformers 版本，因此长参考音频的对齐使用独立 aligner 环境；不要把两个 Qwen 包装进同一环境。所有缓存和临时文件也留在仓库目录中。下载完成后，`service.sh start` 默认设置 Hugging Face 与 Transformers 离线模式。
 
-`start` 是后台模式；API 和 worker 真正就绪后命令才返回。将服务作为容器主进程运行，或所在执行器会在命令返回后清理后台子进程时，使用：
+`start` 是后台模式；各组件在独立会话和进程组中运行，API 和 worker 真正就绪后命令才返回。关闭普通终端、调用脚本退出或上游仅清理启动命令所在进程组，不会停止这些后台组件。将服务作为容器主进程运行、需要前台监督，或所在执行器会在命令返回后清理整个 cgroup 时，使用：
 
 ```bash
 ./service.sh run all
@@ -42,7 +42,7 @@ curl -fsS http://127.0.0.1:20810/api/v1/health
 
 `run` 会保持前台并转发停止信号，无需 systemd 或其他守护程序。构建容器时应先完成 `.runtime`、前端和模型准备，运行时为当前 UID 提供可写的数据、临时、缓存、日志和 `run` 目录；这些位置可用 `.env.example` 已有的 `AUDIO_INTEL_*_DIR` 变量指向挂载卷。端口仍为非特权的 `20810`，rootless 不需要额外脚本分支。
 
-后台模式通过 `./service.sh restart all` 重启。前台模式应向当前 `run all` 进程发送 `SIGTERM`（交互终端可按 `Ctrl+C`），等待它清理完成后再执行 `./service.sh run all`；容器中直接使用 Docker、Podman 或编排器的重启操作。不要在另一个 shell 中对前台实例执行 `restart all`，也不要让容器的 `CMD` 使用后台 `start all`。容器重启策略由运行时负责。
+后台模式通过 `./service.sh restart all` 重启。重启会先完成运行时和模型预检，再停止目标的完整进程树；若任一组件未能完整停止，命令返回非零且不会启动新实例。前台模式应向当前 `run all` 进程发送 `SIGTERM`（交互终端可按 `Ctrl+C`），等待它清理完成后再执行 `./service.sh run all`；容器中直接使用 Docker、Podman 或编排器的重启操作。不要在另一个 shell 中对前台实例执行 `restart all`，也不要让容器的 `CMD` 使用后台 `start all`。独立会话不会逃逸容器或 systemd 的 cgroup，容器重启策略仍由运行时负责。
 
 ASR 与 TTS GPU 能力均按所选模型判断：0.6B/1.7B 使用 `nvidia-smi` 报告的总显存门槛 3840/7936 MiB，而不是当前空闲显存。可从受保护的 `GET /api/v1/capabilities` 读取 `asr.models[].compute_devices` 和 `tts.model_capabilities[].compute_devices`；例如报告 8151 MiB 的 8 GiB 显卡可通过 1.7B 准入。准入门槛不排除其他 GPU 程序导致运行期 OOM，无 GPU 或显存不足时 API 消费方应显式选择 `compute_device=cpu`。
 

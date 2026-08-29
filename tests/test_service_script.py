@@ -121,11 +121,68 @@ def test_background_start_waits_until_ready_and_stops_complete_tree(tmp_path: Pa
         assert status.stdout.count(": running (pid ") == 3
         assert (tmp_path / "logs" / "api.log").is_file()
 
-        tracked = list(_read_pids(run_dir).values()) + _read_executor_pids(run_dir)
+        component_pids = list(_read_pids(run_dir).values())
+        for pid in component_pids:
+            assert os.getsid(pid) == pid
+            assert os.getpgid(pid) == pid
+        tracked = component_pids + _read_executor_pids(run_dir)
         stopped = _run_service("stop", "all", env=env, timeout=20)
         assert stopped.returncode == 0, stopped.stdout + stopped.stderr
         assert not list(run_dir.glob("*.pid"))
         _assert_processes_exit(tracked)
+    finally:
+        _stop_isolated(env)
+        _assert_processes_exit(tracked)
+
+
+def test_background_start_survives_manager_process_group_cleanup(tmp_path: Path) -> None:
+    env = _environment(tmp_path)
+    run_dir = tmp_path / "run"
+    output_path = tmp_path / "manager.log"
+    tracked: list[int] = []
+    try:
+        with output_path.open("wb") as output:
+            manager = subprocess.Popen(
+                ["bash", "-c", 'set -e; "$1" start all; kill -TERM -- -$$', "manager", str(SERVICE)],
+                cwd=ROOT,
+                env=env,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            assert manager.wait(timeout=30) != 0
+
+        status = _run_service("status", env=env)
+        assert status.returncode == 0, status.stdout + status.stderr
+        assert status.stdout.count(": running (pid ") == 3
+        tracked = list(_read_pids(run_dir).values()) + _read_executor_pids(run_dir)
+    finally:
+        _stop_isolated(env)
+        _assert_processes_exit(tracked)
+
+
+def test_restart_replaces_complete_process_trees(tmp_path: Path) -> None:
+    env = _environment(tmp_path)
+    run_dir = tmp_path / "run"
+    tracked: list[int] = []
+    try:
+        started = _run_service("start", "all", env=env)
+        assert started.returncode == 0, started.stdout + started.stderr
+        old_roots = list(_read_pids(run_dir).values())
+        old_processes = old_roots + _read_executor_pids(run_dir)
+        tracked.extend(old_processes)
+
+        restarted = _run_service("restart", "all", env=env, timeout=40)
+        assert restarted.returncode == 0, restarted.stdout + restarted.stderr
+        _assert_processes_exit(old_processes)
+
+        new_roots = list(_read_pids(run_dir).values())
+        new_processes = new_roots + _read_executor_pids(run_dir)
+        tracked.extend(new_processes)
+        assert set(old_roots).isdisjoint(new_roots)
+        status = _run_service("status", env=env)
+        assert status.returncode == 0, status.stdout + status.stderr
+        assert status.stdout.count(": running (pid ") == 3
     finally:
         _stop_isolated(env)
         _assert_processes_exit(tracked)
