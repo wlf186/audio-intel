@@ -605,6 +605,43 @@ def test_tts_gpu_memory_gate_counts_reclaimable_cache() -> None:
     assert not tts_pipeline._gpu_can_microbatch(SimpleNamespace(cuda=cuda))
 
 
+def test_tts_cpu_model_cache_reuses_one_checkpoint_and_clears_before_switch_or_gpu(
+    monkeypatch,
+) -> None:
+    class Factory:
+        calls = []
+
+        @classmethod
+        def from_pretrained(cls, path, **kwargs):
+            model = SimpleNamespace(path=path, options=kwargs)
+            cls.calls.append(model)
+            return model
+
+    fake_torch = SimpleNamespace(float32="float32", bfloat16="bfloat16")
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "qwen_tts", SimpleNamespace(Qwen3TTSModel=Factory))
+    tts_pipeline._cpu_models.clear()
+    model_definition = tts_pipeline.resolve_tts_model("qwen3-tts-0.6b")
+
+    try:
+        first = tts_pipeline.load_model(model_definition, "preset", "cpu")
+        repeated = tts_pipeline.load_model(model_definition, "preset", "cpu")
+        switched = tts_pipeline.load_model(model_definition, "inline_clone", "cpu")
+
+        assert first is repeated
+        assert switched is not first
+        assert len(Factory.calls) == 2
+        assert list(tts_pipeline._cpu_models.values()) == [switched]
+
+        gpu = tts_pipeline.load_model(model_definition, "preset", "gpu")
+
+        assert gpu is Factory.calls[-1]
+        assert len(Factory.calls) == 3
+        assert tts_pipeline._cpu_models == {}
+    finally:
+        tts_pipeline._cpu_models.clear()
+
+
 def test_tts_batch_uses_sequential_decoder_and_restores_it() -> None:
     class Tokenizer:
         def __init__(self) -> None:

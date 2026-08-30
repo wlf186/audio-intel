@@ -157,6 +157,8 @@ Get-NetTCPConnection -LocalPort 20810 -ErrorAction SilentlyContinue
 
 保留 Windows 的系统管理分页文件，长时间 TTS/ASR 时连接电源并禁用自动睡眠。升级、移动 `.runtime` 或删除模型前先执行 `.\service.cmd stop all`。执行中任务通过界面取消时，worker 会终止该任务的完整 Windows 进程树，确认退出后才开放删除；若任务因强制关机中断，重启服务会先清理已记录的遗留执行进程，再恢复过期任务。
 
+同类队列排空后，ASR/TTS 执行器默认保留 60 秒热窗口，再连同完整 Windows 进程树安全重建并归还内存；窗口内的新任务会继续复用。可在启动服务前设置 `AUDIO_INTEL_EXECUTOR_IDLE_SECONDS`，`0` 表示队列排空后立即回收。执行器重建不会重启 API 或使浏览器会话失效。
+
 ## 6. 升级与验证
 
 ```powershell

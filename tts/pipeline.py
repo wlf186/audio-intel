@@ -6,6 +6,7 @@ import re
 import subprocess
 import os
 import platform
+import gc
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Iterator
@@ -53,6 +54,13 @@ def split_text(text: str, limit: int = 300) -> list[str]:
     return chunks
 
 
+def _release_cpu_models() -> None:
+    if not _cpu_models:
+        return
+    _cpu_models.clear()
+    gc.collect()
+
+
 def load_model(model_definition: dict[str, Any], mode: str, compute_device: str) -> Any:
     checkpoint = resolve_tts_checkpoint(model_definition, mode)
     if checkpoint is None:
@@ -61,12 +69,13 @@ def load_model(model_definition: dict[str, Any], mode: str, compute_device: str)
     import torch
     from qwen_tts import Qwen3TTSModel
     if compute_device == "gpu":
+        _release_cpu_models()
         return Qwen3TTSModel.from_pretrained(
             str(settings.models_dir / key), device_map="cuda:0", dtype=torch.bfloat16,
             attn_implementation="sdpa", local_files_only=True,
         )
     if key not in _cpu_models:
-        _cpu_models.clear()  # one CPU full-precision model resident at a time
+        _release_cpu_models()  # one CPU full-precision model resident at a time
         _cpu_models[key] = Qwen3TTSModel.from_pretrained(
             str(settings.models_dir / key), device_map="cpu", dtype=torch.float32,
             attn_implementation="sdpa", local_files_only=True,
@@ -271,7 +280,6 @@ def process_job(context: JobContext) -> dict[str, Any]:
         )
     finally:
         if compute_device == "gpu" and model is not None:
-            import gc
             import torch
             del model
             gc.collect()

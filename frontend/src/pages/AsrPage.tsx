@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, FileAudio, Pause, Pencil, Play, RotateCcw, Search, UploadCloud, UserPlus, X } from 'lucide-react'
 import { api, artifactUrl, formatTime, sourceUrl } from '../lib/api'
 import type { AsrModelCapability, ComputeDevice, HotwordLibraryCapability, HotwordList, Job, JobDetailResource, JobResult, JobSummary, ResultRevealRequest, Segment, Speaker, VoiceprintPerson } from '../lib/types'
@@ -9,6 +9,7 @@ import { InfoTooltip } from '../components/InfoTooltip'
 import { clearAsrPreferences, defaultAsrPreferences, loadAsrPreferences, publicAlignerLanguages, publicAsrLanguages, saveAsrPreferences, type AsrPreferences } from '../lib/preferences'
 import { visibleWorkspaceJobs } from '../lib/jobs'
 import { computeUnavailableReason } from '../lib/presentation'
+const segmentBatchSize=40
 function nameKey(value: string) {
   return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase()
 }
@@ -118,7 +119,9 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   const [notice, setNotice] = useState('')
   const [mediaError, setMediaError] = useState('')
   const [query, setQuery] = useState('')
+  const deferredQuery = useDeferredValue(query)
   const [speakerFilter, setSpeakerFilter] = useState('all')
+  const [visibleSegmentCount, setVisibleSegmentCount] = useState(segmentBatchSize)
   const [selectedSegments, setSelectedSegments] = useState<Set<number>>(() => new Set())
   const [renameSpeaker, setRenameSpeaker] = useState<{
     id: string
@@ -136,6 +139,8 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   const input = useRef<HTMLInputElement>(null)
   const audio = useRef<HTMLAudioElement>(null)
   const resultPanel = useRef<HTMLElement>(null)
+  const segmentList = useRef<HTMLDivElement>(null)
+  const loadMoreSentinel = useRef<HTMLDivElement>(null)
   const stopAt = useRef<number | undefined>(undefined)
   const asrJobs = useMemo(() => jobs.filter((job) => job.kind === 'asr'), [jobs])
   const selectedSummary = asrJobs.find((job) => job.id === selectedJobId && job.state === 'succeeded') || asrJobs.find((job) => job.state === 'succeeded')
@@ -146,11 +151,13 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   const speakerById = useMemo(() => new Map((result?.speakers || []).map((speaker) => [speaker.id, speaker])), [result?.speakers])
   const alignmentDowngraded = Boolean(selected?.request.language === 'Auto' && selected.request.align === true && result?.timestamp_precision === 'segment' && result.language && !alignerLanguages.includes(result.language))
   const duration = result?.duration || 0
-  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const normalizedQuery = deferredQuery.trim().toLocaleLowerCase()
   const segments = useMemo(() => {
     const values = result?.segments || []
     return values.filter((segment) => (!normalizedQuery || segment.text.toLocaleLowerCase().includes(normalizedQuery)) && (speakerFilter === 'all' || segment.speaker === speakerFilter))
   }, [result?.segments, normalizedQuery, speakerFilter])
+  const visibleSegments = useMemo(() => segments.slice(0, visibleSegmentCount), [segments, visibleSegmentCount])
+  const activeSegmentIndex = useMemo(() => segments.findIndex((segment) => currentTime >= segment.start && currentTime < segment.end), [currentTime, segments])
   const selectionSpeaker = useMemo(() => result?.segments?.find((segment) => selectedSegments.has(segment.id))?.speaker, [result?.segments, selectedSegments])
   const selectionLabel = result?.speakers?.find((speaker) => speaker.id === selectionSpeaker)?.label || selectionSpeaker?.replace('_', ' ') || ''
   const models: AsrModelCapability[] = asrModels.length
@@ -224,6 +231,20 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
     setSelectedSegments(new Set())
     setSpeakerFilter('all')
   }, [selectedSummary?.id])
+  useEffect(() => setVisibleSegmentCount(segmentBatchSize), [normalizedQuery, selectedSummary?.id, speakerFilter])
+  useEffect(() => {
+    if (activeSegmentIndex < visibleSegmentCount) return
+    setVisibleSegmentCount(Math.ceil((activeSegmentIndex + 1) / segmentBatchSize) * segmentBatchSize)
+  }, [activeSegmentIndex, visibleSegmentCount])
+  const loadMoreSegments = useCallback(() => setVisibleSegmentCount((current) => Math.min(segments.length, current + segmentBatchSize)), [segments.length])
+  useEffect(() => {
+    const root = segmentList.current
+    const target = loadMoreSentinel.current
+    if (!root || !target || visibleSegmentCount >= segments.length) return
+    const observer = new IntersectionObserver((entries) => {if(entries.some((entry) => entry.isIntersecting))loadMoreSegments()}, {root,rootMargin:'0px 0px 360px'})
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [loadMoreSegments, segments.length, visibleSegmentCount])
   useEffect(() => {
     if (!revealRequest || revealRequest.jobId !== selectedSummary?.id) return
     const frame = requestAnimationFrame(() => {
@@ -306,13 +327,13 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
       setCurrentTime(start)
     }
   }, [])
-  const seek = (ratio: number) => {
+  const seek = useCallback((ratio: number) => {
     const player = audio.current
     if (!player || !duration) return
     stopAt.current = undefined
     player.currentTime = Math.max(0, Math.min(duration, ratio * duration))
     setCurrentTime(player.currentTime)
-  }
+  }, [duration])
   const chooseDropped = (event: React.DragEvent<HTMLButtonElement>) => {
     event.preventDefault()
     const next = event.dataTransfer.files[0]
@@ -599,7 +620,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
               }}
             />
             <div className="wave-area">
-              <Waveform peaks={result.waveform} progress={duration ? currentTime / duration : 0} onSeek={seek} />
+              <Waveform peaks={result.waveform} currentTime={currentTime} duration={duration} onSeek={seek} />
               <div className="time-ruler">
                 <span>00:00</span>
                 <span>{formatTime(duration / 2, false)}</span>
@@ -639,9 +660,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
                   </option>
                 ))}
               </select>
-              <span>
-                {segments.length} / {result.segments?.length || 0} 个片段
-              </span>
+              <span>已展示 {Math.min(visibleSegmentCount,segments.length)} / 匹配 {segments.length} / 总计 {result.segments?.length || 0}</span>
             </div>
             {selectedSegments.size ? (
               <div className="segment-selection" aria-label="段落选择操作">
@@ -657,12 +676,12 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
                 </button>
               </div>
             ) : null}
-            <div className="segments">
+            <div ref={segmentList} className="segments" aria-busy={query!==deferredQuery}>
               {segments.length ? (
-                segments.map((segment) => {
+                <>{visibleSegments.map((segment) => {
                   const active = currentTime >= segment.start && currentTime < segment.end
                   return <SegmentRow key={segment.id} segment={segment} speaker={speakerById.get(segment.speaker)} active={active} currentTime={active ? currentTime : -1} onPlay={playSegment} onSeekWord={seekWord} selected={selectedSegments.has(segment.id)} selectionSpeaker={selectionSpeaker} onToggle={toggleSegment} onRename={openRename} />
-                })
+                })}{visibleSegments.length<segments.length?<div ref={loadMoreSentinel} className="segment-load-more"><span>已展示 {visibleSegments.length} / {segments.length} 个匹配片段</span><button type="button" className="button" onClick={loadMoreSegments}>加载更多</button></div>:null}</>
               ) : (
                 <div className="empty search-empty">
                   <Search size={38} />

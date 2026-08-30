@@ -41,6 +41,9 @@ class Settings:
     )
     worker_poll_seconds: float = float(os.getenv("AUDIO_INTEL_WORKER_POLL_SECONDS", "1"))
     cancel_grace_seconds: float = float(os.getenv("AUDIO_INTEL_CANCEL_GRACE_SECONDS", "1"))
+    executor_idle_seconds: float = max(
+        0.0, float(os.getenv("AUDIO_INTEL_EXECUTOR_IDLE_SECONDS", "60"))
+    )
     mock_mode: bool = os.getenv("AUDIO_INTEL_MOCK_MODE", "0").lower() in {"1", "true", "yes"}
 
     @property

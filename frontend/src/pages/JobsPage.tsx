@@ -1,10 +1,11 @@
 import {useCallback,useEffect,useMemo,useRef,useState,type Dispatch,type SetStateAction} from 'react'
-import {Check,ChevronLeft,ChevronRight,ChevronsLeft,ChevronsRight,Copy,Eye,LoaderCircle,RotateCcw,Search,Trash2,XCircle} from 'lucide-react'
+import {Check,ChevronLeft,ChevronRight,ChevronsLeft,ChevronsRight,CircleAlert,Copy,Eye,LoaderCircle,RotateCcw,Search,Trash2,XCircle} from 'lucide-react'
 import {api,size} from '../lib/api'
 import type {JobHistoryQuery,JobListResponse,JobState,JobSummary} from '../lib/types'
 import {progressPresentation} from '../lib/jobs'
-import {formatLocalDateTime} from '../lib/presentation'
+import {formatLocalDateTime,jobFailurePresentation} from '../lib/presentation'
 import {ConfirmDialog} from '../components/ConfirmDialog'
+import {Modal} from '../components/Modal'
 
 const kindLabels:Record<JobHistoryQuery['kind'],string>={all:'全部',asr:'ASR',tts:'TTS'}
 const stateLabels:Record<JobState,string>={queued:'等待处理',running:'正在处理',succeeded:'已完成',failed:'失败',cancelled:'已取消'}
@@ -92,6 +93,7 @@ export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJob
  const [reloadVersion,setReloadVersion]=useState(0)
  const [now,setNow]=useState(()=>Date.now())
  const [pendingDelete,setPendingDelete]=useState<string[]>([])
+ const [failureDetails,setFailureDetails]=useState<JobSummary>()
  const selectAll=useRef<HTMLInputElement>(null)
  const copyResetTimer=useRef<number>(undefined)
  const requestSequence=useRef(0)
@@ -195,18 +197,20 @@ export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJob
    const estimate=queueEstimate(job)
    const live=progressPresentation(job)
    const stageLabel=stopping?'正在释放计算资源':live.stage
+   const failure=job.state==='failed'?jobFailurePresentation(job):undefined
    return <div className={`table-row ${selected.has(job.id)?'selected':''}`} role="row" key={job.id}>
-    <span className="select-cell"><label><input type="checkbox" aria-label={`选择任务 ${job.display_name}`} checked={selected.has(job.id)} disabled={!canDelete||busy} title={canDelete?'选择任务':'运行中的任务需先取消'} onChange={()=>toggle(job.id)}/></label></span>
-    <span className="job-name"><b>{job.display_name}</b><small className="job-meta"><span className="job-id" title={`完整任务 ID：${job.id}`}>任务 ID：{job.id.slice(0,12)}…</span><button type="button" className={`copy-job-id ${copiedId===job.id?'copied':''}`} aria-label={`${copiedId===job.id?'已复制':'复制'}完整任务 ID ${job.id}`} title={copiedId===job.id?'已复制完整任务 ID':'复制完整任务 ID'} onClick={()=>void copyJobId(job.id)}>{copiedId===job.id?<Check/>:<Copy/>}</button><span aria-hidden="true">·</span><span>{device}</span></small></span>
-    <span className="kind" data-label="类型">{job.kind.toUpperCase()}</span>
-    <span className={`status ${job.state}`} data-label="状态">{stopping?'正在安全停止':stateLabels[job.state]}</span>
-    <span className="created" data-label="创建">{formatLocalDateTime(job.created_at)}</span>
-    <span className="elapsed" data-label="耗时">{elapsed(job,now)}<small>{(job.attempts||0)>1?`${job.attempts} 次尝试`:'实际处理'}</small></span>
-    <span className="job-progress-cell" data-label="进度"><span className="progress-summary">{live.percent}%{live.estimated?' 估算':''} · {stageLabel}</span>{['queued','running'].includes(job.state)?<progress max={100} value={live.percent} aria-label={`${job.display_name} 任务进度 ${live.percent}%`}/>:null}{live.detail?<small className="progress-activity">{live.detail}</small>:null}{estimate?<small className="queue-estimate">{estimate}</small>:null}</span>
-    <span className="actions">{job.state==='succeeded'?<button title="查看结果" aria-label={`查看任务结果 ${job.display_name}`} onClick={()=>openJob(job)}><Eye/></button>:null}{['queued','running'].includes(job.state)?<button title={stopping?'正在安全停止':'取消任务'} aria-label={stopping?`正在安全停止 ${job.display_name}`:`取消任务 ${job.display_name}`} disabled={stopping} onClick={()=>void cancelJob(job)}>{stopping?<LoaderCircle className="spin"/>:<XCircle/>}</button>:null}{['failed','cancelled'].includes(job.state)?<button title="重试" aria-label={`重试任务 ${job.display_name}`} onClick={()=>void act(()=>api.retry(job.id))}><RotateCcw/></button>:null}{canDelete?<button title="永久删除" aria-label={`永久删除任务 ${job.display_name}`} disabled={busy} onClick={()=>void remove([job.id])}><Trash2/></button>:null}</span>
+    <span className="select-cell" role="cell"><label><input type="checkbox" aria-label={`选择任务 ${job.display_name}`} checked={selected.has(job.id)} disabled={!canDelete||busy} title={canDelete?'选择任务':'运行中的任务需先取消'} onChange={()=>toggle(job.id)}/></label></span>
+    <span className="job-name" role="rowheader"><b>{job.display_name}</b><small className="job-meta"><span className="job-id" title={`完整任务 ID：${job.id}`}>任务 ID：{job.id.slice(0,12)}…</span><button type="button" className={`copy-job-id ${copiedId===job.id?'copied':''}`} aria-label={`${copiedId===job.id?'已复制':'复制'}完整任务 ID ${job.id}`} title={copiedId===job.id?'已复制完整任务 ID':'复制完整任务 ID'} onClick={()=>void copyJobId(job.id)}>{copiedId===job.id?<Check/>:<Copy/>}</button><span aria-hidden="true">·</span><span>{device}</span></small></span>
+    <span className="kind" role="cell" data-label="类型">{job.kind.toUpperCase()}</span>
+    <span className={`status ${job.state}`} role="cell" data-label="状态">{stopping?'正在安全停止':stateLabels[job.state]}</span>
+    <span className="created" role="cell" data-label="创建">{formatLocalDateTime(job.created_at)}</span>
+    <span className="elapsed" role="cell" data-label="耗时">{elapsed(job,now)}<small>{(job.attempts||0)>1?`${job.attempts} 次尝试`:'实际处理'}</small></span>
+    <span className="job-progress-cell" role="cell" data-label="进度"><span className="progress-summary">{live.percent}%{live.estimated?' 估算':''} · {stageLabel}</span>{['queued','running'].includes(job.state)?<progress max={100} value={live.percent} aria-label={`${job.display_name} 任务进度 ${live.percent}%`}/>:null}{failure?<small className="job-failure-summary"><b>{failure.title}</b><span>{failure.advice}</span></small>:null}{live.detail?<small className="progress-activity">{live.detail}</small>:null}{estimate?<small className="queue-estimate">{estimate}</small>:null}</span>
+    <span className="actions" role="cell">{job.state==='succeeded'?<button title="查看结果" aria-label={`查看任务结果 ${job.display_name}`} onClick={()=>openJob(job)}><Eye/></button>:null}{job.state==='failed'?<button title="查看失败详情" aria-label={`查看失败详情 ${job.display_name}`} onClick={()=>setFailureDetails(job)}><CircleAlert/></button>:null}{['queued','running'].includes(job.state)?<button title={stopping?'正在安全停止':'取消任务'} aria-label={stopping?`正在安全停止 ${job.display_name}`:`取消任务 ${job.display_name}`} disabled={stopping} onClick={()=>void cancelJob(job)}>{stopping?<LoaderCircle className="spin"/>:<XCircle/>}</button>:null}{['failed','cancelled'].includes(job.state)?<button title="重试" aria-label={`重试任务 ${job.display_name}`} onClick={()=>void act(()=>api.retry(job.id))}><RotateCcw/></button>:null}{canDelete?<button title="永久删除" aria-label={`永久删除任务 ${job.display_name}`} disabled={busy} onClick={()=>void remove([job.id])}><Trash2/></button>:null}</span>
    </div>
   })}{loading&&!items.length?<div className="jobs-loading" role="status"><LoaderCircle className="spin"/>正在加载任务…</div>:!loading&&!items.length?<div className="jobs-empty"><p>{hasFilters?'没有匹配的任务':'还没有任务'}</p><span>{hasFilters?'请调整类型、状态或搜索条件。':'提交音频转写或语音合成后，任务会显示在这里。'}</span></div>:null}</div>
   {total>0?<nav className="job-pagination" aria-label="任务分页"><span>第 {currentPage} / {Math.ceil(total/query.limit)} 页 · 共 {total} 条</span><div><button aria-label="第一页" disabled={currentPage===1} onClick={()=>goToPage(1)}><ChevronsLeft/></button><button aria-label="上一页" disabled={currentPage===1} onClick={()=>goToPage(currentPage-1)}><ChevronLeft/></button>{pages.map((value,index)=><span key={value} className={`page-number-slot ${value===currentPage?'current':''}`}>{index>0&&value-pages[index-1]>1?<i aria-hidden="true">…</i>:null}<button aria-label={`第 ${value} 页`} aria-current={value===currentPage?'page':undefined} className={value===currentPage?'active':''} onClick={()=>goToPage(value)}>{value}</button></span>)}<button aria-label="下一页" disabled={currentPage===totalPages} onClick={()=>goToPage(currentPage+1)}><ChevronRight/></button><button aria-label="最后一页" disabled={currentPage===totalPages} onClick={()=>goToPage(totalPages)}><ChevronsRight/></button></div></nav>:null}
   {pendingDelete.length?<ConfirmDialog title="永久删除任务" description={`永久删除选中的 ${deleteTargets.length} 个任务？${queuedDeletes?`其中 ${queuedDeletes} 个排队任务会先取消。`:''} 输入、输出、临时文件和数据库记录都将被清除，且不可恢复。`} confirmLabel="永久删除" danger busy={busy} onClose={()=>setPendingDelete([])} onConfirm={()=>void confirmRemove()}/>:null}
+  {failureDetails?<Modal title="任务失败详情" closeLabel="关闭失败详情" onClose={()=>setFailureDetails(undefined)}><div className="failure-details"><h3>{jobFailurePresentation(failureDetails).title}</h3><p>{jobFailurePresentation(failureDetails).advice}</p><dl><div><dt>任务</dt><dd>{failureDetails.display_name}</dd></div><div><dt>错误码</dt><dd><code>{failureDetails.error_code||'UnknownError'}</code></dd></div></dl><label>技术详情<textarea readOnly value={failureDetails.error_message||'服务未提供更多错误信息。'}/></label><div className="modal-actions"><button className="button" onClick={()=>setFailureDetails(undefined)}>关闭</button></div></div></Modal>:null}
  </section>
 }

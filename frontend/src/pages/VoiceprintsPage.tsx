@@ -192,7 +192,7 @@ export function VoiceprintsPage({
       ) : null}
       <div className="voiceprint-layout">
         <aside className="people-panel">
-          <button className="create-person-button" disabled={busy||microphoneActive} onClick={openCreate}>
+          <button className="create-person-button" disabled={state!=='ready'||busy||microphoneActive} onClick={openCreate}>
             <Plus size={17}/>新建人员
           </button>
           <ResourceStatePanel state={state} loadingLabel="正在加载声纹人员…" errorLabel="声纹库加载失败。" retry={()=>void refresh()}/>
@@ -213,16 +213,7 @@ export function VoiceprintsPage({
                 </span>
               </button>
             ))
-          ) : state==='ready' ? (
-            <div className="empty small">
-              <Fingerprint />
-              <p>
-                还没有人员
-                <br />
-                可在这里创建，或从 ASR 段落加入
-              </p>
-            </div>
-          ):null}
+          ) : null}
         </aside>
         <section className="samples-panel">
           {selected ? (
@@ -523,7 +514,7 @@ export function VoiceprintsPage({
               <h2>先创建一个人员</h2>
               <p>在左侧输入人员名称并点击创建；之后可上传文件、直接录音，或从 ASR 结果加入样本。</p>
             </div>
-          ):<div className="empty voiceprint-guide"><Fingerprint/><h2>正在准备声纹库</h2></div>}
+          ):state==='loading'?<div className="empty voiceprint-guide" role="status"><Fingerprint/><h2>正在准备声纹库</h2><p>加载完成后即可创建人员并管理声纹样本。</p></div>:<div className="empty voiceprint-guide" role="alert"><Fingerprint/><h2>声纹库暂不可用</h2><p>加载失败，请重试后再创建或编辑人员。</p><button className="button" onClick={()=>void refresh()}>重新加载</button></div>}
         </section>
       </div>
       {editorMode?<Modal title={editorMode==='create'?'新建声纹人员':'编辑声纹人员'} closeLabel="关闭人员编辑" onClose={()=>setEditorMode(undefined)}><p>名字会用于声纹匹配标签；备注最多 20 字。后续修改不会重写历史任务。</p><label>名字（必填）<input value={personName} maxLength={80} autoFocus onChange={event=>setPersonName(event.target.value)}/></label><label>备注（选填）<input value={personNote} maxLength={20} placeholder="例如：外号、手机号、公司名称" onChange={event=>setPersonNote(event.target.value)}/><small>{personNote.trim().length} / 20 字</small></label><label className="toggle-label person-hotword-toggle"><input type="checkbox" checked={includeInHotwordLibrary} onChange={event=>setIncludeInHotwordLibrary(event.target.checked)}/><span>加入热词库</span><small>开启后，名字会自动同步到系统词表“声纹库人名”。</small></label><div className="modal-actions"><button className="button" disabled={busy} onClick={()=>setEditorMode(undefined)}>取消</button><button className="primary" disabled={busy||!personName.trim()||personNote.trim().length>20} onClick={savePerson}>{busy?'正在保存…':'保存人员'}</button></div></Modal>:null}

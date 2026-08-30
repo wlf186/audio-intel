@@ -96,6 +96,13 @@ curl -I https://modelscope.cn
 - 停止失败时任务会保持 `cancelling` 并继续重试，避免残留进程仍在写文件。查看 `./service.sh logs all`，并用 `nvidia-smi` 确认是否存在项目外的 GPU 进程。
 - `AUDIO_INTEL_CANCEL_GRACE_SECONDS` 可调整协作退出窗口；降低它会更早强制停止，通常保持默认值 `1` 即可。
 
+## 任务完成后内存没有立即下降
+
+- ASR/TTS 执行器会在连续任务和短暂突发之间复用。只有同类队列已经排空时才开始空闲计时；默认 60 秒内出现新任务会取消计时并继续复用，不会为了回收内存跳过或延迟已排队任务。
+- TTS CPU 会在该窗口内保留当前 checkpoint；切换 checkpoint 或改用 GPU 时先清理旧 CPU 模型。TTS GPU checkpoint 逐任务释放，但 CUDA context 会随空闲执行器一起回收。ASR 的主模型和 ForcedAligner 逐阶段退出，空闲回收主要归还 VAD、CAM++ 和科学计算库的进程高水位。
+- 空闲窗口结束后，`run/asr-executor.json` 或 `run/tts-executor.json` 中的 PID 应变化，旧 PID 及其后代必须全部退出；监督器 PID、排队任务、API 和浏览器会话保持不变。新执行器未处理任务时不会被周期性重复重建。
+- `AUDIO_INTEL_EXECUTOR_IDLE_SECONDS` 可调整窗口，设为 `0` 表示队列排空后立即回收；修改环境后需按当前部署模式重启服务。若持续空闲后 PID 未变化，查看 `./service.sh logs all`，不要手工杀死执行器或删除 `run/` 元数据。
+
 ## 多人会议被合并为同一说话人
 
 - 支持 ForcedAligner 的语言会按字词时间戳把长 ASR 块重新切成说话人轮次；选择“仅句级时间戳”也会在内部完成对齐，不会返回字词明细。

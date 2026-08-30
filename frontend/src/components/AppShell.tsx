@@ -19,7 +19,7 @@ export function AppShell({page,setPage,children,health,systemError,connectionErr
   return()=>cancelAnimationFrame(frame)
  },[page])
  const phase=systemPhase(health,systemError)
- const mode=phase==='checking'?{tone:'checking' as const,full:'OFFLINE_MODE // CHECKING',compact:'LOCAL CHECK',label:'正在检查本地离线模式'}:phase==='error'?{tone:'error' as const,full:'LOCAL_CORE // DISCONNECTED',compact:'LOCAL DOWN',label:'本地服务连接中断'}:health?.offline?{tone:'ready' as const,full:'OFFLINE_MODE // ACTIVE',compact:'LOCAL ACTIVE',label:'本地服务已连接，离线推理模式已启用'}:{tone:'warning' as const,full:'OFFLINE_MODE // INACTIVE',compact:'LOCAL INACTIVE',label:'本地服务已连接，离线推理模式未启用'}
+ const mode=phase==='checking'?{tone:'checking' as const,full:'OFFLINE_MODE // CHECKING',compact:'检查中',label:'正在检查本地离线模式'}:phase==='error'?{tone:'error' as const,full:'LOCAL_CORE // DISCONNECTED',compact:'连接中断',label:'本地服务连接中断'}:health?.offline?{tone:'ready' as const,full:'OFFLINE_MODE // ACTIVE',compact:'本地可用',label:'本地服务已连接，离线推理模式已启用'}:{tone:'warning' as const,full:'OFFLINE_MODE // INACTIVE',compact:'离线未启用',label:'本地服务已连接，离线推理模式未启用'}
  const engine=(kind:string)=>phase==='checking'?{tone:'checking' as const,value:'CHECKING'}:phase==='error'?{tone:'error' as const,value:'UNKNOWN'}:health?.services.includes(kind)?{tone:'ready' as const,value:'READY'}:{tone:'offline' as const,value:'OFFLINE'}
  const asr=engine('asr'),tts=engine('tts')
  const dataLocal=phase==='checking'?{tone:'checking' as const,value:'CHECKING'}:phase==='error'?{tone:'error' as const,value:'UNKNOWN'}:health?.offline&&health.storage.data?{tone:'ready' as const,value:'READY'}:{tone:'warning' as const,value:'UNVERIFIED'}

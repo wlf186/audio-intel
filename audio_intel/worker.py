@@ -118,11 +118,9 @@ def _run_one_job(
         )
         state = "succeeded"
     except JobCancelled as exc:
-        _fail_voiceprint_import(job, str(exc))
-        finish_job(
-            job_id, "cancelled", stage="cancelled", error_code="cancelled",
-            error_message=str(exc), heartbeat_at=utcnow(),
-        )
+        # The supervisor owns terminal cancellation. Keeping the row running here
+        # ensures clients cannot observe ``cancelled`` before this executor and
+        # every stage child have exited.
         state = "cancelled"
     except Exception as exc:
         _fail_voiceprint_import(job, str(exc))
@@ -251,17 +249,61 @@ def _spawn_executor(kind: str, worker_id: str, worker_pid: int) -> tuple[Any, An
     return process, parent_connection
 
 
+def _retire_idle_executor(kind: str, process: Any, connection: Any) -> None:
+    descendants: list[int] = []
+    try:
+        descendants = [child.pid for child in psutil.Process(process.pid).children(recursive=True)]
+    except (psutil.NoSuchProcess, psutil.ZombieProcess, psutil.AccessDenied):
+        pass
+    try:
+        connection.send(None)
+    except (BrokenPipeError, EOFError, OSError):
+        pass
+    try:
+        connection.close()
+    except (BrokenPipeError, EOFError, OSError):
+        pass
+    process.join(timeout=EXECUTOR_TERMINATE_SECONDS)
+    remaining = _terminate_remaining(descendants)
+    if process.is_alive():
+        remaining.extend(_terminate_process_tree(process.pid))
+    remaining = list(dict.fromkeys(remaining))
+    while remaining:
+        time.sleep(0.25)
+        remaining = _terminate_remaining(remaining)
+    process.join(timeout=0.1)
+    _executor_metadata_path(kind).unlink(missing_ok=True)
+
+
 def _forced_cancel(job: dict[str, Any]) -> None:
     current = get_job(job["id"])
     if current is None or current["state"] != "running":
         return
-    message = "Job force-stopped after cancellation request"
+    message = "Job cancelled after the execution process tree stopped"
     _fail_voiceprint_import(current, message)
     finish_job(
         job["id"], "cancelled", stage="cancelled", error_code="cancelled",
         error_message=message, heartbeat_at=utcnow(),
     )
     shutil.rmtree(settings.temp_dir / job["id"], ignore_errors=True)
+
+
+def _complete_cancelled_executor(
+    kind: str, process: Any, connection: Any, job: dict[str, Any],
+) -> None:
+    remaining_processes = _terminate_process_tree(process.pid)
+    while remaining_processes:
+        update_job(
+            job["id"], stage="cancelling",
+            error_message=f"Waiting for worker processes to stop: {remaining_processes}",
+            heartbeat_at=utcnow(),
+        )
+        time.sleep(0.25)
+        remaining_processes = _terminate_remaining(remaining_processes)
+    process.join(timeout=0.1)
+    _forced_cancel(job)
+    connection.close()
+    _executor_metadata_path(kind).unlink(missing_ok=True)
 
 
 def run(kind: str) -> None:
@@ -285,6 +327,8 @@ def run(kind: str) -> None:
     current_job: dict[str, Any] | None = None
     next_heartbeat = 0.0
     remaining_processes: list[int] = []
+    executor_dirty = False
+    idle_since: float | None = None
 
     try:
         while not stop:
@@ -308,14 +352,33 @@ def run(kind: str) -> None:
                 time.sleep(min(settings.worker_poll_seconds, 0.5))
                 process, connection = _spawn_executor(kind, worker_id, worker_pid)
                 current_job = None
+                executor_dirty = False
+                idle_since = None
                 upsert_worker(worker_id, kind, worker_pid, "idle", details={"executor_pid": process.pid})
 
             if current_job is None:
                 current_job = claim_job(kind, worker_id)
                 if current_job is None:
+                    if executor_dirty:
+                        now = time.monotonic()
+                        if idle_since is None:
+                            idle_since = now
+                        if now - idle_since >= settings.executor_idle_seconds:
+                            _retire_idle_executor(kind, process, connection)
+                            if stop:
+                                break
+                            process, connection = _spawn_executor(kind, worker_id, worker_pid)
+                            executor_dirty = False
+                            idle_since = None
+                            upsert_worker(
+                                worker_id, kind, worker_pid, "idle",
+                                details={"executor_pid": process.pid},
+                            )
+                            continue
                     upsert_worker(worker_id, kind, worker_pid, "idle", details={"executor_pid": process.pid})
                     time.sleep(settings.worker_poll_seconds)
                     continue
+                idle_since = None
                 upsert_worker(
                     worker_id, kind, worker_pid, "busy", current_job["id"],
                     {"stage": "starting", "executor_pid": process.pid},
@@ -329,7 +392,20 @@ def run(kind: str) -> None:
                 except EOFError:
                     continue
                 if completed.get("job_id") == current_job["id"]:
+                    if completed.get("state") == "cancelled":
+                        _complete_cancelled_executor(kind, process, connection, current_job)
+                        process, connection = _spawn_executor(kind, worker_id, worker_pid)
+                        current_job = None
+                        executor_dirty = False
+                        idle_since = None
+                        upsert_worker(
+                            worker_id, kind, worker_pid, "idle",
+                            details={"executor_pid": process.pid},
+                        )
+                        continue
                     current_job = None
+                    executor_dirty = True
+                    idle_since = None
                     upsert_worker(worker_id, kind, worker_pid, "idle", details={"executor_pid": process.pid})
                 continue
 
@@ -352,6 +428,7 @@ def run(kind: str) -> None:
                 continue
 
             cooperative_deadline = time.monotonic() + max(0.0, settings.cancel_grace_seconds)
+            cooperative_cancelled = False
             while time.monotonic() < cooperative_deadline and process.is_alive():
                 if connection.poll(WORKER_MONITOR_SECONDS):
                     try:
@@ -359,7 +436,11 @@ def run(kind: str) -> None:
                     except EOFError:
                         break
                     if completed.get("job_id") == current["id"]:
-                        current_job = None
+                        cooperative_cancelled = completed.get("state") == "cancelled"
+                        if not cooperative_cancelled:
+                            current_job = None
+                            executor_dirty = True
+                            idle_since = None
                         break
                 latest = get_job(current["id"])
                 if latest is None or latest["state"] != "running":
@@ -369,23 +450,11 @@ def run(kind: str) -> None:
                 upsert_worker(worker_id, kind, worker_pid, "idle", details={"executor_pid": process.pid})
                 continue
 
-            remaining_processes = _terminate_process_tree(process.pid)
-            while remaining_processes and not stop:
-                update_job(
-                    current["id"], stage="cancelling",
-                    error_message=f"Waiting for worker processes to stop: {remaining_processes}",
-                    heartbeat_at=utcnow(),
-                )
-                time.sleep(0.25)
-                remaining_processes = _terminate_remaining(remaining_processes)
-            if remaining_processes:
-                continue
-            process.join(timeout=0.1)
-            _forced_cancel(current)
-            connection.close()
-            _executor_metadata_path(kind).unlink(missing_ok=True)
+            _complete_cancelled_executor(kind, process, connection, current)
             process, connection = _spawn_executor(kind, worker_id, worker_pid)
             current_job = None
+            executor_dirty = False
+            idle_since = None
             upsert_worker(worker_id, kind, worker_pid, "idle", details={"executor_pid": process.pid})
     finally:
         try:

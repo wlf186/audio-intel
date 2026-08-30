@@ -23,6 +23,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - `.complete` 必须包含固定模型 revision。旧的空 marker 会在 setup 时被判定为无效并修复。
 - TTS 安装现在同时创建独立 aligner 环境；不要复用旧 TTS 环境中的 qwen-asr。
 - ASR/TTS worker 现在由监督器管理可重启执行器，`setup all` 会将进程树管理所需的 `psutil` 同步到两个模型环境。启动时会校验并清理可信的遗留执行器元数据，再恢复中断任务。
+- ASR/TTS 执行器现在只在同类队列有连续任务时保持热状态；队列排空并默认空闲 60 秒后会安全重建，以归还 VAD、CAM++、TTS CPU checkpoint 和 CUDA context 的进程高水位。可用 `AUDIO_INTEL_EXECUTOR_IDLE_SECONDS` 调整，`0` 表示立即回收。监督器、FIFO、任务状态、API、数据库和浏览器会话均不变。
 - Linux `service.sh` 的 `start` 现在将各组件放入独立会话和进程组，记录真实服务 PID，可在普通终端、调用脚本或其进程组退出后继续后台运行；容器或平台按 cgroup 管理生命周期时仍应使用 `run` 前台动作。`restart` 会先预检，再清理旧的完整进程树，停止失败时返回非零且不启动新实例。启动就绪检查、PID 身份校验和目录覆盖行为保持兼容；不涉及 HTTP API、数据库或原生 Windows 行为变更。
 - 原生 Windows `service.cmd` 的动作保持不变；`start`/`restart` 现在等待 API 与 worker 真正就绪，`stop` 校验 PID 身份并清理完整进程树。已有 `AUDIO_INTEL_*_DIR` 覆盖也会用于日志和 PID 等生命周期状态，不涉及 HTTP API 或数据库迁移。
 - 原生 ASR/TTS API、OpenAI 兼容音频端点和提交页现在默认启用 `accelerate_single_task`。依赖旧版 batch 1 默认行为的客户端必须显式传入 `false`；模型、精度、ASR 分块与说话人语义不变。
@@ -40,6 +41,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - ASR 新增 1.7B 模型选择和热词库。默认仍是 0.6B；旧客户端省略 `model` 和 `hotword_list_ids` 时行为不变。`setup asr/all` 会额外下载固定 revision、当前约 4.4 GiB 的 1.7B 权重。GPU 按标称 4/8 GiB 档位并扣除 256 MiB 报告容差判断，因此 0.6B/1.7B 的实际门槛分别是 3840/7936 MiB，判断口径是报告的总显存而非当前空闲显存。门槛只决定准入，不保证其他 GPU 程序不会造成运行期 OOM。
 - Capabilities 新增 `asr.default_model`、`asr.models[]` 和 `asr.hotword_library`，ASR 结果新增模型身份与 `hotword_context`。这些都是兼容性扩展；严格反序列化客户端应先允许新字段，并按 `asr.models[].compute_devices` 判断所选模型，而不是继续使用只代表默认模型的顶层 `asr.compute_devices`。
 - 声纹库新增浏览器麦克风录音入口，继续复用现有样本上传 API，不新增数据库字段或迁移。远程普通 HTTP 访问仍可能被浏览器拒绝麦克风权限，可继续使用文件上传。
+- Web UI 改进长转写渐进加载、可键盘操作的波形定位、失败任务本地化详情、资源加载失败隔离、模型状态分组和页面导航滚动复位；不改变 API、数据库或浏览器存储生命周期。
 
 ## 升级后验证
 

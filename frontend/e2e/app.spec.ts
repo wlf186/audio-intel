@@ -36,6 +36,7 @@ test('summary SSE stays idle and task details load once with retry states',async
  await expect(page.getByRole('heading',{name:'转写结果加载失败'})).toBeVisible()
  await page.getByRole('button',{name:'重新加载'}).click()
  await expect(page.locator('.result-head')).toContainText('按需详情.wav')
+ await expect(page.locator('.waveform-empty')).toHaveAttribute('aria-label','音频播放位置')
  await page.evaluate(job=>{const target=window as typeof window&{emitJobEvent:(name:string,data:unknown)=>void};target.emitJobEvent('snapshot',{jobs:[job],workers:[]});target.emitJobEvent('heartbeat',{})},summary)
  await page.waitForTimeout(5200)
  expect(jobsCalls).toBe(1)
@@ -253,9 +254,15 @@ test('ASR playback, seek and transcript search are interactive',async({page})=>{
  expect(paused).toBe(true)
  await expect(clock).not.toHaveText('00:00:00.000')
  const waveform=page.locator('.wave-area canvas')
+ await expect(waveform).toHaveAttribute('role','slider')
  const duration=await page.locator('audio').evaluate((element:HTMLAudioElement)=>element.duration)
  await waveform.click({position:{x:Math.max(5,(await waveform.boundingBox())!.width*.7),y:25}})
  await expect.poll(async()=>page.locator('audio').evaluate((element:HTMLAudioElement)=>element.currentTime)).toBeGreaterThan(duration*.5)
+ await waveform.focus()
+ await page.keyboard.press('Home')
+ await expect.poll(async()=>page.locator('audio').evaluate((element:HTMLAudioElement)=>element.currentTime)).toBeLessThan(.1)
+ await page.keyboard.press('End')
+ await expect.poll(async()=>page.locator('audio').evaluate((element:HTMLAudioElement)=>element.currentTime)).toBeGreaterThan(duration*.9)
  await page.locator('.transcript-tools input').fill('不存在的内容')
  await expect(page.locator('.segments article')).toHaveCount(0)
  await expect(page.getByText('没有匹配的转写片段')).toBeVisible()
@@ -366,6 +373,20 @@ test('hotword library supports create and mobile layout without overflow',async(
  expect(errors).toEqual([])
 })
 
+test('partial library failures stay local and keep editors unavailable',async({page})=>{
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{hotword_library:{supported:true,max_lists:100,max_terms_per_list:200,max_selected_lists:8,max_selected_terms:500,max_prompt_chars:8000,max_name_chars:80,max_term_chars:64},speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
+ await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({status:503,json:{detail:'voiceprints unavailable'}}))
+ await page.route('**/api/v1/asr/hotword-lists*',route=>route.fulfill({status:503,json:{detail:'hotwords unavailable'}}))
+ await page.goto('/#voiceprints')
+ await expect(page.getByRole('heading',{name:'声纹库暂不可用'})).toBeVisible()
+ await expect(page.getByRole('button',{name:'新建人员'})).toBeDisabled()
+ await expect(page.locator('.connection-banner')).toHaveCount(0)
+ await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'热词库'}).click()
+ await expect(page.getByRole('heading',{name:'编辑器暂不可用'})).toBeVisible()
+ await expect(page.getByLabel('场景名称')).toHaveCount(0)
+ await expect(page.locator('.connection-banner')).toHaveCount(0)
+})
+
 test('voiceprint metadata synchronizes a read-only system hotword list',async({page})=>{
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
@@ -474,6 +495,11 @@ test('navigation and mobile layout render without overflow',async({page})=>{
  await expect.poll(()=>page.locator('.app-shell>header').evaluate(element=>Math.round(element.getBoundingClientRect().top))).toBe(0)
  await mobileNavigation.getByRole('button',{name:'系统状态'}).click()
  await expect(page.getByRole('heading',{name:'系统状态',exact:true})).toBeVisible()
+ await expect.poll(()=>page.evaluate(()=>Math.round(window.scrollY))).toBe(0)
+ await expect(page.locator('.local-mode .compact-label')).toHaveText('本地可用')
+ await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight))
+ await mobileNavigation.getByRole('button',{name:'系统状态'}).click()
+ await expect.poll(()=>page.evaluate(()=>Math.round(window.scrollY))).toBe(0)
  await expect(page.getByRole('link',{name:'API 文档'})).toBeVisible()
  await page.screenshot({path:'/tmp/audio-intel-after-mobile.png',fullPage:false})
 })
@@ -559,7 +585,7 @@ test('desktop submit actions remain visible and voiceprint model controls reflow
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  const now=new Date().toISOString()
  await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[{id:'voice_layout',name:'布局测试',sample_count:0,samples:[],created_at:now,updated_at:now}]}}))
- const expectInsideMain=async(name:string)=>{const button=page.getByRole('button',{name});await button.scrollIntoViewIfNeeded();await expect(button).toBeVisible();expect(await button.evaluate(element=>{const box=element.getBoundingClientRect();const main=element.closest('main')!.getBoundingClientRect();return box.top>=main.top&&box.bottom<=main.bottom})).toBe(true)}
+ const expectInsideMain=async(name:string)=>{const button=page.getByRole('button',{name});await expect(button).toBeVisible();expect(await button.evaluate(element=>{const box=element.getBoundingClientRect();const main=element.closest('main')!.getBoundingClientRect();return box.top>=main.top&&box.bottom<=main.bottom})).toBe(true)}
  const expectNoControlOverlap=async(scope:string)=>expect(await page.locator(scope).evaluate(element=>{const action=element.querySelector('.submission-actions')!.getBoundingClientRect();const controls=[...element.querySelectorAll('select,.acceleration-control')].map(control=>control.getBoundingClientRect());return controls.every(control=>control.bottom<=action.top||control.top>=action.bottom)})).toBe(true)
  await page.setViewportSize({width:1440,height:900})
  await page.goto('/#asr')
@@ -582,11 +608,15 @@ test('desktop submit actions remain visible and voiceprint model controls reflow
 })
 
 test('system worker state and heartbeat use Chinese local presentation',async({page})=>{
- await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',version:'test',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[{id:'asr-worker',kind:'asr',state:'idle',heartbeat_at:'2026-08-27T10:42:05Z'}],hardware:{},models:[],storage:{data:'/tmp/data'}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',version:'test',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[{id:'asr-worker',kind:'asr',state:'idle',heartbeat_at:'2026-08-27T10:42:05Z'}],hardware:{cpu_percent:25,memory_used:8589934592,memory_total:17179869184,disk_used:10737418240,disk_total:42949672960},models:[{name:'Qwen3-ASR-0.6B',device:'CPU',installed:false,state:'missing',revision:'r1',missing_files:['model.safetensors'],path:'/models/asr'},{name:'Qwen3-TTS-0.6B',device:'CPU',installed:true,state:'installed',revision:'r2',missing_files:[],path:'/models/tts'}],storage:{data:'/tmp/data'}}}))
  await page.goto('/#system')
  const worker=page.locator('.worker-list')
  await expect(worker).toContainText('空闲')
  await expect(worker).not.toContainText('2026-08-27T10:42:05Z')
+ await expect(page.getByRole('progressbar',{name:'项目磁盘'})).toHaveAttribute('aria-valuenow','25')
+ await expect(page.locator('.resource-card').filter({hasText:'项目磁盘'})).toContainText('10 / 40 GB')
+ await expect(page.locator('.model-group').filter({hasText:'ASR 与公共组件'})).toHaveAttribute('open','')
+ await expect(page.locator('.model-group').filter({hasText:'TTS'})).not.toHaveAttribute('open','')
  await expect(page.getByRole('link',{name:'API 文档',exact:true})).toHaveAttribute('href','/docs')
 })
 
@@ -710,7 +740,7 @@ test('shell status reflects system checks, bind changes and recovery',async({pag
  await expect(page.locator('.local-mode')).toContainText('OFFLINE_MODE // ACTIVE',{timeout:5000})
  await page.screenshot({path:'/tmp/audio-intel-status-desktop.png',fullPage:false})
  await page.setViewportSize({width:390,height:844})
- await expect(page.locator('.local-mode .compact-label')).toHaveText('LOCAL ACTIVE')
+ await expect(page.locator('.local-mode .compact-label')).toHaveText('本地可用')
  await expect(page.locator('footer')).not.toBeVisible()
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
  await page.screenshot({path:'/tmp/audio-intel-status-mobile.png',fullPage:false})
@@ -915,7 +945,7 @@ test('task duration, single/multi/select-all and partial batch deletion are inte
  const jobs=[
   {id:'asr-completed',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'已完成转写',created_at:now,updated_at:now,started_at:now,finished_at:now,processing_seconds:3661,processing_as_of:now,attempts:1,compute_device:'gpu',compute_device_name:'NVIDIA RTX A1000 Laptop GPU',request:{compute_device:'gpu',compute_device_name:'NVIDIA RTX A1000 Laptop GPU'},result:{compute_device:'gpu',compute_device_name:'NVIDIA RTX A1000 Laptop GPU'}},
   {id:'asr-queued',kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'排队转写',created_at:now,updated_at:now,processing_seconds:0,processing_as_of:now,attempts:0,request:{compute_device:'cpu'}},
-  {id:'tts-failed',kind:'tts',state:'failed',stage:'failed',progress:.4,display_name:'失败合成',created_at:now,updated_at:now,started_at:now,finished_at:now,processing_seconds:61,processing_as_of:now,attempts:2,request:{compute_device:'cpu'}},
+  {id:'tts-failed',kind:'tts',state:'failed',stage:'failed',progress:.4,display_name:'失败合成',created_at:now,updated_at:now,started_at:now,finished_at:now,processing_seconds:61,processing_as_of:now,attempts:2,error_code:'OutOfMemoryError',error_message:'CUDA out of memory while allocating 512 MiB',request:{compute_device:'cpu'}},
   {id:'tts-running',kind:'tts',state:'running',stage:'synthesizing',progress:.537,display_name:'运行中合成',created_at:now,updated_at:now,started_at:now,processing_seconds:5,processing_as_of:now,attempts:1,request:{compute_device:'gpu'},progress_detail:{stage_code:'synthesis',stage_progress:.537,basis:'estimated',current:1,total:3,unit:'text_chunk',activity:{sequence:2,current:41,total:90,unit:'codec_frame',basis:'estimated',updated_at:now}}},
  ]
  let submitted:string[]=[]
@@ -932,6 +962,18 @@ test('task duration, single/multi/select-all and partial batch deletion are inte
  await expect(page.getByLabel('选择任务 运行中合成')).toBeDisabled()
  await expect(page.getByText('54% 估算')).toBeVisible()
  await expect(page.getByText('当前批次 41/90 codec 帧（总量估算）')).toBeVisible()
+ const failedRow=page.locator('.table-row').filter({hasText:'失败合成'})
+ await expect(failedRow.getByText('显存或内存不足')).toBeVisible()
+ await expect(failedRow.getByRole('cell')).toHaveCount(7)
+ await expect(failedRow.getByRole('rowheader')).toHaveCount(1)
+ const failureButton=page.getByRole('button',{name:'查看失败详情 失败合成'})
+ await failureButton.click()
+ const failureDialog=page.getByRole('dialog',{name:'任务失败详情'})
+ await expect(failureDialog).toContainText('OutOfMemoryError')
+ await expect(failureDialog.getByRole('textbox',{name:'技术详情'})).toHaveValue('CUDA out of memory while allocating 512 MiB')
+ await page.keyboard.press('Escape')
+ await expect(failureDialog).toHaveCount(0)
+ await expect(failureButton).toBeFocused()
  const header=page.getByLabel('全选当前页可操作任务')
  await page.getByLabel('选择任务 已完成转写').check()
  expect(await header.evaluate((element:HTMLInputElement)=>element.indeterminate)).toBe(true)
@@ -1388,7 +1430,7 @@ test('task lists stay newest-first and retain an older selected task',async({pag
  expect(errors).toEqual([])
 })
 
-test('long mobile transcripts scroll inside the bounded result panel',async({page})=>{
+test('long mobile transcripts render progressively and pass scroll at boundaries',async({page})=>{
  const now='2026-08-25T12:00:00+00:00'
  const segments=Array.from({length:220},(_,id)=>({id,start:id*2,end:id*2+1.8,speaker:`Speaker_${id%3}`,speaker_label:`Speaker ${id%3}`,text:`第 ${id+1} 条会议转写内容，用于验证长列表内部滚动。`}))
  const result={text:segments.map(item=>item.text).join(''),language:'Chinese',duration:440,timestamp_precision:'segment',speakers:Array.from({length:3},(_,id)=>({id:`Speaker_${id}`,label:`Speaker ${id}`})),segments,waveform:[.2,.5,.3],artifacts:[]}
@@ -1399,7 +1441,12 @@ test('long mobile transcripts scroll inside the bounded result panel',async({pag
  await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[]}}))
  await page.setViewportSize({width:390,height:844})
  await page.goto('/#asr')
- await expect(page.locator('.segments article')).toHaveCount(220)
+ await expect(page.locator('.segments article')).toHaveCount(40)
+ await expect(page.getByText('已展示 40 / 匹配 220 / 总计 220')).toBeVisible()
+ const loadMore=page.getByRole('button',{name:'加载更多'})
+ await expect(loadMore).toHaveCount(1)
+ await loadMore.dispatchEvent('click')
+ await expect(page.locator('.segments article')).toHaveCount(80)
  await page.locator('.result-panel').evaluate(element=>element.scrollIntoView({block:'start'}))
  await expect(page.locator('.result-panel')).toBeInViewport()
  await page.waitForTimeout(50)
@@ -1408,7 +1455,20 @@ test('long mobile transcripts scroll inside the bounded result panel',async({pag
  expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight*10)
  expect(await page.evaluate(()=>document.documentElement.scrollHeight)).toBeLessThan(3000)
  await page.locator('.segments').evaluate(element=>{element.scrollTop=element.scrollHeight})
- await expect(page.getByText('第 220 条会议转写内容，用于验证长列表内部滚动。')).toBeInViewport()
+ await expect.poll(()=>page.locator('.segments article').count()).toBeGreaterThan(80)
+ await page.locator('.transcript-tools input').fill('第 220 条会议转写内容')
+ await expect(page.locator('.segments article')).toHaveCount(1)
+ await expect(page.getByText('第 220 条会议转写内容，用于验证长列表内部滚动。')).toBeVisible()
+ await page.locator('.transcript-tools input').fill('')
+ await expect(page.locator('.segments article')).toHaveCount(40)
+ await page.locator('.result-panel').evaluate(element=>element.scrollIntoView({block:'start'}))
+ await page.locator('.segments').evaluate(element=>{element.scrollTop=0})
+ const outerBefore=await page.evaluate(()=>window.scrollY)
+ expect(outerBefore).toBeGreaterThan(0)
+ await page.locator('.segments').hover()
+ await page.mouse.wheel(0,-600)
+ await expect.poll(()=>page.evaluate(()=>window.scrollY)).toBeLessThan(outerBefore)
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.locator('.result-panel').evaluate(element=>element.scrollIntoView({block:'start'}))
  await page.screenshot({path:'/tmp/audio-intel-long-transcript-mobile.png',fullPage:false})
 })

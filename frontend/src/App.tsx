@@ -15,7 +15,8 @@ const pages=new Set<Page>(['asr','tts','hotwords','voiceprints','jobs','system']
 const jobLimit=100
 const initialJobHistoryQuery:JobHistoryQuery={kind:'all',state:'all',search:'',limit:25,offset:0}
 function pageFromHash():Page{const value=location.hash.slice(1) as Page;return pages.has(value)?value:'asr'}
-function sameJobSnapshot(current:JobSummary,next:JobSummary){return current.updated_at===next.updated_at&&current.state===next.state&&current.stage===next.stage&&current.progress===next.progress&&current.attempts===next.attempts&&current.error_message===next.error_message&&current.started_at===next.started_at&&current.finished_at===next.finished_at}
+function resetPageScroll(){document.querySelector<HTMLElement>('#main-content')?.scrollTo({top:0,left:0,behavior:'auto'});window.scrollTo({top:0,left:0,behavior:'auto'})}
+function sameJobSnapshot(current:JobSummary,next:JobSummary){return current.updated_at===next.updated_at&&current.state===next.state&&current.stage===next.stage&&current.progress===next.progress&&current.attempts===next.attempts&&current.error_code===next.error_code&&current.error_message===next.error_message&&current.started_at===next.started_at&&current.finished_at===next.finished_at}
 function jobVersion(job:JobSummary){return job.updated_at||job.created_at}
 function summaryOf(job:Job):JobSummary{const {request:_,result:__,...summary}=job;return summary}
 
@@ -27,7 +28,8 @@ export default function App(){
  const [capabilities,setCapabilities]=useState<Capabilities>()
  const [voiceprints,setVoiceprints]=useState<VoiceprintPerson[]>([])
  const [hotwordLists,setHotwordLists]=useState<HotwordList[]>([])
- const [connectionError,setConnectionError]=useState('')
+ const [jobsError,setJobsError]=useState('')
+ const [capabilitiesError,setCapabilitiesError]=useState('')
  const [systemError,setSystemError]=useState('')
  const [auth,setAuth]=useState<AuthSession>()
  const [authError,setAuthError]=useState('')
@@ -41,6 +43,7 @@ export default function App(){
  const [reveal,setReveal]=useState<(ResultRevealRequest&{kind:JobSummary['kind']})>()
  const refreshSequence=useRef(0)
  const revealSequence=useRef(0)
+ const preserveNextHashScroll=useRef(false)
  const detailRef=useRef<Record<string,JobDetailResource>>({})
  const detailRequests=useRef(new Map<string,Promise<Job>>())
  const refreshVoiceprints=useCallback(async()=>{setVoiceprintsState(current=>current==='ready'?'ready':'loading');try{const response=await api.voiceprints();setVoiceprints(response.items);setVoiceprintsState('ready')}catch(error){setVoiceprintsState('error');throw error}},[])
@@ -52,37 +55,38 @@ export default function App(){
  const workspaceJobs=useMemo(()=>newestJobsFirst([...jobs,...Object.values(pinnedJobs).filter((job):job is JobSummary=>Boolean(job)&&!jobs.some(item=>item.id===job.id))]),[jobs,pinnedJobs])
  const updateDetail=useCallback((id:string,resource:JobDetailResource)=>{detailRef.current={...detailRef.current,[id]:resource};setJobDetails(detailRef.current)},[])
  const loadJobDetail=useCallback((summary:JobSummary,force=false)=>{const version=jobVersion(summary);const cached=detailRef.current[summary.id];if(!force&&cached?.version===version&&(cached.state==='ready'||cached.state==='loading'))return;const key=`${summary.id}|${version}`;let request=detailRequests.current.get(key);updateDetail(summary.id,{state:'loading',version});if(!request){request=api.job(summary.id);detailRequests.current.set(key,request);request.finally(()=>detailRequests.current.delete(key)).catch(()=>undefined)}void request.then(job=>updateDetail(summary.id,{state:'ready',version,job})).catch(error=>updateDetail(summary.id,{state:'error',version,error:(error as Error).message}))},[updateDetail])
- const refreshJobs=useCallback(async()=>{if(!authenticated)return;const sequence=++refreshSequence.current;try{const response=await api.jobs();if(sequence===refreshSequence.current){mergeJobs(response.items);setJobsReady(true);setConnectionError('')}}catch(error){if(sequence===refreshSequence.current)setConnectionError((error as Error).message)}},[authenticated,mergeJobs])
+ const refreshJobs=useCallback(async()=>{if(!authenticated)return;const sequence=++refreshSequence.current;try{const response=await api.jobs();if(sequence===refreshSequence.current){mergeJobs(response.items);setJobsReady(true);setJobsError('')}}catch(error){if(sequence===refreshSequence.current)setJobsError((error as Error).message)}},[authenticated,mergeJobs])
  const refreshSystem=useCallback(async()=>{if(!authenticated)return;try{setHealth(await api.system());setSystemError('')}catch(error){setSystemError((error as Error).message)}},[authenticated])
  const refresh=useCallback(async()=>{await Promise.all([refreshJobs(),refreshSystem()])},[refreshJobs,refreshSystem])
  useEffect(()=>{let active=true;void (async()=>{try{const status=await api.auth();const legacy=sessionStorage.getItem('audio-intel:key');if(status.required&&!status.authenticated&&legacy){try{await api.login(legacy);status.authenticated=true}finally{sessionStorage.removeItem('audio-intel:key')}}if(active)setAuth(status)}catch(error){if(active)setAuthError((error as Error).message)}})();const unauthorized=()=>{setJobsReady(false);setAuth(current=>current?{...current,authenticated:false}:{required:true,authenticated:false})};addEventListener('audio-intel:unauthorized',unauthorized);return()=>{active=false;removeEventListener('audio-intel:unauthorized',unauthorized)}},[])
  useEffect(()=>{if(!authenticated)return;void refresh()},[authenticated,refresh])
  useEffect(()=>{if(!authenticated)return;const timer=setInterval(()=>void refreshSystem(),page==='system'?2000:10000);return()=>clearInterval(timer)},[authenticated,page,refreshSystem])
- useEffect(()=>{if(!authenticated||capabilities?.events?.sse!==true){setEventsConnected(false);return}const source=new EventSource(capabilities.events.global_url);const connected=()=>{setEventsConnected(true);setConnectionError('')};const snapshot=(event:MessageEvent<string>)=>{try{const payload=JSON.parse(event.data) as {jobs?:JobSummary[]};if(payload.jobs){mergeJobs(payload.jobs);setJobsReady(true)}connected()}catch{setConnectionError('任务事件格式无效')}};const update=(event:MessageEvent<string>)=>{try{const payload=JSON.parse(event.data) as {jobs?:JobSummary[];removed_job_ids?:string[]};mergeJobUpdates(payload.jobs||[],payload.removed_job_ids||[]);connected()}catch{setConnectionError('任务事件格式无效')}};source.addEventListener('snapshot',snapshot as EventListener);source.addEventListener('update',update as EventListener);source.addEventListener('heartbeat',connected);source.onopen=()=>setEventsConnected(true);source.onerror=()=>setEventsConnected(false);return()=>{source.close();setEventsConnected(false)}},[authenticated,capabilities?.events?.sse,capabilities?.events?.global_url,mergeJobs,mergeJobUpdates])
+ useEffect(()=>{if(!authenticated||capabilities?.events?.sse!==true){setEventsConnected(false);return}const source=new EventSource(capabilities.events.global_url);const connected=()=>{setEventsConnected(true);setJobsError('')};const snapshot=(event:MessageEvent<string>)=>{try{const payload=JSON.parse(event.data) as {jobs?:JobSummary[]};if(payload.jobs){mergeJobs(payload.jobs);setJobsReady(true)}connected()}catch{setJobsError('任务事件格式无效')}};const update=(event:MessageEvent<string>)=>{try{const payload=JSON.parse(event.data) as {jobs?:JobSummary[];removed_job_ids?:string[]};mergeJobUpdates(payload.jobs||[],payload.removed_job_ids||[]);connected()}catch{setJobsError('任务事件格式无效')}};source.addEventListener('snapshot',snapshot as EventListener);source.addEventListener('update',update as EventListener);source.addEventListener('heartbeat',connected);source.onopen=()=>setEventsConnected(true);source.onerror=()=>setEventsConnected(false);return()=>{source.close();setEventsConnected(false)}},[authenticated,capabilities?.events?.sse,capabilities?.events?.global_url,mergeJobs,mergeJobUpdates])
  useEffect(()=>{if(!authenticated||eventsConnected)return;const timer=setInterval(()=>void refreshJobs(),5000);return()=>clearInterval(timer)},[authenticated,eventsConnected,refreshJobs])
  const refreshResources=useCallback(async()=>{
   if(!authenticated)return
   const loadCapabilities=async()=>setCapabilities(await api.capabilities())
   const results=await Promise.allSettled([loadCapabilities(),refreshVoiceprints(),refreshHotwordLists()])
-  const failure=results.find((result):result is PromiseRejectedResult=>result.status==='rejected')
-  setConnectionError(failure?(failure.reason as Error).message:'')
+  const capabilityResult=results[0]
+  setCapabilitiesError(capabilityResult.status==='rejected'?(capabilityResult.reason as Error).message:'')
  },[authenticated,refreshHotwordLists,refreshVoiceprints])
  useEffect(()=>{void refreshResources()},[refreshResources])
  const hasPendingVoiceprint=voiceprints.some(person=>person.samples.some(sample=>sample.state==='pending'))
  useEffect(()=>{if(!hasPendingVoiceprint)return;const timer=setInterval(()=>void refreshVoiceprints(),2000);return()=>clearInterval(timer)},[hasPendingVoiceprint,refreshVoiceprints])
- useEffect(()=>{const onHash=()=>setPage(pageFromHash());addEventListener('hashchange',onHash);return()=>removeEventListener('hashchange',onHash)},[])
- const navigate=(next:Page)=>{setPage(next);if(location.hash!==`#${next}`)location.hash=next}
- const openJob=(job:JobSummary)=>{if(job.state==='succeeded'){setPinnedJobs(current=>({...current,[job.kind]:job}));setSelected(current=>({...current,[job.kind]:job.id}));loadJobDetail(job);setReveal({kind:job.kind,jobId:job.id,token:++revealSequence.current});navigate(job.kind)}else navigate('jobs')}
+ useEffect(()=>{const onHash=()=>{if(preserveNextHashScroll.current)preserveNextHashScroll.current=false;else resetPageScroll();setPage(pageFromHash())};addEventListener('hashchange',onHash);return()=>removeEventListener('hashchange',onHash)},[])
+ const navigate=(next:Page,preserveScroll=false)=>{if(preserveScroll)preserveNextHashScroll.current=true;else resetPageScroll();setPage(next);if(location.hash!==`#${next}`)location.hash=next;else if(preserveScroll)preserveNextHashScroll.current=false}
+ const openJob=(job:JobSummary)=>{if(job.state==='succeeded'){setPinnedJobs(current=>({...current,[job.kind]:job}));setSelected(current=>({...current,[job.kind]:job.id}));loadJobDetail(job);setReveal({kind:job.kind,jobId:job.id,token:++revealSequence.current});navigate(job.kind,true)}else navigate('jobs')}
  const onRevealHandled=useCallback((token:number)=>setReveal(current=>current?.token===token?undefined:current),[])
- const onJobSubmitted=useCallback((job:Job)=>{refreshSequence.current+=1;const summary=summaryOf(job);setJobs(current=>newestJobsFirst([summary,...current.filter(item=>item.id!==job.id)]).slice(0,jobLimit));setConnectionError('')},[])
+ const onJobSubmitted=useCallback((job:Job)=>{refreshSequence.current+=1;const summary=summaryOf(job);setJobs(current=>newestJobsFirst([summary,...current.filter(item=>item.id!==job.id)]).slice(0,jobLimit));setJobsError('')},[])
  const onJobUpdated=useCallback((snapshot:JobSummary)=>{const summary='request' in snapshot?summaryOf(snapshot as Job):snapshot;setJobs(current=>current.map(job=>job.id===summary.id?summary:job));setPinnedJobs(current=>current[summary.kind]?.id===summary.id?{...current,[summary.kind]:summary}:current)},[])
  const onJobResultUpdated=useCallback((jobId:string,result:JobResult)=>{const current=detailRef.current[jobId];if(current?.job)updateDetail(jobId,{...current,job:{...current.job,result}})},[updateDetail])
  const onJobsRemoved=useCallback((ids:string[])=>{const removed=new Set(ids);setJobs(current=>current.filter(job=>!removed.has(job.id)));setPinnedJobs(current=>{const next={...current};for(const kind of ['asr','tts'] as const)if(next[kind]&&removed.has(next[kind]!.id))delete next[kind];return next});setSelected(current=>{const next={...current};for(const kind of ['asr','tts'] as const)if(next[kind]&&removed.has(next[kind]!))delete next[kind];return next})},[])
  const gpuAvailable=health?Boolean(health.hardware.gpu):undefined
  const login=async(key:string)=>{await api.login(key);setJobsReady(false);setVoiceprintsState('loading');setHotwordsState('loading');setAuth({required:true,authenticated:true});setAuthError('')}
- const logout=async()=>{await api.logout();setJobs([]);setJobsReady(false);setPinnedJobs({});setSelected({});detailRef.current={};setJobDetails({});setHealth(undefined);setSystemError('');setCapabilities(undefined);setVoiceprints([]);setVoiceprintsState('loading');setHotwordLists([]);setHotwordsState('loading');setAuth({required:true,authenticated:false})}
- const retryConnection=()=>{setConnectionError('');void Promise.all([refresh(),refreshResources()])}
- return <><AppShell page={page} setPage={navigate} health={health} systemError={systemError} connectionError={connectionError} authRequired={auth?.required&&authenticated} onLogout={()=>void logout()} onRetry={authenticated?retryConnection:undefined}>
+ const logout=async()=>{await api.logout();setJobs([]);setJobsReady(false);setPinnedJobs({});setSelected({});detailRef.current={};setJobDetails({});setHealth(undefined);setSystemError('');setCapabilities(undefined);setJobsError('');setCapabilitiesError('');setVoiceprints([]);setVoiceprintsState('loading');setHotwordLists([]);setHotwordsState('loading');setAuth({required:true,authenticated:false})}
+ const connectionError=jobsError||capabilitiesError
+ const retryConnection=()=>{setJobsError('');setCapabilitiesError('');void Promise.all([refresh(),refreshResources()])}
+ return <><AppShell page={page} setPage={next=>navigate(next)} health={health} systemError={systemError} connectionError={connectionError} authRequired={auth?.required&&authenticated} onLogout={()=>void logout()} onRetry={authenticated?retryConnection:undefined}>
   {authenticated&&page==='asr'?<AsrPage jobs={workspaceJobs} jobDetails={jobDetails} loadJobDetail={loadJobDetail} onJobSubmitted={onJobSubmitted} onJobResultUpdated={onJobResultUpdated} selectedJobId={selected.asr} onSelect={openJob} gpuAvailable={gpuAvailable} maxSpeakers={capabilities?.asr.speaker_count.max||15} asrLanguages={capabilities?.asr.languages} alignerLanguages={capabilities?.asr.aligner_languages} asrModels={capabilities?.asr.models||[]} hotwordLists={hotwordLists} hotwordLimits={capabilities?.asr.hotword_library} voiceprints={voiceprints} refreshVoiceprints={refreshVoiceprints} refreshPeopleAndHotwords={refreshPeopleAndHotwords} revealRequest={reveal?.kind==='asr'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
   {authenticated&&page==='tts'?<TtsPage jobs={workspaceJobs} jobDetails={jobDetails} loadJobDetail={loadJobDetail} onJobSubmitted={onJobSubmitted} selectedJobId={selected.tts} onSelect={openJob} gpuAvailable={gpuAvailable} voiceprints={voiceprints} asrModels={capabilities?.asr.models||[]} ttsModels={capabilities?.tts?.model_capabilities||[]} ttsLanguages={capabilities?.tts?.languages} referenceLanguages={capabilities?.asr.aligner_languages} revealRequest={reveal?.kind==='tts'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
   {authenticated&&page==='hotwords'?<HotwordsPage items={hotwordLists} state={hotwordsState} limits={capabilities?.asr.hotword_library} refresh={refreshHotwordLists}/>:null}

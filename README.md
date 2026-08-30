@@ -68,7 +68,7 @@ export HTTPS_PROXY=$HTTP_PROXY
 
 Linux 详细步骤见 [安装与复原](docs/INSTALL.md)，Windows 原生部署见 [Windows 11 指南](docs/WINDOWS.md)，通用问题见 [故障排查](docs/TROUBLESHOOTING.md)。局域网可用本机 IP 访问；普通 HTTP 下浏览器录音权限受浏览器安全策略限制，文件上传不受影响。
 
-界面右上角的 `OFFLINE_MODE` 表示模型运行时是否启用离线加载，不表示服务只监听 `localhost`；页脚的 `DATA_LOCAL READY` 表示服务同时报告了离线模式和本地数据目录，`NET_LISTEN` 则动态显示 `/api/v1/system` 返回的实际监听地址与端口。健康检查尚未完成或服务失联时，这些位置会显示 `CHECKING`、`UNKNOWN` 或 `DISCONNECTED`，不会继续展示过期的监听地址。
+桌面界面右上角的 `OFFLINE_MODE` 表示模型运行时是否启用离线加载，不表示服务只监听 `localhost`；窄屏会显示“检查中”“本地可用”“离线未启用”或“连接中断”等紧凑状态。页脚的 `DATA_LOCAL READY` 表示服务同时报告了离线模式和本地数据目录，`NET_LISTEN` 则动态显示 `/api/v1/system` 返回的实际监听地址与端口。健康检查尚未完成或服务失联时，这些位置不会继续展示过期的监听地址。
 
 ASR 与 TTS 参数分别以轻量、带版本的 `localStorage` 配置保存在当前浏览器中，两个页面的“恢复默认配置”只重置本页参数，不会清除已选文件或正在编辑的文本。TTS 合成文本、表达指令、参考文本和分析引用只保留在当前 `sessionStorage` 会话；热词库未保存的编辑草稿也只在当前标签页会话中保留，保存词表或点击“取消并清空”后即删除。音频文件不会写入浏览器存储；清除站点数据或对应存储项后会自动恢复默认配置，仅清理 HTTP 缓存通常不会删除这些偏好和草稿。
 
@@ -78,7 +78,7 @@ ASR 与 TTS 参数分别以轻量、带版本的 `localStorage` 配置保存在�
 20810 FastAPI + 本地 Web UI
         │
         ├── SQLite WAL 异步任务队列 ── ASR worker 监督器
-        │       └── 可重启任务执行器
+        │       └── 队列突发期复用、空闲后可重启的任务执行器
         │           FSMN-VAD (CPU) → CAM++ (CPU)
         │           → Qwen3-ASR-0.6B / 1.7B (CPU FP32 / GPU BF16 阶段子进程)
         │           → 阶段子进程退出释放模型内存
@@ -86,7 +86,7 @@ ASR 与 TTS 参数分别以轻量、带版本的 `localStorage` 配置保存在�
         │           → JSON / SRT / VTT / TXT
         │
         └── SQLite WAL 异步任务队列 ── TTS worker 监督器
-                └── 可重启任务执行器
+                └── 队列突发期复用、空闲后可重启的任务执行器
                     Qwen3-TTS 0.6B / 1.7B CustomVoice、Base 或 VoiceDesign（按任务加载一个）
                     └── 超长克隆参考 → 独立 aligner 环境（按需启动后退出）
                     CPU FP32 / GPU BF16 + SDPA + 默认开启、可关闭的单任务自动批处理 → WAV / FLAC / MP3
@@ -104,7 +104,7 @@ ASR/TTS 提交页默认开启“单任务加速”；原生 API 与 OpenAI 兼�
 
 “声纹库”人员包含必填名字、最多 20 字的选填备注，以及默认开启的“加入热词库”开关；同一人员可保存多个独立样本。样本既可从 ASR 段落加入，也可上传或用浏览器麦克风录制。ASR 的 `use_voiceprint_library` 默认开启，只在说话人分离后用 CAM++ 匹配并命名，不改变聚类、说话人 ID 或分段；有备注时标签为“名字（备注）”，并写入 JSON/TXT/SRT/VTT。名字和备注都是任务历史快照，之后修改人员资料不会回写既有任务。
 
-TTS 默认使用 `qwen3-tts-0.6b`，也可切换 `qwen3-tts-1.7b`。预置音色按所选大小加载 CustomVoice；声音克隆按所选大小加载 Base 的 ICL 路径，要求干净参考音频和逐字准确的参考文本，并固定 `x_vector_only_mode=False`；1.7B 还可加载 VoiceDesign，根据必填自然语言描述直接设计新音色。页面上传或录制一次性参考音频后，会先创建一个可查询、可在任务记录中查看的 ASR 分析任务，自动填写参考文本和语种，用户核对后再提交 TTS；API 消费方可用 `/api/v1/tts/clone-references` 和 `reference_job_id` 完成同一流程，旧的 `reference_audio` + `reference_text` 提交方式仍兼容。超过 15 秒的库样本会在完整词边界截断。每个 TTS 执行器同一时间只驻留当前任务所需的一个 checkpoint。
+TTS 默认使用 `qwen3-tts-0.6b`，也可切换 `qwen3-tts-1.7b`。预置音色按所选大小加载 CustomVoice；声音克隆按所选大小加载 Base 的 ICL 路径，要求干净参考音频和逐字准确的参考文本，并固定 `x_vector_only_mode=False`；1.7B 还可加载 VoiceDesign，根据必填自然语言描述直接设计新音色。页面上传或录制一次性参考音频后，会先创建一个可查询、可在任务记录中查看的 ASR 分析任务，自动填写参考文本和语种，用户核对后再提交 TTS；API 消费方可用 `/api/v1/tts/clone-references` 和 `reference_job_id` 完成同一流程，旧的 `reference_audio` + `reference_text` 提交方式仍兼容。超过 15 秒的库样本会在完整词边界截断。每个 TTS 执行器同一时间只驻留一个 CPU checkpoint；相同 checkpoint 可在连续任务及空闲窗口内复用，切换 checkpoint 或转为 GPU 前会先清理。GPU checkpoint 逐任务释放。
 
 TTS 输出 `language` 默认是 `Auto`，支持中、英、日、韩、德、法、俄、葡、西、意语。已知文本语种时建议显式选择；预置音色应优先选择 `/api/v1/capabilities` 中 `preset_speaker_native_languages` 指示的母语。一次性克隆的 `reference_language` 独立控制参考音频的识别和长音频对齐，不应与输出语种混淆。
 
@@ -203,7 +203,7 @@ curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/
 
 TTS 高级控制以 `GET /api/v1/capabilities` 返回的 `tts.model_capabilities[]` 为准：0.6B 不接受自然语言指令；1.7B CustomVoice 的预置音色可选 `instruct`，VoiceDesign 则必须用 `instruct` 描述声线、语速、音调、韵律和情绪；Base 克隆模式不接受指令。官方公共推理接口没有独立数值语速/音高参数，本项目也不开放 `temperature`、`top_k`、`top_p`、`repetition_penalty` 等固定采样项。OpenAI 兼容 `instructions` 仅覆盖 1.7B 预置音色；VoiceDesign 请使用原生异步接口。不支持的组合返回 `422`，不会静默忽略。
 
-排队任务响应中的 `queue.position` 是同类 FIFO 队列中从 1 开始的位置，任务开始运行后为 `null`。`progress` 是单调的最佳整体进度；模型实际提供细粒度活动时，ASR 推理与 TTS 解码按约 0.5 秒的最小写入间隔持久化。模型加载只报告 `model_load` 的开始和完成边界，阻塞加载期间可能长时间没有新活动，服务不会伪造百分比或心跳。消费方必须查看 `progress_detail.basis`：`estimated` 表示百分比包含最佳估算，不能当作精确完成量；`current/total/unit` 是已确认的阶段单元，`activity` 则描述当前推理调用的 `model_load`、`codec_frame`、`output_token` 或 `model_layer` 活动，其中 `activity.basis` 单独说明活动总量是否估算。`estimate` 在至少积累 5 个相同模型、设备和相近任务特征的本机历史样本后返回耗时区间和置信度；0.6B 与 1.7B 分别热身，它只是建议，不是 SLA。SSE 断线时应重新连接并用任务状态接口校准，也可按 `poll_after_seconds` 轮询并使用 ETag/`If-None-Match`。`processing_seconds` 是累计实际处理耗时，不包含排队等待，并会跨失败重试累加；运行中任务配合 `processing_as_of` 可实时显示。`compute_device` 返回 `cpu` 或 `gpu`，`compute_device_name` 返回任务提交/执行时持久化的具体设备名；GPU 名称动态取自实际 `cuda:0`，不会因以后更换硬件而改写历史记录。ASR/TTS worker 使用常驻监督器管理可复用的任务执行进程；取消先等待短暂的协作退出，随后在必要时终止当前任务的完整进程树，确认 GPU 与文件锁释放后才进入“已取消”。默认协作等待 1 秒，可通过 `AUDIO_INTEL_CANCEL_GRACE_SECONDS` 调整。永久删除会清理任务输入、输出、错误文件、临时目录和 SQLite 记录，并在批次结束后执行安全擦除、WAL 截断与数据库压缩。
+排队任务响应中的 `queue.position` 是同类 FIFO 队列中从 1 开始的位置，任务开始运行后为 `null`。`progress` 是单调的最佳整体进度；模型实际提供细粒度活动时，ASR 推理与 TTS 解码按约 0.5 秒的最小写入间隔持久化。模型加载只报告 `model_load` 的开始和完成边界，阻塞加载期间可能长时间没有新活动，服务不会伪造百分比或心跳。消费方必须查看 `progress_detail.basis`：`estimated` 表示百分比包含最佳估算，不能当作精确完成量；`current/total/unit` 是已确认的阶段单元，`activity` 则描述当前推理调用的 `model_load`、`codec_frame`、`output_token` 或 `model_layer` 活动，其中 `activity.basis` 单独说明活动总量是否估算。`estimate` 在至少积累 5 个相同模型、设备和相近任务特征的本机历史样本后返回耗时区间和置信度；0.6B 与 1.7B 分别热身，它只是建议，不是 SLA。SSE 断线时应重新连接并用任务状态接口校准，也可按 `poll_after_seconds` 轮询并使用 ETag/`If-None-Match`。`processing_seconds` 是累计实际处理耗时，不包含排队等待，并会跨失败重试累加；运行中任务配合 `processing_as_of` 可实时显示。`compute_device` 返回 `cpu` 或 `gpu`，`compute_device_name` 返回任务提交/执行时持久化的具体设备名；GPU 名称动态取自实际 `cuda:0`，不会因以后更换硬件而改写历史记录。ASR/TTS worker 使用常驻监督器管理可复用的任务执行进程；同类队列排空后默认保留 60 秒热窗口，再确认旧进程树退出并创建干净执行器。新任务会取消空闲计时，API 与浏览器会话不受执行器回收影响。取消仍先等待短暂的协作退出，随后在必要时终止当前任务的完整进程树，确认 GPU 与文件锁释放后才进入“已取消”。默认协作等待 1 秒，可通过 `AUDIO_INTEL_CANCEL_GRACE_SECONDS` 调整；空闲窗口可通过 `AUDIO_INTEL_EXECUTOR_IDLE_SECONDS` 调整，设为 `0` 表示队列排空后立即回收。永久删除会清理任务输入、输出、错误文件、临时目录和 SQLite 记录，并在批次结束后执行安全擦除、WAL 截断与数据库压缩。
 
 ## OpenAI 兼容消费
 
@@ -231,7 +231,7 @@ AUDIO_INTEL_API_KEY='replace-with-a-long-random-value' ./service.sh start all
 
 浏览器首次访问会提示输入 Key，并将其换成只存在内存中的 HttpOnly 同源会话 Cookie；原始 Key 不进入 URL 或浏览器存储，服务重启后需重新登录。CLI 和外部客户端继续使用 `Authorization: Bearer ...`。`/api/v1/health` 始终公开但只暴露状态、版本和离线标志；硬件、进程、模型路径等信息位于受保护的 `/api/v1/system`。
 
-可复制 `.env.example` 为 `.env`，编辑后用 `set -a; source .env; set +a` 加载；`service.sh` 不会隐式读取环境文件。常用变量包括 `AUDIO_INTEL_HOST`、`AUDIO_INTEL_PORT`、`AUDIO_INTEL_API_KEY`、`AUDIO_INTEL_CANCEL_GRACE_SECONDS`，以及 `AUDIO_INTEL_MAX_QUEUED_ASR`、`AUDIO_INTEL_MAX_QUEUED_TTS`、`AUDIO_INTEL_MAX_CONCURRENT_SUBMISSIONS`、`AUDIO_INTEL_MIN_FREE_DISK_BYTES` 四项准入保护配置。目录覆盖、上传限制、文本限制和全部默认值以 `.env.example` 为准。不要提交 `.env`，也不要在未配置 TLS 和访问控制时直接暴露到公网。
+可复制 `.env.example` 为 `.env`，编辑后用 `set -a; source .env; set +a` 加载；`service.sh` 不会隐式读取环境文件。常用变量包括 `AUDIO_INTEL_HOST`、`AUDIO_INTEL_PORT`、`AUDIO_INTEL_API_KEY`、`AUDIO_INTEL_CANCEL_GRACE_SECONDS`、`AUDIO_INTEL_EXECUTOR_IDLE_SECONDS`，以及 `AUDIO_INTEL_MAX_QUEUED_ASR`、`AUDIO_INTEL_MAX_QUEUED_TTS`、`AUDIO_INTEL_MAX_CONCURRENT_SUBMISSIONS`、`AUDIO_INTEL_MIN_FREE_DISK_BYTES` 四项准入保护配置。目录覆盖、上传限制、文本限制和全部默认值以 `.env.example` 为准。不要提交 `.env`，也不要在未配置 TLS 和访问控制时直接暴露到公网。
 
 ## 验证
 
