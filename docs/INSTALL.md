@@ -37,15 +37,11 @@ curl -fsS http://127.0.0.1:20810/api/v1/health
 默认 HTTP 足以支持本机访问；通过局域网 IP 使用浏览器麦克风时，可直接启用项目本地 CA 和 HTTPS，无需另建反向代理：
 
 ```bash
-./service.sh tls create --host 192.168.1.20
-export AUDIO_INTEL_PROTOCOL=https
-export AUDIO_INTEL_TLS_CERT_FILE=data/tls/server.pem
-export AUDIO_INTEL_TLS_KEY_FILE=data/tls/server-key.pem
-export AUDIO_INTEL_TLS_CA_FILE=data/tls/audio-intel-root-ca.pem
+./service.sh tls enable
 ./service.sh start all
 ```
 
-证书中的 `--host` 必须包含客户端实际使用的 IP 或主机名；地址变化后运行 `./service.sh tls renew --host NEW_IP`。20810 在 HTTPS 模式下只接受 HTTPS，不提供同端口 HTTP，也不自动重定向。客户端安装根证书和指纹核对步骤见 [README](../README.md#局域网-https-与浏览器录音)。
+`tls enable` 自动收集 localhost、主机名和活动网卡地址，并保留旧证书已有的 SAN；也可通过重复的 `--host` 追加容器无法发现的宿主机/VPN 地址。模式保存在 `<AUDIO_INTEL_DATA_DIR>/tls/service-profile.json`（默认是 `data/tls/service-profile.json`），新终端中的普通 `start`、`restart` 和 `run` 会自动沿用。地址变化后重新执行 `tls enable`；需要立即应用到后台服务时加 `--restart`。`tls enable --restart` 和 `tls disable --restart` 都会执行 `restart all`，重启 API、ASR 和 TTS；后者切回 HTTP 但不删除证书。20810 在 HTTPS 模式下只接受 HTTPS，不提供同端口 HTTP，也不自动重定向。客户端安装根证书和指纹核对步骤见 [README](../README.md#局域网-https-与浏览器录音)。
 
 `start` 是后台模式；各组件在独立会话和进程组中运行，API 和 worker 真正就绪后命令才返回。关闭普通终端、调用脚本退出或上游仅清理启动命令所在进程组，不会停止这些后台组件。将服务作为容器主进程运行、需要前台监督，或所在执行器会在命令返回后清理整个 cgroup 时，使用：
 
@@ -86,7 +82,7 @@ set -a; source .env; set +a
 ./service.sh start all
 ```
 
-`service.sh` 不会自动读取 `.env`。同一 shell 后续可直接 `./service.sh restart all`；每个新 shell 都必须先重新执行 `set -a; source .env; set +a`。这对 HTTPS 尤其重要，否则新进程会按默认 HTTP 启动。切回 HTTP 时还必须从环境和 `.env` 中移除三个 `AUDIO_INTEL_TLS_*` 配置。
+`service.sh` 不会自动读取通用 `.env`；每个新 shell 使用其中的端口、目录、API Key 等设置前仍必须重新加载。项目管理的 HTTPS 例外：`tls enable` 写入当前 `AUDIO_INTEL_DATA_DIR` 下的专用 profile 会自动加载。若覆盖数据目录，应在执行 `tls enable` 和后续启停命令前保持相同的 `AUDIO_INTEL_DATA_DIR`。显式 `AUDIO_INTEL_PROTOCOL` 和证书变量优先于该 profile，适用于外部管理的证书；若旧终端仍导出了这些变量，脚本会提示它们正在覆盖保存模式。
 
 默认最多分别保留 5 个排队中的 ASR/TTS 任务、同时持久化 2 个提交，并为数据卷保留至少 5 GiB 空闲空间。通过 `AUDIO_INTEL_MAX_QUEUED_ASR`、`AUDIO_INTEL_MAX_QUEUED_TTS`、`AUDIO_INTEL_MAX_CONCURRENT_SUBMISSIONS` 和 `AUDIO_INTEL_MIN_FREE_DISK_BYTES` 调整；完整默认值见 `.env.example`。达到限制时提交返回 `429`，不会丢弃既有任务。
 

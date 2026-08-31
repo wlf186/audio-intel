@@ -11,9 +11,9 @@
 curl -v http://127.0.0.1:20810/api/v1/health
 ```
 
-若配置了 `AUDIO_INTEL_PROTOCOL=https`，探针地址也必须改为 `https://...`。`ERR_SSL_PROTOCOL_ERROR` 通常表示浏览器使用 HTTPS 访问了仍以 HTTP 启动的端口；运行 `./service.sh status` 或 `service.cmd status` 查看实际协议。证书名称错误通常表示当前 IP 不在证书 SAN 中，请使用 `tls renew --host 当前IP` 更新服务器证书。
+若配置了 HTTPS，探针地址也必须改为 `https://...`。`ERR_SSL_PROTOCOL_ERROR` 通常表示浏览器使用 HTTPS 访问了仍以 HTTP 启动的端口；运行 `./service.sh status` 或 `service.cmd status` 查看实际协议。证书名称错误通常表示当前 IP 不在证书 SAN 中，请重新执行 `tls enable --host 当前IP` 更新服务器证书并保持 HTTPS profile。
 
-`service.sh` 和 `service.cmd` 不自动读取 `.env`。HTTPS 在同一终端可直接 `restart all`；新终端必须先重新导出协议、证书、私钥和可选 CA 路径，Linux 也可执行 `set -a; source .env; set +a`。若忘记加载，未设置 TLS 文件时会按默认 HTTP 启动；只残留 TLS 文件但协议是 HTTP 时则会被预检拒绝。
+`service.sh` 和 `service.cmd` 不自动读取通用 `.env`，但 `tls enable` 创建的 `<AUDIO_INTEL_DATA_DIR>/tls/service-profile.json`（默认 `data/tls/service-profile.json`）会自动加载，因此新终端可直接 `restart all` 并继续使用 HTTPS。若启用时覆盖了数据目录，新终端必须先恢复同一个 `AUDIO_INTEL_DATA_DIR`。运行 `tls status` 查看保存模式、证书和实际端点。显式 `AUDIO_INTEL_PROTOCOL` 或 TLS 文件变量优先于 profile；若旧终端仍保留这些变量，清除它们或按提示确认覆盖行为。只残留 TLS 文件但协议是 HTTP 时仍会被预检拒绝。
 
 若已启用 API Key，公开 `/health` 只返回最小状态。详细诊断使用：
 
@@ -145,7 +145,7 @@ rootless 本身不会导致该问题。确认当前 UID 对 `.env.example` 中�
 
 ## 浏览器麦克风无法录音
 
-- 浏览器麦克风要求安全上下文。本机请使用 `http://localhost:<端口>` 或 `http://127.0.0.1:<端口>`；通过局域网 IP 远程访问时，使用 `./service.sh tls create --host 当前IP` 配置项目直连 HTTPS，或在外层反向代理终止 TLS。普通 HTTP 通常会被浏览器拒绝。
+- 浏览器麦克风要求安全上下文。本机请使用 `http://localhost:<端口>` 或 `http://127.0.0.1:<端口>`；通过局域网 IP 远程访问时，使用 `./service.sh tls enable` 配置项目直连 HTTPS，或在外层反向代理终止 TLS。命令会自动收集活动地址，也可用 `--host 当前IP` 明确追加。普通 HTTP 通常会被浏览器拒绝。
 - 直连 HTTPS 时先查看 `./service.sh status` 确认实际协议，再从登录页或全局右上角“HTTPS 证书”安装根 CA 并核对 `tls fingerprint`。若首次连接完全无法打开，可通过可信文件传输复制 `data/tls/audio-intel-root-ca.cer` 到客户端安装。
 - 点击“开始录音”后，在浏览器站点权限和操作系统隐私设置中允许麦克风。若提示设备占用，请关闭会议、录音或语音聊天程序后重试。
 - 每次最长录制 30 秒，停止后先试听或重录，再确认创建声纹入库任务。未确认的录音只存在页面内存中，切换人员或离开页面会释放麦克风并清除暂存录音。

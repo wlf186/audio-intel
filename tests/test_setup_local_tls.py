@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import stat
@@ -21,19 +22,26 @@ def _fake_mkcert(tmp_path: Path) -> tuple[Path, Path]:
     executable.write_text("""#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$MKCERT_TEST_LOG"
-cert=''; key=''
+cert=''; key=''; hosts=()
 while (($#)); do
   case "$1" in
     -cert-file) cert="$2"; shift 2 ;;
     -key-file) key="$2"; shift 2 ;;
-    *) shift ;;
+    *) hosts+=("$1"); shift ;;
   esac
 done
 mkdir -p "$CAROOT"
 if [[ ! -f "$CAROOT/rootCA.pem" ]]; then
   openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj '/CN=Audio Intel Test Root' -keyout "$CAROOT/rootCA-key.pem" -out "$CAROOT/rootCA.pem" >/dev/null 2>&1
 fi
-openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj '/CN=localhost' -keyout "$key" -out "$cert" >/dev/null 2>&1
+san=''
+for host in "${hosts[@]}"; do
+  kind='DNS'
+  [[ "$host" == *:* || "$host" =~ ^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$ ]] && kind='IP'
+  [[ -z "$san" ]] || san+=','
+  san+="$kind:$host"
+done
+openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj '/CN=localhost' -addext "subjectAltName=$san" -keyout "$key" -out "$cert" >/dev/null 2>&1
 """, encoding="utf-8")
     executable.chmod(0o755)
     return executable, log
@@ -89,3 +97,47 @@ def test_missing_mkcert_explains_offline_binary_option(tmp_path: Path) -> None:
     assert result.returncode == 2
     assert "offline mkcert binary" in result.stderr
     assert "network requests" in result.stderr
+
+
+def test_enable_persists_https_and_disable_keeps_certificates(tmp_path: Path) -> None:
+    executable, log = _fake_mkcert(tmp_path)
+    tls_dir = tmp_path / "tls"
+    env = {
+        **os.environ, "PATH": f"{executable.parent}{os.pathsep}{os.environ['PATH']}",
+        "MKCERT_TEST_LOG": str(log),
+    }
+
+    enabled = _run("enable", tls_dir, env, "192.0.2.44")
+    assert enabled.returncode == 0, enabled.stderr
+    profile = json.loads((tls_dir / "service-profile.json").read_text(encoding="utf-8"))
+    assert profile["enabled"] is True
+    assert "192.0.2.44" in profile["hosts"]
+    assert (tls_dir / "server-key.pem").is_file()
+
+    enabled_again = _run("enable", tls_dir, env)
+    assert enabled_again.returncode == 0, enabled_again.stderr
+    profile = json.loads((tls_dir / "service-profile.json").read_text(encoding="utf-8"))
+    assert "192.0.2.44" in profile["hosts"]
+
+    values = _run("profile-values", tls_dir, env)
+    assert values.stdout.splitlines()[0] == "https"
+    certificate_before = (tls_dir / "server.pem").read_bytes()
+    disabled = _run("disable", tls_dir, env)
+    assert disabled.returncode == 0, disabled.stderr
+    profile = json.loads((tls_dir / "service-profile.json").read_text(encoding="utf-8"))
+    assert profile["enabled"] is False
+    assert (tls_dir / "server.pem").read_bytes() == certificate_before
+    assert _run("profile-values", tls_dir, env).stdout.splitlines()[0] == "http"
+
+
+def test_disable_recovers_a_corrupt_profile_without_deleting_ca(tmp_path: Path) -> None:
+    tls_dir = tmp_path / "tls"
+    tls_dir.mkdir()
+    (tls_dir / "service-profile.json").write_text("not json", encoding="utf-8")
+    (tls_dir / "server.pem").write_text("keep", encoding="utf-8")
+
+    disabled = _run("disable", tls_dir, os.environ.copy())
+
+    assert disabled.returncode == 0, disabled.stderr
+    assert (tls_dir / "server.pem").read_text(encoding="utf-8") == "keep"
+    assert _run("profile-values", tls_dir, os.environ.copy()).stdout.splitlines()[0] == "http"

@@ -6,6 +6,10 @@ ACTION="${1:-status}"
 TARGET="${2:-all}"
 START_TIMEOUT_SECONDS=20
 STOP_TIMEOUT_SECONDS=15
+TLS_ENV_EXPLICIT=0
+for TLS_NAME in AUDIO_INTEL_PROTOCOL AUDIO_INTEL_TLS_CERT_FILE AUDIO_INTEL_TLS_KEY_FILE AUDIO_INTEL_TLS_CA_FILE; do
+  [[ -z "${!TLS_NAME:-}" ]] || TLS_ENV_EXPLICIT=1
+done
 
 resolve_dir() {
   local value="$1"
@@ -19,13 +23,37 @@ LOG_DIR="$(resolve_dir "${AUDIO_INTEL_LOG_DIR:-logs}")"
 RUN_DIR="$(resolve_dir "${AUDIO_INTEL_RUN_DIR:-run}")"
 MODELS_DIR="$(resolve_dir "${AUDIO_INTEL_MODELS_DIR:-models}")"
 FRONTEND_DIR="$(resolve_dir "${AUDIO_INTEL_FRONTEND_DIR:-frontend/dist}")"
+TLS_DIR="$DATA_DIR/tls"
 
-if [[ "$ACTION" == "tls" ]]; then
-  case "$TARGET" in create|renew|fingerprint) ;; *) echo "Usage: ./service.sh tls {create|renew|fingerprint} [--host HOST ...]" >&2; exit 2 ;; esac
-  exec python3 "$ROOT_DIR/scripts/setup_local_tls.py" "$TARGET" "${@:3}"
+if [[ "$ACTION" != "tls" ]]; then
+  case "$TARGET" in all|api|asr|tts) ;; *) echo "Target must be all, api, asr, or tts" >&2; exit 2 ;; esac
 fi
 
-case "$TARGET" in all|api|asr|tts) ;; *) echo "Target must be all, api, asr, or tts" >&2; exit 2 ;; esac
+tls_python() {
+  if [[ -x "$ROOT_DIR/.runtime/api/bin/python" ]]; then
+    printf '%s\n' "$ROOT_DIR/.runtime/api/bin/python"
+  else
+    command -v python3 || { echo "Python 3 is required to run the TLS helper." >&2; return 1; }
+  fi
+}
+
+load_tls_profile() {
+  (( TLS_ENV_EXPLICIT == 0 )) || return 0
+  local python output
+  local -a values
+  python="$(tls_python)" || return 1
+  output="$("$python" "$ROOT_DIR/scripts/setup_local_tls.py" profile-values --tls-dir "$TLS_DIR")" || return 1
+  mapfile -t values <<< "$output"
+  export AUDIO_INTEL_PROTOCOL="${values[0]:-http}"
+  if [[ "$AUDIO_INTEL_PROTOCOL" == "https" ]]; then
+    export AUDIO_INTEL_TLS_CERT_FILE="${values[1]:-}"
+    export AUDIO_INTEL_TLS_KEY_FILE="${values[2]:-}"
+    export AUDIO_INTEL_TLS_CA_FILE="${values[3]:-}"
+  fi
+  TLS_CONFIG_SOURCE="${values[4]:-default}"
+}
+
+case "$ACTION" in start|run|restart) load_tls_profile ;; esac
 
 export PYTHONPATH="$ROOT_DIR"
 export PYTHONUNBUFFERED=1
@@ -84,6 +112,23 @@ pid_alive() {
   local pid
   pid="$(read_pid "$1")" || return 1
   process_matches "$1" "$pid"
+}
+
+running_endpoint() {
+  local pid
+  pid="$(read_pid api)" || return 1
+  "$ROOT_DIR/.runtime/api/bin/python" "$ROOT_DIR/scripts/service_process.py" endpoint "$pid" 2>/dev/null
+}
+
+configured_mode() {
+  if (( TLS_ENV_EXPLICIT == 1 )); then
+    printf '%s (environment)\n' "${AUDIO_INTEL_PROTOCOL:-http}"
+    return
+  fi
+  local python output
+  python="$(tls_python)" || return 1
+  output="$("$python" "$ROOT_DIR/scripts/setup_local_tls.py" profile-values --tls-dir "$TLS_DIR")" || return 1
+  printf '%s (%s)\n' "$(sed -n '1p' <<< "$output")" "$(sed -n '5p' <<< "$output")"
 }
 
 remove_stale_pid() {
@@ -294,7 +339,9 @@ start_action() {
     fi
     (( STARTED_NEW == 0 )) || STARTED_COMPONENTS+=("$component")
   done
-  echo "Sandevistan-Audio: $AUDIO_INTEL_PROTOCOL://127.0.0.1:$AUDIO_INTEL_PORT"
+  local endpoint
+  endpoint="$(running_endpoint 2>/dev/null || true)"
+  echo "Sandevistan-Audio: ${endpoint:-$AUDIO_INTEL_PROTOCOL://127.0.0.1:$AUDIO_INTEL_PORT}"
 }
 
 restart_action() {
@@ -346,7 +393,9 @@ run_action() {
       return 1
     fi
   done
-  echo "Sandevistan-Audio: $AUDIO_INTEL_PROTOCOL://127.0.0.1:$AUDIO_INTEL_PORT"
+  local endpoint
+  endpoint="$(running_endpoint 2>/dev/null || true)"
+  echo "Sandevistan-Audio: ${endpoint:-$AUDIO_INTEL_PROTOCOL://127.0.0.1:$AUDIO_INTEL_PORT}"
   while true; do
     for component in "${RUN_COMPONENTS[@]}"; do
       if ! process_matches "$component" "${RUN_PIDS[$component]}"; then
@@ -359,7 +408,47 @@ run_action() {
   done
 }
 
+tls_action() {
+  local subaction="$TARGET" python restart=0 argument
+  local -a helper_args=()
+  case "$subaction" in create|renew|fingerprint|enable|disable|status) ;; *)
+    echo "Usage: ./service.sh tls {enable|disable|status|create|renew|fingerprint} [--host HOST ...] [--restart]" >&2
+    return 2
+  esac
+  for argument in "${@:3}"; do
+    if [[ "$argument" == "--restart" ]]; then
+      restart=1
+    else
+      helper_args+=("$argument")
+    fi
+  done
+  if (( restart == 1 )) && [[ "$subaction" != "enable" && "$subaction" != "disable" ]]; then
+    echo "--restart is supported only by tls enable and tls disable" >&2
+    return 2
+  fi
+  python="$(tls_python)" || return 1
+  "$python" "$ROOT_DIR/scripts/setup_local_tls.py" "$subaction" --tls-dir "$TLS_DIR" "${helper_args[@]}" || return
+  if [[ "$subaction" == "status" ]]; then
+    if pid_alive api; then
+      echo "Running endpoint: $(running_endpoint 2>/dev/null || echo 'protocol unknown')"
+    else
+      echo "Running endpoint: stopped"
+    fi
+  fi
+  if [[ "$subaction" == "enable" || "$subaction" == "disable" ]]; then
+    if (( TLS_ENV_EXPLICIT == 1 )); then
+      echo "Note: explicit AUDIO_INTEL_PROTOCOL/TLS environment variables override the saved profile." >&2
+    fi
+    if (( restart == 1 )); then
+      unset AUDIO_INTEL_PROTOCOL AUDIO_INTEL_TLS_CERT_FILE AUDIO_INTEL_TLS_KEY_FILE AUDIO_INTEL_TLS_CA_FILE
+      exec "$ROOT_DIR/service.sh" restart all
+    fi
+    echo "Apply it to a running background service with: ./service.sh restart all"
+  fi
+}
+
 case "$ACTION" in
+  tls) tls_action "$@" ;;
   start) start_action ;;
   run) run_action ;;
   stop)
@@ -382,9 +471,16 @@ case "$ACTION" in
         echo "$component: stopped"
       fi
     done
+    configured="$(configured_mode 2>/dev/null || echo 'invalid TLS profile')"
+    echo "next start: $configured"
+    if pid_alive api; then
+      actual="$(running_endpoint 2>/dev/null || true)"
+      configured_protocol="${configured%% *}"
+      [[ "$actual" == "$configured_protocol"://* ]] || echo "warning: running protocol differs from the next-start configuration"
+    fi
     ;;
   logs) tail -n 120 -F "$LOG_DIR"/$( [[ "$TARGET" == all ]] && echo '*.log' || echo "$TARGET.log" ) ;;
   setup) "$ROOT_DIR/scripts/bootstrap.sh" "$TARGET" ;;
   doctor) python3 "$ROOT_DIR/scripts/doctor.py" ;;
-  *) echo "Usage: ./service.sh {start|run|stop|restart|status|logs|setup|doctor} [all|asr|tts|api] | tls {create|renew|fingerprint}" >&2; exit 2 ;;
+  *) echo "Usage: ./service.sh {start|run|stop|restart|status|logs|setup|doctor} [all|asr|tts|api] | tls {enable|disable|status|create|renew|fingerprint}" >&2; exit 2 ;;
 esac

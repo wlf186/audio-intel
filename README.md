@@ -39,29 +39,25 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 
 ### 局域网 HTTPS 与浏览器录音
 
-HTTP 是默认协议。通过局域网 IP 使用麦克风录音时，浏览器通常要求 HTTPS 安全上下文。项目提供基于已安装 `mkcert` 的纯本地证书助手；它使用 `data/tls/ca` 下的项目专用 CA，不调用 `mkcert -install`，生成过程不访问网络：
+HTTP 是默认协议。通过局域网 IP 使用麦克风录音时，浏览器通常要求 HTTPS 安全上下文。项目提供基于已安装 `mkcert` 的纯本地证书助手；它使用 `data/tls/ca` 下的项目专用 CA，不调用 `mkcert -install`，生成过程不访问网络。首次启用只需：
 
 ```bash
-./service.sh tls create --host 192.168.1.20
-export AUDIO_INTEL_PROTOCOL=https
-export AUDIO_INTEL_TLS_CERT_FILE=data/tls/server.pem
-export AUDIO_INTEL_TLS_KEY_FILE=data/tls/server-key.pem
-export AUDIO_INTEL_TLS_CA_FILE=data/tls/audio-intel-root-ca.pem
+./service.sh tls enable
 ./service.sh start all
 ```
 
-这些变量只在当前 shell 中生效；同一终端后续可直接执行 `./service.sh restart all`。若希望新终端也能复用配置，复制 `.env.example` 为不会提交的 `.env`，把协议改为 `https` 并取消三个 TLS 文件变量的注释；每次新开终端先加载再重启：
+`tls enable` 自动把 localhost、主机名和所有活动网卡的可用地址写入证书，并保留旧证书已有的 SAN；可重复使用 `--host 192.168.1.20` 追加容器内无法发现的宿主机、VPN IP 或指定域名。HTTPS 模式和证书路径保存在不会提交的 `<AUDIO_INTEL_DATA_DIR>/tls/service-profile.json`（默认是 `data/tls/service-profile.json`），因此换终端后普通的 `start`、`restart` 和 Linux `run` 都会继续使用 HTTPS，无需导出环境变量。查看配置、证书和实际运行协议：
 
 ```bash
-set -a
-source .env
-set +a
-./service.sh restart all
+./service.sh tls status
+./service.sh status
 ```
 
-`service.sh` 不会自动读取 `.env`。切回 HTTP 时必须把协议改为 `http` 并取消设置全部 `AUDIO_INTEL_TLS_*` 变量，否则预检会拒绝启动。
+启用或禁用默认只保存下次启动配置，不会中断正在处理的任务。应用到后台服务时再显式重启，也可以执行 `./service.sh tls enable --restart` 或 `./service.sh tls disable --restart`；两条命令都会执行完整的 `restart all`，重启 API、ASR 和 TTS。`tls disable` 只切回 HTTP，保留 CA、服务器证书和私钥。底层的 `tls create`、`renew` 和 `fingerprint` 命令继续保留，但不会代替 `enable` 保存服务模式。
 
-Windows 使用 `service.cmd tls create --host 192.168.1.20`，并设置同名环境变量。`create` 不覆盖现有文件；IP 变化后使用 `tls renew --host NEW_IP`，它只更换服务器叶证书并保留根 CA。`tls fingerprint` 输出供客户端核对的 SHA-256 指纹。`mkcert` 必须预先安装或以离线二进制放入 `PATH`。
+`service.sh` 不会自动读取通用 `.env`。显式设置的 `AUDIO_INTEL_PROTOCOL` 和 `AUDIO_INTEL_TLS_*` 仍优先于保存的 profile，供外部证书或临时覆盖使用；脚本检测到冲突时会提示。`status` 始终读取实际 API 进程，若运行协议与下次启动配置不同会明确警告。
+
+Windows 使用相同命令：`service.cmd tls enable`、`service.cmd tls status` 和 `service.cmd tls disable --restart`。地址变化后重新执行 `tls enable`；缺少 SAN 或临近过期时只更换服务器叶证书并保留根 CA。`tls fingerprint` 输出供客户端核对的 SHA-256 指纹。`mkcert` 必须预先安装或以离线二进制放入 `PATH`。
 
 启用 HTTPS 后，20810 端口仅接受 HTTPS，不能同时通过 HTTP 访问，也不自动重定向。`restart` 会先验证协议、证书和私钥，验证失败不会停止当前服务；`status` 显示实际运行进程的协议。HTTP 模式若配置了任何 TLS 文件会直接报错，避免误以为连接已加密。
 

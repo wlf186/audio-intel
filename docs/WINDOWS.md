@@ -35,18 +35,14 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 
 ## 局域网 HTTPS
 
-通过局域网 IP 使用浏览器麦克风前，先安装 `mkcert` 或把离线 `mkcert.exe` 放入 `PATH`，然后生成项目专用证书（替换为实际 IP）：
+通过局域网 IP 使用浏览器麦克风前，先安装 `mkcert` 或把离线 `mkcert.exe` 放入 `PATH`，然后启用项目专用证书：
 
 ```powershell
-.\service.cmd tls create --host 192.168.1.20
-$env:AUDIO_INTEL_PROTOCOL = 'https'
-$env:AUDIO_INTEL_TLS_CERT_FILE = 'data\tls\server.pem'
-$env:AUDIO_INTEL_TLS_KEY_FILE = 'data\tls\server-key.pem'
-$env:AUDIO_INTEL_TLS_CA_FILE = 'data\tls\audio-intel-root-ca.pem'
+.\service.cmd tls enable
 .\service.cmd start all
 ```
 
-同一 PowerShell 中再次启动或应用配置时直接执行 `.\service.cmd restart all`。新开 PowerShell 后必须重新设置上面四个 `$env:` 变量；脚本不会自动读取 `.env`，否则服务会按默认 HTTP 启动。
+命令自动把 localhost、主机名和活动网卡地址加入证书，并保留旧证书已有的 SAN；可用 `--host 192.168.1.20` 追加容器无法发现的宿主机/VPN 地址。模式保存在 `<AUDIO_INTEL_DATA_DIR>\tls\service-profile.json`（默认是 `data\tls\service-profile.json`），新开 PowerShell 后普通的 `start` 和 `restart` 会继续使用 HTTPS。若覆盖数据目录，执行 `tls enable` 和后续启停命令时必须保持相同的 `AUDIO_INTEL_DATA_DIR`。`.\service.cmd tls status` 可同时查看保存配置、证书信息和实际运行协议。
 
 浏览器访问 `https://192.168.1.20:20810`。从登录页下载 `.cer`，核对 `.\service.cmd tls fingerprint` 的 SHA-256 指纹后，打开证书并安装到“受信任的根证书颁发机构”（当前用户或本地计算机），再重启 Chrome/Edge。若客户端还无法打开首次自签名连接，可通过可信文件传输复制服务端的 `data\tls\audio-intel-root-ca.cer`。管理员在服务端项目目录也可使用：
 
@@ -54,7 +50,7 @@ $env:AUDIO_INTEL_TLS_CA_FILE = 'data\tls\audio-intel-root-ca.pem'
 certutil -addstore -f Root .\data\tls\audio-intel-root-ca.cer
 ```
 
-IP 变化时运行 `.\service.cmd tls renew --host NEW_IP`；根 CA 保持不变，已安装客户端无需重新安装。启用 HTTPS 后 20810 仅接受 HTTPS，不同时提供 HTTP。切回 HTTP 前，将协议设为 `http` 并用 `Remove-Item Env:AUDIO_INTEL_TLS_CERT_FILE,Env:AUDIO_INTEL_TLS_KEY_FILE,Env:AUDIO_INTEL_TLS_CA_FILE -ErrorAction SilentlyContinue` 清除 TLS 文件变量。不要分发 `data\tls\server-key.pem` 或 `data\tls\ca\rootCA-key.pem`。
+IP 变化时重新运行 `.\service.cmd tls enable`；根 CA 保持不变，已安装客户端无需重新安装。启用和禁用默认只保存下次启动配置，`--restart` 才会立即应用；`tls enable --restart` 和 `tls disable --restart` 都会执行 `restart all`，重启 API、ASR 和 TTS。后者切回 HTTP，但证书不会删除。显式设置的 `AUDIO_INTEL_PROTOCOL` 和 TLS 文件环境变量仍优先于 profile，适合外部证书配置。启用 HTTPS 后 20810 仅接受 HTTPS，不同时提供 HTTP。不要分发 `data\tls\server-key.pem` 或 `data\tls\ca\rootCA-key.pem`。
 
 只安装或启动部分能力：
 
@@ -91,7 +87,7 @@ $env:UV_SYSTEM_CERTS = '1'
 $env:REQUESTS_CA_BUNDLE = 'C:\certs\company-ca.pem'
 ```
 
-运行配置同样使用当前 PowerShell 的环境变量；脚本不会自动读取 `.env`，新终端必须重新设置部署所需变量后再执行 `start` 或 `restart`：
+端口、目录、API Key 等通用运行配置仍使用当前 PowerShell 的环境变量；脚本不会自动读取 `.env`，新终端必须重新设置这些部署变量后再执行 `start` 或 `restart`。`tls enable` 保存的 HTTPS profile 会单独自动加载：
 
 ```powershell
 $env:AUDIO_INTEL_PORT = '20810'
@@ -188,7 +184,7 @@ Get-NetTCPConnection -LocalPort 20810 -ErrorAction SilentlyContinue
 .\service.cmd stop all
 git pull --ff-only
 .\service.cmd setup all
-# 若使用 HTTPS，在这个新 PowerShell 中重新设置 AUDIO_INTEL_PROTOCOL 和三个 TLS 文件变量。
+# tls enable 保存的 HTTPS profile 会自动加载；外部证书环境变量仍需在新终端重新设置。
 .\service.cmd start all
 .\.runtime\api\Scripts\python.exe scripts\smoke_test.py
 ```

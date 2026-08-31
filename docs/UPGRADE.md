@@ -29,6 +29,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - Linux `service.sh` 的 `start` 现在将各组件放入独立会话和进程组，记录真实服务 PID，可在普通终端、调用脚本或其进程组退出后继续后台运行；容器或平台按 cgroup 管理生命周期时仍应使用 `run` 前台动作。`restart` 会先预检，再清理旧的完整进程树，停止失败时返回非零且不启动新实例。启动就绪检查、PID 身份校验和目录覆盖行为保持兼容；不涉及 HTTP API、数据库或原生 Windows 行为变更。
 - 原生 Windows `service.cmd` 的动作保持不变；`start`/`restart` 现在等待 API 与 worker 真正就绪，`stop` 校验 PID 身份并清理完整进程树。已有 `AUDIO_INTEL_*_DIR` 覆盖也会用于日志和 PID 等生命周期状态，不涉及 HTTP API 或数据库迁移。
 - 服务脚本新增可选的单端口 HTTPS 模式和项目本地 CA 助手。配置 `AUDIO_INTEL_PROTOCOL=https`、证书与私钥后，`start`/`run`/`restart` 会启用 TLS 并在停止旧服务前验证证书；`status` 显示实际协议。新增公开的 `/api/v1/tls/bootstrap` 与根证书下载端点仅用于登录前建立信任，不返回私钥或详细系统数据。HTTP 仍是默认值，不涉及数据库迁移。
+- 项目管理的 HTTPS 现在可通过 `tls enable` 持久化到 `<AUDIO_INTEL_DATA_DIR>/tls/service-profile.json`（默认 `data/tls/service-profile.json`）；新终端中的普通 `start`/`restart` 会自动沿用，`tls disable` 无损切回 HTTP。`tls enable|disable --restart` 都会执行完整的 `restart all`。旧的环境变量配置仍优先且保持兼容。
 - 原生 ASR/TTS API、OpenAI 兼容音频端点和提交页现在默认启用 `accelerate_single_task`。依赖旧版 batch 1 默认行为的客户端必须显式传入 `false`；模型、精度、ASR 分块与说话人语义不变。
 - ASR/TTS 新提交默认都使用 GPU；TTS 输出语种默认由 `Chinese` 改为 `Auto`。已有浏览器偏好保持不变，无 GPU 的 API 消费方需显式传 `compute_device=cpu`，依赖固定中文默认值的消费方需显式传 `language=Chinese`。
 - 一次性 TTS 克隆参考新增 `/api/v1/tts/clone-references` 分析端点和 `reference_job_id` 提交方式。分析任务会保留在 ASR 任务记录中，旧的 `reference_audio` + `reference_text` 请求继续兼容。

@@ -13,6 +13,12 @@ $RootDir = $PSScriptRoot
 $RuntimeDir = Join-Path $RootDir ".runtime"
 $ServiceHelper = Join-Path $RootDir "scripts\service_process.py"
 $StartTimeoutSeconds = 20
+$TlsEnvironmentExplicit = $false
+foreach ($name in @("AUDIO_INTEL_PROTOCOL", "AUDIO_INTEL_TLS_CERT_FILE", "AUDIO_INTEL_TLS_KEY_FILE", "AUDIO_INTEL_TLS_CA_FILE")) {
+    if (-not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name, "Process"))) {
+        $TlsEnvironmentExplicit = $true
+    }
+}
 
 function Get-ProcessEnvironment {
     param([string]$Name)
@@ -54,6 +60,7 @@ $LogDir = Resolve-ConfiguredPath "AUDIO_INTEL_LOG_DIR" "logs"
 $RunDir = Resolve-ConfiguredPath "AUDIO_INTEL_RUN_DIR" "run"
 $ModelsDir = Resolve-ConfiguredPath "AUDIO_INTEL_MODELS_DIR" "models"
 $FrontendDir = Resolve-ConfiguredPath "AUDIO_INTEL_FRONTEND_DIR" "frontend\dist"
+$TlsDir = Join-Path $DataDir "tls"
 
 function Initialize-Environment {
     foreach ($directory in @($RunDir, $LogDir, $DataDir, $TempDir, $CacheDir, $ModelsDir)) {
@@ -94,6 +101,33 @@ function Initialize-Environment {
 function Get-RuntimePython {
     param([string]$Component)
     return Join-Path $RuntimeDir "$Component\Scripts\python.exe"
+}
+
+function Get-TlsPython {
+    $python = Get-RuntimePython "api"
+    if (Test-Path $python) { return $python }
+    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+    if ($null -eq $pythonCommand) { throw "Python 3 is required to run the TLS helper." }
+    return $pythonCommand.Source
+}
+
+function Get-TlsProfileConfig {
+    $python = Get-TlsPython
+    $output = & $python (Join-Path $RootDir "scripts\setup_local_tls.py") profile-json --tls-dir $TlsDir
+    if ($LASTEXITCODE -ne 0) { throw "TLS service profile could not be read." }
+    return (($output -join "`n") | ConvertFrom-Json)
+}
+
+function Import-TlsProfile {
+    if ($TlsEnvironmentExplicit) { return }
+    $profile = Get-TlsProfileConfig
+    Set-ProcessEnvironment "AUDIO_INTEL_PROTOCOL" $profile.protocol
+    if ($profile.protocol -eq "https") {
+        Set-ProcessEnvironment "AUDIO_INTEL_TLS_CERT_FILE" $profile.cert_file
+        Set-ProcessEnvironment "AUDIO_INTEL_TLS_KEY_FILE" $profile.key_file
+        Set-ProcessEnvironment "AUDIO_INTEL_TLS_CA_FILE" $profile.ca_file
+    }
+    $script:TlsConfigSource = $profile.source
 }
 
 function Get-PidPath {
@@ -152,6 +186,28 @@ function Get-TrackedProcess {
 function Test-Running {
     param([string]$Component)
     return $null -ne (Get-TrackedProcess $Component)
+}
+
+function Get-RunningEndpoint {
+    $process = Get-TrackedProcess "api"
+    if ($null -eq $process) { return $null }
+    $endpoint = & (Get-RuntimePython "api") $ServiceHelper endpoint $process.Id
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return $endpoint
+}
+
+function Get-ConfiguredMode {
+    if ($TlsEnvironmentExplicit) {
+        $protocol = Get-ProcessEnvironment "AUDIO_INTEL_PROTOCOL"
+        if ([string]::IsNullOrWhiteSpace($protocol)) { $protocol = "http" }
+        return "$protocol (environment)"
+    }
+    try {
+        $profile = Get-TlsProfileConfig
+        return "$($profile.protocol) ($($profile.source))"
+    } catch {
+        return "invalid TLS profile"
+    }
 }
 
 function Ensure-Ready {
@@ -340,21 +396,47 @@ function Invoke-StartTargets {
         }
         throw $startError
     }
-    Write-Host "Sandevistan-Audio: $((Get-ProcessEnvironment 'AUDIO_INTEL_PROTOCOL'))://127.0.0.1:$((Get-ProcessEnvironment 'AUDIO_INTEL_PORT'))"
+    $endpoint = Get-RunningEndpoint
+    if ([string]::IsNullOrWhiteSpace($endpoint)) {
+        $endpoint = "$((Get-ProcessEnvironment 'AUDIO_INTEL_PROTOCOL'))://127.0.0.1:$((Get-ProcessEnvironment 'AUDIO_INTEL_PORT'))"
+    }
+    Write-Host "Sandevistan-Audio: $endpoint"
 }
 
+if ($Action -in @("start", "restart")) { Import-TlsProfile }
 Initialize-Environment
 
 if ($Action -eq "tls") {
-    if ($Target -notin @("create", "renew", "fingerprint")) { throw "Usage: service.cmd tls {create|renew|fingerprint} [--host HOST ...]" }
-    $python = Get-RuntimePython "api"
-    if (-not (Test-Path $python)) {
-        $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
-        if ($null -eq $pythonCommand) { throw "Python 3 is required to run the TLS helper." }
-        $python = $pythonCommand.Source
+    if ($Target -notin @("create", "renew", "fingerprint", "enable", "disable", "status")) {
+        throw "Usage: service.cmd tls {enable|disable|status|create|renew|fingerprint} [--host HOST ...] [--restart]"
     }
-    & $python (Join-Path $RootDir "scripts\setup_local_tls.py") $Target @ExtraArgs
-    exit $LASTEXITCODE
+    $restartRequested = $ExtraArgs -contains "--restart"
+    if ($restartRequested -and $Target -notin @("enable", "disable")) {
+        throw "--restart is supported only by tls enable and tls disable"
+    }
+    $helperArgs = @($ExtraArgs | Where-Object { $_ -ne "--restart" })
+    $python = Get-TlsPython
+    & $python (Join-Path $RootDir "scripts\setup_local_tls.py") $Target --tls-dir $TlsDir @helperArgs
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    if ($Target -eq "status") {
+        $endpoint = Get-RunningEndpoint
+        if ([string]::IsNullOrWhiteSpace($endpoint)) { $endpoint = "stopped" }
+        Write-Host "Running endpoint: $endpoint"
+    }
+    if ($Target -in @("enable", "disable")) {
+        if ($TlsEnvironmentExplicit) {
+            Write-Warning "Explicit AUDIO_INTEL_PROTOCOL/TLS environment variables override the saved profile."
+        }
+        if ($restartRequested) {
+            foreach ($name in @("AUDIO_INTEL_PROTOCOL", "AUDIO_INTEL_TLS_CERT_FILE", "AUDIO_INTEL_TLS_KEY_FILE", "AUDIO_INTEL_TLS_CA_FILE")) {
+                [Environment]::SetEnvironmentVariable($name, $null, "Process")
+            }
+            & (Join-Path $RootDir "service.cmd") restart all
+            exit $LASTEXITCODE
+        }
+        Write-Host "Apply it to a running background service with: service.cmd restart all"
+    }
+    exit 0
 }
 
 if ($Target -notin @("all", "api", "asr", "tts")) { throw "Target must be all, api, asr, or tts" }
@@ -378,6 +460,15 @@ switch ($Action) {
                 Write-Host "$component`: running (pid $($process.Id), $endpoint)"
             } else {
                 Write-Host "$component`: running (pid $($process.Id))"
+            }
+        }
+        $configured = Get-ConfiguredMode
+        Write-Host "next start: $configured"
+        $actual = Get-RunningEndpoint
+        if (-not [string]::IsNullOrWhiteSpace($actual)) {
+            $configuredProtocol = ($configured -split " ")[0]
+            if (-not $actual.StartsWith("$configuredProtocol`://")) {
+                Write-Warning "running protocol differs from the next-start configuration"
             }
         }
     }

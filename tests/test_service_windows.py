@@ -72,6 +72,27 @@ def _run_service(*args: str, env: dict[str, str], timeout: float = 45) -> subpro
     return subprocess.CompletedProcess(command, 124 if timed_out else process.returncode, stdout, stderr)
 
 
+def _profile_environment(tmp_path: Path, port: int | None = None) -> dict[str, str]:
+    env = _environment(tmp_path, port)
+    for name in (
+        "AUDIO_INTEL_PROTOCOL", "AUDIO_INTEL_TLS_CERT_FILE", "AUDIO_INTEL_TLS_KEY_FILE",
+        "AUDIO_INTEL_TLS_CA_FILE",
+    ):
+        env.pop(name, None)
+    return env
+
+
+def _write_tls_profile(tmp_path: Path, cert: Path, key: Path, *, enabled: bool = True) -> Path:
+    tls_dir = tmp_path / "data" / "tls"
+    tls_dir.mkdir(parents=True, exist_ok=True)
+    profile = tls_dir / "service-profile.json"
+    profile.write_text(json.dumps({
+        "version": 1, "enabled": enabled, "cert_file": str(cert), "key_file": str(key),
+        "ca_file": "", "hosts": ["localhost", "127.0.0.1", "::1"],
+    }), encoding="utf-8")
+    return profile
+
+
 def _read_pids(run_dir: Path) -> dict[str, int]:
     return {
         component: int((run_dir / f"{component}.pid").read_text().strip())
@@ -204,6 +225,42 @@ def test_windows_https_lifecycle_when_openssl_is_available(tmp_path: Path) -> No
             assert response.status == 200
         status = _run_service("status", env={**env, "AUDIO_INTEL_PROTOCOL": "http", "AUDIO_INTEL_TLS_CERT_FILE": "", "AUDIO_INTEL_TLS_KEY_FILE": ""})
         assert "https://127.0.0.1:" in status.stdout
+    finally:
+        _stop_isolated(env)
+        _assert_processes_exit(tracked)
+
+
+def test_windows_saved_tls_profile_survives_new_shell_and_can_be_disabled(tmp_path: Path) -> None:
+    openssl = shutil.which("openssl")
+    if not openssl:
+        pytest.skip("openssl is unavailable on this Windows runner")
+    cert = tmp_path / "server.pem"
+    key = tmp_path / "server-key.pem"
+    subprocess.run([
+        openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "30",
+        "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost",
+        "-keyout", str(key), "-out", str(cert),
+    ], check=True, capture_output=True, text=True)
+    env = _profile_environment(tmp_path)
+    profile_path = _write_tls_profile(tmp_path, cert, key)
+    tracked: list[int] = []
+    try:
+        started = _run_service("start", "api", env=env)
+        assert started.returncode == 0, started.stdout + started.stderr
+        assert "https://127.0.0.1:" in started.stdout
+        first_pid = int((tmp_path / "run" / "api.pid").read_text())
+        tracked.append(first_pid)
+
+        disabled = _run_service("tls", "disable", env=env)
+        assert disabled.returncode == 0, disabled.stdout + disabled.stderr
+        assert cert.is_file() and key.is_file()
+        assert json.loads(profile_path.read_text(encoding="utf-8"))["enabled"] is False
+
+        restarted = _run_service("restart", "api", env=env)
+        assert restarted.returncode == 0, restarted.stdout + restarted.stderr
+        assert "http://127.0.0.1:" in restarted.stdout
+        tracked.append(int((tmp_path / "run" / "api.pid").read_text()))
+        _assert_processes_exit([first_pid])
     finally:
         _stop_isolated(env)
         _assert_processes_exit(tracked)

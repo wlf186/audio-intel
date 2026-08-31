@@ -68,6 +68,27 @@ def _self_signed_certificate(tmp_path: Path) -> tuple[Path, Path]:
     return cert, key
 
 
+def _profile_environment(tmp_path: Path, port: int | None = None) -> dict[str, str]:
+    env = _environment(tmp_path, port)
+    for name in (
+        "AUDIO_INTEL_PROTOCOL", "AUDIO_INTEL_TLS_CERT_FILE", "AUDIO_INTEL_TLS_KEY_FILE",
+        "AUDIO_INTEL_TLS_CA_FILE",
+    ):
+        env.pop(name, None)
+    return env
+
+
+def _write_tls_profile(tmp_path: Path, cert: Path, key: Path, *, enabled: bool = True) -> Path:
+    tls_dir = tmp_path / "data" / "tls"
+    tls_dir.mkdir(parents=True, exist_ok=True)
+    profile = tls_dir / "service-profile.json"
+    profile.write_text(json.dumps({
+        "version": 1, "enabled": enabled, "cert_file": str(cert), "key_file": str(key),
+        "ca_file": "", "hosts": ["localhost", "127.0.0.1", "::1"],
+    }), encoding="utf-8")
+    return profile
+
+
 def _read_pids(run_dir: Path) -> dict[str, int]:
     return {
         component: int((run_dir / f"{component}.pid").read_text().strip())
@@ -305,6 +326,89 @@ def test_https_start_uses_tls_readiness_and_reports_actual_endpoint(tmp_path: Pa
             assert response.status == 200
         with pytest.raises(Exception):
             urllib.request.urlopen(f"http://127.0.0.1:{env['AUDIO_INTEL_PORT']}/api/v1/health", timeout=1)
+    finally:
+        _stop_isolated(env)
+        _assert_processes_exit(tracked)
+
+
+def test_saved_tls_profile_survives_new_shell_and_disable_keeps_certificates(tmp_path: Path) -> None:
+    cert, key = _self_signed_certificate(tmp_path)
+    env = _profile_environment(tmp_path)
+    profile_path = _write_tls_profile(tmp_path, cert, key)
+    tracked: list[int] = []
+    try:
+        started = _run_service("start", "api", env=env)
+        assert started.returncode == 0, started.stdout + started.stderr
+        assert f"https://127.0.0.1:{env['AUDIO_INTEL_PORT']}" in started.stdout
+        first_pid = int((tmp_path / "run" / "api.pid").read_text())
+        tracked.append(first_pid)
+
+        explicit_http = {
+            **env, "AUDIO_INTEL_PROTOCOL": "http", "AUDIO_INTEL_TLS_CERT_FILE": "",
+            "AUDIO_INTEL_TLS_KEY_FILE": "", "AUDIO_INTEL_TLS_CA_FILE": "",
+        }
+        repeated = _run_service("start", "api", env=explicit_http)
+        assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+        assert f"https://127.0.0.1:{env['AUDIO_INTEL_PORT']}" in repeated.stdout
+        status = _run_service("status", env=explicit_http)
+        assert "warning: running protocol differs" in status.stdout
+
+        certificate_before = cert.read_bytes()
+        disabled = _run_service("tls", "disable", env=env)
+        assert disabled.returncode == 0, disabled.stdout + disabled.stderr
+        assert cert.read_bytes() == certificate_before
+        assert json.loads(profile_path.read_text(encoding="utf-8"))["enabled"] is False
+
+        restarted = _run_service("restart", "api", env=env)
+        assert restarted.returncode == 0, restarted.stdout + restarted.stderr
+        assert f"http://127.0.0.1:{env['AUDIO_INTEL_PORT']}" in restarted.stdout
+        tracked.append(int((tmp_path / "run" / "api.pid").read_text()))
+        _assert_processes_exit([first_pid])
+    finally:
+        _stop_isolated(env)
+        _assert_processes_exit(tracked)
+
+
+def test_corrupt_tls_profile_never_blocks_stop(tmp_path: Path) -> None:
+    env = _profile_environment(tmp_path)
+    tracked: list[int] = []
+    try:
+        started = _run_service("start", "api", env={**env, "AUDIO_INTEL_PROTOCOL": "http"})
+        assert started.returncode == 0, started.stdout + started.stderr
+        tracked = [int((tmp_path / "run" / "api.pid").read_text())]
+        profile = tmp_path / "data" / "tls" / "service-profile.json"
+        profile.parent.mkdir(parents=True, exist_ok=True)
+        profile.write_text("broken", encoding="utf-8")
+
+        failed = _run_service("restart", "api", env=env)
+        assert failed.returncode != 0
+        assert "Unable to read TLS service profile" in failed.stderr
+        assert _process_alive(tracked[0])
+
+        stopped = _run_service("stop", "api", env=env)
+        assert stopped.returncode == 0, stopped.stdout + stopped.stderr
+        _assert_processes_exit(tracked)
+    finally:
+        _stop_isolated(env)
+        _assert_processes_exit(tracked)
+
+
+def test_tls_disable_restart_applies_saved_mode_to_all_services(tmp_path: Path) -> None:
+    env = _profile_environment(tmp_path)
+    tracked: list[int] = []
+    try:
+        started = _run_service("start", "api", env=env)
+        assert started.returncode == 0, started.stdout + started.stderr
+        first_pid = int((tmp_path / "run" / "api.pid").read_text())
+        tracked.append(first_pid)
+
+        applied = _run_service("tls", "disable", "--restart", env=env, timeout=40)
+        assert applied.returncode == 0, applied.stdout + applied.stderr
+        assert "HTTP mode saved" in applied.stdout
+        assert applied.stdout.count("started ") == 3
+        assert f"http://127.0.0.1:{env['AUDIO_INTEL_PORT']}" in applied.stdout
+        _assert_processes_exit([first_pid])
+        tracked.extend(list(_read_pids(tmp_path / "run").values()))
     finally:
         _stop_isolated(env)
         _assert_processes_exit(tracked)
