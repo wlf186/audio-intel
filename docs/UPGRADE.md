@@ -5,6 +5,8 @@
 停止全部服务并备份 `data/`。这里包含 SQLite 队列、历史输入输出、声音档案和声纹库；不要删除或覆盖它。
 
 ```bash
+# 若部署依赖 .env，先加载它；service.sh 不会自动读取环境文件。
+if [[ -f .env ]]; then set -a; source .env; set +a; fi
 ./service.sh stop all
 cp -a data "data.backup.$(date +%Y%m%d-%H%M%S)"
 git pull --ff-only
@@ -26,6 +28,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - ASR/TTS 执行器现在只在同类队列有连续任务时保持热状态；队列排空并默认空闲 60 秒后会安全重建，以归还 VAD、CAM++、TTS CPU checkpoint 和 CUDA context 的进程高水位。可用 `AUDIO_INTEL_EXECUTOR_IDLE_SECONDS` 调整，`0` 表示立即回收。监督器、FIFO、任务状态、API、数据库和浏览器会话均不变。
 - Linux `service.sh` 的 `start` 现在将各组件放入独立会话和进程组，记录真实服务 PID，可在普通终端、调用脚本或其进程组退出后继续后台运行；容器或平台按 cgroup 管理生命周期时仍应使用 `run` 前台动作。`restart` 会先预检，再清理旧的完整进程树，停止失败时返回非零且不启动新实例。启动就绪检查、PID 身份校验和目录覆盖行为保持兼容；不涉及 HTTP API、数据库或原生 Windows 行为变更。
 - 原生 Windows `service.cmd` 的动作保持不变；`start`/`restart` 现在等待 API 与 worker 真正就绪，`stop` 校验 PID 身份并清理完整进程树。已有 `AUDIO_INTEL_*_DIR` 覆盖也会用于日志和 PID 等生命周期状态，不涉及 HTTP API 或数据库迁移。
+- 服务脚本新增可选的单端口 HTTPS 模式和项目本地 CA 助手。配置 `AUDIO_INTEL_PROTOCOL=https`、证书与私钥后，`start`/`run`/`restart` 会启用 TLS 并在停止旧服务前验证证书；`status` 显示实际协议。新增公开的 `/api/v1/tls/bootstrap` 与根证书下载端点仅用于登录前建立信任，不返回私钥或详细系统数据。HTTP 仍是默认值，不涉及数据库迁移。
 - 原生 ASR/TTS API、OpenAI 兼容音频端点和提交页现在默认启用 `accelerate_single_task`。依赖旧版 batch 1 默认行为的客户端必须显式传入 `false`；模型、精度、ASR 分块与说话人语义不变。
 - ASR/TTS 新提交默认都使用 GPU；TTS 输出语种默认由 `Chinese` 改为 `Auto`。已有浏览器偏好保持不变，无 GPU 的 API 消费方需显式传 `compute_device=cpu`，依赖固定中文默认值的消费方需显式传 `language=Chinese`。
 - 一次性 TTS 克隆参考新增 `/api/v1/tts/clone-references` 分析端点和 `reference_job_id` 提交方式。分析任务会保留在 ASR 任务记录中，旧的 `reference_audio` + `reference_text` 请求继续兼容。
@@ -42,12 +45,14 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - Capabilities 新增 `asr.default_model`、`asr.models[]` 和 `asr.hotword_library`，ASR 结果新增模型身份与 `hotword_context`。这些都是兼容性扩展；严格反序列化客户端应先允许新字段，并按 `asr.models[].compute_devices` 判断所选模型，而不是继续使用只代表默认模型的顶层 `asr.compute_devices`。
 - 声纹库新增浏览器麦克风录音入口，继续复用现有样本上传 API，不新增数据库字段或迁移。远程普通 HTTP 访问仍可能被浏览器拒绝麦克风权限，可继续使用文件上传。
 - Web UI 改进长转写渐进加载、可键盘操作的波形定位、失败任务本地化详情、资源加载失败隔离、模型状态分组和页面导航滚动复位；不改变 API、数据库或浏览器存储生命周期。
+- Web UI 的 API 文档和 HTTPS 证书帮助现在位于全局右上角，系统状态页不再重复相同入口。ASR、TTS、克隆参考和声纹样本上传会显示浏览器到服务端的上传进度，区分上传与服务端创建任务，允许在创建前取消并保留文件重试；旧浏览器缺少 `crypto.randomUUID()` 时改用 Web Crypto 安全随机数生成兼容 UUID。上述均不改变任务 API、幂等语义或数据库。
 
 ## 升级后验证
 
 ```bash
 ./service.sh doctor
-curl -fsS http://127.0.0.1:20810/api/v1/health
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
+curl -fsS "$BASE_URL/api/v1/health"
 .runtime/api/bin/python scripts/smoke_test.py
 .runtime/api/bin/python -m pytest -q
 corepack pnpm@10.15.1 --dir frontend typecheck

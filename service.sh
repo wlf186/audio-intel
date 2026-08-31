@@ -20,12 +20,19 @@ RUN_DIR="$(resolve_dir "${AUDIO_INTEL_RUN_DIR:-run}")"
 MODELS_DIR="$(resolve_dir "${AUDIO_INTEL_MODELS_DIR:-models}")"
 FRONTEND_DIR="$(resolve_dir "${AUDIO_INTEL_FRONTEND_DIR:-frontend/dist}")"
 
+if [[ "$ACTION" == "tls" ]]; then
+  case "$TARGET" in create|renew|fingerprint) ;; *) echo "Usage: ./service.sh tls {create|renew|fingerprint} [--host HOST ...]" >&2; exit 2 ;; esac
+  exec python3 "$ROOT_DIR/scripts/setup_local_tls.py" "$TARGET" "${@:3}"
+fi
+
 case "$TARGET" in all|api|asr|tts) ;; *) echo "Target must be all, api, asr, or tts" >&2; exit 2 ;; esac
 
 export PYTHONPATH="$ROOT_DIR"
 export PYTHONUNBUFFERED=1
 export AUDIO_INTEL_HOST="${AUDIO_INTEL_HOST:-0.0.0.0}"
 export AUDIO_INTEL_PORT="${AUDIO_INTEL_PORT:-20810}"
+export AUDIO_INTEL_PROTOCOL="${AUDIO_INTEL_PROTOCOL:-http}"
+export AUDIO_INTEL_PROTOCOL="${AUDIO_INTEL_PROTOCOL,,}"
 export AUDIO_INTEL_MOCK_MODE="${AUDIO_INTEL_MOCK_MODE:-0}"
 export AUDIO_INTEL_DATA_DIR="$DATA_DIR"
 export AUDIO_INTEL_TEMP_DIR="$TEMP_DIR"
@@ -34,6 +41,9 @@ export AUDIO_INTEL_LOG_DIR="$LOG_DIR"
 export AUDIO_INTEL_RUN_DIR="$RUN_DIR"
 export AUDIO_INTEL_MODELS_DIR="$MODELS_DIR"
 export AUDIO_INTEL_FRONTEND_DIR="$FRONTEND_DIR"
+if [[ -n "${AUDIO_INTEL_TLS_CERT_FILE:-}" ]]; then export AUDIO_INTEL_TLS_CERT_FILE="$(resolve_dir "$AUDIO_INTEL_TLS_CERT_FILE")"; fi
+if [[ -n "${AUDIO_INTEL_TLS_KEY_FILE:-}" ]]; then export AUDIO_INTEL_TLS_KEY_FILE="$(resolve_dir "$AUDIO_INTEL_TLS_KEY_FILE")"; fi
+if [[ -n "${AUDIO_INTEL_TLS_CA_FILE:-}" ]]; then export AUDIO_INTEL_TLS_CA_FILE="$(resolve_dir "$AUDIO_INTEL_TLS_CA_FILE")"; fi
 export HF_HOME="${HF_HOME:-$CACHE_DIR/huggingface}"
 export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-$HF_HOME/hub}"
 export MODELSCOPE_CACHE="${MODELSCOPE_CACHE:-$CACHE_DIR/modelscope}"
@@ -115,6 +125,9 @@ component_command() {
   local component="$1"
   if [[ "$component" == "api" ]]; then
     COMPONENT_COMMAND=("$ROOT_DIR/.runtime/api/bin/python" -m uvicorn audio_intel.api:app --host "$AUDIO_INTEL_HOST" --port "$AUDIO_INTEL_PORT")
+    if [[ "$AUDIO_INTEL_PROTOCOL" == "https" ]]; then
+      COMPONENT_COMMAND+=(--ssl-certfile "$AUDIO_INTEL_TLS_CERT_FILE" --ssl-keyfile "$AUDIO_INTEL_TLS_KEY_FILE")
+    fi
   else
     local worker_python="$ROOT_DIR/.runtime/$component/bin/python"
     [[ "$AUDIO_INTEL_MOCK_MODE" == "1" ]] && worker_python="$ROOT_DIR/.runtime/api/bin/python"
@@ -145,7 +158,8 @@ wait_ready() {
   pid="$(read_pid "$component")" || return 1
   if [[ "$component" == "api" ]]; then
     "$ROOT_DIR/.runtime/api/bin/python" "$ROOT_DIR/scripts/service_process.py" \
-      wait-api "$pid" "$AUDIO_INTEL_HOST" "$AUDIO_INTEL_PORT" "$START_TIMEOUT_SECONDS"
+      wait-api "$pid" "$AUDIO_INTEL_HOST" "$AUDIO_INTEL_PORT" "$START_TIMEOUT_SECONDS" \
+      "$AUDIO_INTEL_PROTOCOL"
   else
     "$ROOT_DIR/.runtime/api/bin/python" "$ROOT_DIR/scripts/service_process.py" \
       wait-worker "$component" "$pid" "$START_TIMEOUT_SECONDS"
@@ -243,6 +257,9 @@ configure_services() {
 preflight() {
   local component
   for component in $(start_targets); do ensure_ready "$component"; done
+  "$ROOT_DIR/.runtime/api/bin/python" "$ROOT_DIR/scripts/setup_local_tls.py" validate-config \
+    --protocol "$AUDIO_INTEL_PROTOCOL" --cert "${AUDIO_INTEL_TLS_CERT_FILE:-}" \
+    --key "${AUDIO_INTEL_TLS_KEY_FILE:-}" --ca "${AUDIO_INTEL_TLS_CA_FILE:-}"
 }
 
 stop_list() {
@@ -277,7 +294,7 @@ start_action() {
     fi
     (( STARTED_NEW == 0 )) || STARTED_COMPONENTS+=("$component")
   done
-  echo "Sandevistan-Audio: http://127.0.0.1:$AUDIO_INTEL_PORT"
+  echo "Sandevistan-Audio: $AUDIO_INTEL_PROTOCOL://127.0.0.1:$AUDIO_INTEL_PORT"
 }
 
 restart_action() {
@@ -329,7 +346,7 @@ run_action() {
       return 1
     fi
   done
-  echo "Sandevistan-Audio: http://127.0.0.1:$AUDIO_INTEL_PORT"
+  echo "Sandevistan-Audio: $AUDIO_INTEL_PROTOCOL://127.0.0.1:$AUDIO_INTEL_PORT"
   while true; do
     for component in "${RUN_COMPONENTS[@]}"; do
       if ! process_matches "$component" "${RUN_PIDS[$component]}"; then
@@ -354,7 +371,13 @@ case "$ACTION" in
     for component in api asr tts; do
       remove_stale_pid "$component"
       if pid_alive "$component"; then
-        echo "$component: running (pid $(read_pid "$component"))"
+        if [[ "$component" == "api" ]]; then
+          pid="$(read_pid "$component")"
+          endpoint="$("$ROOT_DIR/.runtime/api/bin/python" "$ROOT_DIR/scripts/service_process.py" endpoint "$pid" 2>/dev/null || true)"
+          echo "$component: running (pid $pid, ${endpoint:-protocol unknown})"
+        else
+          echo "$component: running (pid $(read_pid "$component"))"
+        fi
       else
         echo "$component: stopped"
       fi
@@ -363,5 +386,5 @@ case "$ACTION" in
   logs) tail -n 120 -F "$LOG_DIR"/$( [[ "$TARGET" == all ]] && echo '*.log' || echo "$TARGET.log" ) ;;
   setup) "$ROOT_DIR/scripts/bootstrap.sh" "$TARGET" ;;
   doctor) python3 "$ROOT_DIR/scripts/doctor.py" ;;
-  *) echo "Usage: ./service.sh {start|run|stop|restart|status|logs|setup|doctor} [all|asr|tts|api]" >&2; exit 2 ;;
+  *) echo "Usage: ./service.sh {start|run|stop|restart|status|logs|setup|doctor} [all|asr|tts|api] | tls {create|renew|fingerprint}" >&2; exit 2 ;;
 esac

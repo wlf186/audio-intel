@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import os
 import socket
+import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 from pathlib import Path
 
 import psutil
@@ -161,3 +164,46 @@ def test_windows_port_conflict_fails_without_process_residue(tmp_path: Path) -> 
     assert started.returncode != 0
     assert "api failed to start" in (started.stdout + started.stderr)
     assert not (tmp_path / "run" / "api.pid").exists()
+
+
+def test_windows_tls_preflight_rejects_invalid_configuration(tmp_path: Path) -> None:
+    env = _environment(tmp_path)
+    invalid = _run_service("start", "api", env={**env, "AUDIO_INTEL_PROTOCOL": "ftp"})
+    assert invalid.returncode != 0
+    assert "must be 'http' or 'https'" in (invalid.stdout + invalid.stderr)
+    ambiguous = _run_service("start", "api", env={**env, "AUDIO_INTEL_TLS_CERT_FILE": "missing.pem"})
+    assert ambiguous.returncode != 0
+    assert "require AUDIO_INTEL_PROTOCOL=https" in (ambiguous.stdout + ambiguous.stderr)
+
+
+def test_windows_https_lifecycle_when_openssl_is_available(tmp_path: Path) -> None:
+    openssl = shutil.which("openssl")
+    if not openssl:
+        pytest.skip("openssl is unavailable on this Windows runner")
+    cert = tmp_path / "server.pem"
+    key = tmp_path / "server-key.pem"
+    subprocess.run([
+        openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "30",
+        "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost",
+        "-keyout", str(key), "-out", str(cert),
+    ], check=True, capture_output=True, text=True)
+    env = {
+        **_environment(tmp_path), "AUDIO_INTEL_PROTOCOL": "https",
+        "AUDIO_INTEL_TLS_CERT_FILE": str(cert), "AUDIO_INTEL_TLS_KEY_FILE": str(key),
+    }
+    tracked: list[int] = []
+    try:
+        started = _run_service("start", "api", env=env)
+        assert started.returncode == 0, started.stdout + started.stderr
+        assert "https://127.0.0.1:" in started.stdout
+        tracked = [int((tmp_path / "run" / "api.pid").read_text())]
+        with urllib.request.urlopen(
+            f"https://127.0.0.1:{env['AUDIO_INTEL_PORT']}/api/v1/health",
+            context=ssl._create_unverified_context(), timeout=3,
+        ) as response:
+            assert response.status == 200
+        status = _run_service("status", env={**env, "AUDIO_INTEL_PROTOCOL": "http", "AUDIO_INTEL_TLS_CERT_FILE": "", "AUDIO_INTEL_TLS_KEY_FILE": ""})
+        assert "https://127.0.0.1:" in status.stdout
+    finally:
+        _stop_isolated(env)
+        _assert_processes_exit(tracked)

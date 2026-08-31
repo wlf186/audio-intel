@@ -78,13 +78,18 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         for method, operation in methods.items()
         if method in HTTP_METHODS
     ]
-    assert len(operations) == 40
+    assert len(operations) == 43
     assert len({operation["operationId"] for operation in operations}) == len(operations)
     assert all(operation.get("tags") for operation in operations)
     assert all("**English:**" in operation.get("description", "") for operation in operations)
     assert "/api/v1/capabilities.asr" not in schema["info"]["description"]
     assert "/api/v1/jobs/{id}" not in schema["info"]["description"]
     assert "/api/v1/jobs/{job_id}/events" in schema["info"]["description"]
+    browser_example = schema["info"]["description"].split(
+        "同源浏览器 fetch：HttpOnly 会话", 1,
+    )[1].split("</details>", 1)[0]
+    assert "cryptoApi.getRandomValues(new Uint8Array(16))" in browser_example
+    assert "headers: {'Idempotency-Key': createIdempotencyKey()}" in browser_example
     assert schema["servers"] == [{"url": "/", "description": "当前本地服务 / Current local service"}]
     assert schema["components"]["securitySchemes"] == {
         "BearerAuth": {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import ssl
 import subprocess
 import sys
 import time
@@ -177,10 +178,13 @@ def _probe_host(bind_host: str) -> str:
     return bind_host
 
 
-def wait_api(pid: int, bind_host: str, port: int, timeout: float) -> int:
+def wait_api(pid: int, bind_host: str, port: int, timeout: float, protocol: str = "http") -> int:
     host = _probe_host(bind_host)
     authority = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    handlers: list[urllib.request.BaseHandler] = [urllib.request.ProxyHandler({})]
+    if protocol == "https":
+        handlers.append(urllib.request.HTTPSHandler(context=ssl._create_unverified_context()))
+    opener = urllib.request.build_opener(*handlers)
     deadline = time.monotonic() + timeout
     last_error = "health probe did not respond"
     while time.monotonic() < deadline:
@@ -188,7 +192,7 @@ def wait_api(pid: int, bind_host: str, port: int, timeout: float) -> int:
             print("API process exited before becoming ready", file=sys.stderr)
             return 1
         try:
-            with opener.open(f"http://{authority}/api/v1/health", timeout=0.75) as response:
+            with opener.open(f"{protocol}://{authority}/api/v1/health", timeout=0.75) as response:
                 payload = json.load(response)
                 if response.status == 200 and payload.get("status") == "ok":
                     return 0
@@ -246,6 +250,10 @@ def main() -> int:
     api_parser.add_argument("host")
     api_parser.add_argument("port", type=int)
     api_parser.add_argument("timeout", type=float)
+    api_parser.add_argument("protocol", choices=("http", "https"), nargs="?", default="http")
+
+    endpoint_parser = subparsers.add_parser("endpoint")
+    endpoint_parser.add_argument("pid", type=int)
 
     worker_parser = subparsers.add_parser("wait-worker")
     worker_parser.add_argument("kind", choices=("asr", "tts"))
@@ -260,7 +268,20 @@ def main() -> int:
     if args.action == "launch-detached":
         return launch_detached(args.log_path, args.command)
     if args.action == "wait-api":
-        return wait_api(args.pid, args.host, args.port, args.timeout)
+        return wait_api(args.pid, args.host, args.port, args.timeout, args.protocol)
+    if args.action == "endpoint":
+        process = _matching_process("api", args.pid)
+        if process is None:
+            return 1
+        command = process.cmdline()
+        def option(name: str, fallback: str) -> str:
+            try:
+                return command[command.index(name) + 1]
+            except (ValueError, IndexError):
+                return fallback
+        protocol = "https" if "--ssl-certfile" in command else "http"
+        print(f"{protocol}://{option('--host', 'unknown')}:{option('--port', 'unknown')}")
+        return 0
     return wait_worker(args.kind, args.pid, args.timeout)
 
 

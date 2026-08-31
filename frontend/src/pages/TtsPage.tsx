@@ -10,7 +10,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react'
-import { api, artifactUrl, formatTime } from '../lib/api'
+import { api, artifactUrl, formatTime, isUploadCancelled, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
 import type {
   ComputeDevice,
   AsrModelCapability,
@@ -38,6 +38,7 @@ import {
 import { progressPresentation, visibleWorkspaceJobs } from '../lib/jobs'
 import { handleTabKeys } from '../lib/tabs'
 import { computeUnavailableReason } from '../lib/presentation'
+import { SubmissionProgress } from '../components/SubmissionProgress'
 
 type Props = {
   jobs: JobSummary[]
@@ -47,6 +48,7 @@ type Props = {
   selectedJobId?: string
   onSelect: (job: JobSummary) => void
   gpuAvailable?: boolean
+  maxUploadBytes?: number
   voiceprints: VoiceprintPerson[]
   asrModels: AsrModelCapability[]
   ttsModels: TtsModelCapability[]
@@ -124,6 +126,7 @@ export function TtsPage({
   selectedJobId,
   onSelect,
   gpuAvailable,
+  maxUploadBytes,
   voiceprints,
   asrModels,
   ttsModels,
@@ -138,16 +141,21 @@ export function TtsPage({
   const [referenceSource, setReferenceSource] =
     useState<ReferenceSource>('upload')
   const [referenceName, setReferenceName] = useState('')
+  const [referenceFile,setReferenceFile]=useState<File>()
   const [referenceAsrModel,setReferenceAsrModel]=useState('qwen3-asr-0.6b')
   const [referenceAsrDevice,setReferenceAsrDevice]=useState<ComputeDevice>('gpu')
   const [voices, setVoices] = useState<string[]>([])
   const [voicesLoading,setVoicesLoading]=useState(true)
   const [busy, setBusy] = useState(false)
   const [referenceBusy, setReferenceBusy] = useState(false)
+  const [referenceUploadProgress,setReferenceUploadProgress]=useState<UploadProgress>()
+  const [referenceError,setReferenceError]=useState('')
+  const [referenceNotice,setReferenceNotice]=useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   const preview = useRef<HTMLElement>(null)
+  const referenceUploadController=useRef<AbortController|undefined>(undefined)
   const recorder = useMicrophoneRecorder(30)
   const ttsJobs = useMemo(
     () => jobs.filter((job) => job.kind === 'tts'),
@@ -209,7 +217,8 @@ export function TtsPage({
   const selectedReferenceModel=asrModels.find(item=>item.id===referenceAsrModel)||asrModels.find(item=>item.default)
   const referenceGpu=selectedReferenceModel?.compute_devices.find(item=>item.id==='gpu')
   const effectiveReferenceDevice:ComputeDevice=referenceAsrDevice==='gpu'&&(referenceGpu?.available===false||gpuAvailable===false)?'cpu':referenceAsrDevice
-  const submitBlockReason=busy?'正在提交任务…':referenceBusy?'正在分析克隆参考…':!draft.text.trim()?'请输入需要合成的文本。':!selectedTtsModel?.installed?'所选 TTS 模型尚未完整安装。':instructionRequired&&!draft.instruct.trim()?'音色设计需要填写音色与表达指令。':draft.mode==='inline_clone'&&draft.cloneSource==='upload'&&(!referenceReady||!draft.refText.trim())?'请先完成参考音频自动识别，并确认识别文本。':draft.mode==='inline_clone'&&draft.cloneSource==='voiceprint'&&!sample?'请选择一个已完成转写的声纹样本。':''
+  const referenceBusyReason=referenceUploadProgress?.phase==='creating'?'正在创建克隆参考分析任务…':referenceUploadProgress?'正在上传克隆参考…':'正在分析克隆参考…'
+  const submitBlockReason=busy?'正在提交任务…':referenceBusy?referenceBusyReason:!draft.text.trim()?'请输入需要合成的文本。':!selectedTtsModel?.installed?'所选 TTS 模型尚未完整安装。':instructionRequired&&!draft.instruct.trim()?'音色设计需要填写音色与表达指令。':draft.mode==='inline_clone'&&draft.cloneSource==='upload'&&(!referenceReady||!draft.refText.trim())?'请先完成参考音频自动识别，并确认识别文本。':draft.mode==='inline_clone'&&draft.cloneSource==='voiceprint'&&!sample?'请选择一个已完成转写的声纹样本。':''
 
   useEffect(() => {
     saveTtsContent(content)
@@ -348,18 +357,26 @@ export function TtsPage({
         .catch(() => undefined)
   }
   const analyzeReference = async (file: File) => {
+    const limitError=uploadLimitMessage(file,maxUploadBytes)
+    setReferenceError('')
+    setReferenceNotice('')
+    if(limitError){setReferenceError(limitError);return false}
     setReferenceBusy(true)
+    setReferenceUploadProgress({phase:'preparing',loadedBytes:0})
     setError('')
     setNotice('')
     try {
       await cancelActiveReference()
+      const controller=new AbortController()
+      referenceUploadController.current=controller
       const data = new FormData()
       data.set('file', file)
       data.set('model',referenceAsrModel)
       data.set('compute_device', effectiveReferenceDevice)
       data.set('accelerate_single_task', String(draft.accelerateSingleTask))
-      const job = await api.analyzeCloneReference(data)
+      const job = await api.analyzeCloneReference(data,{signal:controller.signal,onProgress:setReferenceUploadProgress})
       setReferenceName(file.name)
+      setReferenceFile(undefined)
       setContent((current) => ({
         ...current,
         refJobId: job.id,
@@ -370,24 +387,26 @@ export function TtsPage({
       setNotice('已创建克隆参考 ASR 分析任务，识别完成后可确认文本并生成。')
       return true
     } catch (cause) {
-      setError((cause as Error).message)
+      if(isUploadCancelled(cause))setReferenceNotice('上传已取消，参考音频仍保留，可直接重试。')
+      else setReferenceError((cause as Error).message)
       return false
     } finally {
+      referenceUploadController.current=undefined
+      setReferenceUploadProgress(undefined)
       setReferenceBusy(false)
     }
   }
   const chooseReference = (file?: File) => {
-    if (file) void analyzeReference(file)
+    if (file){setReferenceFile(file);setReferenceName(file.name);setReferenceError('');setReferenceNotice('');void analyzeReference(file)}
     if (fileRef.current) fileRef.current.value = ''
   }
   const analyzeRecording = async () => {
-    if (recorder.recorded && (await analyzeReference(recorder.recorded.file)))
-      recorder.discard()
+    if(recorder.recorded){setReferenceFile(undefined);setReferenceName(recorder.recorded.file.name);if(await analyzeReference(recorder.recorded.file))recorder.discard()}
   }
   const retryReference = async () => {
     if (!referenceJob) return
     setReferenceBusy(true)
-    setError('')
+    setReferenceError('')
     try {
       const job = await api.retry(referenceJob.id)
       setContent((current) => ({
@@ -397,7 +416,7 @@ export function TtsPage({
       }))
       onJobSubmitted(job)
     } catch (cause) {
-      setError((cause as Error).message)
+      setReferenceError((cause as Error).message)
     } finally {
       setReferenceBusy(false)
     }
@@ -411,6 +430,9 @@ export function TtsPage({
       refLanguage: 'Auto',
     }))
     setReferenceName('')
+    setReferenceFile(undefined)
+    setReferenceError('')
+    setReferenceNotice('')
     recorder.discard()
     setNotice('已清除当前克隆参考。')
   }
@@ -779,7 +801,11 @@ export function TtsPage({
                   >
                     <Upload size={16} />
                     {referenceBusy
-                      ? '正在提交分析…'
+                      ? referenceUploadProgress?.phase === 'creating'
+                        ? '正在创建分析任务…'
+                        : referenceUploadProgress?.phase === 'uploading' && referenceUploadProgress.percent !== undefined
+                          ? `正在上传 ${referenceUploadProgress.percent}%`
+                          : '正在准备上传…'
                       : referenceName ||
                         referenceJob?.display_name.replace(
                           'TTS 克隆参考分析 · ',
@@ -854,7 +880,13 @@ export function TtsPage({
                         onClick={() => void analyzeRecording()}
                       >
                         <Sparkles size={15} />
-                        {referenceBusy ? '正在提交…' : '使用并自动分析'}
+                    {referenceBusy
+                      ? referenceUploadProgress?.phase === 'creating'
+                        ? '正在创建任务…'
+                        : referenceUploadProgress?.phase === 'uploading' && referenceUploadProgress.percent !== undefined
+                          ? `正在上传 ${referenceUploadProgress.percent}%`
+                          : '正在准备上传…'
+                      : '使用并自动分析'}
                       </button>
                       <button
                         className="button secondary"
@@ -888,6 +920,33 @@ export function TtsPage({
                   )}
                 </div>
               )}
+              {referenceUploadProgress ? (
+                <SubmissionProgress
+                  label="克隆参考音频"
+                  progress={referenceUploadProgress}
+                  onCancel={() => referenceUploadController.current?.abort()}
+                />
+              ) : null}
+              {referenceError ? (
+                <div className="submission-feedback" role="alert">
+                  <p className="error">{referenceError}</p>
+                  {referenceFile && !uploadLimitMessage(referenceFile,maxUploadBytes) ? (
+                    <button className="button secondary" disabled={referenceBusy} onClick={() => void analyzeReference(referenceFile)}>
+                      <RefreshCw size={15} />重新上传
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              {referenceNotice ? (
+                <div className="submission-feedback" role="status">
+                  <p className="notice">{referenceNotice}</p>
+                  {referenceFile ? (
+                    <button className="button secondary" disabled={referenceBusy} onClick={() => void analyzeReference(referenceFile)}>
+                      <RefreshCw size={15} />重新上传
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               {referenceJob ? (
                 <div className={`clone-analysis ${referenceJob.state}`}>
                   <div className="clone-analysis-status">

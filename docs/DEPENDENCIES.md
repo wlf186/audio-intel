@@ -13,6 +13,8 @@ qwen-tts 0.1.1 与 qwen-asr 0.0.6 精确要求不同 Transformers 版本，严�
 
 前端固定 pnpm 10.15.1，支持 Node 22.20+，CI 和文档推荐 Node 24 LTS；当前锁定 React 19、TypeScript 5.9 和 Vite 7。TypeScript 6、Vite 8、lucide-react 1.x 以及 Torch/Qwen 大版本升级不属于例行补丁，应单独做兼容与真实模型验证。
 
+`mkcert` 是局域网直连 HTTPS 证书生成的可选系统工具，不属于 Python 或前端运行时锁。证书助手只从 `PATH` 调用它，并通过项目专用 `data/tls/ca` 设置 `CAROOT`；不会运行 `mkcert -install`。不使用内置证书助手、或由外部反向代理终止 TLS 时无需安装。
+
 新增 0.6B/1.7B 模型大小或 Base、CustomVoice、VoiceDesign checkpoint 不等于新增 Python 包依赖：模型身份和 revision 由 `audio_intel/model_manifest.json` 固定。只要直接依赖清单未改变，就不应仅因增加 checkpoint 而重新生成哈希锁。
 
 ## 锁文件

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -286,6 +286,18 @@ class CapabilitiesResponse(PublicModel):
     tts: TtsCapability
     limits: ApiLimits
     events: dict[str, Any]
+
+
+class TlsDownloadUrls(PublicModel):
+    cer: str
+    pem: str
+
+
+class TlsBootstrapResponse(PublicModel):
+    protocol: Literal["http", "https"]
+    ca_installation_available: bool
+    ca_sha256_fingerprint: str | None = None
+    ca_download_urls: TlsDownloadUrls | None = None
 
 
 class WorkerResponse(PublicModel):

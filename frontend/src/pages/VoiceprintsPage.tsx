@@ -10,10 +10,11 @@ import {
   Upload,
 } from 'lucide-react'
 import { useMicrophoneRecorder } from '../hooks/useMicrophoneRecorder'
-import { api, formatTime } from '../lib/api'
+import { api, formatTime, isUploadCancelled, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
 import {ConfirmDialog} from '../components/ConfirmDialog'
 import {Modal} from '../components/Modal'
 import {ResourceStatePanel} from '../components/ResourceStatePanel'
+import {SubmissionProgress} from '../components/SubmissionProgress'
 import { publicAsrLanguages } from '../lib/preferences'
 import type { AsrModelCapability, ComputeDevice, Job, ResourceState, VoiceprintPerson } from '../lib/types'
 import { handleTabKeys } from '../lib/tabs'
@@ -26,6 +27,7 @@ type Props = {
   refreshPeopleAndHotwords: () => Promise<void>
   onJobSubmitted: (job: Job) => void
   gpuAvailable?: boolean
+  maxUploadBytes?: number
   asrModels: AsrModelCapability[]
   asrLanguages?: string[]
 }
@@ -38,6 +40,7 @@ export function VoiceprintsPage({
   refreshPeopleAndHotwords,
   onJobSubmitted,
   gpuAvailable,
+  maxUploadBytes,
   asrModels,
   asrLanguages = publicAsrLanguages,
 }: Props) {
@@ -48,6 +51,9 @@ export function VoiceprintsPage({
   const [computeDevice, setComputeDevice] = useState<ComputeDevice>('gpu')
   const [model, setModel] = useState('qwen3-asr-0.6b')
   const [busy, setBusy] = useState(false)
+  const [sampleProgress,setSampleProgress]=useState<UploadProgress>()
+  const [sampleError,setSampleError]=useState('')
+  const [sampleNotice,setSampleNotice]=useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [editorMode,setEditorMode]=useState<'create'|'edit'>()
@@ -56,6 +62,7 @@ export function VoiceprintsPage({
   const [includeInHotwordLibrary,setIncludeInHotwordLibrary]=useState(true)
   const [confirmDelete,setConfirmDelete]=useState<'person'|string>()
   const fileRef = useRef<HTMLInputElement>(null)
+  const sampleUploadController=useRef<AbortController|undefined>(undefined)
   const recorder = useMicrophoneRecorder(30)
   const selected = useMemo(
     () => people.find((person) => person.id === selectedId) || people[0],
@@ -66,11 +73,17 @@ export function VoiceprintsPage({
   const selectedModel=asrModels.find(item=>item.id===model)||asrModels.find(item=>item.default)
   const modelGpu=selectedModel?.compute_devices.find(item=>item.id==='gpu')
   const effectiveComputeDevice:ComputeDevice=computeDevice==='gpu'&&(modelGpu?.available===false||gpuAvailable===false)?'cpu':computeDevice
+  const selectedSampleFile=source==='upload'?file:recorder.recorded?.file
+  const fileLimitError=selectedSampleFile?uploadLimitMessage(selectedSampleFile,maxUploadBytes):''
+  const submitLabel=sampleProgress?.phase==='creating'?'正在创建入库任务…':sampleProgress?.phase==='uploading'&&sampleProgress.percent!==undefined?`正在上传 ${sampleProgress.percent}%`:sampleProgress?'正在准备上传…':source==='upload'?'自动转写并入库':'确认转写并入库'
   useEffect(() => {
     if (selected && !selectedId) setSelectedId(selected.id)
   }, [selected, selectedId])
   useEffect(() => {
     setFile(undefined)
+    setSampleProgress(undefined)
+    setSampleError('')
+    setSampleNotice('')
     if (fileRef.current) fileRef.current.value = ''
     recorder.discard()
   }, [selected?.id, recorder.discard])
@@ -129,27 +142,50 @@ export function VoiceprintsPage({
   }
   const submitSample = async (sampleFile: File, kind: SampleSource) => {
     if (!selected) return
+    const limitError=uploadLimitMessage(sampleFile,maxUploadBytes)
+    setSampleError('')
+    setSampleNotice('')
+    if(limitError){setSampleError(limitError);return}
     const personId = selected.id
-    const succeeded = await run(async () => {
+    setBusy(true)
+    setError('')
+    setNotice('')
+    const controller=new AbortController()
+    sampleUploadController.current=controller
+    try {
       const data = new FormData()
       data.set('file', sampleFile)
       data.set('model', model)
       data.set('language', language)
       data.set('compute_device', effectiveComputeDevice)
-      const response = await api.uploadVoiceprintSample(personId, data)
+      const response = await api.uploadVoiceprintSample(personId, data,{signal:controller.signal,onProgress:setSampleProgress})
       onJobSubmitted(response.job)
-      setNotice('已创建“声纹样本入库”ASR 任务，可在任务记录查看进度。')
-    })
-    if (!succeeded) return
-    if (kind === 'record') recorder.discard()
-    else {
-      setFile(undefined)
-      if (fileRef.current) fileRef.current.value = ''
+      setSampleNotice('已创建“声纹样本入库”ASR 任务，可在任务记录查看进度。')
+      if (kind === 'record') recorder.discard()
+      else {
+        setFile(undefined)
+        if (fileRef.current) fileRef.current.value = ''
+      }
+      await refresh().catch(cause=>setError(`任务已创建，但刷新声纹列表失败：${(cause as Error).message}`))
+    } catch(cause) {
+      if(isUploadCancelled(cause))setSampleNotice('上传已取消，音频仍保留，可直接重试。')
+      else setSampleError((cause as Error).message)
+    } finally {
+      sampleUploadController.current=undefined
+      setSampleProgress(undefined)
+      setBusy(false)
     }
+  }
+  const chooseSample=(next?:File)=>{
+    setFile(next)
+    setSampleError('')
+    setSampleNotice('')
   }
   const startRecording = () => {
     setError('')
     setNotice('')
+    setSampleError('')
+    setSampleNotice('')
     void recorder.start()
   }
   const removeSample = (sampleId: string) => {
@@ -288,7 +324,7 @@ export function VoiceprintsPage({
                     hidden
                     type="file"
                     accept="audio/*,video/*"
-                    onChange={(event) => setFile(event.target.files?.[0])}
+                    onChange={(event) => chooseSample(event.target.files?.[0])}
                   />
                   <button
                     className="select-like upload"
@@ -401,6 +437,33 @@ export function VoiceprintsPage({
                   )}
                 </div>
               )}
+              {sampleProgress ? (
+                <SubmissionProgress
+                  label="声纹样本"
+                  progress={sampleProgress}
+                  onCancel={() => sampleUploadController.current?.abort()}
+                />
+              ) : null}
+              {sampleError || fileLimitError ? (
+                <div className="submission-feedback" role="alert">
+                  <p className="error">{sampleError || fileLimitError}</p>
+                  {sampleError && selectedSampleFile ? (
+                    <button className="button secondary" disabled={busy} onClick={() => void submitSample(selectedSampleFile,source)}>
+                      <RotateCcw size={15}/>重新上传
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              {sampleNotice ? (
+                <div className="submission-feedback" role="status">
+                  <p className="notice">{sampleNotice}</p>
+                  {selectedSampleFile && sampleNotice.includes('取消') ? (
+                    <button className="button secondary" disabled={busy} onClick={() => void submitSample(selectedSampleFile,source)}>
+                      <RotateCcw size={15}/>重新上传
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="sample-options voiceprint-sample-options">
                 <select aria-label="声纹入库 ASR 模型" value={model} disabled={busy||microphoneActive} onChange={event=>setModel(event.target.value)}>
                   {(asrModels.length?asrModels:[{id:'qwen3-asr-0.6b',name:'Qwen3-ASR 0.6B',installed:true} as AsrModelCapability]).map(item=><option key={item.id} value={item.id} disabled={!item.installed}>{item.name}{item.installed?'':'（未安装）'}</option>)}
@@ -434,7 +497,7 @@ export function VoiceprintsPage({
                 <button
                   className="primary"
                   disabled={
-                    busy || (source === 'upload' ? !file : !recorder.recorded)
+                    busy || Boolean(fileLimitError) || !selectedSampleFile
                   }
                   onClick={() =>
                     source === 'upload' && file
@@ -445,7 +508,7 @@ export function VoiceprintsPage({
                   }
                 >
                   <Mic2 size={16} />
-                  {source === 'upload' ? '自动转写并入库' : '确认转写并入库'}
+                  {submitLabel}
                 </button>
               </div>
               <div className="sample-list">

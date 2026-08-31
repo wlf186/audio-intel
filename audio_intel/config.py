@@ -13,6 +13,14 @@ def _path(name: str, default: str) -> Path:
     return value if value.is_absolute() else (ROOT / value).resolve()
 
 
+def _optional_path(name: str) -> Path | None:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return None
+    path = Path(value)
+    return path if path.is_absolute() else (ROOT / path).resolve()
+
+
 @dataclass(frozen=True)
 class Settings:
     root: Path = ROOT
@@ -25,6 +33,10 @@ class Settings:
     frontend_dir: Path = _path("AUDIO_INTEL_FRONTEND_DIR", "frontend/dist")
     host: str = os.getenv("AUDIO_INTEL_HOST", "0.0.0.0")
     port: int = int(os.getenv("AUDIO_INTEL_PORT", "20810"))
+    protocol: str = os.getenv("AUDIO_INTEL_PROTOCOL", "http").strip().lower() or "http"
+    tls_cert_file: Path | None = _optional_path("AUDIO_INTEL_TLS_CERT_FILE")
+    tls_key_file: Path | None = _optional_path("AUDIO_INTEL_TLS_KEY_FILE")
+    tls_ca_file: Path | None = _optional_path("AUDIO_INTEL_TLS_CA_FILE")
     api_key: str = os.getenv("AUDIO_INTEL_API_KEY", "").strip()
     enabled_services: frozenset[str] = frozenset(
         item.strip() for item in os.getenv("AUDIO_INTEL_SERVICES", "asr,tts").split(",") if item.strip()

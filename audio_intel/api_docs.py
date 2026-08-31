@@ -17,6 +17,8 @@ API_DESCRIPTION = r"""
 <details>
 <summary><strong>提交契约、默认值与语种 / Submission contract, defaults, and languages</strong></summary>
 
+HTTP 是默认协议；启用 HTTPS 时，把示例中的 `AUDIO_INTEL_BASE_URL` 设为实际 `https://IP:20810`，公开的 `/api/v1/tls/bootstrap` 会返回已配置根 CA 的下载地址和 SHA-256 指纹。 / HTTP is the default; for HTTPS, set `AUDIO_INTEL_BASE_URL` to the actual `https://IP:20810`, and use public `/api/v1/tls/bootstrap` for the configured root CA download URLs and SHA-256 fingerprint.
+
 原生异步 ASR、TTS、克隆参考分析和声纹样本上传都强制要求 8–128 字符的 `Idempotency-Key`。首次接受返回 `202`；相同键和相同请求重放返回原任务、`200` 和 `Idempotency-Replayed: true`；相同键用于不同请求返回 `409 idempotency_key_conflict`。队列、提交并发或磁盘保护拒绝时返回 `429`、稳定 `code` 和 `Retry-After`，消费方应保留同一个键稍后重试。
 
 Native asynchronous ASR, TTS, clone-reference analysis, and voiceprint upload require an 8–128 character `Idempotency-Key`. The first accepted request returns `202`; replaying the same request returns the original job with `200` and `Idempotency-Replayed: true`; changing the request under the same key returns `409 idempotency_key_conflict`. Admission rejection returns `429`, a stable `code`, and `Retry-After`; keep the same key for that retry.
@@ -48,7 +50,7 @@ Explicit ASR languages are limited to the 11 word-aligned languages listed by `/
 
 ```bash
 set -euo pipefail
-BASE_URL=http://127.0.0.1:20810
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
 AUTH=()
 if [[ -n "${AUDIO_INTEL_API_KEY:-}" ]]; then AUTH=(-H "Authorization: Bearer $AUDIO_INTEL_API_KEY"); fi
 IDEMPOTENCY_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
@@ -87,7 +89,7 @@ curl --fail-with-body -sS "${AUTH[@]}" "$BASE_URL/api/v1/jobs/$JOB_ID/result" | 
 <summary><strong>curl：1.7B 预置音色与音色设计 / 1.7B preset and voice design</strong></summary>
 
 ```bash
-BASE_URL=http://127.0.0.1:20810
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
 AUTH=(); if [[ -n "${AUDIO_INTEL_API_KEY:-}" ]]; then AUTH=(-H "Authorization: Bearer $AUDIO_INTEL_API_KEY"); fi
 curl --fail-with-body -sS "${AUTH[@]}" -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
   -F text='欢迎使用本地语音服务。' -F model=qwen3-tts-1.7b \
@@ -108,7 +110,7 @@ curl --fail-with-body -sS "${AUTH[@]}" -H "Idempotency-Key: $(python3 -c 'import
 
 ```bash
 set -euo pipefail
-BASE_URL=http://127.0.0.1:20810
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
 AUTH=(); if [[ -n "${AUDIO_INTEL_API_KEY:-}" ]]; then AUTH=(-H "Authorization: Bearer $AUDIO_INTEL_API_KEY"); fi
 wait_job(){ local id=$1 state; while :; do JOB=$(curl --fail-with-body -sS "${AUTH[@]}" "$BASE_URL/api/v1/jobs/$id"); state=$(jq -r .state <<<"$JOB"); [[ "$state" == queued || "$state" == running ]] || break; sleep "$(jq -r '.poll_after_seconds // 2' <<<"$JOB")"; done; [[ "$state" == succeeded ]] || { jq . <<<"$JOB" >&2; return 1; }; }
 
@@ -139,7 +141,7 @@ The analysis is a regular visible ASR job. Pass a reviewed or corrected `referen
 
 ```bash
 set -euo pipefail
-BASE_URL=http://127.0.0.1:20810
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
 AUTH=(); if [[ -n "${AUDIO_INTEL_API_KEY:-}" ]]; then AUTH=(-H "Authorization: Bearer $AUDIO_INTEL_API_KEY"); fi
 SAMPLE_ID=$(curl --fail-with-body -sS "${AUTH[@]}" "$BASE_URL/api/v1/voiceprints/people" |
   jq -r '.items[].samples[] | select(.state=="ready" and .tts_eligible) | .id' | head -n1)
@@ -164,7 +166,7 @@ import time
 import uuid
 import httpx
 
-base_url = "http://127.0.0.1:20810"
+base_url = os.getenv("AUDIO_INTEL_BASE_URL", "http://127.0.0.1:20810")
 api_key = os.getenv("AUDIO_INTEL_API_KEY")
 headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 idempotency_key = str(uuid.uuid4())  # Keep this value until this logical submission succeeds.
@@ -193,7 +195,7 @@ with httpx.Client(base_url=base_url, headers=headers, timeout=120) as client:
 <summary><strong>Node 22 fetch：Bearer 客户端 / Bearer client</strong></summary>
 
 ```javascript
-const baseUrl = 'http://127.0.0.1:20810'
+const baseUrl = process.env.AUDIO_INTEL_BASE_URL || 'http://127.0.0.1:20810'
 const apiKey = process.env.AUDIO_INTEL_API_KEY
 if (!apiKey) throw new Error('Set AUDIO_INTEL_API_KEY')
 const idempotencyKey = crypto.randomUUID() // Retain for retries of this logical submission.
@@ -224,13 +226,24 @@ Node 或其他服务端客户端持有 Bearer 密钥。遇到 `429` 时读取 `R
 <summary><strong>同源浏览器 fetch：HttpOnly 会话 / Same-origin browser session</strong></summary>
 
 ```javascript
+function createIdempotencyKey() {
+  const cryptoApi = globalThis.crypto
+  if (!cryptoApi?.getRandomValues) throw new Error('Web Crypto is required')
+  if (typeof cryptoApi.randomUUID === 'function') return cryptoApi.randomUUID()
+  const bytes = cryptoApi.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
 const form = new FormData()
 form.set('text', '这是本地生成的语音。')
 form.set('voice_mode', 'preset')
 form.set('speaker', 'Vivian')
 const response = await fetch('/api/v1/tts/jobs', {
   method: 'POST', credentials: 'same-origin',
-  headers: {'Idempotency-Key': crypto.randomUUID()}, body: form,
+  headers: {'Idempotency-Key': createIdempotencyKey()}, body: form,
 })
 if (!response.ok) throw new Error(`submission failed: ${response.status} ${await response.text()}`)
 const job = await response.json()
@@ -273,7 +286,7 @@ Global events contain summaries only. Fetch `/api/v1/jobs/{job_id}` when opening
 
 ```bash
 set -euo pipefail
-BASE_URL=http://127.0.0.1:20810
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
 JOB_ID=${JOB_ID:?export the submitted job ID first}
 AUTH=(); if [[ -n "${AUDIO_INTEL_API_KEY:-}" ]]; then AUTH=(-H "Authorization: Bearer $AUDIO_INTEL_API_KEY"); fi
 curl --fail-with-body -N "${AUTH[@]}" "$BASE_URL/api/v1/jobs/$JOB_ID/events"

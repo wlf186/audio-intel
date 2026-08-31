@@ -35,7 +35,45 @@ Set-Location C:\ai\audio-intel
 Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 ```
 
-浏览器访问 `http://127.0.0.1:20810`，完整中英双语 API 消费指南与可交互契约位于 `http://127.0.0.1:20810/docs`，机器可读定义位于 `/openapi.json`。Swagger 代码、样式、图标和校验器均随服务本地托管，运行期不访问 CDN。只需要部分能力时可减少模型下载：
+浏览器访问 `http://127.0.0.1:20810`，完整中英双语 API 消费指南与可交互契约位于 `http://127.0.0.1:20810/docs`，机器可读定义位于 `/openapi.json`。Swagger 代码、样式、图标和校验器均随服务本地托管，运行期不访问 CDN。
+
+### 局域网 HTTPS 与浏览器录音
+
+HTTP 是默认协议。通过局域网 IP 使用麦克风录音时，浏览器通常要求 HTTPS 安全上下文。项目提供基于已安装 `mkcert` 的纯本地证书助手；它使用 `data/tls/ca` 下的项目专用 CA，不调用 `mkcert -install`，生成过程不访问网络：
+
+```bash
+./service.sh tls create --host 192.168.1.20
+export AUDIO_INTEL_PROTOCOL=https
+export AUDIO_INTEL_TLS_CERT_FILE=data/tls/server.pem
+export AUDIO_INTEL_TLS_KEY_FILE=data/tls/server-key.pem
+export AUDIO_INTEL_TLS_CA_FILE=data/tls/audio-intel-root-ca.pem
+./service.sh start all
+```
+
+这些变量只在当前 shell 中生效；同一终端后续可直接执行 `./service.sh restart all`。若希望新终端也能复用配置，复制 `.env.example` 为不会提交的 `.env`，把协议改为 `https` 并取消三个 TLS 文件变量的注释；每次新开终端先加载再重启：
+
+```bash
+set -a
+source .env
+set +a
+./service.sh restart all
+```
+
+`service.sh` 不会自动读取 `.env`。切回 HTTP 时必须把协议改为 `http` 并取消设置全部 `AUDIO_INTEL_TLS_*` 变量，否则预检会拒绝启动。
+
+Windows 使用 `service.cmd tls create --host 192.168.1.20`，并设置同名环境变量。`create` 不覆盖现有文件；IP 变化后使用 `tls renew --host NEW_IP`，它只更换服务器叶证书并保留根 CA。`tls fingerprint` 输出供客户端核对的 SHA-256 指纹。`mkcert` 必须预先安装或以离线二进制放入 `PATH`。
+
+启用 HTTPS 后，20810 端口仅接受 HTTPS，不能同时通过 HTTP 访问，也不自动重定向。`restart` 会先验证协议、证书和私钥，验证失败不会停止当前服务；`status` 显示实际运行进程的协议。HTTP 模式若配置了任何 TLS 文件会直接报错，避免误以为连接已加密。
+
+登录页和全局右上角的“HTTPS 证书”入口可在认证前下载公开根证书并显示指纹。若客户端浏览器还无法打开首次自签名连接，可把服务端的 `data/tls/audio-intel-root-ca.cer` 通过可信文件传输发送到客户端；它是公开证书，不包含私钥。安装前先与服务端 `tls fingerprint` 的输出通过可信渠道比对：
+
+- Windows：打开下载的 `sandevistan-audio-root-ca.cer`（或服务端生成的 `data\tls\audio-intel-root-ca.cer`），安装到“受信任的根证书颁发机构”（当前用户或本地计算机），再重启 Chrome/Edge。管理员可对实际文件路径运行 `certutil -addstore -f Root <证书路径>`。
+- iOS：打开 `.cer` 安装描述文件，再到“设置 → 通用 → 关于本机 → 证书信任设置”启用完全信任，然后重启浏览器。
+- 桌面 Chrome/Edge 可临时在证书警告页选择“高级 → 继续”。连接会加密，但服务器身份没有验证，主动中间人仍可能截获 API Key 和音频；不保证 Safari、iOS、Firefox 或未来浏览器支持这种方式。
+
+根 CA 私钥 `data/tls/ca/rootCA-key.pem` 和服务器私钥 `data/tls/server-key.pem` 绝不能分发。根私钥泄漏后必须替换 CA，并在所有客户端重新安装。
+
+只需要部分能力时可减少模型下载：
 
 ```bash
 ./service.sh setup asr   # 或 tts / api
@@ -68,7 +106,9 @@ export HTTPS_PROXY=$HTTP_PROXY
 
 Linux 详细步骤见 [安装与复原](docs/INSTALL.md)，Windows 原生部署见 [Windows 11 指南](docs/WINDOWS.md)，通用问题见 [故障排查](docs/TROUBLESHOOTING.md)。局域网可用本机 IP 访问；普通 HTTP 下浏览器录音权限受浏览器安全策略限制，文件上传不受影响。
 
-桌面界面右上角的 `OFFLINE_MODE` 表示模型运行时是否启用离线加载，不表示服务只监听 `localhost`；窄屏会显示“检查中”“本地可用”“离线未启用”或“连接中断”等紧凑状态。页脚的 `DATA_LOCAL READY` 表示服务同时报告了离线模式和本地数据目录，`NET_LISTEN` 则动态显示 `/api/v1/system` 返回的实际监听地址与端口。健康检查尚未完成或服务失联时，这些位置不会继续展示过期的监听地址。
+全局右上角集中提供“HTTPS 证书”和“API 文档”入口，系统状态页只展示硬件、模型、worker 与存储信息，不再重复相同的离线状态和文档入口。桌面界面右上角的 `OFFLINE_MODE` 表示模型运行时是否启用离线加载，不表示服务只监听 `localhost`；窄屏会显示“检查中”“本地可用”“离线未启用”或“连接中断”等紧凑状态。页脚的 `DATA_LOCAL READY` 表示服务同时报告了离线模式和本地数据目录，`NET_LISTEN` 则动态显示 `/api/v1/system` 返回的实际监听地址与端口。健康检查尚未完成或服务失联时，这些位置不会继续展示过期的监听地址。
+
+ASR、TTS、TTS 克隆参考分析和声纹样本入库在提交文件时会区分“准备上传”“正在上传”和“上传完成，正在创建任务”，并显示可用的字节进度。创建任务前可以取消上传；文件或麦克风录音仍保留在当前页面，可直接重试并复用同一个幂等键。服务公开上传上限时，页面会在发起请求前拒绝过大的文件。
 
 ASR 与 TTS 参数分别以轻量、带版本的 `localStorage` 配置保存在当前浏览器中，两个页面的“恢复默认配置”只重置本页参数，不会清除已选文件或正在编辑的文本。TTS 合成文本、表达指令、参考文本和分析引用只保留在当前 `sessionStorage` 会话；热词库未保存的编辑草稿也只在当前标签页会话中保留，保存词表或点击“取消并清空”后即删除。音频文件不会写入浏览器存储；清除站点数据或对应存储项后会自动恢复默认配置，仅清理 HTTP 缓存通常不会删除这些偏好和草稿。
 
@@ -125,7 +165,7 @@ run/          监督器 PID 与执行器身份元数据
 ## 原生异步 API
 
 ```bash
-BASE_URL=http://127.0.0.1:20810
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
 ASR_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
 # 创建场景词表并取得真实 ID；已有词表也可直接复用其 ID。
 HOTWORD_LIST_ID=$(curl --fail-with-body -sS \
@@ -167,10 +207,10 @@ curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" "$BASE_URL/api/v1/jobs/JOB_
 curl -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -d '{"job_ids":["JOB_ID_1","JOB_ID_2"],"purge":true}' \
-  http://127.0.0.1:20810/api/v1/jobs/batch-delete
+  "$BASE_URL/api/v1/jobs/batch-delete"
 
 # ASR 原始音源（支持 Range，可直接用于播放器）
-curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/v1/jobs/JOB_ID/source -o source.wav
+curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" "$BASE_URL/api/v1/jobs/JOB_ID/source" -o source.wav
 ```
 
 以下仅列出主要端点；完整且实时的接口定义以 `/docs` 和 `/openapi.json` 为准：
@@ -191,6 +231,7 @@ curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/
 - `GET /api/v1/voiceprints/samples/{sample_id}/audio`
 - `POST /api/v1/tts/voices`、`GET /api/v1/tts/voices`、`DELETE /api/v1/tts/voices/{voice_id}`
 - `GET /api/v1/health`（公开最小探针）、`GET /api/v1/system`（详细且受保护）、`GET /api/v1/capabilities`
+- `GET /api/v1/tls/bootstrap`、`GET /api/v1/tls/root-ca.cer|pem`（公开 HTTPS 信任引导，只返回配置的根证书）
 - `GET|POST|DELETE /api/v1/auth/session`
 - `GET /api/v1/events`（全局 SSE）
 - `GET /v1/models` 与 OpenAI 兼容音频端点
@@ -208,15 +249,16 @@ TTS 高级控制以 `GET /api/v1/capabilities` 返回的 `tts.model_capabilities
 ## OpenAI 兼容消费
 
 ```bash
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
 curl -F file=@meeting.wav -F model=qwen3-asr-0.6b -F compute_device=gpu \
   -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -F prompt='项目会议' -F response_format=verbose_json \
-  http://127.0.0.1:20810/v1/audio/transcriptions
+  "$BASE_URL/v1/audio/transcriptions"
 
 curl -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -d '{"model":"qwen3-tts-0.6b","input":"你好","voice":"Vivian","language":"Chinese","response_format":"wav","compute_device":"gpu"}' \
-  http://127.0.0.1:20810/v1/audio/speech -o speech.wav
+  "$BASE_URL/v1/audio/speech" -o speech.wav
 ```
 
 兼容端点是同步等待接口；长任务建议使用原生异步 API。
@@ -229,7 +271,7 @@ curl -H 'Content-Type: application/json' \
 AUDIO_INTEL_API_KEY='replace-with-a-long-random-value' ./service.sh start all
 ```
 
-浏览器首次访问会提示输入 Key，并将其换成只存在内存中的 HttpOnly 同源会话 Cookie；原始 Key 不进入 URL 或浏览器存储，服务重启后需重新登录。CLI 和外部客户端继续使用 `Authorization: Bearer ...`。`/api/v1/health` 始终公开但只暴露状态、版本和离线标志；硬件、进程、模型路径等信息位于受保护的 `/api/v1/system`。
+浏览器首次访问会提示输入 Key，并将其换成只存在内存中的 HttpOnly 同源会话 Cookie；原始 Key 不进入 URL 或浏览器存储，服务重启后需重新登录。CLI 和外部客户端继续使用 `Authorization: Bearer ...`。`/api/v1/health` 始终公开但只暴露状态、版本和离线标志；HTTPS 信任引导端点也可在登录前读取配置的公开根证书。硬件、进程、模型路径、媒体和任务数据仍受保护。
 
 可复制 `.env.example` 为 `.env`，编辑后用 `set -a; source .env; set +a` 加载；`service.sh` 不会隐式读取环境文件。常用变量包括 `AUDIO_INTEL_HOST`、`AUDIO_INTEL_PORT`、`AUDIO_INTEL_API_KEY`、`AUDIO_INTEL_CANCEL_GRACE_SECONDS`、`AUDIO_INTEL_EXECUTOR_IDLE_SECONDS`，以及 `AUDIO_INTEL_MAX_QUEUED_ASR`、`AUDIO_INTEL_MAX_QUEUED_TTS`、`AUDIO_INTEL_MAX_CONCURRENT_SUBMISSIONS`、`AUDIO_INTEL_MIN_FREE_DISK_BYTES` 四项准入保护配置。目录覆盖、上传限制、文本限制和全部默认值以 `.env.example` 为准。不要提交 `.env`，也不要在未配置 TLS 和访问控制时直接暴露到公网。
 

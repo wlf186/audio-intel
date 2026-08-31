@@ -7,6 +7,47 @@ function routeJobList(page:Page,handler:(route:Route)=>Promise<unknown>|unknown)
 test.beforeEach(async({page})=>{await page.route('**/api/v1/capabilities',async route=>{const response=await route.fetch();const body=await response.json();body.events={...body.events,sse:false};await route.fulfill({response,json:body})})})
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:'ignoreErrors'})})
 
+test('HTTPS certificate help is available before authentication without protected requests',async({page})=>{
+ const errors:string[]=[]
+ const protectedRequests:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ page.on('request',request=>{const path=new URL(request.url()).pathname;if(['/api/v1/jobs','/api/v1/system','/api/v1/capabilities','/api/v1/voiceprints/people','/api/v1/asr/hotword-lists'].includes(path))protectedRequests.push(path)})
+ await page.route('**/api/v1/auth/session',route=>route.fulfill({json:{required:true,authenticated:false}}))
+ await page.route('**/api/v1/tls/bootstrap',route=>route.fulfill({json:{protocol:'https',ca_installation_available:true,ca_sha256_fingerprint:'AA:BB:CC:DD',ca_download_urls:{cer:'/api/v1/tls/root-ca.cer',pem:'/api/v1/tls/root-ca.pem'}}}))
+ await page.goto('/#asr')
+ await expect(page.getByRole('heading',{name:'访问验证'})).toBeVisible()
+ await page.getByRole('button',{name:'先安装 HTTPS 根证书'}).click()
+ await expect(page.getByText('ROOT CA · SHA-256')).toBeVisible()
+ await expect(page.getByText('AA:BB:CC:DD')).toBeVisible()
+ await expect(page.getByRole('link',{name:'下载 Windows / iOS 证书'})).toHaveAttribute('href','/api/v1/tls/root-ca.cer')
+ await expect(page.getByText(/证书信任设置/)).toBeVisible()
+ expect(protectedRequests).toEqual([])
+ await page.screenshot({path:'/tmp/audio-intel-tls-preauth-desktop.png',fullPage:false})
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ const back=page.getByRole('button',{name:'返回登录'})
+ await expect(back).toBeVisible()
+ const box=await back.boundingBox()
+ expect(box!.height).toBeGreaterThanOrEqual(44)
+ await page.screenshot({path:'/tmp/audio-intel-tls-preauth-mobile.png',fullPage:false})
+ expect(errors).toEqual([])
+})
+
+test('global HTTPS certificate help opens from the header',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.route('**/api/v1/tls/bootstrap',route=>route.fulfill({json:{protocol:'http',ca_installation_available:false}}))
+ await page.goto('/#asr')
+ await page.getByRole('button',{name:'打开 HTTPS 证书帮助'}).click()
+ await expect(page.getByRole('heading',{name:'HTTPS 证书与浏览器录音'})).toBeVisible()
+ await expect(page.getByText(/当前服务使用 HTTP/)).toBeVisible()
+ await page.getByRole('button',{name:'关闭 HTTPS 证书帮助'}).click()
+ await expect(page.getByRole('heading',{name:'HTTPS 证书与浏览器录音'})).toHaveCount(0)
+ expect(errors).toEqual([])
+})
+
 test('summary SSE stays idle and task details load once with retry states',async({page})=>{
  const errors:string[]=[]
  let jobsCalls=0
@@ -474,6 +515,9 @@ test('navigation and mobile layout render without overflow',async({page})=>{
  await expect(page.getByRole('link',{name:'打开 API 文档'})).toBeVisible()
  await page.getByRole('button',{name:'系统状态'}).click()
  await expect(page.getByRole('heading',{name:'系统状态',exact:true})).toBeVisible()
+ await page.setViewportSize({width:1024,height:820})
+ await expect(page.getByRole('link',{name:'打开 API 文档'})).toBeVisible()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(1024)
  await page.setViewportSize({width:390,height:844})
  await page.goto('/#tts')
  await expect(page.getByRole('heading',{name:'语音合成'})).toBeVisible()
@@ -500,7 +544,12 @@ test('navigation and mobile layout render without overflow',async({page})=>{
  await page.evaluate(()=>window.scrollTo(0,document.documentElement.scrollHeight))
  await mobileNavigation.getByRole('button',{name:'系统状态'}).click()
  await expect.poll(()=>page.evaluate(()=>Math.round(window.scrollY))).toBe(0)
- await expect(page.getByRole('link',{name:'API 文档'})).toBeVisible()
+ const mobileDocs=page.getByRole('link',{name:'打开 API 文档'})
+ await expect(mobileDocs).toBeVisible()
+ await expect(mobileDocs.locator('.compact-label')).toHaveText('文档')
+ const mobileDocsBox=await mobileDocs.boundingBox()
+ expect(mobileDocsBox!.width).toBeGreaterThanOrEqual(44)
+ expect(mobileDocsBox!.height).toBeGreaterThanOrEqual(44)
  await page.screenshot({path:'/tmp/audio-intel-after-mobile.png',fullPage:false})
 })
 
@@ -586,7 +635,7 @@ test('desktop submit actions remain visible and voiceprint model controls reflow
  const now=new Date().toISOString()
  await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[{id:'voice_layout',name:'布局测试',sample_count:0,samples:[],created_at:now,updated_at:now}]}}))
  const expectInsideMain=async(name:string)=>{const button=page.getByRole('button',{name});await expect(button).toBeVisible();expect(await button.evaluate(element=>{const box=element.getBoundingClientRect();const main=element.closest('main')!.getBoundingClientRect();return box.top>=main.top&&box.bottom<=main.bottom})).toBe(true)}
- const expectNoControlOverlap=async(scope:string)=>expect(await page.locator(scope).evaluate(element=>{const action=element.querySelector('.submission-actions')!.getBoundingClientRect();const controls=[...element.querySelectorAll('select,.acceleration-control')].map(control=>control.getBoundingClientRect());return controls.every(control=>control.bottom<=action.top||control.top>=action.bottom)})).toBe(true)
+ const expectNoControlOverlap=async(scope:string)=>{const layout=await page.locator(scope).evaluate(element=>{const action=element.querySelector('.submission-actions')!.getBoundingClientRect();const controls=[...element.querySelectorAll('select,.acceleration-control')].map(control=>{const box=control.getBoundingClientRect();return {label:control.getAttribute('aria-label')||control.className,top:box.top,bottom:box.bottom}});return {action:{top:action.top,bottom:action.bottom},controls}});expect(layout.controls.filter(control=>control.bottom>layout.action.top&&control.top<layout.action.bottom),JSON.stringify(layout)).toEqual([])}
  await page.setViewportSize({width:1440,height:900})
  await page.goto('/#asr')
  await expectInsideMain('开始转写')
@@ -617,7 +666,10 @@ test('system worker state and heartbeat use Chinese local presentation',async({p
  await expect(page.locator('.resource-card').filter({hasText:'项目磁盘'})).toContainText('10 / 40 GB')
  await expect(page.locator('.model-group').filter({hasText:'ASR 与公共组件'})).toHaveAttribute('open','')
  await expect(page.locator('.model-group').filter({hasText:'TTS'})).not.toHaveAttribute('open','')
- await expect(page.getByRole('link',{name:'API 文档',exact:true})).toHaveAttribute('href','/docs')
+ const docsLink=page.getByRole('link',{name:'打开 API 文档',exact:true})
+ await expect(docsLink).toHaveCount(1)
+ await expect(docsLink).toHaveAttribute('href','/docs')
+ await expect(docsLink).toHaveAttribute('target','_blank')
 })
 
 test('ASR and TTS preferences persist independently and reset per page',async({page})=>{
@@ -727,7 +779,7 @@ test('shell status reflects system checks, bind changes and recovery',async({pag
  await expect(page.locator('footer .local-copy')).toContainText('数据本地存储')
  await expect(page.locator('footer .bind')).toContainText('localhost:21999')
  await expect(page.locator('footer .shell-status').filter({hasText:'ASR_ENGINE'})).toContainText('READY')
- await expect(page.locator('.system-health')).toContainText('离线模式已启用')
+ await expect(page.locator('.system-health')).toHaveCount(0)
  state='warning'
  await expect(page.locator('.local-mode')).toContainText('OFFLINE_MODE // INACTIVE',{timeout:5000})
  await expect(page.locator('footer .local-copy')).toContainText('UNVERIFIED')
@@ -897,6 +949,8 @@ test('API key login and logout use an ephemeral browser session',async({page})=>
  await keyInput.press('Tab')
  await expect(page.getByRole('button',{name:'进入工作台'})).toBeFocused()
  await page.keyboard.press('Tab')
+ await expect(page.getByRole('button',{name:'先安装 HTTPS 根证书'})).toBeFocused()
+ await page.keyboard.press('Tab')
  await expect(keyInput).toBeFocused()
  await page.getByRole('button',{name:'进入工作台'}).click()
  await expect(page.getByRole('dialog',{name:'访问验证'})).toHaveCount(0)
@@ -905,6 +959,11 @@ test('API key login and logout use an ephemeral browser session',async({page})=>
  await page.screenshot({path:'/tmp/audio-intel-authenticated-system.png',fullPage:false})
  expect(submittedAuthorization).toBe('Bearer browser-secret')
  expect(await page.evaluate(()=>({stored:sessionStorage.getItem('audio-intel:key'),url:location.href}))).toEqual({stored:null,url:expect.not.stringContaining('browser-secret')})
+ await page.setViewportSize({width:390,height:844})
+ await expect(page.locator('.local-mode')).toBeVisible()
+ await expect(page.getByRole('link',{name:'打开 API 文档'})).toBeVisible()
+ await expect(page.getByRole('button',{name:'退出本地会话'})).toBeVisible()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
  await page.getByRole('button',{name:'退出本地会话'}).click()
  await expect(page.getByRole('dialog',{name:'访问验证'})).toBeVisible()
  expect(errors).toEqual([])
@@ -1077,13 +1136,14 @@ test('first ASR submission appears immediately from the accepted job response',a
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.addInitScript(()=>Object.defineProperty(Object.getPrototypeOf(globalThis.crypto),'randomUUID',{configurable:true,value:undefined}))
  const now='2026-08-25T12:00:00+00:00'
  const queued={id:'abcdef1234567890abcdef1234567890',kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'first-submit.wav',created_at:now,updated_at:now,processing_seconds:0,processing_as_of:now,attempts:0,compute_device:'gpu',compute_device_name:'Test GPU',source_url:'/api/v1/jobs/abcdef1234567890abcdef1234567890/source',request:{compute_device:'gpu',compute_device_name:'Test GPU'}}
  let submitted=false
  let releaseList:()=>void=()=>{}
  const listGate=new Promise<void>(resolve=>{releaseList=resolve})
  await routeJobList(page,async route=>{if(submitted)await listGate;return route.fulfill({json:{items:submitted?[queued]:[]}})})
- await page.route('**/api/v1/asr/jobs',route=>{expect(route.request().headers()['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);submitted=true;return route.fulfill({status:202,json:queued})})
+ await page.route('**/api/v1/asr/jobs',route=>{expect(route.request().headers()['idempotency-key']).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);submitted=true;return route.fulfill({status:202,json:queued})})
  await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{gpu:{name:'Test GPU',memory_used_mib:0,memory_total_mib:4096,utilization:0}},models:[],storage:{data:'/tmp/data'}}}))
  await page.goto('/#asr')
  await page.locator('input[type="file"]').setInputFiles({name:'first-submit.wav',mimeType:'audio/wav',buffer:Buffer.from('RIFF-test')})
@@ -1092,6 +1152,69 @@ test('first ASR submission appears immediately from the accepted job response',a
  await expect(queueItem).toBeVisible({timeout:1000})
  await expect(queueItem).toContainText('等待处理')
  releaseList()
+ await page.screenshot({path:'/tmp/audio-intel-asr-http-uuid-desktop.png',fullPage:false})
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/audio-intel-asr-http-uuid-mobile.png',fullPage:false})
+ expect(errors).toEqual([])
+})
+
+test('large ASR uploads expose progress, cancel safely, and retry with the same key',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.addInitScript(()=>{
+  let attempt=0
+  const keys:string[]=[]
+  class MockUploadXHR{
+   status=0;statusText='';responseText='';withCredentials=false;timeout=0
+   onload:(()=>void)|null=null;onerror:(()=>void)|null=null;ontimeout:(()=>void)|null=null;onabort:(()=>void)|null=null
+   upload={onloadstart:null as ((event:ProgressEvent)=>void)|null,onprogress:null as ((event:ProgressEvent)=>void)|null,onload:null as ((event:ProgressEvent)=>void)|null}
+   private timers:number[]=[]
+   open(_method:string,_url:string){}
+   setRequestHeader(name:string,value:string){if(name.toLowerCase()==='idempotency-key'){keys.push(value);(window as typeof window&{__uploadKeys?:string[]}).__uploadKeys=keys}}
+   getResponseHeader(_name:string){return null}
+   send(_body?:Document|XMLHttpRequestBodyInit|null){
+    attempt+=1
+    const currentAttempt=attempt
+    const total=1024*1024
+    this.upload.onloadstart?.(new ProgressEvent('loadstart'))
+    this.timers.push(window.setTimeout(()=>this.upload.onprogress?.(new ProgressEvent('progress',{lengthComputable:true,loaded:total*.25,total})),30))
+    if(currentAttempt===1)return
+    this.timers.push(window.setTimeout(()=>this.upload.onprogress?.(new ProgressEvent('progress',{lengthComputable:true,loaded:total*.7,total})),200))
+    this.timers.push(window.setTimeout(()=>this.upload.onload?.(new ProgressEvent('load')),350))
+    this.timers.push(window.setTimeout(()=>{
+     this.status=202
+     this.responseText=JSON.stringify({id:'large-upload-job',kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'large-upload.wav',created_at:new Date().toISOString(),request:{compute_device:'gpu'}})
+     this.onload?.()
+    },800))
+   }
+   abort(){this.timers.forEach(timer=>clearTimeout(timer));this.onabort?.()}
+  }
+  Object.defineProperty(window,'XMLHttpRequest',{configurable:true,value:MockUploadXHR})
+ })
+ await routeJobList(page,route=>route.fulfill({json:{items:[]}}))
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{default_model:'qwen3-asr-0.6b',models:[],speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15,max_upload_bytes:2*1024*1024},events:{sse:false}}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'0.0.0.0:20810',services:['asr','tts'],workers:[],hardware:{gpu:{available:true}},models:[],storage:{data:'/tmp/data'}}}))
+ await page.goto('/#asr')
+ await page.locator('input[type="file"]').setInputFiles({name:'large-upload.wav',mimeType:'audio/wav',buffer:Buffer.alloc(1024*1024,1)})
+ await page.getByRole('button',{name:'开始转写'}).click()
+ const status=page.getByRole('region',{name:'ASR 音频提交状态'})
+ await expect(status).toContainText('25%')
+ await page.getByRole('button',{name:'取消上传'}).click()
+ await expect(page.getByRole('status')).toContainText('上传已取消')
+ await expect(page.getByText('large-upload.wav')).toBeVisible()
+ const firstKey=(await page.evaluate(()=>(window as typeof window&{__uploadKeys?:string[]}).__uploadKeys?.[0]))||''
+ await page.setViewportSize({width:390,height:844})
+ await page.getByRole('button',{name:'开始转写'}).click()
+ await expect(status).toContainText('70%')
+ await expect(status).toContainText('上传完成，正在创建任务')
+ await expect(page.getByRole('button',{name:'取消上传'})).toHaveCount(0)
+ await expect(page.locator('.aside-jobs .job-mini').filter({hasText:'large-upload.wav'})).toBeVisible()
+ const uploadKeys=await page.evaluate(()=>(window as typeof window&{__uploadKeys?:string[]}).__uploadKeys||[])
+ expect(uploadKeys).toEqual([firstKey,firstKey])
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/audio-intel-upload-progress-mobile.png',fullPage:false})
  expect(errors).toEqual([])
 })
 
@@ -1172,11 +1295,36 @@ test('ASR speaker limit, filter, rename and voiceprint segment enrollment are in
  expect(errors).toEqual([])
 })
 
+test('TTS microphone explains the HTTP security boundary and keeps upload available',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.addInitScript(()=>Object.defineProperty(window,'isSecureContext',{configurable:true,value:false}))
+ await routeJobList(page,route=>route.fulfill({json:{items:[]}}))
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',offline:true,bind:'0.0.0.0:20810',services:['asr','tts'],workers:[],hardware:{gpu:{available:true}},models:[],storage:{data:'/tmp/data'}}}))
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,aligner_languages:['Chinese','English']},tts:{languages:['Auto','Chinese','English'],default_language:'Auto',preset_speaker_native_languages:{Vivian:'Chinese'}},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
+ await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[]}}))
+ await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
+ await page.goto('/#tts')
+ await page.evaluate(()=>{localStorage.removeItem('audio-intel:tts-preferences:v2');sessionStorage.removeItem('audio-intel:tts-content:v2')})
+ await page.reload()
+ await page.getByRole('tab',{name:'声音克隆'}).click()
+ await page.getByRole('tab',{name:'麦克风录音'}).click()
+ await expect(page.locator('.recorder-unavailable')).toContainText('麦克风录音需要通过 localhost、127.0.0.1 或 HTTPS 访问')
+ await expect(page.getByRole('tab',{name:'上传文件'})).toBeEnabled()
+ await page.screenshot({path:'/tmp/audio-intel-tts-http-microphone-desktop.png',fullPage:false})
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/audio-intel-tts-http-microphone-mobile.png',fullPage:false})
+ expect(errors).toEqual([])
+})
+
 test('one-off TTS clone references are auto-analyzed, editable and recoverable',async({page})=>{
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  await page.addInitScript(()=>{
+  Object.defineProperty(Object.getPrototypeOf(globalThis.crypto),'randomUUID',{configurable:true,value:undefined})
   Object.defineProperty(navigator,'mediaDevices',{configurable:true,value:{getUserMedia:async()=>({getTracks:()=>[{stop:()=>undefined}]})}})
   class FakeMediaRecorder{
    static isTypeSupported(type:string){return type==='audio/webm;codecs=opus'}
@@ -1202,7 +1350,7 @@ test('one-off TTS clone references are auto-analyzed, editable and recoverable',
  await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
  await page.route('**/api/v1/jobs/*/artifacts/reference.wav',route=>route.fulfill({contentType:'audio/wav',body:Buffer.from('RIFF-reference')}))
  await page.route('**/api/v1/tts/clone-references',async route=>{
-  expect(route.request().headers()['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/)
+  expect(route.request().headers()['idempotency-key']).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   analysisCount+=1
   analysisBodies.push((await route.request().postDataBuffer())?.toString()||'')
   const id=`reference-analysis-${analysisCount}`
@@ -1210,7 +1358,7 @@ test('one-off TTS clone references are auto-analyzed, editable and recoverable',
   await route.fulfill({status:202,json:queued})
   analysisJob={...queued,state:'succeeded',stage:'completed',progress:1,result:{text:analysisCount===1?'自动识别的上传文本。':'自动识别的录音文本。',language:'Chinese',duration:6,artifacts:[{name:'reference.wav',media_type:'audio/wav',size:1200}]}}
  })
- await page.route('**/api/v1/tts/jobs',async route=>{expect(route.request().headers()['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);ttsBody=(await route.request().postDataBuffer())?.toString()||'';await route.fulfill({status:202,json:{id:'tts-inline',kind:'tts',state:'queued',stage:'queued',progress:0,display_name:'一次性克隆',created_at:now,updated_at:now,request:{compute_device:'gpu'}}})})
+ await page.route('**/api/v1/tts/jobs',async route=>{expect(route.request().headers()['idempotency-key']).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);ttsBody=(await route.request().postDataBuffer())?.toString()||'';await route.fulfill({status:202,json:{id:'tts-inline',kind:'tts',state:'queued',stage:'queued',progress:0,display_name:'一次性克隆',created_at:now,updated_at:now,request:{compute_device:'gpu'}}})})
  await page.goto('/#tts')
  await page.evaluate(()=>{localStorage.removeItem('audio-intel:tts-preferences:v2');sessionStorage.removeItem('audio-intel:tts-content:v2')})
  await page.reload()

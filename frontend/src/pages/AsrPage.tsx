@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, FileAudio, Pause, Pencil, Play, RotateCcw, Search, UploadCloud, UserPlus, X } from 'lucide-react'
-import { api, artifactUrl, formatTime, sourceUrl } from '../lib/api'
+import { api, artifactUrl, formatTime, isUploadCancelled, sourceUrl, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
 import type { AsrModelCapability, ComputeDevice, HotwordLibraryCapability, HotwordList, Job, JobDetailResource, JobResult, JobSummary, ResultRevealRequest, Segment, Speaker, VoiceprintPerson } from '../lib/types'
 import { Waveform } from '../components/Waveform'
 import { JobMini } from '../components/JobMini'
@@ -9,6 +9,7 @@ import { InfoTooltip } from '../components/InfoTooltip'
 import { clearAsrPreferences, defaultAsrPreferences, loadAsrPreferences, publicAlignerLanguages, publicAsrLanguages, saveAsrPreferences, type AsrPreferences } from '../lib/preferences'
 import { visibleWorkspaceJobs } from '../lib/jobs'
 import { computeUnavailableReason } from '../lib/presentation'
+import { SubmissionProgress } from '../components/SubmissionProgress'
 const segmentBatchSize=40
 function nameKey(value: string) {
   return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase()
@@ -99,6 +100,7 @@ type Props = {
   onSelect: (job: JobSummary) => void
   gpuAvailable?: boolean
   maxSpeakers: number
+  maxUploadBytes?: number
   asrLanguages?: string[]
   alignerLanguages?: string[]
   asrModels: AsrModelCapability[]
@@ -111,12 +113,13 @@ type Props = {
   onRevealHandled: (token: number) => void
 }
 
-export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, maxSpeakers, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordLimits, voiceprints, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
+export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, maxSpeakers, maxUploadBytes, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordLimits, voiceprints, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const [file, setFile] = useState<File>()
   const [preferences, setPreferences] = useState<AsrPreferences>(() => loadAsrPreferences(maxSpeakers))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [uploadProgress,setUploadProgress]=useState<UploadProgress>()
   const [mediaError, setMediaError] = useState('')
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
@@ -142,6 +145,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   const segmentList = useRef<HTMLDivElement>(null)
   const loadMoreSentinel = useRef<HTMLDivElement>(null)
   const stopAt = useRef<number | undefined>(undefined)
+  const uploadController=useRef<AbortController|undefined>(undefined)
   const asrJobs = useMemo(() => jobs.filter((job) => job.kind === 'asr'), [jobs])
   const selectedSummary = asrJobs.find((job) => job.id === selectedJobId && job.state === 'succeeded') || asrJobs.find((job) => job.state === 'succeeded')
   const visibleJobs = useMemo(() => visibleWorkspaceJobs(asrJobs, selectedSummary?.id), [asrJobs, selectedSummary?.id])
@@ -197,6 +201,8 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   const effectiveComputeDevice: ComputeDevice = computeDevice === 'gpu' && gpuCapability?.available === false ? 'cpu' : computeDevice
   const selectedHotwordStats = useMemo(() => hotwordStats(hotwordLists, selectedHotwordIds), [hotwordLists, selectedHotwordIds])
   const selectedHotwordIssue = hotwordLimitIssue(selectedHotwordIds.size, selectedHotwordStats, hotwordLimits, '当前热词选择已超出单次任务限制')
+  const fileLimitError=file?uploadLimitMessage(file,maxUploadBytes):''
+  const submitLabel=uploadProgress?.phase==='creating'?'正在创建任务…':uploadProgress?.phase==='uploading'&&uploadProgress.percent!==undefined?`正在上传 ${uploadProgress.percent}%`:uploadProgress?'正在准备上传…':busy?'正在处理…':'开始转写'
   const hotwordSelectionIssue = (item: HotwordList) => {
     if (selectedHotwordIds.has(item.id)) return ''
     if (!item.term_count) return '该系统词表当前没有已启用的人名，暂不可选择。'
@@ -267,10 +273,13 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
       input.current?.click()
       return
     }
+    if(fileLimitError){setError(fileLimitError);return}
     setBusy(true)
     setError('')
     setNotice('')
     try {
+      const controller=new AbortController()
+      uploadController.current=controller
       const data = new FormData()
       data.set('file', file)
       data.set('model', model)
@@ -283,15 +292,18 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
       data.set('compute_device', effectiveComputeDevice)
       data.set('accelerate_single_task', String(accelerateSingleTask))
       if (selectedHotwordIds.size) data.set('hotword_list_ids', [...selectedHotwordIds].join(','))
-      const job = await api.submitAsr(data)
+      const job = await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
       onJobSubmitted(job)
       setFile(undefined)
       setSelectedHotwordIds(new Set())
       setNotice('任务已提交，可在任务记录查看进度。')
       if (input.current) input.current.value = ''
     } catch (cause) {
-      setError((cause as Error).message)
+      if(isUploadCancelled(cause))setNotice('上传已取消，已选文件仍保留，可直接重新提交。')
+      else setError((cause as Error).message)
     } finally {
+      uploadController.current=undefined
+      setUploadProgress(undefined)
       setBusy(false)
     }
   }
@@ -334,10 +346,11 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
     player.currentTime = Math.max(0, Math.min(duration, ratio * duration))
     setCurrentTime(player.currentTime)
   }, [duration])
+  const chooseFile=(next?:File)=>{if(!next)return;setFile(next);setError('');setNotice('')}
   const chooseDropped = (event: React.DragEvent<HTMLButtonElement>) => {
     event.preventDefault()
     const next = event.dataTransfer.files[0]
-    if (next) setFile(next)
+    chooseFile(next)
   }
   const toggleSegment = useCallback(
     (segment: Segment) =>
@@ -428,8 +441,8 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
             恢复默认配置
           </button>
         </div>
-        <input ref={input} hidden type="file" accept="audio/*,video/*" onChange={(event) => setFile(event.target.files?.[0])} />
-        <button className="dropzone" onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={chooseDropped}>
+        <input ref={input} hidden type="file" accept="audio/*,video/*" disabled={busy} onChange={(event) => chooseFile(event.target.files?.[0])} />
+        <button className="dropzone" disabled={busy} onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={chooseDropped}>
           <UploadCloud size={44} />
           <b>{file?.name || '拖放音频到这里'}</b>
           <span>{file ? '点击可重新选择' : '支持常见音视频格式'}</span>
@@ -546,9 +559,9 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
           导出格式<div className="select-like">JSON · SRT · VTT · TXT</div>
         </label>
         <div className="submission-actions">
-          {error ? (
+          {error||fileLimitError ? (
             <p className="error" role="alert">
-              {error}
+              {error||fileLimitError}
             </p>
           ) : null}
           {notice ? (
@@ -556,9 +569,10 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
               {notice}
             </p>
           ) : null}
-          <button className="primary" disabled={busy || !chosenModel.installed || Boolean(selectedHotwordIssue)} aria-describedby={selectedHotwordIssue ? 'asr-hotword-limit-error' : undefined} onClick={submit}>
+          {uploadProgress?<SubmissionProgress label="ASR 音频" progress={uploadProgress} onCancel={()=>uploadController.current?.abort()}/>:null}
+          <button className="primary" disabled={busy || !chosenModel.installed || Boolean(selectedHotwordIssue) || Boolean(fileLimitError)} aria-describedby={selectedHotwordIssue ? 'asr-hotword-limit-error' : undefined} onClick={submit}>
             <Play size={18} />
-            {busy ? '正在处理…' : '开始转写'}
+            {submitLabel}
           </button>
         </div>
         <section className="aside-jobs">

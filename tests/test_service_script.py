@@ -4,6 +4,7 @@ import json
 import os
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -54,6 +55,17 @@ def _run_service(*args: str, env: dict[str, str], timeout: float = 30) -> subpro
         timeout=timeout,
         check=False,
     )
+
+
+def _self_signed_certificate(tmp_path: Path) -> tuple[Path, Path]:
+    cert = tmp_path / "server.pem"
+    key = tmp_path / "server-key.pem"
+    subprocess.run([
+        "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "30",
+        "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost",
+        "-keyout", str(key), "-out", str(cert),
+    ], check=True, capture_output=True, text=True)
+    return cert, key
 
 
 def _read_pids(run_dir: Path) -> dict[str, int]:
@@ -270,3 +282,56 @@ def test_port_conflict_fails_without_leaving_a_pid_file(tmp_path: Path) -> None:
     assert started.returncode != 0
     assert "api failed to start" in started.stderr
     assert not (tmp_path / "run" / "api.pid").exists()
+
+
+def test_https_start_uses_tls_readiness_and_reports_actual_endpoint(tmp_path: Path) -> None:
+    cert, key = _self_signed_certificate(tmp_path)
+    env = {
+        **_environment(tmp_path), "AUDIO_INTEL_PROTOCOL": "https",
+        "AUDIO_INTEL_TLS_CERT_FILE": str(cert), "AUDIO_INTEL_TLS_KEY_FILE": str(key),
+    }
+    tracked: list[int] = []
+    try:
+        started = _run_service("start", "api", env=env)
+        assert started.returncode == 0, started.stdout + started.stderr
+        assert f"https://127.0.0.1:{env['AUDIO_INTEL_PORT']}" in started.stdout
+        tracked = [int((tmp_path / "run" / "api.pid").read_text())]
+        status = _run_service("status", env={**env, "AUDIO_INTEL_PROTOCOL": "http", "AUDIO_INTEL_TLS_CERT_FILE": "", "AUDIO_INTEL_TLS_KEY_FILE": ""})
+        assert "https://127.0.0.1:" in status.stdout
+        context = ssl._create_unverified_context()
+        with urllib.request.urlopen(
+            f"https://127.0.0.1:{env['AUDIO_INTEL_PORT']}/api/v1/health", context=context, timeout=2,
+        ) as response:
+            assert response.status == 200
+        with pytest.raises(Exception):
+            urllib.request.urlopen(f"http://127.0.0.1:{env['AUDIO_INTEL_PORT']}/api/v1/health", timeout=1)
+    finally:
+        _stop_isolated(env)
+        _assert_processes_exit(tracked)
+
+
+def test_tls_preflight_errors_and_failed_restart_preserve_running_service(tmp_path: Path) -> None:
+    env = _environment(tmp_path)
+    tracked: list[int] = []
+    try:
+        invalid_protocol = _run_service("start", "api", env={**env, "AUDIO_INTEL_PROTOCOL": "ftp"})
+        assert invalid_protocol.returncode != 0
+        assert "must be 'http' or 'https'" in invalid_protocol.stderr
+        ambiguous = _run_service("start", "api", env={**env, "AUDIO_INTEL_TLS_CERT_FILE": "missing.pem"})
+        assert ambiguous.returncode != 0
+        assert "require AUDIO_INTEL_PROTOCOL=https" in ambiguous.stderr
+        missing = _run_service("start", "api", env={**env, "AUDIO_INTEL_PROTOCOL": "https"})
+        assert missing.returncode != 0
+        assert "HTTPS requires" in missing.stderr
+
+        started = _run_service("start", "api", env=env)
+        assert started.returncode == 0, started.stdout + started.stderr
+        pid = int((tmp_path / "run" / "api.pid").read_text())
+        tracked = [pid]
+        failed = _run_service("restart", "api", env={**env, "AUDIO_INTEL_PROTOCOL": "https"})
+        assert failed.returncode != 0
+        assert int((tmp_path / "run" / "api.pid").read_text()) == pid
+        assert _process_alive(pid)
+    finally:
+        _stop_isolated(env)
+        _assert_processes_exit(tracked)

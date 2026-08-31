@@ -1,8 +1,9 @@
 param(
-    [ValidateSet("start", "stop", "restart", "status", "logs", "setup", "doctor")]
+    [ValidateSet("start", "stop", "restart", "status", "logs", "setup", "doctor", "tls")]
     [string]$Action = "status",
-    [ValidateSet("all", "api", "asr", "tts")]
-    [string]$Target = "all"
+    [string]$Target = "all",
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$ExtraArgs
 )
 
 Set-StrictMode -Version Latest
@@ -38,6 +39,14 @@ function Resolve-ConfiguredPath {
     return [IO.Path]::GetFullPath($value)
 }
 
+function Resolve-OptionalConfiguredPath {
+    param([string]$Name)
+    $value = Get-ProcessEnvironment $Name
+    if ([string]::IsNullOrWhiteSpace($value)) { return "" }
+    if (-not [IO.Path]::IsPathRooted($value)) { $value = Join-Path $RootDir $value }
+    return [IO.Path]::GetFullPath($value)
+}
+
 $DataDir = Resolve-ConfiguredPath "AUDIO_INTEL_DATA_DIR" "data"
 $TempDir = Resolve-ConfiguredPath "AUDIO_INTEL_TEMP_DIR" "tmp"
 $CacheDir = Resolve-ConfiguredPath "AUDIO_INTEL_CACHE_DIR" "cache"
@@ -55,6 +64,8 @@ function Initialize-Environment {
     Set-DefaultEnvironment "PYTHONUNBUFFERED" "1"
     Set-DefaultEnvironment "AUDIO_INTEL_HOST" "0.0.0.0"
     Set-DefaultEnvironment "AUDIO_INTEL_PORT" "20810"
+    Set-DefaultEnvironment "AUDIO_INTEL_PROTOCOL" "http"
+    Set-ProcessEnvironment "AUDIO_INTEL_PROTOCOL" ((Get-ProcessEnvironment "AUDIO_INTEL_PROTOCOL").Trim().ToLowerInvariant())
     Set-DefaultEnvironment "AUDIO_INTEL_MOCK_MODE" "0"
     Set-ProcessEnvironment "AUDIO_INTEL_DATA_DIR" $DataDir
     Set-ProcessEnvironment "AUDIO_INTEL_TEMP_DIR" $TempDir
@@ -63,6 +74,10 @@ function Initialize-Environment {
     Set-ProcessEnvironment "AUDIO_INTEL_RUN_DIR" $RunDir
     Set-ProcessEnvironment "AUDIO_INTEL_MODELS_DIR" $ModelsDir
     Set-ProcessEnvironment "AUDIO_INTEL_FRONTEND_DIR" $FrontendDir
+    foreach ($name in @("AUDIO_INTEL_TLS_CERT_FILE", "AUDIO_INTEL_TLS_KEY_FILE", "AUDIO_INTEL_TLS_CA_FILE")) {
+        $resolved = Resolve-OptionalConfiguredPath $name
+        if (-not [string]::IsNullOrWhiteSpace($resolved)) { Set-ProcessEnvironment $name $resolved }
+    }
     Set-DefaultEnvironment "HF_HOME" (Join-Path $CacheDir "huggingface")
     Set-DefaultEnvironment "HUGGINGFACE_HUB_CACHE" (Join-Path $CacheDir "huggingface\hub")
     Set-DefaultEnvironment "MODELSCOPE_CACHE" (Join-Path $CacheDir "modelscope")
@@ -183,7 +198,7 @@ function Wait-ComponentReady {
     param([string]$Component, [int]$ProcessId)
     $apiPython = Get-RuntimePython "api"
     if ($Component -eq "api") {
-        & $apiPython $ServiceHelper wait-api $ProcessId (Get-ProcessEnvironment "AUDIO_INTEL_HOST") (Get-ProcessEnvironment "AUDIO_INTEL_PORT") $StartTimeoutSeconds
+        & $apiPython $ServiceHelper wait-api $ProcessId (Get-ProcessEnvironment "AUDIO_INTEL_HOST") (Get-ProcessEnvironment "AUDIO_INTEL_PORT") $StartTimeoutSeconds (Get-ProcessEnvironment "AUDIO_INTEL_PROTOCOL")
     } else {
         & $apiPython $ServiceHelper wait-worker $Component $ProcessId $StartTimeoutSeconds
     }
@@ -212,7 +227,13 @@ function Start-One {
 
     $python = if ((Get-ProcessEnvironment "AUDIO_INTEL_MOCK_MODE") -eq "1" -and $Component -ne "api") { Get-RuntimePython "api" } else { Get-RuntimePython $Component }
     $arguments = if ($Component -eq "api") {
-        @("-m", "uvicorn", "audio_intel.api:app", "--host", (Get-ProcessEnvironment "AUDIO_INTEL_HOST"), "--port", (Get-ProcessEnvironment "AUDIO_INTEL_PORT"))
+        $apiArguments = @("-m", "uvicorn", "audio_intel.api:app", "--host", (Get-ProcessEnvironment "AUDIO_INTEL_HOST"), "--port", (Get-ProcessEnvironment "AUDIO_INTEL_PORT"))
+        if ((Get-ProcessEnvironment "AUDIO_INTEL_PROTOCOL") -eq "https") {
+            $certFile = '"{0}"' -f (Get-ProcessEnvironment "AUDIO_INTEL_TLS_CERT_FILE")
+            $keyFile = '"{0}"' -f (Get-ProcessEnvironment "AUDIO_INTEL_TLS_KEY_FILE")
+            $apiArguments += @("--ssl-certfile", $certFile, "--ssl-keyfile", $keyFile)
+        }
+        $apiArguments
     } else {
         @("-m", "audio_intel.worker", $Component)
     }
@@ -281,6 +302,9 @@ function Set-EnabledServices {
 
 function Invoke-Preflight {
     foreach ($component in (Get-StartTargets)) { Ensure-Ready $component }
+    $apiPython = Get-RuntimePython "api"
+    & $apiPython (Join-Path $RootDir "scripts\setup_local_tls.py") validate-config
+    if ($LASTEXITCODE -ne 0) { throw "TLS configuration validation failed" }
 }
 
 function Invoke-StopTargets {
@@ -316,10 +340,24 @@ function Invoke-StartTargets {
         }
         throw $startError
     }
-    Write-Host "Sandevistan-Audio: http://127.0.0.1:$((Get-ProcessEnvironment 'AUDIO_INTEL_PORT'))"
+    Write-Host "Sandevistan-Audio: $((Get-ProcessEnvironment 'AUDIO_INTEL_PROTOCOL'))://127.0.0.1:$((Get-ProcessEnvironment 'AUDIO_INTEL_PORT'))"
 }
 
 Initialize-Environment
+
+if ($Action -eq "tls") {
+    if ($Target -notin @("create", "renew", "fingerprint")) { throw "Usage: service.cmd tls {create|renew|fingerprint} [--host HOST ...]" }
+    $python = Get-RuntimePython "api"
+    if (-not (Test-Path $python)) {
+        $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+        if ($null -eq $pythonCommand) { throw "Python 3 is required to run the TLS helper." }
+        $python = $pythonCommand.Source
+    }
+    & $python (Join-Path $RootDir "scripts\setup_local_tls.py") $Target @ExtraArgs
+    exit $LASTEXITCODE
+}
+
+if ($Target -notin @("all", "api", "asr", "tts")) { throw "Target must be all, api, asr, or tts" }
 
 switch ($Action) {
     "start" { Invoke-StartTargets }
@@ -332,7 +370,15 @@ switch ($Action) {
     "status" {
         foreach ($component in @("api", "asr", "tts")) {
             $process = Get-TrackedProcess $component
-            if ($null -eq $process) { Write-Host "$component`: stopped" } else { Write-Host "$component`: running (pid $($process.Id))" }
+            if ($null -eq $process) {
+                Write-Host "$component`: stopped"
+            } elseif ($component -eq "api") {
+                $endpoint = & (Get-RuntimePython "api") $ServiceHelper endpoint $process.Id
+                if ($LASTEXITCODE -ne 0) { $endpoint = "protocol unknown" }
+                Write-Host "$component`: running (pid $($process.Id), $endpoint)"
+            } else {
+                Write-Host "$component`: running (pid $($process.Id))"
+            }
         }
     }
     "logs" {

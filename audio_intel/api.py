@@ -10,6 +10,7 @@ import re
 import secrets
 import shutil
 import sqlite3
+import ssl
 import time
 import uuid
 from datetime import datetime
@@ -97,7 +98,7 @@ from .api_models import (
     OpenAISpeechRequest, OpenAITranscription, OpenAIVerboseTranscription, ProblemDetail, SystemResponse,
     VoiceListResponse, VoiceProfileResponse, VoiceprintPeopleResponse,
     VoiceprintPersonResponse, VoiceprintSamplesResponse, VoiceprintUploadResponse,
-    HotwordListResponse, HotwordListsResponse,
+    HotwordListResponse, HotwordListsResponse, TlsBootstrapResponse,
 )
 
 
@@ -940,6 +941,64 @@ def create_app() -> FastAPI:
     )
     def health() -> HealthResponse:
         return {"status": "ok", "version": __version__, "offline": True}
+
+    def tls_ca_bytes() -> tuple[bytes, bytes] | None:
+        path = settings.tls_ca_file
+        if settings.protocol != "https" or path is None or not path.is_file():
+            return None
+        try:
+            pem = path.read_bytes()
+            der = ssl.PEM_cert_to_DER_cert(pem.decode("ascii"))
+            return pem, der
+        except (OSError, UnicodeError, ValueError):
+            return None
+
+    @app.get(
+        "/api/v1/tls/bootstrap", response_model=TlsBootstrapResponse, response_model_exclude_unset=True,
+        tags=[SERVICE_TAG], summary="读取 HTTPS 信任引导 / Get HTTPS trust bootstrap",
+        description=bilingual(
+            "公开返回当前协议、可安装根证书的下载地址与 SHA-256 指纹；绝不返回私钥。",
+            "Publicly return the active protocol, installable root certificate URLs, and its SHA-256 fingerprint; private keys are never exposed.",
+        ),
+        operation_id="getTlsBootstrap",
+    )
+    def tls_bootstrap() -> TlsBootstrapResponse:
+        pair = tls_ca_bytes()
+        if pair is None:
+            return {"protocol": "https" if settings.protocol == "https" else "http", "ca_installation_available": False}
+        fingerprint = hashlib.sha256(pair[1]).hexdigest().upper()
+        formatted = ":".join(fingerprint[index:index + 2] for index in range(0, len(fingerprint), 2))
+        return {
+            "protocol": "https", "ca_installation_available": True,
+            "ca_sha256_fingerprint": formatted,
+            "ca_download_urls": {"cer": "/api/v1/tls/root-ca.cer", "pem": "/api/v1/tls/root-ca.pem"},
+        }
+
+    @app.get(
+        "/api/v1/tls/root-ca.cer", tags=[SERVICE_TAG], summary="下载 DER 根证书 / Download DER root CA",
+        description=bilingual("公开下载用于 Windows 和 iOS 安装的 DER 根证书。", "Publicly download the DER root CA for Windows and iOS installation."),
+        operation_id="downloadTlsRootCaDer",
+    )
+    def tls_root_ca_cer() -> Response:
+        pair = tls_ca_bytes()
+        if pair is None:
+            raise HTTPException(status_code=404, detail="TLS root CA is not available")
+        return Response(pair[1], media_type="application/pkix-cert", headers={
+            "Content-Disposition": 'attachment; filename="sandevistan-audio-root-ca.cer"', "Cache-Control": "no-store",
+        })
+
+    @app.get(
+        "/api/v1/tls/root-ca.pem", tags=[SERVICE_TAG], summary="下载 PEM 根证书 / Download PEM root CA",
+        description=bilingual("公开下载 PEM 格式根证书。", "Publicly download the root CA in PEM format."),
+        operation_id="downloadTlsRootCaPem",
+    )
+    def tls_root_ca_pem() -> Response:
+        pair = tls_ca_bytes()
+        if pair is None:
+            raise HTTPException(status_code=404, detail="TLS root CA is not available")
+        return Response(pair[0], media_type="application/x-pem-file", headers={
+            "Content-Disposition": 'attachment; filename="sandevistan-audio-root-ca.pem"', "Cache-Control": "no-store",
+        })
 
     @app.get(
         "/api/v1/auth/session", response_model=AuthSessionResponse, response_model_exclude_unset=True,

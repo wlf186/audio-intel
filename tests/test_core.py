@@ -467,6 +467,7 @@ def test_asr_gpu_overlaps_batched_diarization(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(asr_pipeline, "_parallel_diarization_enabled", lambda *_: True)
     monkeypatch.setattr(asr_pipeline, "compute_device_name", lambda *_: "Test GPU")
     monkeypatch.setattr(asr_pipeline, "write_asr_exports", lambda _job_id, result, _formats: result)
+    monkeypatch.setattr(asr_pipeline, "list_voiceprint_people", lambda: [])
     diarization_started = Event()
     release_diarization = Event()
 
@@ -518,6 +519,7 @@ def test_asr_segment_mode_aligns_multi_speaker_text_internally(tmp_path, monkeyp
     )
     monkeypatch.setattr(asr_pipeline, "compute_device_name", lambda *_: "CPU")
     monkeypatch.setattr(asr_pipeline, "write_asr_exports", lambda _job_id, result, _formats: result)
+    monkeypatch.setattr(asr_pipeline, "list_voiceprint_people", lambda: [])
     operations = []
 
     def fake_model_stage(_context, operation, _payload, _directory, _device, _progress):
