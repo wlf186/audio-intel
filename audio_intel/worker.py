@@ -112,6 +112,7 @@ def _run_one_job(
         current = get_job(job_id)
         if current and current.get("cancel_requested"):
             raise JobCancelled("Job cancellation requested")
+        shutil.rmtree(context.work_dir, ignore_errors=True)
         finish_job(
             job_id, "succeeded", stage="completed", progress=1,
             result_json=result, heartbeat_at=utcnow(),
@@ -127,6 +128,7 @@ def _run_one_job(
         error_path = settings.jobs_dir / job_id / "error.log"
         error_path.parent.mkdir(parents=True, exist_ok=True)
         error_path.write_text(traceback.format_exc(), encoding="utf-8")
+        shutil.rmtree(context.work_dir, ignore_errors=True)
         finish_job(
             job_id, "failed", stage="failed", error_code=type(exc).__name__,
             error_message=str(exc)[:2000], heartbeat_at=utcnow(),
@@ -281,11 +283,11 @@ def _forced_cancel(job: dict[str, Any]) -> None:
         return
     message = "Job cancelled after the execution process tree stopped"
     _fail_voiceprint_import(current, message)
+    shutil.rmtree(settings.temp_dir / job["id"], ignore_errors=True)
     finish_job(
         job["id"], "cancelled", stage="cancelled", error_code="cancelled",
         error_message=message, heartbeat_at=utcnow(),
     )
-    shutil.rmtree(settings.temp_dir / job["id"], ignore_errors=True)
 
 
 def _complete_cancelled_executor(
@@ -341,12 +343,12 @@ def run(kind: str) -> None:
                         else:
                             message = f"{kind.upper()} execution process exited unexpectedly"
                             _fail_voiceprint_import(current, message)
+                            shutil.rmtree(settings.temp_dir / current["id"], ignore_errors=True)
                             finish_job(
                                 current["id"], "failed", stage="failed",
                                 error_code="WorkerProcessExit", error_message=message,
                                 heartbeat_at=utcnow(),
                             )
-                            shutil.rmtree(settings.temp_dir / current["id"], ignore_errors=True)
                 connection.close()
                 process.join(timeout=0.1)
                 time.sleep(min(settings.worker_poll_seconds, 0.5))

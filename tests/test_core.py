@@ -403,10 +403,10 @@ def test_asr_voiceprint_note_label_is_written_to_all_exports(tmp_path, monkeypat
     )
     asr_pipeline.write_asr_exports("note-label", result, ["json", "srt", "vtt", "txt"])
     output = local.jobs_dir / "note-label" / "output"
-    assert "尼克杨（研发&平台）" in (output / "transcript.json").read_text()
-    assert "尼克杨（研发&平台）" in (output / "transcript.srt").read_text()
-    assert "尼克杨（研发&平台）" in (output / "transcript.txt").read_text()
-    assert "<v 尼克杨（研发&amp;平台）>" in (output / "transcript.vtt").read_text()
+    assert "尼克杨（研发&平台）" in (output / "transcript.json").read_text(encoding="utf-8")
+    assert "尼克杨（研发&平台）" in (output / "transcript.srt").read_text(encoding="utf-8")
+    assert "尼克杨（研发&平台）" in (output / "transcript.txt").read_text(encoding="utf-8")
+    assert "<v 尼克杨（研发&amp;平台）>" in (output / "transcript.vtt").read_text(encoding="utf-8")
 
 
 def test_asr_auto_speaker_refinement_finds_split_stable_speaker() -> None:

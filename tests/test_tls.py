@@ -28,7 +28,7 @@ Ozz2xNOLqylUK1k=
 
 def test_public_tls_bootstrap_and_downloads_are_pre_auth(tmp_path, monkeypatch) -> None:
     ca = tmp_path / "root.pem"
-    ca.write_text(TEST_CA, encoding="ascii")
+    ca.write_bytes(TEST_CA.encode("ascii"))
     local = replace(
         settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
         api_key="secret", protocol="https", tls_ca_file=ca,
