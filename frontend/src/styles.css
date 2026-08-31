@@ -325,6 +325,7 @@ select:focus{border-color:var(--cyan)}
  .control-panel>.submission-actions,.tts-editor .submission-actions{position:sticky;z-index:8;padding:11px 0 12px;background:linear-gradient(180deg,#090f10f2,#090f10 28%);border-top:1px solid #344344;box-shadow:0 -12px 24px #050809d9}
  .control-panel>.submission-actions{bottom:-29px}.tts-editor .submission-actions{bottom:0}
  .tts-editor .submission-actions{margin:14px 0 0}
+ .tts-editor .acceleration-control{margin-top:4px}
  .tts-editor .text-editor textarea{min-height:150px}
 }
 
