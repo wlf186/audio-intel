@@ -1,7 +1,7 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, FileAudio, Pause, Pencil, Play, RotateCcw, Search, UploadCloud, UserPlus, X } from 'lucide-react'
 import { api, artifactUrl, formatTime, isUploadCancelled, sourceUrl, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
-import type { AsrModelCapability, ComputeDevice, HotwordLibraryCapability, HotwordList, Job, JobDetailResource, JobResult, JobSummary, ResultRevealRequest, Segment, Speaker, VoiceprintPerson } from '../lib/types'
+import type { AsrModelCapability, ComputeDevice, HotwordLibraryCapability, HotwordList, Job, JobDetailResource, JobResult, JobSummary, ResourceState, ResultRevealRequest, Segment, Speaker, VoiceprintPerson } from '../lib/types'
 import { Waveform } from '../components/Waveform'
 import { JobMini } from '../components/JobMini'
 import { Modal } from '../components/Modal'
@@ -105,6 +105,7 @@ type Props = {
   alignerLanguages?: string[]
   asrModels: AsrModelCapability[]
   hotwordLists: HotwordList[]
+  hotwordsState: ResourceState
   hotwordLimits?: HotwordLibraryCapability
   voiceprints: VoiceprintPerson[]
   refreshVoiceprints: () => Promise<void>
@@ -113,7 +114,7 @@ type Props = {
   onRevealHandled: (token: number) => void
 }
 
-export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, maxSpeakers, maxUploadBytes, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordLimits, voiceprints, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
+export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, maxSpeakers, maxUploadBytes, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const [file, setFile] = useState<File>()
   const [preferences, setPreferences] = useState<AsrPreferences>(() => loadAsrPreferences(maxSpeakers))
   const [busy, setBusy] = useState(false)
@@ -132,7 +133,6 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   }>()
   const [renameValue, setRenameValue] = useState('')
   const [libraryOpen, setLibraryOpen] = useState(false)
-  const [selectedHotwordIds, setSelectedHotwordIds] = useState<Set<string>>(() => new Set())
   const [targetPersonId, setTargetPersonId] = useState('')
   const [newPersonName, setNewPersonName] = useState('')
   const [newPersonNote, setNewPersonNote] = useState('')
@@ -199,6 +199,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   const { language, speakerCount: speakers, align, useVoiceprints, computeDevice, accelerateSingleTask } = preferences
   const model = chosenModel.id
   const effectiveComputeDevice: ComputeDevice = computeDevice === 'gpu' && gpuCapability?.available === false ? 'cpu' : computeDevice
+  const selectedHotwordIds = useMemo(() => new Set(preferences.hotwordListIds), [preferences.hotwordListIds])
   const selectedHotwordStats = useMemo(() => hotwordStats(hotwordLists, selectedHotwordIds), [hotwordLists, selectedHotwordIds])
   const selectedHotwordIssue = hotwordLimitIssue(selectedHotwordIds.size, selectedHotwordStats, hotwordLimits, '当前热词选择已超出单次任务限制')
   const fileLimitError=file?uploadLimitMessage(file,maxUploadBytes):''
@@ -220,6 +221,17 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   useEffect(() => {
     if (speakers !== 'auto' && Number(speakers) > maxSpeakers) updatePreference('speakerCount', 'auto')
   }, [maxSpeakers, speakers])
+  useEffect(() => {
+    if (hotwordsState !== 'ready') return
+    const selectableIds = new Set(hotwordLists.filter((item) => item.term_count > 0).map((item) => item.id))
+    setPreferences((current) => {
+      const hotwordListIds = current.hotwordListIds.filter((id) => selectableIds.has(id))
+      if (hotwordListIds.length === current.hotwordListIds.length) return current
+      const next = { ...current, hotwordListIds }
+      saveAsrPreferences(next)
+      return next
+    })
+  }, [hotwordLists, hotwordsState])
   useEffect(() => {
     if (selectedSummary) loadJobDetail(selectedSummary)
   }, [loadJobDetail, selectedSummary])
@@ -295,7 +307,6 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
       const job = await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
       onJobSubmitted(job)
       setFile(undefined)
-      setSelectedHotwordIds(new Set())
       setNotice('任务已提交，可在任务记录查看进度。')
       if (input.current) input.current.value = ''
     } catch (cause) {
@@ -420,7 +431,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
     }
   }
   const resetPreferences = () => {
-    const next = { ...defaultAsrPreferences }
+    const next = { ...defaultAsrPreferences, hotwordListIds: [] }
     clearAsrPreferences()
     saveAsrPreferences(next)
     setPreferences(next)
@@ -481,13 +492,13 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
                     checked={selectedHotwordIds.has(item.id)}
                     disabled={Boolean(issue)}
                     aria-describedby={issueId}
-                    onChange={() =>
-                      setSelectedHotwordIds((current) => {
-                        const next = new Set(current)
-                        next.has(item.id) ? next.delete(item.id) : next.add(item.id)
-                        return next
-                      })
-                    }
+                    onChange={() => setPreferences((current) => {
+                      const selected = new Set(current.hotwordListIds)
+                      selected.has(item.id) ? selected.delete(item.id) : selected.add(item.id)
+                      const next = { ...current, hotwordListIds: [...selected] }
+                      saveAsrPreferences(next)
+                      return next
+                    })}
                   />
                   <span>
                     {item.name}

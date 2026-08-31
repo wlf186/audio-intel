@@ -310,9 +310,10 @@ test('ASR playback, seek and transcript search are interactive',async({page})=>{
  expect(errors).toEqual([])
 })
 
-test('ASR model routing and task-scoped hotword selection are explicit',async({page})=>{
+test('ASR model routing and remembered hotword selection are explicit',async({page})=>{
  const errors:string[]=[]
  let submitted=''
+ let hotwordResponse:'ready'|'error'='ready'
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  const models=[
@@ -323,13 +324,19 @@ test('ASR model routing and task-scoped hotword selection are explicit',async({p
  const termOverflowHotword={id:'hotwords_team',name:'团队人名',terms:['Qwen','Whisper'],term_count:2,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}
  const characterOverflowHotword={id:'hotwords_project',name:'项目代号',terms:['SandevistanProject'],term_count:1,created_at:new Date().toISOString(),updated_at:new Date().toISOString()}
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{model:'Qwen3-ASR-0.6B',default_model:'qwen3-asr-0.6b',models,hotword_library:{supported:true,max_lists:100,max_terms_per_list:200,max_selected_lists:8,max_selected_terms:2,max_prompt_chars:30,max_name_chars:80,max_term_chars:64},speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,languages:['Auto','Chinese'],aligner_languages:['Chinese']},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
- await page.route('**/api/v1/asr/hotword-lists',route=>route.fulfill({json:{items:[hotword,termOverflowHotword,characterOverflowHotword],count:3}}))
+ let hotwordItems=[hotword,termOverflowHotword,characterOverflowHotword]
+ await page.route('**/api/v1/asr/hotword-lists',route=>hotwordResponse==='error'?route.fulfill({status:503,json:{detail:'hotwords unavailable'}}):route.fulfill({json:{items:hotwordItems,count:hotwordItems.length}}))
  await page.route('**/api/v1/asr/jobs',async route=>{submitted=(await route.request().postDataBuffer())?.toString()||'';await route.fulfill({status:202,json:{id:'model-hotword-job',kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'model.wav',created_at:new Date().toISOString(),request:{model:'qwen3-asr-1.7b',compute_device:'cpu'}}})})
  await page.goto('/#asr')
  await page.getByLabel('ASR 模型').selectOption('qwen3-asr-1.7b')
  await expect(page.getByLabel('ASR 计算设备')).toHaveValue('cpu')
  await expect(page.getByText(/至少需要 7936 MiB 显存.*4096 MiB/)).toBeVisible()
  await page.getByRole('checkbox',{name:/医疗术语/}).check()
+ await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'任务记录'}).click()
+ await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:/转写工作台/}).click()
+ await expect(page.getByRole('checkbox',{name:/医疗术语/})).toBeChecked()
+ await page.reload()
+ await expect(page.getByRole('checkbox',{name:/医疗术语/})).toBeChecked()
  const termOverflow=page.getByRole('checkbox',{name:/团队人名/})
  await expect(termOverflow).toBeDisabled()
  await expect(page.getByText(/选择“团队人名”后将超出单次任务限制.*3 个唯一热词.*上限 2 个/)).toBeVisible()
@@ -356,8 +363,21 @@ test('ASR model routing and task-scoped hotword selection are explicit',async({p
  expect(submitted).toContain('hotwords_medical')
  expect(submitted).toContain('name="compute_device"')
  expect(submitted).toContain('cpu')
+ await expect(page.getByRole('checkbox',{name:/医疗术语/})).toBeChecked()
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('audio-intel:asr-preferences:v3')||'{}').hotwordListIds)).toEqual(['hotwords_medical'])
+ await page.getByRole('button',{name:'恢复默认配置'}).click()
  await expect(page.getByRole('checkbox',{name:/医疗术语/})).not.toBeChecked()
- expect(errors).toEqual([])
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('audio-intel:asr-preferences:v3')||'{}').hotwordListIds)).toEqual([])
+ await page.getByRole('checkbox',{name:/医疗术语/}).check()
+ hotwordResponse='error'
+ await page.reload()
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('audio-intel:asr-preferences:v3')||'{}').hotwordListIds)).toEqual(['hotwords_medical'])
+ hotwordResponse='ready'
+ hotwordItems=[{...hotword,terms:[],term_count:0},termOverflowHotword,characterOverflowHotword]
+ await page.reload()
+ await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('audio-intel:asr-preferences:v3')||'{}').hotwordListIds)).toEqual([])
+ await expect(page.getByRole('checkbox',{name:/医疗术语/})).not.toBeChecked()
+ expect(errors.filter(message=>!message.includes('503 (Service Unavailable)'))).toEqual([])
 })
 
 test('hotword library supports create and mobile layout without overflow',async({page})=>{
@@ -695,10 +715,17 @@ test('ASR and TTS preferences persist independently and reset per page',async({p
   await route.fulfill({response,json:body})
  })
  await page.goto('/#asr')
- await page.evaluate(()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('audio-intel:asr-preferences:v1','{broken');localStorage.setItem('audio-intel:tts-preferences:v1','{broken')})
+ await page.evaluate(()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('audio-intel:asr-preferences:v2',JSON.stringify({model:'qwen3-asr-0.6b',language:'French',speakerCount:'2',align:false,useVoiceprints:false,computeDevice:'cpu',accelerateSingleTask:false}));localStorage.setItem('audio-intel:asr-preferences:v1','{broken');localStorage.setItem('audio-intel:tts-preferences:v1','{broken')})
  await page.reload()
  const asrDevice=page.getByLabel('ASR 计算设备')
  const asrAcceleration=page.getByRole('checkbox',{name:'单任务加速',exact:true})
+ await expect(asrDevice).toHaveValue('cpu')
+ await expect(asrAcceleration).not.toBeChecked()
+ await expect(page.getByLabel('识别语言')).toHaveValue('French')
+ const migrated=await page.evaluate(()=>({previous:localStorage.getItem('audio-intel:asr-preferences:v2'),current:JSON.parse(localStorage.getItem('audio-intel:asr-preferences:v3')||'{}')}))
+ expect(migrated.previous).toBeNull()
+ expect(migrated.current).toMatchObject({computeDevice:'cpu',accelerateSingleTask:false,hotwordListIds:[]})
+ await page.getByRole('button',{name:'恢复默认配置'}).click()
  await expect(asrDevice).toHaveValue('gpu')
  await expect(asrAcceleration).toBeChecked()
  await page.getByRole('button',{name:'查看单任务加速说明'}).hover()
@@ -744,8 +771,8 @@ test('ASR and TTS preferences persist independently and reset per page',async({p
  await expect(page.getByLabel('输出语种')).toHaveValue('Auto')
  await expect(page.getByLabel('音色',{exact:true})).toHaveValue('Vivian')
  await expect(page.locator('.text-editor textarea')).toHaveValue('这段文本只应保留在当前会话。')
- const stored=await page.evaluate(()=>({asr:JSON.parse(localStorage.getItem('audio-intel:asr-preferences:v2')||'{}'),tts:JSON.parse(localStorage.getItem('audio-intel:tts-preferences:v2')||'{}'),localContent:localStorage.getItem('audio-intel:tts-content:v2'),sessionContent:sessionStorage.getItem('audio-intel:tts-content:v2')}))
- expect(stored.asr).toMatchObject({computeDevice:'gpu',accelerateSingleTask:true})
+ const stored=await page.evaluate(()=>({asr:JSON.parse(localStorage.getItem('audio-intel:asr-preferences:v3')||'{}'),tts:JSON.parse(localStorage.getItem('audio-intel:tts-preferences:v2')||'{}'),localContent:localStorage.getItem('audio-intel:tts-content:v2'),sessionContent:sessionStorage.getItem('audio-intel:tts-content:v2')}))
+ expect(stored.asr).toMatchObject({computeDevice:'gpu',accelerateSingleTask:true,hotwordListIds:[]})
  expect(stored.tts).toMatchObject({computeDevice:'gpu',accelerateSingleTask:true})
  expect(stored.localContent).toBeNull()
  expect(stored.sessionContent).toContain('这段文本只应保留在当前会话')
