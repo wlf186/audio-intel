@@ -13,9 +13,75 @@ MAX_HOTWORD_PROMPT_CHARS = 8_000
 MAX_HOTWORD_NAME_CHARS = 80
 MAX_HOTWORD_TERM_CHARS = 64
 SYSTEM_HOTWORD_LIST_ID = "hotwords_voiceprint_people"
-SYSTEM_HOTWORD_LIST_NAME = "声纹库人名"
+SYSTEM_HOTWORD_LIST_NAME = "声纹库人名（全名）"
+SYSTEM_SHORT_HOTWORD_LIST_ID = "hotwords_voiceprint_people_short"
+SYSTEM_SHORT_HOTWORD_LIST_NAME = "声纹库人名（去姓）"
+LEGACY_SYSTEM_HOTWORD_LIST_NAME = "声纹库人名"
+RESERVED_SYSTEM_HOTWORD_LIST_NAMES = frozenset({
+    LEGACY_SYSTEM_HOTWORD_LIST_NAME,
+    SYSTEM_HOTWORD_LIST_NAME,
+    SYSTEM_SHORT_HOTWORD_LIST_NAME,
+})
 
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
+_LATIN_FIRST_NAME = re.compile(r"[A-Za-z]{2,}(?:[-'][A-Za-z]+)*")
+_LATIN_NAME_TOKEN = re.compile(r"[A-Za-z]+(?:[-'][A-Za-z]+)*\.?")
+_LATIN_TITLES = frozenset({
+    "dame", "dr", "lady", "lord", "miss", "mr", "mrs", "ms", "prof",
+    "professor", "rev", "reverend", "sir",
+})
+
+# The 100 most frequent single-character surnames published in the Ministry of
+# Education's 2011 Chinese language report. Keeping the list local makes name
+# derivation deterministic and preserves offline runtime behavior.
+_COMMON_SINGLE_SURNAMES = frozenset(
+    "李王张陈刘杨周黄吴赵孙马胡徐郭林朱金郑高何宋罗梁谢姚韩冯许邓曹丁蔡蒋于杜叶唐温沈彭袁姜余潘万苏曾董汪鲁范田陆白方贾肖谭崔雷吕石钟任韦康卢江牛魏程孟安廖夏戴邵龙钱齐秦毛汤邱洪乔俞华莫梅熊薛穆易侯尹顾段傅"
+)
+
+# Common compound surnames enumerated in the Ministry of Public Security's
+# 2021 national name report.
+_COMMON_COMPOUND_SURNAMES = frozenset({
+    "夏侯", "司徒", "司马", "完颜", "尉迟", "慕容",
+    "欧阳", "申屠", "皇甫", "诸葛", "贺兰", "长孙", "令狐", "上官",
+})
+
+
+def derive_voiceprint_short_name(value: str) -> str | None:
+    """Return a conservative surname-free ASR hint for a stored person name."""
+    name = " ".join(unicodedata.normalize("NFKC", value).strip().split())
+    if not name:
+        return None
+
+    compact = name.replace(" ", "")
+    if compact and all(_is_han_character(character) for character in compact):
+        if compact[:2] in _COMMON_COMPOUND_SURNAMES:
+            given_name = compact[2:]
+        elif compact[0] in _COMMON_SINGLE_SURNAMES:
+            given_name = compact[1:]
+        else:
+            return None
+        return given_name if len(given_name) == 2 else None
+
+    tokens = name.split(" ")
+    first = tokens[0]
+    if (
+        len(tokens) < 2
+        or first.casefold() in _LATIN_TITLES
+        or _LATIN_FIRST_NAME.fullmatch(first) is None
+        or any(_LATIN_NAME_TOKEN.fullmatch(token) is None for token in tokens[1:])
+    ):
+        return None
+    return first
+
+
+def _is_han_character(value: str) -> bool:
+    codepoint = ord(value)
+    return (
+        0x3400 <= codepoint <= 0x4DBF
+        or 0x4E00 <= codepoint <= 0x9FFF
+        or 0xF900 <= codepoint <= 0xFAFF
+        or 0x20000 <= codepoint <= 0x3134F
+    )
 
 
 def normalize_hotword_name(value: str) -> str:

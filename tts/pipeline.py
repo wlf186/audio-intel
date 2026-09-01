@@ -12,12 +12,12 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from audio_intel.config import settings
-from audio_intel.gpu import compute_device_name, gpu_lease
+from audio_intel.gpu import compute_device_name, gpu_diagnostics, gpu_lease
 from audio_intel.model_registry import model_installation, resolve_tts_checkpoint, resolve_tts_model
 from audio_intel.performance import lower_batch_size, resolve_acceleration
 from audio_intel.progress import ThrottledProgress
 from audio_intel.utils import waveform_peaks
-from audio_intel.worker import JobContext
+from audio_intel.worker import JobContext, mark_executor_for_recycle
 
 
 _cpu_models: dict[str, Any] = {}
@@ -266,7 +266,10 @@ def process_job(context: JobContext) -> dict[str, Any]:
     if lease is not None:
         lease.__enter__()
     model = None
+    initial_gpu_diagnostics = None
     try:
+        if compute_device == "gpu" and not settings.mock_mode:
+            initial_gpu_diagnostics = gpu_diagnostics(0)
         if request["voice_mode"] not in {"preset", "voice_design"}:
             _prepare_clone_reference(context, request, compute_device)
         model = None if settings.mock_mode else load_model(model_definition, request["voice_mode"], compute_device)
@@ -278,12 +281,27 @@ def process_job(context: JobContext) -> dict[str, Any]:
             context, request, chunks, model, compute_device, acceleration,
             model_definition, checkpoint,
         )
-    finally:
-        if compute_device == "gpu" and model is not None:
+    except Exception as exc:
+        if compute_device == "gpu" and not settings.mock_mode:
             import torch
-            del model
+            if isinstance(exc, torch.OutOfMemoryError):
+                mark_executor_for_recycle(exc, "cuda_oom")
+                try:
+                    exc.add_note("audio_intel_gpu_diagnostics=" + json.dumps({
+                        "before": initial_gpu_diagnostics,
+                        "at_failure": gpu_diagnostics(0),
+                    }, ensure_ascii=False, sort_keys=True))
+                except Exception:
+                    pass
+        raise
+    finally:
+        if compute_device == "gpu":
+            import torch
+            if model is not None:
+                del model
             gc.collect()
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         if lease is not None:
             lease.__exit__(None, None, None)
 

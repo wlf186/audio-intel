@@ -1061,7 +1061,10 @@ def create_app() -> FastAPI:
     @app.get(
         "/api/v1/system", response_model=SystemResponse, response_model_exclude_unset=True,
         tags=[SERVICE_TAG], summary="读取详细系统状态 / Get detailed system status",
-        description=bilingual("返回 worker、硬件、模型 revision 和本地存储路径；始终受保护。", "Return workers, hardware, model revisions, and local storage paths; always protected."),
+        description=bilingual(
+            "返回 worker、硬件、模型 revision 和本地存储路径；GPU 快照区分设备范围当前已用、当前空闲和按 total-used-free 计算的系统保留估算；始终受保护。",
+            "Return workers, hardware, model revisions, and local storage paths; the GPU snapshot distinguishes device-wide used and free memory from the estimated system-reserved residual calculated as total-used-free; always protected.",
+        ),
         operation_id="getSystem", responses={**AUTH_RESPONSES},
     )
     def system(_: None = Depends(require_api_key)) -> SystemResponse:
@@ -1149,8 +1152,8 @@ def create_app() -> FastAPI:
         response_model_exclude_unset=True, tags=[ASR_TAG],
         summary="读取 ASR 热词库 / List ASR hotword lists",
         description=bilingual(
-            "列出本地词表，包括只读系统词表“声纹库人名”。提交 ASR 时仍需通过 `hotword_list_ids` 显式选择；选择顺序不表示识别权重。",
-            "List local vocabularies, including the read-only system list `声纹库人名`. Select every list explicitly through `hotword_list_ids`; selection order does not imply recognition weight.",
+            "列出本地词表，包括只读系统词表“声纹库人名（全名）”和“声纹库人名（去姓）”。提交 ASR 时仍需通过 `hotword_list_ids` 显式选择；选择顺序不表示识别权重。",
+            "List local vocabularies, including the read-only full-name and surname-free voiceprint system lists. Select every list explicitly through `hotword_list_ids`; selection order does not imply recognition weight.",
         ),
         operation_id="listAsrHotwordLists", responses={**AUTH_RESPONSES},
     )
@@ -1163,8 +1166,8 @@ def create_app() -> FastAPI:
         response_model=HotwordListResponse, response_model_exclude_unset=True,
         tags=[ASR_TAG], summary="创建 ASR 热词词表 / Create an ASR hotword list",
         description=bilingual(
-            "创建名称唯一的自定义热词词表。名称在 NFKC、空白折叠和大小写无关规范化后唯一；“声纹库人名”为系统保留名称。空词条会移除，等价重复词保留首次形式。",
-            "Create a uniquely named custom hotword list. Names are unique after NFKC normalization, whitespace folding, and case folding; `声纹库人名` is reserved for the system list. Empty terms are removed and equivalent duplicates preserve their first display form.",
+            "创建名称唯一的自定义热词词表。名称在 NFKC、空白折叠和大小写无关规范化后唯一；声纹人名系统词表的现行及旧名称均为保留名称。空词条会移除，等价重复词保留首次形式。",
+            "Create a uniquely named custom hotword list. Names are unique after NFKC normalization, whitespace folding, and case folding; current and legacy voiceprint-system list names are reserved. Empty terms are removed and equivalent duplicates preserve their first display form.",
         ),
         operation_id="createAsrHotwordList",
         responses={**AUTH_RESPONSES, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},

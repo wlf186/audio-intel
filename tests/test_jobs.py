@@ -203,7 +203,7 @@ def test_historical_jobs_backfill_compute_device_names(tmp_path, monkeypatch) ->
     assert db_module.get_job(old_tts["id"])["request"]["compute_device_name"] == "CPU"
     assert db_module.get_job(named["id"])["request"]["compute_device_name"] == "Original GPU"
     with sqlite3.connect(local.database_path) as database:
-        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 8
+        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 9
 
 
 def test_schema_upgrade_reaches_voiceprints_without_a_gpu(tmp_path, monkeypatch) -> None:
@@ -218,7 +218,7 @@ def test_schema_upgrade_reaches_voiceprints_without_a_gpu(tmp_path, monkeypatch)
     db_module.init_db()
 
     with sqlite3.connect(local.database_path) as database:
-        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 8
+        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 9
         assert database.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='voiceprint_people'"
         ).fetchone()[0] == 1
@@ -258,15 +258,18 @@ def test_voiceprint_people_samples_and_import_job_purge_are_independent(tmp_path
     assert db_module.get_voiceprint_sample("sample_pending") is None
 
 
-def test_voiceprint_people_sync_the_read_only_system_hotword_list(tmp_path, monkeypatch) -> None:
+def test_voiceprint_people_sync_the_read_only_system_hotword_lists(tmp_path, monkeypatch) -> None:
     local = local_settings(tmp_path)
     install_settings(local, monkeypatch)
     db_module.init_db()
 
-    system = db_module.get_hotword_list("hotwords_voiceprint_people")
-    assert system is not None
-    assert system["kind"] == "system"
-    assert system["terms"] == []
+    full = db_module.get_hotword_list("hotwords_voiceprint_people")
+    short = db_module.get_hotword_list("hotwords_voiceprint_people_short")
+    assert full is not None and short is not None
+    assert full["kind"] == short["kind"] == "system"
+    assert full["name"] == "声纹库人名（全名）"
+    assert short["name"] == "声纹库人名（去姓）"
+    assert full["terms"] == short["terms"] == []
 
     excluded = db_module.create_voiceprint_person(
         " 李　雷 ", note=" 138 0000 0000 ", include_in_hotword_library=False,
@@ -279,40 +282,60 @@ def test_voiceprint_people_sync_the_read_only_system_hotword_list(tmp_path, monk
     )
     assert updated is not None
     assert db_module.get_hotword_list("hotwords_voiceprint_people")["terms"] == ["李 雷"]
+    assert db_module.get_hotword_list("hotwords_voiceprint_people_short")["terms"] == []
 
     db_module.update_voiceprint_person(excluded["id"], name="李小雷", note=None)
     included = db_module.create_voiceprint_person("韩梅梅")
     assert db_module.get_hotword_list("hotwords_voiceprint_people")["terms"] == ["李小雷", "韩梅梅"]
+    assert db_module.get_hotword_list("hotwords_voiceprint_people_short")["terms"] == ["小雷", "梅梅"]
+
+    duplicate = db_module.create_voiceprint_person("张小雷")
+    assert db_module.get_hotword_list("hotwords_voiceprint_people_short")["terms"] == ["小雷", "梅梅"]
+    db_module.delete_voiceprint_person_record(duplicate["id"])
 
     db_module.delete_voiceprint_person_record(included["id"])
     assert db_module.get_hotword_list("hotwords_voiceprint_people")["terms"] == ["李小雷"]
-    with __import__("pytest").raises(db_module.ReadOnlyHotwordListError):
-        db_module.update_hotword_list("hotwords_voiceprint_people", terms=[])
-    with __import__("pytest").raises(db_module.ReadOnlyHotwordListError):
-        db_module.delete_hotword_list("hotwords_voiceprint_people")
+    assert db_module.get_hotword_list("hotwords_voiceprint_people_short")["terms"] == ["小雷"]
+    for item_id in ("hotwords_voiceprint_people", "hotwords_voiceprint_people_short"):
+        with __import__("pytest").raises(db_module.ReadOnlyHotwordListError):
+            db_module.update_hotword_list(item_id, terms=[])
+        with __import__("pytest").raises(db_module.ReadOnlyHotwordListError):
+            db_module.delete_hotword_list(item_id)
 
 
-def test_schema_v8_preserves_a_custom_list_using_the_reserved_system_name(
+def test_schema_v9_preserves_custom_lists_using_reserved_system_names(
     tmp_path, monkeypatch,
 ) -> None:
     local = local_settings(tmp_path)
     install_settings(local, monkeypatch)
     db_module.init_db()
+    historical = db_module.create_job("asr", "historical", {
+        "hotword_list_ids": ["hotwords_voiceprint_people"],
+        "hotword_lists": [{
+            "id": "hotwords_voiceprint_people", "name": "声纹库人名",
+            "terms": ["旧词"], "updated_at": "2026-01-01T00:00:00+00:00",
+        }],
+    })
     now = db_module.utcnow()
     with sqlite3.connect(local.database_path) as database:
         database.execute(
-            "DELETE FROM asr_hotword_lists WHERE id='hotwords_voiceprint_people'"
+            "DELETE FROM asr_hotword_lists WHERE kind='system'"
         )
-        database.execute(
-            """INSERT INTO asr_hotword_lists(
-               id,name,name_key,terms_json,kind,created_at,updated_at
-               ) VALUES(?,?,?,?,?,?,?)""",
-            (
-                "hotwords_legacy", "声纹库人名", db_module.hotword_name_key("声纹库人名"),
-                '["旧词"]', "custom", now, now,
-            ),
-        )
-        database.execute("UPDATE schema_meta SET version=7")
+        for item_id, name in (
+            ("hotwords_legacy", "声纹库人名"),
+            ("hotwords_full_conflict", "声纹库人名（全名）"),
+            ("hotwords_short_conflict", "声纹库人名（去姓）"),
+        ):
+            database.execute(
+                """INSERT INTO asr_hotword_lists(
+                   id,name,name_key,terms_json,kind,created_at,updated_at
+                   ) VALUES(?,?,?,?,?,?,?)""",
+                (
+                    item_id, name, db_module.hotword_name_key(name),
+                    '["旧词"]', "custom", now, now,
+                ),
+            )
+        database.execute("UPDATE schema_meta SET version=8")
 
     db_module.init_db()
 
@@ -320,10 +343,15 @@ def test_schema_v8_preserves_a_custom_list_using_the_reserved_system_name(
     assert legacy is not None
     assert legacy["name"] == "声纹库人名（原自定义）"
     assert legacy["terms"] == ["旧词"]
-    system = db_module.get_hotword_list("hotwords_voiceprint_people")
-    assert system is not None
-    assert system["name"] == "声纹库人名"
-    assert system["kind"] == "system"
+    assert db_module.get_hotword_list("hotwords_full_conflict")["name"] == "声纹库人名（全名）（原自定义）"
+    assert db_module.get_hotword_list("hotwords_short_conflict")["name"] == "声纹库人名（去姓）（原自定义）"
+    full = db_module.get_hotword_list("hotwords_voiceprint_people")
+    short = db_module.get_hotword_list("hotwords_voiceprint_people_short")
+    assert full is not None and short is not None
+    assert full["name"] == "声纹库人名（全名）"
+    assert short["name"] == "声纹库人名（去姓）"
+    assert full["kind"] == short["kind"] == "system"
+    assert db_module.get_job(historical["id"])["request"]["hotword_lists"][0]["name"] == "声纹库人名"
 
 
 def test_batch_delete_purges_files_queue_and_database(tmp_path, monkeypatch) -> None:

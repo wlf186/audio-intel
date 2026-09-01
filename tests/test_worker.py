@@ -61,6 +61,104 @@ def test_process_tree_termination_removes_descendants() -> None:
     assert not psutil.pid_exists(child_pid)
 
 
+def test_terminal_cuda_oom_requests_executor_recycle(tmp_path, monkeypatch) -> None:
+    local = replace(
+        settings,
+        data_dir=tmp_path / "data",
+        temp_dir=tmp_path / "tmp",
+        run_dir=tmp_path / "run",
+        log_dir=tmp_path / "logs",
+        models_dir=tmp_path / "models",
+    )
+    monkeypatch.setattr(db_module, "settings", local)
+    monkeypatch.setattr(worker_module, "settings", local)
+    local.ensure_directories()
+    db_module.init_db()
+    worker_id = "tts-test-worker"
+    job = db_module.create_job("tts", "oom", {
+        "text": "你好。", "compute_device": "gpu",
+    })
+    db_module.claim_job("tts", worker_id)
+
+    def fail(_context):
+        exc = RuntimeError("CUDA out of memory")
+        worker_module.mark_executor_for_recycle(exc, "cuda_oom")
+        raise exc
+
+    outcome = worker_module._run_one_job(
+        "tts", job["id"], worker_id, os.getpid(), fail,
+    )
+
+    assert outcome == {"state": "failed", "recycle_reason": "cuda_oom"}
+    assert db_module.get_job(job["id"])["error_code"] == "RuntimeError"
+    assert not (local.temp_dir / job["id"]).exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fork-only integration injection")
+def test_supervisor_rebuilds_poisoned_executor_before_next_job(
+    tmp_path, monkeypatch,
+) -> None:
+    local = replace(
+        settings,
+        data_dir=tmp_path / "data",
+        temp_dir=tmp_path / "tmp",
+        run_dir=tmp_path / "run",
+        log_dir=tmp_path / "logs",
+        models_dir=tmp_path / "models",
+        worker_poll_seconds=0.03,
+        executor_idle_seconds=60,
+    )
+    monkeypatch.setattr(db_module, "settings", local)
+    monkeypatch.setattr(worker_module, "settings", local)
+    local.ensure_directories()
+    db_module.init_db()
+    child_path = local.run_dir / "poison-child.pid"
+
+    def processor(context):
+        if context.job["display_name"] == "oom":
+            child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+            child_path.write_text(str(child.pid), encoding="utf-8")
+            exc = RuntimeError("CUDA out of memory")
+            worker_module.mark_executor_for_recycle(exc, "cuda_oom")
+            raise exc
+        return {"duration": 1.0}
+
+    fork_context = worker_module.multiprocessing.get_context("fork")
+    monkeypatch.setattr(worker_module, "_processor", lambda _kind: processor)
+    monkeypatch.setattr(worker_module.multiprocessing, "get_context", lambda _method: fork_context)
+    supervisor = fork_context.Process(target=worker_module.run, args=("tts",))
+    supervisor.start()
+    metadata = local.run_dir / "tts-executor.json"
+    tracked: set[int] = set()
+    try:
+        initial_pid = _wait_for_executor_pid(metadata)
+        tracked.add(initial_pid)
+        first = db_module.create_job("tts", "oom", {"compute_device": "gpu"})
+        second = db_module.create_job("tts", "next", {"compute_device": "gpu"})
+
+        _wait_for_job(first["id"], lambda job: job["state"] == "failed")
+        completed = _wait_for_job(second["id"], lambda job: job["state"] == "succeeded")
+        replacement_pid = _wait_for_executor_pid(metadata, lambda pid: pid != initial_pid)
+        tracked.add(replacement_pid)
+        child_pid = int(child_path.read_text())
+
+        assert completed["result"]["duration"] == 1.0
+        assert not psutil.pid_exists(initial_pid)
+        assert not psutil.pid_exists(child_pid)
+        assert supervisor.is_alive()
+    finally:
+        supervisor.terminate()
+        supervisor.join(timeout=5)
+        if supervisor.is_alive():
+            supervisor.kill()
+            supervisor.join(timeout=2)
+        for pid in tracked:
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline and psutil.pid_exists(pid):
+                time.sleep(0.03)
+            assert not psutil.pid_exists(pid)
+
+
 def test_supervised_worker_cancels_running_job_and_continues(tmp_path, monkeypatch) -> None:
     local = replace(
         settings,

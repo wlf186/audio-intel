@@ -14,14 +14,45 @@ def test_gpu_snapshot_targets_cuda_zero_and_parses_dynamic_name(monkeypatch) -> 
 
     def fake_run(command, **_):
         captured.extend(command)
-        return SimpleNamespace(stdout="Dynamic Test GPU, 123, 4096, 45\n")
+        return SimpleNamespace(stdout="Dynamic Test GPU, 123, 3650, 4096, 45\n")
 
     monkeypatch.setattr(gpu_module.subprocess, "run", fake_run)
     snapshot = gpu_module.gpu_snapshot(0)
     assert snapshot == {
-        "name": "Dynamic Test GPU", "memory_used_mib": 123, "memory_total_mib": 4096, "utilization": 45,
+        "name": "Dynamic Test GPU", "memory_used_mib": 123, "memory_free_mib": 3650,
+        "memory_total_mib": 4096, "memory_system_reserved_mib": 323, "utilization": 45,
     }
     assert "--id=0" in captured
+
+
+def test_gpu_snapshot_falls_back_when_free_memory_query_is_unsupported(monkeypatch) -> None:
+    calls = 0
+
+    def fake_run(_command, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise subprocess.CalledProcessError(1, "nvidia-smi")
+        return SimpleNamespace(stdout="Fallback GPU, 12, 8192, 3\n")
+
+    monkeypatch.setattr(gpu_module.subprocess, "run", fake_run)
+
+    assert gpu_module.gpu_snapshot(0) == {
+        "name": "Fallback GPU", "memory_used_mib": 12,
+        "memory_total_mib": 8192, "utilization": 3,
+    }
+
+
+def test_gpu_compute_processes_are_best_effort(monkeypatch) -> None:
+    monkeypatch.setattr(
+        gpu_module.subprocess, "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout="42, python, 512\n43, hidden, N/A\n"),
+    )
+
+    assert gpu_module.gpu_compute_processes(0) == [
+        {"pid": 42, "process_name": "python", "memory_used_mib": 512},
+        {"pid": 43, "process_name": "hidden", "memory_used_mib": None},
+    ]
 
 
 def test_gpu_lease_serializes_independent_processes(tmp_path, monkeypatch) -> None:

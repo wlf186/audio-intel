@@ -205,6 +205,28 @@ def test_terminal_per_job_sse_emits_snapshot_and_closes(tmp_path, monkeypatch) -
     assert '"state": "succeeded"' in response.text
 
 
+def test_system_gpu_snapshot_exposes_free_and_system_reserved_memory(
+    tmp_path, monkeypatch,
+) -> None:
+    local = replace(
+        settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
+        models_dir=tmp_path / "models",
+    )
+    gpu = {
+        "name": "4 GB GPU", "memory_used_mib": 15, "memory_free_mib": 3756,
+        "memory_total_mib": 4096, "memory_system_reserved_mib": 325, "utilization": 0,
+    }
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    monkeypatch.setattr(api_module, "cached_gpu_snapshot", lambda *_args, **_kwargs: gpu)
+
+    with TestClient(api_module.create_app()) as client:
+        response = client.get("/api/v1/system")
+
+    assert response.status_code == 200
+    assert response.json()["hardware"]["gpu"] == gpu
+
+
 def test_api_queues_asr_and_validates_tts(tmp_path, monkeypatch) -> None:
     local = replace(settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp", enabled_services=frozenset({"asr", "tts"}))
     monkeypatch.setattr(api_module, "settings", local)
@@ -602,9 +624,11 @@ def test_hotword_library_normalizes_snapshots_and_survives_edit_delete_on_replay
         # NFKC and case folding collapse equivalent spellings while preserving first display form.
         assert item["term_count"] == 2
         listing = client.get("/api/v1/asr/hotword-lists").json()
-        assert listing["count"] == 2
+        assert listing["count"] == 3
         assert listing["items"][0]["id"] == "hotwords_voiceprint_people"
         assert listing["items"][0]["kind"] == "system"
+        assert listing["items"][1]["id"] == "hotwords_voiceprint_people_short"
+        assert listing["items"][1]["kind"] == "system"
 
         request["data"] = {
             "compute_device": "cpu", "context": "会议上下文",
@@ -616,6 +640,9 @@ def test_hotword_library_normalizes_snapshots_and_survives_edit_delete_on_replay
         assert job_request["hotword_list_ids"] == [item["id"]]
         assert job_request["hotword_lists"][0]["terms"] == item["terms"]
         assert job_request["effective_context"].startswith("会议上下文\n\nVocabulary: ")
+        assert client.patch(
+            f"/api/v1/asr/hotword-lists/{item['id']}", json={"name": "声纹库人名"},
+        ).status_code == 409
 
         updated = client.patch(
             f"/api/v1/asr/hotword-lists/{item['id']}",
@@ -630,7 +657,7 @@ def test_hotword_library_normalizes_snapshots_and_survives_edit_delete_on_replay
     assert replay.json()["request"]["hotword_lists"][0]["terms"] == item["terms"]
 
 
-def test_voiceprint_person_metadata_controls_the_system_hotword_list(tmp_path, monkeypatch) -> None:
+def test_voiceprint_person_metadata_controls_the_system_hotword_lists(tmp_path, monkeypatch) -> None:
     local = replace(
         settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
         enabled_services=frozenset({"asr"}), min_free_disk_bytes=0,
@@ -639,31 +666,53 @@ def test_voiceprint_person_metadata_controls_the_system_hotword_list(tmp_path, m
     monkeypatch.setattr(db_module, "settings", local)
     with TestClient(api_module.create_app()) as client:
         created = client.post("/api/v1/voiceprints/people", json={
-            "name": " 张　三 ", "note": " 研发　一部 ",
+            "name": " 张　三丰 ", "note": " 研发　一部 ",
         })
         assert created.status_code == 201
         person = created.json()
-        assert person["name"] == "张 三"
+        assert person["name"] == "张 三丰"
         assert person["note"] == "研发 一部"
         assert person["include_in_hotword_library"] is True
 
         listing = client.get("/api/v1/asr/hotword-lists").json()
-        system = listing["items"][0]
+        full, short = listing["items"][:2]
         assert {
-            key: system[key] for key in ("id", "name", "kind", "terms", "term_count")
+            key: full[key] for key in ("id", "name", "kind", "terms", "term_count")
         } == {
-            "id": "hotwords_voiceprint_people", "name": "声纹库人名", "kind": "system",
-            "terms": ["张 三"], "term_count": 1,
+            "id": "hotwords_voiceprint_people", "name": "声纹库人名（全名）", "kind": "system",
+            "terms": ["张 三丰"], "term_count": 1,
         }
-        assert client.patch(
-            "/api/v1/asr/hotword-lists/hotwords_voiceprint_people", json={"terms": []},
-        ).status_code == 403
-        assert client.delete(
-            "/api/v1/asr/hotword-lists/hotwords_voiceprint_people",
-        ).status_code == 403
-        assert client.post(
-            "/api/v1/asr/hotword-lists", json={"name": "声纹库人名", "terms": ["冲突"]},
-        ).status_code == 409
+        assert {
+            key: short[key] for key in ("id", "name", "kind", "terms", "term_count")
+        } == {
+            "id": "hotwords_voiceprint_people_short", "name": "声纹库人名（去姓）", "kind": "system",
+            "terms": ["三丰"], "term_count": 1,
+        }
+        for item_id in ("hotwords_voiceprint_people", "hotwords_voiceprint_people_short"):
+            assert client.patch(
+                f"/api/v1/asr/hotword-lists/{item_id}", json={"terms": []},
+            ).status_code == 403
+            assert client.delete(f"/api/v1/asr/hotword-lists/{item_id}").status_code == 403
+        for reserved_name in ("声纹库人名", "声纹库人名（全名）", "声纹库人名（去姓）"):
+            assert client.post(
+                "/api/v1/asr/hotword-lists", json={"name": reserved_name, "terms": ["冲突"]},
+            ).status_code == 409
+
+        selected_both = client.post(
+            "/api/v1/asr/jobs",
+            headers=idem(),
+            files={"file": ("names.wav", b"RIFF-names", "audio/wav")},
+            data={
+                "compute_device": "cpu",
+                "hotword_list_ids": "hotwords_voiceprint_people,hotwords_voiceprint_people_short",
+            },
+        )
+        assert selected_both.status_code == 202
+        selected_request = selected_both.json()["request"]
+        assert selected_request["hotword_list_ids"] == [
+            "hotwords_voiceprint_people", "hotwords_voiceprint_people_short",
+        ]
+        assert selected_request["effective_context"] == "Vocabulary: 张 三丰, 三丰."
 
         updated = client.patch(f"/api/v1/voiceprints/people/{person['id']}", json={
             "note": None, "include_in_hotword_library": False,
@@ -671,19 +720,23 @@ def test_voiceprint_person_metadata_controls_the_system_hotword_list(tmp_path, m
         assert updated.status_code == 200
         assert updated.json()["note"] is None
         assert updated.json()["include_in_hotword_library"] is False
-        assert client.get("/api/v1/asr/hotword-lists").json()["items"][0]["terms"] == []
+        assert all(
+            item["terms"] == []
+            for item in client.get("/api/v1/asr/hotword-lists").json()["items"][:2]
+        )
 
         too_long = client.patch(f"/api/v1/voiceprints/people/{person['id']}", json={
             "note": "超" * 21,
         })
         assert too_long.status_code == 422
 
-        empty_system_request = {
-            "headers": idem(),
-            "files": {"file": ("empty.wav", b"RIFF-empty", "audio/wav")},
-            "data": {"compute_device": "cpu", "hotword_list_ids": "hotwords_voiceprint_people"},
-        }
-        assert client.post("/api/v1/asr/jobs", **empty_system_request).status_code == 422
+        for item_id in ("hotwords_voiceprint_people", "hotwords_voiceprint_people_short"):
+            empty_system_request = {
+                "headers": idem(),
+                "files": {"file": ("empty.wav", b"RIFF-empty", "audio/wav")},
+                "data": {"compute_device": "cpu", "hotword_list_ids": item_id},
+            }
+            assert client.post("/api/v1/asr/jobs", **empty_system_request).status_code == 422
 
 
 def test_voiceprint_upload_accepts_browser_recording_container(tmp_path, monkeypatch) -> None:

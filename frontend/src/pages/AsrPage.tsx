@@ -206,7 +206,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   const submitLabel=uploadProgress?.phase==='creating'?'正在创建任务…':uploadProgress?.phase==='uploading'&&uploadProgress.percent!==undefined?`正在上传 ${uploadProgress.percent}%`:uploadProgress?'正在准备上传…':busy?'正在处理…':'开始转写'
   const hotwordSelectionIssue = (item: HotwordList) => {
     if (selectedHotwordIds.has(item.id)) return ''
-    if (!item.term_count) return '该系统词表当前没有已启用的人名，暂不可选择。'
+    if (!item.term_count) return '该系统词表当前没有可用词条，暂不可选择。'
     const ids = new Set(selectedHotwordIds)
     ids.add(item.id)
     return hotwordLimitIssue(ids.size, hotwordStats(hotwordLists, ids), hotwordLimits, `选择“${item.name}”后将超出单次任务限制`)
@@ -518,7 +518,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
           )}
           {hotwordLists.length ? (
             <small className={`hotword-selection-summary${selectedHotwordIssue ? ' invalid' : ''}`}>
-              已选 {selectedHotwordIds.size} / {hotwordLimits?.max_selected_lists || 8} 个表 · {selectedHotwordStats.terms} / {hotwordLimits?.max_selected_terms || 500} 个唯一词 · {selectedHotwordStats.promptChars} / {hotwordLimits?.max_prompt_chars || 8000} 字符
+              已选 {selectedHotwordIds.size}/{hotwordLimits?.max_selected_lists || 8} 表 · {selectedHotwordStats.terms}/{hotwordLimits?.max_selected_terms || 500} 词 · {selectedHotwordStats.promptChars}/{hotwordLimits?.max_prompt_chars || 8000} 字符
             </small>
           ) : null}
           {selectedHotwordIssue ? (
@@ -767,7 +767,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
               <label className="toggle-label person-hotword-toggle">
                 <input type="checkbox" checked={newPersonHotword} onChange={(event) => setNewPersonHotword(event.target.checked)} />
                 <span>加入热词库</span>
-                <small>自动同步名字到“声纹库人名”。</small>
+                <small>自动同步到“声纹库人名（全名）”，可靠提取时也同步到“去姓”词表。</small>
               </label>
             </>
           ) : (

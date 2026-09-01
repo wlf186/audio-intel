@@ -259,7 +259,7 @@ export function VoiceprintsPage({
                   <h2>{selected.name}</h2>
                   {selected.note?<p className="person-note">{selected.note}</p>:null}
                   <p>
-                    {selected.sample_count} 个独立样本 · {selected.include_in_hotword_library?'同步到“声纹库人名”':'不加入人名热词'} · 人员资料修改不会重写历史任务
+                    {selected.sample_count} 个独立样本 · {selected.include_in_hotword_library?'同步到全名与可用的去姓热词':'不加入人名热词'} · 人员资料修改不会重写历史任务
                   </p>
                 </div>
                 <button
@@ -580,7 +580,7 @@ export function VoiceprintsPage({
           ):state==='loading'?<div className="empty voiceprint-guide" role="status"><Fingerprint/><h2>正在准备声纹库</h2><p>加载完成后即可创建人员并管理声纹样本。</p></div>:<div className="empty voiceprint-guide" role="alert"><Fingerprint/><h2>声纹库暂不可用</h2><p>加载失败，请重试后再创建或编辑人员。</p><button className="button" onClick={()=>void refresh()}>重新加载</button></div>}
         </section>
       </div>
-      {editorMode?<Modal title={editorMode==='create'?'新建声纹人员':'编辑声纹人员'} closeLabel="关闭人员编辑" onClose={()=>setEditorMode(undefined)}><p>名字会用于声纹匹配标签；备注最多 20 字。后续修改不会重写历史任务。</p><label>名字（必填）<input value={personName} maxLength={80} autoFocus onChange={event=>setPersonName(event.target.value)}/></label><label>备注（选填）<input value={personNote} maxLength={20} placeholder="例如：外号、手机号、公司名称" onChange={event=>setPersonNote(event.target.value)}/><small>{personNote.trim().length} / 20 字</small></label><label className="toggle-label person-hotword-toggle"><input type="checkbox" checked={includeInHotwordLibrary} onChange={event=>setIncludeInHotwordLibrary(event.target.checked)}/><span>加入热词库</span><small>开启后，名字会自动同步到系统词表“声纹库人名”。</small></label><div className="modal-actions"><button className="button" disabled={busy} onClick={()=>setEditorMode(undefined)}>取消</button><button className="primary" disabled={busy||!personName.trim()||personNote.trim().length>20} onClick={savePerson}>{busy?'正在保存…':'保存人员'}</button></div></Modal>:null}
+      {editorMode?<Modal title={editorMode==='create'?'新建声纹人员':'编辑声纹人员'} closeLabel="关闭人员编辑" onClose={()=>setEditorMode(undefined)}><p>名字会用于声纹匹配标签；备注最多 20 字。后续修改不会重写历史任务。</p><label>名字（必填）<input value={personName} maxLength={80} autoFocus onChange={event=>setPersonName(event.target.value)}/></label><label>备注（选填）<input value={personNote} maxLength={20} placeholder="例如：外号、手机号、公司名称" onChange={event=>setPersonNote(event.target.value)}/><small>{personNote.trim().length} / 20 字</small></label><label className="toggle-label person-hotword-toggle"><input type="checkbox" checked={includeInHotwordLibrary} onChange={event=>setIncludeInHotwordLibrary(event.target.checked)}/><span>加入热词库</span><small>开启后，完整姓名会同步到“声纹库人名（全名）”；系统能可靠提取时，也会生成“去姓”热词。</small></label><div className="modal-actions"><button className="button" disabled={busy} onClick={()=>setEditorMode(undefined)}>取消</button><button className="primary" disabled={busy||!personName.trim()||personNote.trim().length>20} onClick={savePerson}>{busy?'正在保存…':'保存人员'}</button></div></Modal>:null}
       {confirmDelete&&selected?<ConfirmDialog title={confirmDelete==='person'?'删除人员':'删除声纹样本'} description={confirmDelete==='person'?`永久删除“${selected.name}”及其全部声纹样本？此操作不可恢复。`:'永久删除这个声纹样本？此操作不可恢复。'} confirmLabel="永久删除" danger busy={busy} onClose={()=>setConfirmDelete(undefined)} onConfirm={confirmDelete==='person'?confirmRemovePerson:()=>confirmRemoveSample(confirmDelete)}/>:null}
     </div>
   )

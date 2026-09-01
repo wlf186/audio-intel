@@ -448,13 +448,16 @@ test('partial library failures stay local and keep editors unavailable',async({p
  await expect(page.locator('.connection-banner')).toHaveCount(0)
 })
 
-test('voiceprint metadata synchronizes a read-only system hotword list',async({page})=>{
+test('voiceprint metadata synchronizes independently selectable full and surname-free system lists',async({page})=>{
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  const now=new Date().toISOString()
  let people:any[]=[]
- let system={id:'hotwords_voiceprint_people',name:'声纹库人名',kind:'system',terms:[] as string[],term_count:0,created_at:now,updated_at:now}
+ let systems=[
+  {id:'hotwords_voiceprint_people',name:'声纹库人名（全名）',kind:'system',terms:[] as string[],term_count:0,created_at:now,updated_at:now},
+  {id:'hotwords_voiceprint_people_short',name:'声纹库人名（去姓）',kind:'system',terms:[] as string[],term_count:0,created_at:now,updated_at:now},
+ ]
  let submitted:any
  await routeJobList(page,route=>route.fulfill({json:{items:[],count:0,total:0,limit:100,offset:0,has_more:false}}))
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{hotword_library:{supported:true,max_lists:100,max_terms_per_list:200,max_selected_lists:8,max_selected_terms:500,max_prompt_chars:8000,max_name_chars:80,max_term_chars:64},speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,aligner_languages:['Chinese']},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
@@ -463,33 +466,48 @@ test('voiceprint metadata synchronizes a read-only system hotword list',async({p
    submitted=route.request().postDataJSON()
    const person={id:'voice_zhang',name:submitted.name,note:submitted.note,include_in_hotword_library:submitted.include_in_hotword_library,sample_count:0,samples:[],created_at:now,updated_at:now}
    people=[person]
-   system={...system,terms:[person.name],term_count:1,updated_at:new Date().toISOString()}
+   systems=[
+    {...systems[0],terms:[person.name],term_count:1,updated_at:new Date().toISOString()},
+    {...systems[1],terms:['三丰'],term_count:1,updated_at:new Date().toISOString()},
+   ]
    await route.fulfill({status:201,json:person})
   }else await route.fulfill({json:{items:people}})
  })
- await page.route('**/api/v1/asr/hotword-lists',route=>route.fulfill({json:{items:[system],count:1}}))
+ await page.route('**/api/v1/asr/hotword-lists',route=>route.fulfill({json:{items:systems,count:systems.length}}))
  await page.goto('/#voiceprints')
  await page.getByRole('button',{name:'新建人员'}).click()
  const dialog=page.getByRole('dialog',{name:'新建声纹人员'})
- await dialog.getByLabel('名字（必填）').fill('张三')
+ await dialog.getByLabel('名字（必填）').fill('张三丰')
  await dialog.getByLabel('备注（选填）').fill('研发一部')
  await expect(dialog.getByRole('checkbox',{name:'加入热词库'})).toBeChecked()
  await dialog.getByRole('button',{name:'保存人员'}).click()
- expect(submitted).toEqual({name:'张三',note:'研发一部',include_in_hotword_library:true})
+ expect(submitted).toEqual({name:'张三丰',note:'研发一部',include_in_hotword_library:true})
  await expect(page.locator('.samples-panel .person-note')).toHaveText('研发一部')
  await expect(page.getByText('已加入人名热词')).toBeVisible()
  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'热词库'}).click()
- const systemList=page.locator('.hotword-list article').filter({hasText:'声纹库人名'})
- await expect(systemList).toBeVisible()
- await expect(systemList.getByText('系统',{exact:true})).toBeVisible()
- await expect(page.getByRole('button',{name:'编辑 声纹库人名'})).toHaveCount(0)
- await expect(page.getByRole('button',{name:'删除 声纹库人名'})).toHaveCount(0)
- await page.getByRole('button',{name:'查看 声纹库人名'}).click()
+ const fullList=page.locator('.hotword-list article').filter({hasText:'声纹库人名（全名）'})
+ const shortList=page.locator('.hotword-list article').filter({hasText:'声纹库人名（去姓）'})
+ await expect(fullList).toBeVisible()
+ await expect(shortList).toBeVisible()
+ await expect(fullList.getByText('系统',{exact:true})).toBeVisible()
+ await expect(page.getByRole('button',{name:/编辑 声纹库人名/})).toHaveCount(0)
+ await expect(page.getByRole('button',{name:/删除 声纹库人名/})).toHaveCount(0)
+ await page.getByRole('button',{name:'查看 声纹库人名（去姓）'}).click()
  await expect(page.getByLabel('场景名称')).toBeDisabled()
- await expect(page.locator('.hotword-editor textarea')).toHaveValue('张三')
- await expect(page.getByText('此词表由系统维护')).toBeVisible()
+ await expect(page.locator('.hotword-editor textarea')).toHaveValue('三丰')
+ await expect(page.getByRole('note')).toContainText('自动去姓生成，并非昵称')
+ await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'转写工作台'}).click()
+ const fullOption=page.getByRole('checkbox',{name:/声纹库人名（全名）/})
+ const shortOption=page.getByRole('checkbox',{name:/声纹库人名（去姓）/})
+ await fullOption.check()
+ await expect(fullOption).toBeChecked()
+ await expect(shortOption).not.toBeChecked()
+ await shortOption.check()
+ await expect(shortOption).toBeChecked()
+ await page.screenshot({path:'/tmp/audio-intel-voiceprint-hotword-lists-desktop.png',fullPage:false})
  await page.setViewportSize({width:390,height:844})
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/audio-intel-voiceprint-hotword-lists-mobile.png',fullPage:false})
  expect(errors).toEqual([])
 })
 
@@ -677,19 +695,28 @@ test('desktop submit actions remain visible and voiceprint model controls reflow
 })
 
 test('system worker state and heartbeat use Chinese local presentation',async({page})=>{
- await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',version:'test',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[{id:'asr-worker',kind:'asr',state:'idle',heartbeat_at:'2026-08-27T10:42:05Z'}],hardware:{cpu_percent:25,memory_used:8589934592,memory_total:17179869184,disk_used:10737418240,disk_total:42949672960},models:[{name:'Qwen3-ASR-0.6B',device:'CPU',installed:false,state:'missing',revision:'r1',missing_files:['model.safetensors'],path:'/models/asr'},{name:'Qwen3-TTS-0.6B',device:'CPU',installed:true,state:'installed',revision:'r2',missing_files:[],path:'/models/tts'}],storage:{data:'/tmp/data'}}}))
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.route('**/api/v1/system',route=>route.fulfill({json:{status:'ok',version:'test',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[{id:'asr-worker',kind:'asr',state:'idle',heartbeat_at:'2026-08-27T10:42:05Z'}],hardware:{cpu_percent:25,memory_used:8589934592,memory_total:17179869184,disk_used:10737418240,disk_total:42949672960,gpu:{name:'Test GPU',memory_used_mib:15,memory_free_mib:3756,memory_total_mib:4096,memory_system_reserved_mib:325,utilization:0}},models:[{name:'Qwen3-ASR-0.6B',device:'CPU',installed:false,state:'missing',revision:'r1',missing_files:['model.safetensors'],path:'/models/asr'},{name:'Qwen3-TTS-0.6B',device:'CPU',installed:true,state:'installed',revision:'r2',missing_files:[],path:'/models/tts'}],storage:{data:'/tmp/data'}}}))
  await page.goto('/#system')
  const worker=page.locator('.worker-list')
  await expect(worker).toContainText('空闲')
  await expect(worker).not.toContainText('2026-08-27T10:42:05Z')
  await expect(page.getByRole('progressbar',{name:'项目磁盘'})).toHaveAttribute('aria-valuenow','25')
  await expect(page.locator('.resource-card').filter({hasText:'项目磁盘'})).toContainText('10 / 40 GB')
+ const gpu=page.locator('.resource-card').filter({hasText:'GPU'})
+ await expect(gpu).toContainText('当前可用 3756 MiB')
+ await expect(gpu).toContainText('系统保留估算 325 MiB')
  await expect(page.locator('.model-group').filter({hasText:'ASR 与公共组件'})).toHaveAttribute('open','')
  await expect(page.locator('.model-group').filter({hasText:'TTS'})).not.toHaveAttribute('open','')
  const docsLink=page.getByRole('link',{name:'打开 API 文档',exact:true})
  await expect(docsLink).toHaveCount(1)
  await expect(docsLink).toHaveAttribute('href','/docs')
  await expect(docsLink).toHaveAttribute('target','_blank')
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ expect(errors).toEqual([])
 })
 
 test('ASR and TTS preferences persist independently and reset per page',async({page})=>{

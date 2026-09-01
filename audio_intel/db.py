@@ -11,9 +11,14 @@ from typing import Any, Iterator
 
 from .config import settings
 from .hotwords import (
+    LEGACY_SYSTEM_HOTWORD_LIST_NAME,
     MAX_HOTWORD_LISTS,
+    RESERVED_SYSTEM_HOTWORD_LIST_NAMES,
     SYSTEM_HOTWORD_LIST_ID,
     SYSTEM_HOTWORD_LIST_NAME,
+    SYSTEM_SHORT_HOTWORD_LIST_ID,
+    SYSTEM_SHORT_HOTWORD_LIST_NAME,
+    derive_voiceprint_short_name,
     hotword_name_key,
     normalize_hotword_name,
     normalize_hotword_terms,
@@ -24,6 +29,9 @@ JOB_STATES = {"queued", "running", "succeeded", "failed", "cancelled"}
 VOICEPRINT_SAMPLE_STATES = {"pending", "ready", "failed"}
 MAX_VOICEPRINT_NOTE_CHARS = 20
 _UNSET = object()
+_RESERVED_HOTWORD_NAME_KEYS = frozenset(
+    hotword_name_key(name) for name in RESERVED_SYSTEM_HOTWORD_LIST_NAMES
+)
 
 
 class IdempotencyConflict(ValueError):
@@ -58,43 +66,95 @@ def normalize_person_note(note: str | None) -> str | None:
     return clean_note
 
 
-def _sync_voiceprint_hotword_list(db: sqlite3.Connection, now: str | None = None) -> None:
-    timestamp = now or utcnow()
-    terms = [
-        row["name"] for row in db.execute(
-            """SELECT name FROM voiceprint_people
-               WHERE include_in_hotword_library=1 ORDER BY name_key,id"""
-        ).fetchall()
-    ]
+def _upsert_system_hotword_list(
+    db: sqlite3.Connection,
+    item_id: str,
+    name: str,
+    terms: list[str],
+    timestamp: str,
+) -> None:
     terms_json = json.dumps(terms, ensure_ascii=False)
-    row = db.execute(
-        "SELECT * FROM asr_hotword_lists WHERE id=?", (SYSTEM_HOTWORD_LIST_ID,)
-    ).fetchone()
+    row = db.execute("SELECT * FROM asr_hotword_lists WHERE id=?", (item_id,)).fetchone()
     if row is None:
         db.execute(
             """INSERT INTO asr_hotword_lists(
                id,name,name_key,terms_json,kind,created_at,updated_at
                ) VALUES(?,?,?,?,?,?,?)""",
             (
-                SYSTEM_HOTWORD_LIST_ID, SYSTEM_HOTWORD_LIST_NAME,
-                hotword_name_key(SYSTEM_HOTWORD_LIST_NAME), terms_json,
+                item_id, name, hotword_name_key(name), terms_json,
                 "system", timestamp, timestamp,
             ),
         )
         return
     if (
-        row["name"] != SYSTEM_HOTWORD_LIST_NAME
-        or row["name_key"] != hotword_name_key(SYSTEM_HOTWORD_LIST_NAME)
+        row["name"] != name
+        or row["name_key"] != hotword_name_key(name)
         or row["terms_json"] != terms_json
         or row["kind"] != "system"
     ):
         db.execute(
             """UPDATE asr_hotword_lists
                SET name=?,name_key=?,terms_json=?,kind='system',updated_at=? WHERE id=?""",
-            (
-                SYSTEM_HOTWORD_LIST_NAME, hotword_name_key(SYSTEM_HOTWORD_LIST_NAME),
-                terms_json, timestamp, SYSTEM_HOTWORD_LIST_ID,
-            ),
+            (name, hotword_name_key(name), terms_json, timestamp, item_id),
+        )
+
+
+def _sync_voiceprint_hotword_lists(db: sqlite3.Connection, now: str | None = None) -> None:
+    timestamp = now or utcnow()
+    people = db.execute(
+        """SELECT name FROM voiceprint_people
+           WHERE include_in_hotword_library=1 ORDER BY name_key,id"""
+    ).fetchall()
+    full_names = [str(row["name"]) for row in people]
+    short_names: list[str] = []
+    seen_short_names: set[str] = set()
+    for name in full_names:
+        short_name = derive_voiceprint_short_name(name)
+        if short_name is None:
+            continue
+        key = short_name.casefold()
+        if key not in seen_short_names:
+            seen_short_names.add(key)
+            short_names.append(short_name)
+    _upsert_system_hotword_list(
+        db, SYSTEM_HOTWORD_LIST_ID, SYSTEM_HOTWORD_LIST_NAME, full_names, timestamp,
+    )
+    _upsert_system_hotword_list(
+        db, SYSTEM_SHORT_HOTWORD_LIST_ID, SYSTEM_SHORT_HOTWORD_LIST_NAME,
+        short_names, timestamp,
+    )
+
+
+def _preserve_reserved_custom_hotword_lists(db: sqlite3.Connection) -> None:
+    system_ids = (SYSTEM_HOTWORD_LIST_ID, SYSTEM_SHORT_HOTWORD_LIST_ID)
+    for reserved_name in (
+        LEGACY_SYSTEM_HOTWORD_LIST_NAME,
+        SYSTEM_HOTWORD_LIST_NAME,
+        SYSTEM_SHORT_HOTWORD_LIST_NAME,
+    ):
+        conflict = db.execute(
+            """SELECT id FROM asr_hotword_lists
+               WHERE name_key=? AND id NOT IN (?,?)""",
+            (hotword_name_key(reserved_name), *system_ids),
+        ).fetchone()
+        if conflict is None:
+            continue
+        suffix = 1
+        while True:
+            candidate = (
+                f"{reserved_name}（原自定义）" if suffix == 1
+                else f"{reserved_name}（原自定义 {suffix}）"
+            )
+            candidate_key = hotword_name_key(candidate)
+            exists = db.execute(
+                "SELECT 1 FROM asr_hotword_lists WHERE name_key=?", (candidate_key,)
+            ).fetchone()
+            if exists is None:
+                break
+            suffix += 1
+        db.execute(
+            "UPDATE asr_hotword_lists SET name=?,name_key=?,updated_at=? WHERE id=?",
+            (candidate, candidate_key, utcnow(), conflict["id"]),
         )
 
 
@@ -356,33 +416,14 @@ def init_db() -> None:
                 db.execute(
                     "ALTER TABLE asr_hotword_lists ADD COLUMN kind TEXT NOT NULL DEFAULT 'custom'"
                 )
-            system_name_key = hotword_name_key(SYSTEM_HOTWORD_LIST_NAME)
-            conflict = db.execute(
-                "SELECT id FROM asr_hotword_lists WHERE name_key=? AND id<>?",
-                (system_name_key, SYSTEM_HOTWORD_LIST_ID),
-            ).fetchone()
-            if conflict is not None:
-                suffix = 1
-                while True:
-                    candidate = (
-                        "声纹库人名（原自定义）" if suffix == 1
-                        else f"声纹库人名（原自定义 {suffix}）"
-                    )
-                    candidate_key = hotword_name_key(candidate)
-                    exists = db.execute(
-                        "SELECT 1 FROM asr_hotword_lists WHERE name_key=?", (candidate_key,)
-                    ).fetchone()
-                    if exists is None:
-                        break
-                    suffix += 1
-                db.execute(
-                    "UPDATE asr_hotword_lists SET name=?,name_key=?,updated_at=? WHERE id=?",
-                    (candidate, candidate_key, utcnow(), conflict["id"]),
-                )
-            _sync_voiceprint_hotword_list(db)
             db.execute("UPDATE schema_meta SET version=8 WHERE version<8")
+        version = db.execute("SELECT MIN(version) FROM schema_meta").fetchone()[0]
+        if version < 9:
+            _preserve_reserved_custom_hotword_lists(db)
+            _sync_voiceprint_hotword_lists(db)
+            db.execute("UPDATE schema_meta SET version=9 WHERE version<9")
         else:
-            _sync_voiceprint_hotword_list(db)
+            _sync_voiceprint_hotword_lists(db)
         db.execute(
             """CREATE TABLE IF NOT EXISTS queue_sequence (
                singleton INTEGER PRIMARY KEY CHECK(singleton=1),value INTEGER NOT NULL)"""
@@ -420,6 +461,8 @@ def _decode_hotword_list(row: sqlite3.Row | None) -> dict[str, Any] | None:
 
 def create_hotword_list(name: str, terms: list[Any]) -> dict[str, Any]:
     clean_name = normalize_hotword_name(name)
+    if hotword_name_key(clean_name) in _RESERVED_HOTWORD_NAME_KEYS:
+        raise sqlite3.IntegrityError("The hotword list name is reserved for a system list")
     clean_terms = normalize_hotword_terms(terms)
     now = utcnow()
     item_id = "hotwords_" + uuid.uuid4().hex[:16]
@@ -471,6 +514,8 @@ def update_hotword_list(
     changes: dict[str, Any] = {}
     if name is not None:
         clean_name = normalize_hotword_name(name)
+        if hotword_name_key(clean_name) in _RESERVED_HOTWORD_NAME_KEYS:
+            raise sqlite3.IntegrityError("The hotword list name is reserved for a system list")
         changes.update({"name": clean_name, "name_key": hotword_name_key(clean_name)})
     if terms is not None:
         changes["terms_json"] = json.dumps(normalize_hotword_terms(terms), ensure_ascii=False)
@@ -1028,7 +1073,7 @@ def create_voiceprint_person(
                 "INSERT OR IGNORE INTO voiceprint_aliases(alias_id,person_id) VALUES(?,?)",
                 (person_id, person_id),
             )
-            _sync_voiceprint_hotword_list(db, now)
+            _sync_voiceprint_hotword_lists(db, now)
             db.execute("COMMIT")
         except Exception:
             db.execute("ROLLBACK")
@@ -1091,7 +1136,7 @@ def update_voiceprint_person(
                 (*changes.values(), person_id),
             )
             if cursor.rowcount and sync_hotwords:
-                _sync_voiceprint_hotword_list(db, now)
+                _sync_voiceprint_hotword_lists(db, now)
             db.execute("COMMIT")
         except Exception:
             db.execute("ROLLBACK")
@@ -1109,7 +1154,7 @@ def delete_voiceprint_person_record(person_id: str) -> bool:
         try:
             cursor = db.execute("DELETE FROM voiceprint_people WHERE id=?", (person_id,))
             if cursor.rowcount:
-                _sync_voiceprint_hotword_list(db)
+                _sync_voiceprint_hotword_lists(db)
             db.execute("COMMIT")
         except Exception:
             db.execute("ROLLBACK")

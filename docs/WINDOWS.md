@@ -189,6 +189,6 @@ git pull --ff-only
 .\.runtime\api\Scripts\python.exe scripts\smoke_test.py
 ```
 
-升级前备份 `data\`。API 启动时会把数据库自动迁移到 schema v8；完整的不兼容 API 变更和迁移说明见 [升级指南](UPGRADE.md)。不要从其他机器复制 `.runtime\`；在目标机器重新 setup。模型目录可以复制，但每个模型的 `.complete` 内容必须与项目固定的 revision 一致。
+升级前备份 `data\`。API 启动时会把数据库自动迁移到 schema v9；完整的不兼容 API 变更和迁移说明见 [升级指南](UPGRADE.md)。不要从其他机器复制 `.runtime\`；在目标机器重新 setup。模型目录可以复制，但每个模型的 `.complete` 内容必须与项目固定的 revision 一致。
 
 `setup tts` 同时维护独立的 `.runtime\aligner`，这是超长克隆样本按词边界截断所需的内部运行时，不是额外服务。更多版本与锁文件说明见 [依赖维护](DEPENDENCIES.md)。

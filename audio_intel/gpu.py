@@ -68,12 +68,54 @@ def _unlock(handle: BinaryIO) -> None:
 
 
 def gpu_snapshot(index: int = 0) -> dict[str, int | str] | None:
+    queries = (
+        ("name,memory.used,memory.free,memory.total,utilization.gpu", True),
+        ("name,memory.used,memory.total,utilization.gpu", False),
+    )
+    for query, includes_free in queries:
+        try:
+            output = subprocess.run(
+                [
+                    "nvidia-smi",
+                    f"--id={index}",
+                    f"--query-gpu={query}",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=True,
+            ).stdout.strip()
+            fields = [field.strip() for field in output.splitlines()[0].split(",")]
+            if includes_free:
+                used, free, total, utilization = map(int, fields[1:5])
+                return {
+                    "name": fields[0],
+                    "memory_used_mib": used,
+                    "memory_free_mib": free,
+                    "memory_total_mib": total,
+                    "memory_system_reserved_mib": max(0, total - used - free),
+                    "utilization": utilization,
+                }
+            return {
+                "name": fields[0],
+                "memory_used_mib": int(fields[1]),
+                "memory_total_mib": int(fields[2]),
+                "utilization": int(fields[3]),
+            }
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+            continue
+    return None
+
+
+def gpu_compute_processes(index: int = 0) -> list[dict[str, int | str | None]]:
+    """Return the compute clients visible to NVML without making inference depend on it."""
     try:
         output = subprocess.run(
             [
                 "nvidia-smi",
                 f"--id={index}",
-                "--query-gpu=name,memory.used,memory.total,utilization.gpu",
+                "--query-compute-apps=pid,process_name,used_gpu_memory",
                 "--format=csv,noheader,nounits",
             ],
             capture_output=True,
@@ -81,15 +123,34 @@ def gpu_snapshot(index: int = 0) -> dict[str, int | str] | None:
             timeout=2,
             check=True,
         ).stdout.strip()
-        fields = [field.strip() for field in output.splitlines()[0].split(",")]
-        return {
-            "name": fields[0],
-            "memory_used_mib": int(fields[1]),
-            "memory_total_mib": int(fields[2]),
-            "utilization": int(fields[3]),
-        }
-    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
-        return None
+    except (OSError, subprocess.SubprocessError):
+        return []
+    result: list[dict[str, int | str | None]] = []
+    for line in output.splitlines():
+        fields = [field.strip() for field in line.split(",", 2)]
+        if len(fields) != 3:
+            continue
+        try:
+            pid = int(fields[0])
+        except ValueError:
+            continue
+        try:
+            used_memory: int | None = int(fields[2])
+        except ValueError:
+            used_memory = None
+        result.append({
+            "pid": pid,
+            "process_name": fields[1],
+            "memory_used_mib": used_memory,
+        })
+    return result
+
+
+def gpu_diagnostics(index: int = 0) -> dict[str, object]:
+    return {
+        "snapshot": gpu_snapshot(index),
+        "compute_processes": gpu_compute_processes(index),
+    }
 
 
 def cached_gpu_snapshot(

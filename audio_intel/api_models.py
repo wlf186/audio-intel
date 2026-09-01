@@ -311,10 +311,22 @@ class WorkerResponse(PublicModel):
 
 
 class GpuSnapshot(PublicModel):
-    name: str
-    memory_used_mib: int | float
-    memory_total_mib: int | float
-    utilization: int | float
+    name: str = Field(description="GPU 设备名称 / GPU device name")
+    memory_used_mib: int | float = Field(
+        description="设备范围当前已用显存，可能包含本服务、其它应用和图形上下文 / Device-wide currently used memory, potentially including this service, other applications, and graphics contexts",
+    )
+    memory_free_mib: int | float | None = Field(
+        None,
+        description="设备范围当前空闲显存；旧版 nvidia-smi 探测回退时可能缺省 / Device-wide currently free memory; may be absent with the legacy nvidia-smi probe fallback",
+    )
+    memory_total_mib: int | float = Field(
+        description="GPU 报告的物理总显存 / Total physical memory reported by the GPU",
+    )
+    memory_system_reserved_mib: int | float | None = Field(
+        None,
+        description="按 max(total-used-free, 0) 得到的系统保留估算，通常对应驱动或固件保留且不提供进程归属；旧版探测回退时可能缺省 / Estimated system-reserved residual calculated as max(total-used-free, 0), typically driver or firmware reservation without process attribution; may be absent with the legacy probe fallback",
+    )
+    utilization: int | float = Field(description="GPU 利用率百分比 / GPU utilization percentage")
 
 
 class HardwareSnapshot(PublicModel):

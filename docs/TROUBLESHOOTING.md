@@ -40,9 +40,12 @@ curl -I https://modelscope.cn
 - ASR 与 TTS GPU 资格都按所选模型和 `nvidia-smi` 报告的**总显存**判断，不读取当前空闲显存。0.6B/1.7B 的门槛分别是 3840/7936 MiB；例如 4096 MiB 可选择 0.6B，8151 MiB 可选择 1.7B。
 - 查询受保护的 `GET /api/v1/capabilities`，查看 `asr.models[].compute_devices` 或 `tts.model_capabilities[].compute_devices` 中的 `available`、`minimum_memory_mib`、`total_memory_mib` 和 `unavailable_reason_code`。两个顶层 `compute_devices` 兼容字段都只代表默认 0.6B 模型。
 - `gpu_unavailable` 表示没有兼容 GPU，`insufficient_gpu_memory` 表示所选模型未达到总显存门槛，`asr_model_unavailable` / `tts_model_unavailable` 表示固定 revision 未完整安装。显式 API GPU 请求返回 `503`，不会静默回退；前端会显示原因并按 CPU 创建本次任务。
-- 总显存达到门槛只表示允许尝试，不保证其他 GPU 程序、WDDM 或驱动开销不会导致实际 OOM；batch 1 仍失败时应关闭其他 GPU 程序或改用 CPU。
+- 总显存达到门槛只表示允许尝试，不保证其他 GPU 程序、WDDM 或遗留 CUDA 上下文不会耗尽当前空闲显存；0.6B TTS 已在干净的 4 GiB GPU 上直接加载验证通过，batch 1 仍失败时应先排查当前占用或改用 CPU。
+- 系统页会分别显示设备范围 GPU 当前已用、当前空闲和“系统保留估算”。估算值按 `max(total-used-free, 0)` 计算，通常对应驱动或固件保留，不提供进程归属，也不等同于应用残留；“当前已用”则可能同时包含本服务、其他应用和图形上下文。
+- 终态 CUDA OOM 会把加载前、失败时的显存和 `nvidia-smi` 可见计算进程写入任务 `error.log`，随后完整退出并重建该执行器。失败任务不会自动改用 CPU 或自动重试；关闭占用 GPU 的外部程序后重新提交即可。
 - ASR、Aligner 与 TTS GPU 任务由全局锁串行运行。单任务加速开启时，ASR/TTS 按硬件和模型保守分档批处理；1.7B 会在硬件档位基础上降低两个批次档位。TTS decoder 仍按文本块顺序执行，关闭加速时固定为 batch 1。
-- “单任务加速”默认开启；OOM 时按 `16→12→8→6→4→2→1` 回退并重试当前批次。排障或对照 batch 1 时可在页面关闭，API 客户端则显式传入 `accelerate_single_task=false`。完成任务可在结果 JSON 的 `acceleration.target_batch_size`、`stage_target_batch_sizes`、`stage_batch_sizes`、`batch_penalty_steps` 和 `oom_fallbacks` 查看实际选择。
+- “单任务加速”默认开启；推理批次 OOM 会按 `16→12→8→6→4→2→1` 回退并重试当前批次，batch 1 或模型加载仍 OOM 才属于上述终态 OOM。排障或对照 batch 1 时可在页面关闭，API 客户端则显式传入 `accelerate_single_task=false`。完成任务可在结果 JSON 的 `acceleration.target_batch_size`、`stage_target_batch_sizes`、`stage_batch_sizes`、`batch_penalty_steps` 和 `oom_fallbacks` 查看实际选择。
+- 若错误显示 GPU 几乎无空闲、但当前任务的 PyTorch 或进程占用仍很小，说明空间主要被其它或遗留上下文占用，不是当前模型稳态本身超限；结合错误日志中的前后快照和可见 PID 排查。项目 GPU 锁只约束本服务的协作任务，不能阻止外部 CUDA 程序。
 - OOM 后先确认没有其他 GPU 程序，再重试任务；不要同时启动另一套模型服务。
 
 若要判断开关在当前机器和素材上的实际收益，至少执行三组交替基准；短音频或单句文本只有一个块时通常没有明显收益：
@@ -57,7 +60,7 @@ curl -I https://modelscope.cn
 
 - 0.6B 和 1.7B 使用相同热词接口。热词会作为 Qwen ASR 的上下文提示，不是强制词典；音质、发音、上下文歧义和词表噪声仍会影响结果。优先加入专有名词、项目代号和容易混淆的短语，避免把通用高频词全部加入。
 - 单个词表最多 200 个词条，最多保存 100 个词表；一次任务最多选择 8 个词表、合并后最多 500 个唯一词条，自动生成的 `Vocabulary: ...` 段最多 8000 字符。具体值以 `/api/v1/capabilities` 的 `asr.hotword_library` 为准。
-- “声纹库人名”是额外的系统只读词表，不占 100 个自定义词表配额。它只同步已开启“加入热词库”的人员名字，仍需在 ASR 中手动选择；为空或合并后超限时不能用于提交。
+- “声纹库人名（全名）”和“声纹库人名（去姓）”是额外的系统只读词表，不占 100 个自定义词表配额。两表均只同步已开启“加入热词库”的人员；去姓表仅生成可靠提取的两字中文名或英文首名，单字名、格式模糊的姓名会跳过。两表仍需在 ASR 中手动选择；为空或合并后超限时不能用于提交。
 - 名称和词条会执行 NFKC、首尾/重复空白规范化及大小写无关去重；空词条被移除，单个词条最长 64 字符。未知词表 ID、选择过多或合并超限返回 `422`。
 - 原生 ASR 的 `context`、OpenAI 兼容转写的 `prompt` 会放在自动生成的 Vocabulary 段之前。留空 `hotword_list_ids` 只表示不使用已保存词表，不会清除显式 `context`/`prompt`。
 - 提交时会把词表内容写入 `request.hotword_lists` 快照，结果的 `hotword_context` 返回所用 ID、名称和去重词数。后续编辑或删除词表不会改变历史任务或相同幂等请求的重放。

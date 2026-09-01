@@ -28,10 +28,15 @@ WORKER_MONITOR_SECONDS = 0.10
 EXECUTOR_TERMINATE_SECONDS = 0.75
 EXECUTOR_KILL_SECONDS = 0.50
 WORKER_HEARTBEAT_SECONDS = 1.0
+EXECUTOR_RECYCLE_ATTRIBUTE = "_audio_intel_executor_recycle_reason"
 
 
 class JobCancelled(RuntimeError):
     pass
+
+
+def mark_executor_for_recycle(exc: BaseException, reason: str) -> None:
+    setattr(exc, EXECUTOR_RECYCLE_ATTRIBUTE, reason)
 
 
 def _fail_voiceprint_import(job: dict[str, Any], message: str) -> None:
@@ -101,12 +106,13 @@ def _run_one_job(
     worker_id: str,
     worker_pid: int,
     processor: Callable[[JobContext], dict[str, Any]],
-) -> str:
+) -> dict[str, str | None]:
     job = get_job(job_id)
     if job is None or job["state"] != "running" or job.get("worker_id") != worker_id:
-        return "skipped"
+        return {"state": "skipped", "recycle_reason": None}
     context = JobContext(job, worker_id, worker_pid)
     state = "failed"
+    recycle_reason: str | None = None
     try:
         result = processor(context)
         current = get_job(job_id)
@@ -124,6 +130,9 @@ def _run_one_job(
         # every stage child have exited.
         state = "cancelled"
     except Exception as exc:
+        marked_reason = getattr(exc, EXECUTOR_RECYCLE_ATTRIBUTE, None)
+        if isinstance(marked_reason, str) and marked_reason:
+            recycle_reason = marked_reason
         _fail_voiceprint_import(job, str(exc))
         error_path = settings.jobs_dir / job_id / "error.log"
         error_path.parent.mkdir(parents=True, exist_ok=True)
@@ -136,7 +145,7 @@ def _run_one_job(
         state = "failed"
     finally:
         shutil.rmtree(context.work_dir, ignore_errors=True)
-    return state
+    return {"state": state, "recycle_reason": recycle_reason}
 
 
 def _executor_main(kind: str, worker_id: str, worker_pid: int, connection: Any) -> None:
@@ -149,9 +158,9 @@ def _executor_main(kind: str, worker_id: str, worker_pid: int, connection: Any) 
                 return
             if job_id is None:
                 return
-            state = _run_one_job(kind, str(job_id), worker_id, worker_pid, processor)
+            outcome = _run_one_job(kind, str(job_id), worker_id, worker_pid, processor)
             try:
-                connection.send({"job_id": job_id, "state": state})
+                connection.send({"job_id": job_id, **outcome})
             except (BrokenPipeError, EOFError, OSError):
                 return
     finally:
@@ -251,7 +260,7 @@ def _spawn_executor(kind: str, worker_id: str, worker_pid: int) -> tuple[Any, An
     return process, parent_connection
 
 
-def _retire_idle_executor(kind: str, process: Any, connection: Any) -> None:
+def _retire_executor(kind: str, process: Any, connection: Any) -> None:
     descendants: list[int] = []
     try:
         descendants = [child.pid for child in psutil.Process(process.pid).children(recursive=True)]
@@ -366,7 +375,7 @@ def run(kind: str) -> None:
                         if idle_since is None:
                             idle_since = now
                         if now - idle_since >= settings.executor_idle_seconds:
-                            _retire_idle_executor(kind, process, connection)
+                            _retire_executor(kind, process, connection)
                             if stop:
                                 break
                             process, connection = _spawn_executor(kind, worker_id, worker_pid)
@@ -403,6 +412,21 @@ def run(kind: str) -> None:
                         upsert_worker(
                             worker_id, kind, worker_pid, "idle",
                             details={"executor_pid": process.pid},
+                        )
+                        continue
+                    recycle_reason = completed.get("recycle_reason")
+                    if isinstance(recycle_reason, str) and recycle_reason:
+                        _retire_executor(kind, process, connection)
+                        process, connection = _spawn_executor(kind, worker_id, worker_pid)
+                        current_job = None
+                        executor_dirty = False
+                        idle_since = None
+                        upsert_worker(
+                            worker_id, kind, worker_pid, "idle",
+                            details={
+                                "executor_pid": process.pid,
+                                "recycled_after": recycle_reason,
+                            },
                         )
                         continue
                     current_job = None

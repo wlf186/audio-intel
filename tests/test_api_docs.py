@@ -317,6 +317,18 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     assert "disable_name_hotword" in person_patch["requestBody"]["content"]["application/json"]["examples"]
     assert "8151 MiB" in schema["info"]["description"]
     assert "recognition hints" in schema["info"]["description"]
+    assert "surname-free list" in schema["info"]["description"]
+    gpu_snapshot = schema["components"]["schemas"]["GpuSnapshot"]["properties"]
+    assert "memory_free_mib" in gpu_snapshot
+    assert "memory_system_reserved_mib" in gpu_snapshot
+    assert "Device-wide currently free memory" in gpu_snapshot["memory_free_mib"]["description"]
+    assert "max(total-used-free, 0)" in gpu_snapshot["memory_system_reserved_mib"]["description"]
+    system_description = schema["paths"]["/api/v1/system"]["get"]["description"]
+    assert "device-wide used and free memory" in system_description
+    assert "total-used-free" in system_description
+    assert schema["paths"]["/api/v1/jobs/{job_id}/result"]["get"]["responses"]["200"]["content"]["application/json"]["examples"]["asr"]["value"]["hotword_context"]["list_ids"] == [
+        "hotwords_voiceprint_people", "hotwords_voiceprint_people_short",
+    ]
 
     for methods in schema["paths"].values():
         for method, operation in methods.items():

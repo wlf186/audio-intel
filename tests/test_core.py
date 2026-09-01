@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
@@ -640,8 +641,84 @@ def test_tts_cpu_model_cache_reuses_one_checkpoint_and_clears_before_switch_or_g
         assert gpu is Factory.calls[-1]
         assert len(Factory.calls) == 3
         assert tts_pipeline._cpu_models == {}
+        assert gpu.options["device_map"] == "cuda:0"
+        assert gpu.options["dtype"] == "bfloat16"
     finally:
         tts_pipeline._cpu_models.clear()
+
+
+@pytest.mark.parametrize(("model_id", "mode"), (
+    ("qwen3-tts-0.6b", "preset"),
+    ("qwen3-tts-0.6b", "inline_clone"),
+    ("qwen3-tts-1.7b", "preset"),
+    ("qwen3-tts-1.7b", "inline_clone"),
+    ("qwen3-tts-1.7b", "voice_design"),
+))
+def test_tts_gpu_models_load_directly(model_id: str, mode: str, monkeypatch) -> None:
+    class Factory:
+        calls = []
+
+        @classmethod
+        def from_pretrained(cls, path, **kwargs):
+            loaded = SimpleNamespace(path=path, options=kwargs)
+            cls.calls.append(loaded)
+            return loaded
+
+    fake_torch = SimpleNamespace(float32="float32", bfloat16="bfloat16")
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "qwen_tts", SimpleNamespace(Qwen3TTSModel=Factory))
+
+    loaded = tts_pipeline.load_model(
+        tts_pipeline.resolve_tts_model(model_id), mode, "gpu",
+    )
+
+    assert loaded.options["device_map"] == "cuda:0"
+
+
+def test_tts_terminal_cuda_oom_records_diagnostics_and_marks_executor(
+    tmp_path, monkeypatch,
+) -> None:
+    class OutOfMemoryError(RuntimeError):
+        pass
+
+    cleared = []
+    fake_torch = SimpleNamespace(
+        OutOfMemoryError=OutOfMemoryError,
+        cuda=SimpleNamespace(is_available=lambda: True, empty_cache=lambda: cleared.append(True)),
+    )
+    local = replace(
+        settings, mock_mode=False, models_dir=tmp_path / "models",
+        temp_dir=tmp_path / "tmp", data_dir=tmp_path / "data",
+    )
+    monkeypatch.setattr(tts_pipeline, "settings", local)
+    monkeypatch.setattr(tts_pipeline, "model_installation", lambda *_: {"installed": True})
+    monkeypatch.setattr(tts_pipeline, "gpu_lease", lambda *_: nullcontext())
+    snapshots = iter((
+        {"snapshot": {"memory_free_mib": 3600}, "compute_processes": []},
+        {"snapshot": {"memory_free_mib": 20}, "compute_processes": [{"pid": 42}]},
+    ))
+    monkeypatch.setattr(tts_pipeline, "gpu_diagnostics", lambda *_: next(snapshots))
+    monkeypatch.setattr(
+        tts_pipeline, "load_model",
+        lambda *_: (_ for _ in ()).throw(OutOfMemoryError("CUDA out of memory")),
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    context = SimpleNamespace(
+        job={"request": {
+            "text": "你好。", "model": "qwen3-tts-0.6b", "voice_mode": "preset",
+            "speaker": "Vivian", "compute_device": "gpu", "response_format": "wav",
+            "language": "Chinese", "accelerate_single_task": False,
+        }},
+        progress=lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(OutOfMemoryError) as caught:
+        tts_pipeline.process_job(context)
+
+    assert getattr(caught.value, "_audio_intel_executor_recycle_reason") == "cuda_oom"
+    assert '"memory_free_mib": 3600' in caught.value.__notes__[0]
+    assert '"memory_free_mib": 20' in caught.value.__notes__[0]
+    assert cleared == [True]
 
 
 def test_tts_batch_uses_sequential_decoder_and_restores_it() -> None:
