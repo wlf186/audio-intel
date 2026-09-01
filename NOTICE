@@ -1,7 +1,6 @@
-Sandevistan-Audio
+audio-intel
 Copyright 2026 wlf186
 
-This product downloads and uses third-party open-source software and model
-weights. Their licenses and attribution links are listed in
-THIRD_PARTY_NOTICES.md. No third-party model weights are distributed in this
-source repository.
+This source repository does not distribute third-party model weights. Its setup
+process installs third-party software and downloads model weights; their
+licenses and attribution links are listed in THIRD_PARTY_NOTICES.md.

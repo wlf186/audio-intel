@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PUBLIC_DOCS = (
     ROOT / "README.md",
     ROOT / "README_CN.md",
+    ROOT / "BRAND_NOTICE.md",
     ROOT / "AGENTS.md",
     ROOT / "CONTRIBUTING.md",
     ROOT / "docs" / "API.md",
@@ -51,9 +52,10 @@ def test_readmes_keep_parallel_information_architecture() -> None:
     english = (ROOT / "README.md").read_text(encoding="utf-8")
     chinese = (ROOT / "README_CN.md").read_text(encoding="utf-8")
     section_pairs = (
+        ("Interface preview", "界面预览"),
         ("What it does", "主要能力"),
-        ("Quick Start", "快速开始"),
         ("Compatibility and hardware", "兼容性与硬件"),
+        ("Quick Start", "快速开始"),
         ("How it works", "工作原理"),
         ("API and integrations", "API 与集成"),
         ("Documentation", "文档"),
@@ -69,10 +71,24 @@ def test_readmes_keep_parallel_information_architecture() -> None:
     assert "README.md" in chinese
 
 
+def test_public_brand_notice_preserves_license_and_identity_boundaries() -> None:
+    english = (ROOT / "README.md").read_text(encoding="utf-8")
+    chinese = (ROOT / "README_CN.md").read_text(encoding="utf-8")
+    notice = (ROOT / "BRAND_NOTICE.md").read_text(encoding="utf-8")
+
+    assert "BRAND_NOTICE.md" in english and "BRAND_NOTICE.md" in chinese
+    assert "has not been authorized, sponsored, approved, or endorsed" in english
+    assert "未获得 CD PROJEKT RED、R. Talsorian Games 或任何相关权利方的授权、赞助、认可或背书" in chinese
+    assert "maintained on a non-commercial basis" in notice
+    assert "不会给 Apache 许可的材料增加非商业限制" in notice
+    assert "Section 6" in notice
+    assert "CD PROJEKT RED Fan Content Guidelines" in notice
+
+
 def test_readme_assets_are_bounded_and_reproducible() -> None:
     asset_dir = ROOT / "docs" / "assets" / "readme"
     for locale in ("en-US", "zh-CN"):
-        for name in ("asr-workspace.webp", "tts-workspace.webp", "job-history.webp"):
+        for name in ("asr-workspace.webp", "tts-workspace.webp", "job-history.webp", "api-docs.webp"):
             path = asset_dir / locale / name
             assert path.is_file()
             assert path.stat().st_size < 500_000
@@ -82,15 +98,17 @@ def test_readme_assets_are_bounded_and_reproducible() -> None:
 
     english = (ROOT / "README.md").read_text(encoding="utf-8")
     chinese = (ROOT / "README_CN.md").read_text(encoding="utf-8")
-    assert english.count("docs/assets/readme/en-US/") == 3
+    assert english.count("docs/assets/readme/en-US/") == 4
     assert "docs/assets/readme/zh-CN/" not in english
-    assert chinese.count("docs/assets/readme/zh-CN/") == 3
+    assert chinese.count("docs/assets/readme/zh-CN/") == 4
     assert "docs/assets/readme/en-US/" not in chinese
 
     capture_script = (ROOT / "scripts" / "capture_readme_assets.mjs").read_text(encoding="utf-8")
     assert "audio-intel:ui-locale:v1" in capture_script
     assert "locale:'zh-CN'" in capture_script
     assert "locale:'en-US'" in capture_script
+    assert "api-docs.webp" in capture_script
+    assert "`${baseUrl}/docs`" in capture_script
 
 
 def test_docs_do_not_link_to_removed_chinese_readme_anchor() -> None:

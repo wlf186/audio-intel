@@ -15,7 +15,7 @@
       "batch_penalty_steps": 0,
       "device": "CPU FP32 / GPU BF16",
       "license": "Apache-2.0",
-      "license_url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/blob/main/LICENSE"
+      "license_url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/blob/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/README.md"
     },
     {
       "name": "Qwen3-ASR-1.7B",
@@ -37,7 +37,7 @@
       "batch_penalty_steps": 2,
       "device": "CPU FP32 / GPU BF16",
       "license": "Apache-2.0",
-      "license_url": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/blob/main/LICENSE"
+      "license_url": "https://huggingface.co/Qwen/Qwen3-ASR-1.7B/blob/7278e1e70fe206f11671096ffdd38061171dd6e5/README.md"
     },
     {
       "name": "Qwen3-ForcedAligner-0.6B",
@@ -48,7 +48,7 @@
       "targets": ["asr", "tts"],
       "device": "CPU FP32 / GPU BF16",
       "license": "Apache-2.0",
-      "license_url": "https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B/blob/main/LICENSE"
+      "license_url": "https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B/blob/c7cbfc2048c462b0d63a45797104fc9db3ad62b7/README.md"
     },
     {
       "name": "FSMN-VAD",
@@ -59,7 +59,7 @@
       "targets": ["asr"],
       "device": "CPU · FP32",
       "license": "Apache-2.0",
-      "license_url": "https://modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"
+      "license_url": "https://modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch/files?v=v2.0.4"
     },
     {
       "name": "CAM++",
@@ -70,7 +70,7 @@
       "targets": ["asr"],
       "device": "CPU · FP32",
       "license": "Apache-2.0",
-      "license_url": "https://modelscope.cn/models/iic/speech_campplus_sv_zh-cn_16k-common"
+      "license_url": "https://modelscope.cn/models/iic/speech_campplus_sv_zh-cn_16k-common/files?v=v2.0.2"
     },
     {
       "name": "Qwen3-TTS-12Hz-0.6B-Base",
@@ -87,7 +87,7 @@
       "batch_penalty_steps": 0,
       "device": "CPU FP32 / GPU BF16",
       "license": "Apache-2.0",
-      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base/blob/main/LICENSE"
+      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base/blob/5d83992436eae1d760afd27aff78a71d676296fc/README.md"
     },
     {
       "name": "Qwen3-TTS-12Hz-0.6B-CustomVoice",
@@ -104,7 +104,7 @@
       "batch_penalty_steps": 0,
       "device": "CPU FP32 / GPU BF16",
       "license": "Apache-2.0",
-      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/blob/main/LICENSE"
+      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice/blob/85e237c12c027371202489a0ec509ded67b5e4b5/README.md"
     },
     {
       "name": "Qwen3-TTS-12Hz-1.7B-Base",
@@ -121,7 +121,7 @@
       "batch_penalty_steps": 2,
       "device": "CPU FP32 / GPU BF16",
       "license": "Apache-2.0",
-      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base/blob/main/LICENSE"
+      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base/blob/fd4b254389122332181a7c3db7f27e918eec64e3/README.md"
     },
     {
       "name": "Qwen3-TTS-12Hz-1.7B-CustomVoice",
@@ -138,7 +138,7 @@
       "batch_penalty_steps": 2,
       "device": "CPU FP32 / GPU BF16",
       "license": "Apache-2.0",
-      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice/blob/main/LICENSE"
+      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice/blob/0c0e3051f131929182e2c023b9537f8b1c68adfe/README.md"
     },
     {
       "name": "Qwen3-TTS-12Hz-1.7B-VoiceDesign",
@@ -155,7 +155,7 @@
       "batch_penalty_steps": 2,
       "device": "CPU FP32 / GPU BF16",
       "license": "Apache-2.0",
-      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/blob/main/LICENSE"
+      "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/blob/5ecdb67327fd37bb2e042aab12ff7391903235d3/README.md"
     }
   ]
 }

@@ -18,6 +18,7 @@
 
 <p align="center">
   <a href="README.md">English</a> ·
+  <a href="#主要能力">主要能力</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#api-与集成">API</a> ·
   <a href="#文档">文档</a> ·
@@ -28,25 +29,42 @@
   <a href="https://github.com/wlf186/audio-intel/actions/workflows/linux.yml"><img alt="Linux 质量检查" src="https://github.com/wlf186/audio-intel/actions/workflows/linux.yml/badge.svg"></a>
   <a href="https://github.com/wlf186/audio-intel/actions/workflows/windows.yml"><img alt="原生 Windows 冒烟测试" src="https://github.com/wlf186/audio-intel/actions/workflows/windows.yml/badge.svg"></a>
   <a href="https://github.com/wlf186/audio-intel/releases"><img alt="最新版本" src="https://img.shields.io/github/v/release/wlf186/audio-intel"></a>
+  <img alt="安装后离线运行" src="https://img.shields.io/badge/runtime-offline%20after%20setup-0f8b8d">
+  <img alt="CPU 与 NVIDIA GPU" src="https://img.shields.io/badge/inference-CPU%20%7C%20NVIDIA%20GPU-5a67d8">
   <a href="LICENSE"><img alt="自有代码许可证：Apache 2.0" src="https://img.shields.io/badge/code%20license-Apache--2.0-blue"></a>
 </p>
 
+> [!IMPORTANT]
+> 本项目是独立、非官方、以非商业方式维护的开源项目，未获得 CD PROJEKT RED、R. Talsorian Games 或任何相关权利方的授权、赞助、认可或背书。详见[品牌与项目身份声明](BRAND_NOTICE.md)。
+
+## 界面预览
+
 ![Sandevistan Audio 本地 ASR 工作区，展示说话人分离结果与导出控件](docs/assets/readme/zh-CN/asr-workspace.webp)
+
+<p align="center">
+  <img src="docs/assets/readme/zh-CN/tts-workspace.webp" width="49%" alt="Sandevistan Audio 预置音色语音合成工作区">
+  <img src="docs/assets/readme/zh-CN/job-history.webp" width="49%" alt="Sandevistan Audio 持久化 ASR 与 TTS 任务记录">
+</p>
+
+![Sandevistan Audio 本地中英双语 Swagger API 指南](docs/assets/readme/zh-CN/api-docs.webp)
+
+> [!NOTE]
+> Web UI 支持简体中文和英文，可在页眉或登录对话框中切换，选择会保存在当前浏览器。本地 Swagger API 指南同样提供中英双语内容。
 
 ## 主要能力
 
 | 范围 | 能力 |
 | --- | --- |
-| **语音识别** | Qwen3-ASR 0.6B/1.7B、FSMN-VAD、CAM++ 说话人分离、句段与字词时间戳、热词、声纹命名，以及 JSON/SRT/VTT/TXT 导出 |
-| **语音合成** | Qwen3-TTS 0.6B/1.7B、预置音色、参考音频声音克隆、1.7B VoiceDesign，以及 WAV/FLAC/MP3 输出 |
-| **本地任务系统** | SQLite 持久化队列、上传与推理进度、本机历史 ETA、SSE、取消、重试、任务记录和安全清理 |
-| **集成与部署** | 原生异步 API、OpenAI 兼容转写与语音端点、本地 Web UI、CPU FP32 和 NVIDIA GPU BF16 |
+| **本地语音识别** | Qwen3-ASR 0.6B/1.7B、FSMN-VAD、CAM++ 说话人分离、句段与字词时间戳，以及 JSON/SRT/VTT/TXT 导出 |
+| **说话人与声纹** | 复用声纹档案识别并命名已知人员；自定义及声纹衍生热词表改善领域词汇，已完成任务保留不可变快照 |
+| **本地语音工作室** | Qwen3-TTS 0.6B/1.7B、预置音色、一次性或声纹库声音克隆、1.7B VoiceDesign，以及 WAV/FLAC/MP3 输出 |
+| **持久任务引擎** | SQLite 持久化队列、上传与推理进度、本机历史 ETA、SSE、取消、重试、任务记录和安全清理 |
+| **Web UI 与 API** | 中英双语本地 Web UI 和 Swagger 指南、原生异步 API，以及 OpenAI 兼容转写与语音端点 |
+| **部署感知运行** | 默认推荐的 CPU/GPU 全量配置和可选 CPU-only 配置；UI 与 API 只展示当前部署真正可用的设备和模型控制项 |
 
-### 为私有、可重复的工作流而设计
+### 与普通模型演示的区别
 
 - **安装后本地运行。** 模型 revision 固定，运行期强制离线加载；输入、结果、声音、数据库和日志均位于项目可控目录。
-- **一台工作站覆盖完整流程。** 无需拼装多个服务，即可完成会议转写、字幕导出、已知说话人识别、场景热词维护、语音合成和声音克隆。
-- **可观察的长任务。** 提供队列位置、阶段进度、细粒度活动、ETA 热身、ETag 与 SSE，同时避免在全局列表和事件中携带完整任务结果。
 - **严谨的进程隔离。** ASR 与 TTS 使用互不兼容的独立环境和可复用受监督执行器；完整任务进程树退出后，取消任务才进入终态。
 - **模型感知控制。** UI 与 API 只暴露所选 Qwen checkpoint 和声音模式真正支持的控制项，不静默忽略无效参数。
 
@@ -56,19 +74,31 @@
 - 使用预置音色、声音克隆和 1.7B 声音设计搭建私有语音工作室。
 - 通过异步或 OpenAI 兼容 API，为本地工具提供持久化语音后端。
 
-<p align="center">
-  <img src="docs/assets/readme/zh-CN/tts-workspace.webp" width="49%" alt="Sandevistan Audio 预置音色语音合成工作区">
-  <img src="docs/assets/readme/zh-CN/job-history.webp" width="49%" alt="Sandevistan Audio 持久化 ASR 与 TTS 任务记录">
-</p>
+## 兼容性与硬件
+
+默认且推荐的 **full 全量配置** 是标准部署方式。CPU-only 是开发者为缩小依赖体积而主动选择的精简配置，并非默认安装路径。
+
+| 配置 | 运行时与行为 | 磁盘建议 | 适用情况 |
+| --- | --- | --- | --- |
+| **full — 默认推荐** | 全部模型和功能；同时安装 CPU FP32 与 NVIDIA GPU BF16 运行时；任务默认使用 GPU，也可显式选择 CPU | 固定模型、隔离运行时和安装缓存约 43 GiB；最低预留 55 GiB，建议 70 GiB | 希望使用受支持的默认配置，或可能使用 GPU 加速 |
+| **CPU-only — 可选精简** | 保留相同 ASR/TTS 模型与功能，不安装 CUDA、NVIDIA 和 Triton 包；仅 CPU FP32；GPU 控件禁用，API 显式请求 GPU 返回 `503` | Linux 实测模型与项目运行时核心占用约 29 GiB；下载/安装缓存和任务数据另计；最低预留 40 GiB，建议 50 GiB | 明确接受明显更慢的推理速度，以缩小依赖体积 |
+
+| 项目 | 支持基线 |
+| --- | --- |
+| 操作系统 | Ubuntu 22.04/24.04 x86_64；原生 Windows 11 x64 |
+| NVIDIA GPU | 可选；`nvidia-smi` 必须正常，驱动需支持固定的 PyTorch CUDA 运行时 |
+| GPU 准入 | 0.6B 模型：总显存 3840 MiB；1.7B 模型：总显存 7936 MiB |
+| 内存 | 完整安装最低 16 GB；建议 32 GB |
+
+GPU 准入读取报告的总显存而不是当前空闲显存，其他 GPU 进程仍可能导致 OOM。API 显式请求不可用的 GPU 时返回 `503`，不会静默切到 CPU；Web UI 会解释原因并为本次提交选择 CPU。
+
+macOS 与 ARM 尚未验证，项目也没有官方容器镜像。Linux 前台模式可作为 OCI 容器入口，但调用方需负责准备或挂载运行时和模型。原生 Windows 生命周期已由 CI 覆盖，真实模型的 Windows GPU 推理尚无实机验证记录。
 
 ## 快速开始
 
-> [!IMPORTANT]
-> 默认推荐的 full ASR + TTS 安装中，固定模型、隔离运行时和安装缓存合计约 **43 GiB**。至少预留 **55 GiB**、建议 **70 GiB** 可用磁盘；完整能力建议至少 **16 GB 内存**，**32 GB** 更舒适。NVIDIA GPU 可选，全部能力也提供显式 CPU 路径。
+以下命令安装默认推荐的 full 全量配置。需要 Git、curl、tar、Node.js 22.20+（推荐 Node.js 24 LTS）与 Corepack；Python 3.12 和固定版本的运行时会安装到项目目录。
 
 ### Ubuntu 22.04 / 24.04 x86_64
-
-需要 Git、curl、tar、Node.js 22.20+（推荐 Node.js 24 LTS）与 Corepack。Python 3.12 和固定版本的运行时会安装到项目目录：
 
 ```bash
 git clone https://github.com/wlf186/audio-intel.git
@@ -98,7 +128,7 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 
 浏览器访问 <http://127.0.0.1:20810>。Web UI 支持简体中文和英文，可在页眉或登录对话框中切换，选择会保存在当前浏览器。中英双语交互式 API 指南位于 <http://127.0.0.1:20810/docs>，机器可读契约位于 `/openapi.json`。Swagger 资源和校验器均随服务本地托管。
 
-上述命令安装的是默认且推荐的 **full 全量配置**。开发者如明确希望精简 CPU-only 运行时，可保留全部 ASR/TTS 模型与功能，同时不安装 CUDA、NVIDIA 和 Triton 包：
+选择 CPU-only 配置的开发者在专用安装命令后使用相同的启动命令：
 
 ```bash
 ./service.sh setup all --profile cpu
@@ -107,7 +137,7 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 
 原生 Windows 使用 `.\service.cmd setup all --profile cpu`，随后执行 `.\service.cmd start all`。
 
-CPU-only 配置在 Linux 上实测的模型与项目运行时核心占用约为 **29 GiB**，下载/安装缓存和任务数据另计；至少预留 **40 GiB**，建议 **50 GiB**，以容纳下载、升级和日常使用。推理使用 CPU FP32，速度可能明显慢于 GPU。所选配置会记录在 `.runtime`，后续安装/升级自动沿用。Web UI 会禁用 GPU 选项；API 省略设备字段时默认 CPU，显式请求 GPU 返回 `503`。切换配置前须停止服务并清空或取消未终结任务，然后执行 `setup all --profile full|cpu`。
+所选配置会记录在 `.runtime`，后续安装/升级自动沿用。切换配置前须停止服务并清空或取消未终结任务，然后执行 `setup all --profile full|cpu`。
 
 不需要完整模型集时，可以只安装或启动一条管线：
 
@@ -120,21 +150,6 @@ CPU-only 配置在 Linux 上实测的模型与项目运行时核心占用约为 
 ```
 
 完整前提条件、代理、部分安装、前台/容器运行与升级步骤见 [Linux 安装指南](docs/INSTALL.md)和[原生 Windows 指南](docs/WINDOWS.md)。
-
-## 兼容性与硬件
-
-| 项目 | 支持基线 |
-| --- | --- |
-| 操作系统 | Ubuntu 22.04/24.04 x86_64；原生 Windows 11 x64 |
-| CPU | 全部 ASR 与 TTS 能力，FP32 |
-| NVIDIA GPU | BF16；`nvidia-smi` 必须正常，驱动需支持固定的 PyTorch CUDA 运行时 |
-| GPU 准入 | 0.6B 模型：总显存 3840 MiB；1.7B 模型：总显存 7936 MiB |
-| 内存 | 完整安装最低 16 GB；建议 32 GB |
-| 磁盘 | full：最低 55 GiB、建议 70 GiB；CPU-only Linux 参考：最低 40 GiB、建议 50 GiB |
-
-GPU 准入读取报告的总显存而不是当前空闲显存，其他 GPU 进程仍可能导致 OOM。API 显式请求不可用的 GPU 时返回 `503`，不会静默切到 CPU；Web UI 会解释原因并为本次提交选择 CPU。
-
-macOS 与 ARM 尚未验证，项目也没有官方容器镜像。Linux 前台模式可作为 OCI 容器入口，但调用方需负责准备或挂载运行时和模型。原生 Windows 生命周期已由 CI 覆盖，真实模型的 Windows GPU 推理尚无实机验证记录。
 
 ## 工作原理
 
@@ -202,6 +217,7 @@ curl --fail-with-body -sS \
 | [升级](docs/UPGRADE.md) | 数据备份、schema 兼容和升级步骤 |
 | [依赖维护](docs/DEPENDENCIES.md) | 运行时隔离、版本固定、锁文件和安全审计说明 |
 | [参与贡献](CONTRIBUTING.md) | 开发环境、验证命令和 Pull Request 要求 |
+| [品牌与项目身份](BRAND_NOTICE.md) | 非官方身份、第三方权利及 Apache-2.0 授权边界 |
 
 ## 安全与数据归属
 
@@ -225,6 +241,4 @@ AUDIO_INTEL_API_KEY='replace-with-a-long-random-value' ./service.sh start all
 
 ## 许可证
 
-项目自有代码以 [Apache License 2.0](LICENSE) 发布。下载的模型权重不包含在仓库中，并继续适用各上游许可证；详见[第三方组件与模型声明](THIRD_PARTY_NOTICES.md)。
-
-Sandevistan Audio 是非官方的赛博朋克风格界面，与相关游戏、商标或权利人不存在隶属或背书关系。
+项目自有代码以 [Apache License 2.0](LICENSE) 发布。下载的模型权重不包含在仓库中，并继续适用各上游许可证；详见[第三方组件与模型声明](THIRD_PARTY_NOTICES.md)。代码许可证不授予第三方名称或知识产权的使用权；详见[品牌与项目身份声明](BRAND_NOTICE.md)。

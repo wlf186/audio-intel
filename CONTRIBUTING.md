@@ -84,6 +84,14 @@ The four native asynchronous submission endpoints must preserve first-accept `20
 - Add an interaction assertion, console-error check, and desktop plus 390 px validation for UI changes.
 - Document changes to browser-storage lifetime or draft-clearing behavior.
 
+## Licensing and provenance
+
+- Unless explicitly stated otherwise, contributions intentionally submitted to this repository are provided under Apache-2.0 in accordance with Section 5 of that license. Contributors must have the rights needed to submit their work.
+- Identify third-party code, fonts, icons, samples, and other assets with their source, version or revision, and license. Preserve required notices and do not commit model weights, generated media, or material whose redistribution rights are unclear.
+- Update `audio_intel/model_manifest.json`, `THIRD_PARTY_NOTICES.md`, and related documentation when a change alters model identity, dependency provenance, or redistributed notices.
+- A prebuilt container, offline installer, runtime bundle, or appliance image requires an artifact-specific SBOM, license-text bundle, and reciprocal-license/source-offer review before release.
+- Brand references must remain consistent with [BRAND_NOTICE.md](BRAND_NOTICE.md); do not imply authorization, sponsorship, approval, endorsement, or affiliation by a third-party rights holder.
+
 ## Pull requests
 
 Use Conventional Commit subjects, for example:

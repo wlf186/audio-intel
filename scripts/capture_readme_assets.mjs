@@ -160,6 +160,24 @@ async function capturePage(browser,context,config,hash,readySelector,name){
  return webp
 }
 
+async function captureApiDocs(browser,context,config){
+ const errors=[]
+ const page=await context.newPage()
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ page.on('pageerror',error=>errors.push(error.message))
+ await page.goto(`${baseUrl}/docs`,{waitUntil:'networkidle'})
+ await page.locator('.swagger-ui .info .title').waitFor({state:'visible'})
+ await page.locator('.swagger-ui .opblock-tag').first().waitFor({state:'visible'})
+ await page.getByText('快速开始 / Quick start',{exact:true}).waitFor({state:'visible'})
+ await page.waitForTimeout(500)
+ await page.evaluate(()=>window.scrollTo({top:0,left:0,behavior:'auto'}))
+ const png=await page.screenshot({type:'png',fullPage:false})
+ const webp=await webpFromPng(browser,png)
+ await writeFile(resolve(outputDir,config.directory,'api-docs.webp'),webp)
+ await page.close()
+ if(errors.length)throw new Error(`${config.locale} API docs emitted browser errors: ${errors.join(' | ')}`)
+}
+
 async function captureLocale(browser,config){
  await mkdir(resolve(outputDir,config.directory),{recursive:true})
  const jobIds=await seedDemoJobs(config)
@@ -168,6 +186,7 @@ async function captureLocale(browser,config){
   const hero=await capturePage(browser,context,config,'asr','.segments article','asr-workspace.webp')
   await capturePage(browser,context,config,'tts','.audio-card','tts-workspace.webp')
   await capturePage(browser,context,config,'jobs','.jobs-table [role="rowheader"]','job-history.webp')
+  await captureApiDocs(browser,context,config)
   return hero
  }finally{
   await context.close()

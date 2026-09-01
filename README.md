@@ -18,6 +18,7 @@
 
 <p align="center">
   <a href="README_CN.md">简体中文</a> ·
+  <a href="#what-it-does">Features</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="#api-and-integrations">API</a> ·
   <a href="#documentation">Documentation</a> ·
@@ -28,10 +29,24 @@
   <a href="https://github.com/wlf186/audio-intel/actions/workflows/linux.yml"><img alt="Linux quality gates" src="https://github.com/wlf186/audio-intel/actions/workflows/linux.yml/badge.svg"></a>
   <a href="https://github.com/wlf186/audio-intel/actions/workflows/windows.yml"><img alt="Native Windows smoke" src="https://github.com/wlf186/audio-intel/actions/workflows/windows.yml/badge.svg"></a>
   <a href="https://github.com/wlf186/audio-intel/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/wlf186/audio-intel"></a>
+  <img alt="Offline after setup" src="https://img.shields.io/badge/runtime-offline%20after%20setup-0f8b8d">
+  <img alt="CPU and NVIDIA GPU" src="https://img.shields.io/badge/inference-CPU%20%7C%20NVIDIA%20GPU-5a67d8">
   <a href="LICENSE"><img alt="Code license: Apache 2.0" src="https://img.shields.io/badge/code%20license-Apache--2.0-blue"></a>
 </p>
 
+> [!IMPORTANT]
+> This is an independent, unofficial open-source project maintained on a non-commercial basis. It has not been authorized, sponsored, approved, or endorsed by CD PROJEKT RED, R. Talsorian Games, or any related rights holder. See the [brand and project status notice](BRAND_NOTICE.md).
+
+## Interface preview
+
 ![Sandevistan Audio local ASR workspace showing a speaker-separated transcript and export controls](docs/assets/readme/en-US/asr-workspace.webp)
+
+<p align="center">
+  <img src="docs/assets/readme/en-US/tts-workspace.webp" width="49%" alt="Sandevistan Audio TTS workspace with preset voice synthesis">
+  <img src="docs/assets/readme/en-US/job-history.webp" width="49%" alt="Sandevistan Audio persistent ASR and TTS task history">
+</p>
+
+![Sandevistan Audio bilingual local Swagger API guide](docs/assets/readme/en-US/api-docs.webp)
 
 > [!NOTE]
 > The Web UI supports Simplified Chinese and English. Use the language selector in the header or sign-in dialog; the choice is stored locally in the browser. The local Swagger API guide is also bilingual.
@@ -40,16 +55,16 @@
 
 | Area | Capabilities |
 | --- | --- |
-| **Speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, hotwords, voiceprint naming, and JSON/SRT/VTT/TXT export |
-| **Speech synthesis** | Qwen3-TTS 0.6B/1.7B, preset voices, reference-based voice cloning, 1.7B VoiceDesign, and WAV/FLAC/MP3 output |
-| **Local operations** | Persistent SQLite job queues, upload and inference progress, local ETA history, SSE updates, cancellation, retry, task history, and safe purge |
-| **Integration** | Native asynchronous APIs, OpenAI-compatible transcription and speech endpoints, local Web UI, CPU FP32, and NVIDIA GPU BF16 |
+| **Local speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, and JSON/SRT/VTT/TXT export |
+| **Speaker intelligence** | Reusable voiceprint profiles name known speakers; custom and voiceprint-derived hotword lists improve domain vocabulary while completed tasks retain immutable snapshots |
+| **Local voice studio** | Qwen3-TTS 0.6B/1.7B, preset voices, one-off or library-based voice cloning, 1.7B VoiceDesign, and WAV/FLAC/MP3 output |
+| **Durable task engine** | Persistent SQLite queues, upload and inference progress, local ETA history, SSE updates, cancellation, retry, task history, and safe purge |
+| **Web UI and APIs** | Bilingual local Web UI and Swagger guide, native asynchronous APIs, and OpenAI-compatible transcription and speech endpoints |
+| **Deployment-aware operation** | Recommended full CPU/GPU profile plus an optional CPU-only profile; the UI and API expose only devices and model controls available in the active deployment |
 
-### Built for private, repeatable workflows
+### Why it is different
 
 - **Local after setup.** Model revisions are pinned and runtime loading is forced offline; inputs, results, voices, the database, and logs stay in project-controlled directories.
-- **One workstation, complete workflow.** Transcribe meetings, produce subtitles, identify known speakers, maintain scenario hotwords, synthesize speech, and clone voices without assembling separate services.
-- **Observable long-running jobs.** Queue position, stage progress, activity, ETA warm-up, ETags, and SSE are available without putting full task results into global list or event payloads.
 - **Careful process isolation.** ASR and TTS use separate, incompatible Python environments and reusable supervised executors. Cancellation reaches a terminal state only after the complete task process tree exits.
 - **Model-aware controls.** The UI and API expose only controls supported by the selected Qwen checkpoint and voice mode instead of silently ignoring unsupported input.
 
@@ -59,19 +74,31 @@
 - Run a private local voice studio with preset voices, cloning, and 1.7B voice design.
 - Add a durable speech backend to local tools through asynchronous or OpenAI-compatible APIs.
 
-<p align="center">
-  <img src="docs/assets/readme/en-US/tts-workspace.webp" width="49%" alt="Sandevistan Audio TTS workspace with preset voice synthesis">
-  <img src="docs/assets/readme/en-US/job-history.webp" width="49%" alt="Sandevistan Audio persistent ASR and TTS job history">
-</p>
+## Compatibility and hardware
+
+The recommended **full** profile is the default. The CPU-only profile is an explicit developer choice for machines where a smaller dependency footprint matters more than inference speed.
+
+| Profile | Runtime and behavior | Disk guidance | Choose it when |
+| --- | --- | --- | --- |
+| **Full — recommended** | All models and features; CPU FP32 plus NVIDIA GPU BF16 runtimes; submissions default to GPU and can explicitly use CPU | About 43 GiB for pinned models, isolated runtimes, and installation caches; 55 GiB free minimum, 70 GiB recommended | You want the supported default and may use GPU acceleration |
+| **CPU-only — optional** | The same ASR/TTS models and features without CUDA, NVIDIA, or Triton packages; CPU FP32; GPU controls are disabled and explicit GPU API requests return `503` | Measured Linux core footprint—models plus project runtimes—is about 29 GiB; download/install caches and task data are additional; 40 GiB free minimum, 50 GiB recommended | You deliberately accept substantially slower inference to reduce dependency size |
+
+| Item | Supported baseline |
+| --- | --- |
+| Operating systems | Ubuntu 22.04/24.04 x86_64; native Windows 11 x64 |
+| NVIDIA GPU | Optional; `nvidia-smi` must work and the driver must support the pinned PyTorch CUDA runtime |
+| GPU admission | 0.6B models: 3840 MiB total VRAM; 1.7B models: 7936 MiB total VRAM |
+| Memory | 16 GB minimum for full setup; 32 GB recommended |
+
+GPU admission uses total reported VRAM, not current free VRAM. Other GPU processes can still cause an out-of-memory failure. Explicit API requests for an unavailable GPU return `503` instead of silently switching to CPU; the Web UI explains the reason and selects CPU for that submission.
+
+macOS and ARM are not validated. There is no official container image. Linux foreground mode can be used as an OCI container entrypoint, but the caller remains responsible for building the runtimes and models into the image or mounting them. Native Windows lifecycle behavior is covered by CI; real-model Windows GPU inference has not yet been validated.
 
 ## Quick Start
 
-> [!IMPORTANT]
-> The recommended full ASR + TTS installation uses about **43 GiB** for pinned models, isolated runtimes, and installation caches. Reserve at least **55 GiB** of free disk space; **70 GiB** is recommended. Start with **16 GB RAM**; **32 GB** is more comfortable. An NVIDIA GPU is optional—every capability also has an explicit CPU path.
+The commands below install the recommended full profile. Install Git, curl, tar, Node.js 22.20+ (Node.js 24 LTS recommended), and Corepack. Python 3.12 and pinned project runtimes are installed inside the repository.
 
 ### Ubuntu 22.04 / 24.04 x86_64
-
-Install Git, curl, tar, Node.js 22.20+ (Node.js 24 LTS recommended), and Corepack. Python 3.12 and pinned project runtimes are installed inside the repository.
 
 ```bash
 git clone https://github.com/wlf186/audio-intel.git
@@ -101,7 +128,7 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 
 Open <http://127.0.0.1:20810>. The bilingual interactive API guide is served at <http://127.0.0.1:20810/docs>, and the machine-readable contract is at `/openapi.json`. Swagger assets and validation are hosted locally.
 
-The commands above install the recommended **full** profile. Developers who deliberately want a smaller CPU-only runtime can keep every ASR/TTS model and feature while omitting CUDA, NVIDIA, and Triton packages:
+Developers who choose the CPU-only profile use the same startup command after profile-specific setup:
 
 ```bash
 ./service.sh setup all --profile cpu
@@ -110,7 +137,7 @@ The commands above install the recommended **full** profile. Developers who deli
 
 On native Windows, use `.\service.cmd setup all --profile cpu` followed by `.\service.cmd start all`.
 
-The measured Linux core footprint for the CPU-only profile—models plus project runtimes—is about **29 GiB**. Download/install caches and task data are additional; reserve at least **40 GiB**, with **50 GiB** recommended for downloads, upgrades, and normal use. Inference uses CPU FP32 and can be substantially slower. The selected profile is stored under `.runtime` and reused by later setup/upgrade commands. The UI disables GPU choices, omitted API device fields default to CPU, and explicit GPU requests return `503`. To switch profiles, stop the service, drain or cancel nonterminal jobs, then run `setup all --profile full|cpu`.
+The selected profile is stored under `.runtime` and reused by later setup/upgrade commands. To switch profiles, stop the service, drain or cancel nonterminal jobs, then run `setup all --profile full|cpu`.
 
 Install or start only one pipeline when you do not need the complete model set:
 
@@ -123,21 +150,6 @@ Install or start only one pipeline when you do not need the complete model set:
 ```
 
 See the [Linux installation guide](docs/INSTALL.md) or [native Windows guide](docs/WINDOWS.md) for prerequisites, proxies, partial installations, foreground/container operation, and upgrades.
-
-## Compatibility and hardware
-
-| Item | Supported baseline |
-| --- | --- |
-| Operating systems | Ubuntu 22.04/24.04 x86_64; native Windows 11 x64 |
-| CPU | All ASR and TTS capabilities, FP32 |
-| NVIDIA GPU | BF16; `nvidia-smi` must work and the driver must support the pinned PyTorch CUDA runtime |
-| GPU admission | 0.6B models: 3840 MiB total VRAM; 1.7B models: 7936 MiB total VRAM |
-| Memory | 16 GB minimum for full setup; 32 GB recommended |
-| Disk | Full: 55 GiB free minimum, 70 GiB recommended; CPU-only Linux reference: 40 GiB minimum, 50 GiB recommended |
-
-GPU admission uses total reported VRAM, not current free VRAM. Other GPU processes can still cause an out-of-memory failure. Explicit API requests for an unavailable GPU return `503` instead of silently switching to CPU; the Web UI explains the reason and selects CPU for that submission.
-
-macOS and ARM are not validated. There is no official container image. Linux foreground mode can be used as an OCI container entrypoint, but the caller remains responsible for building the runtimes and models into the image or mounting them. Native Windows lifecycle behavior is covered by CI; real-model Windows GPU inference has not yet been validated.
 
 ## How it works
 
@@ -205,6 +217,7 @@ Add `Authorization: Bearer $AUDIO_INTEL_API_KEY` when authentication is configur
 | [Upgrade](docs/UPGRADE.md) | Data backup, schema compatibility, and upgrade steps |
 | [Dependency maintenance](docs/DEPENDENCIES.md) | Runtime separation, pins, locks, and security-audit notes |
 | [Contributing](CONTRIBUTING.md) | Development setup, verification, and pull-request expectations |
+| [Brand and project status](BRAND_NOTICE.md) | Unofficial status, third-party rights, and the boundary of the Apache-2.0 grant |
 
 ## Security and data ownership
 
@@ -228,6 +241,4 @@ Models, task inputs, generated outputs, the SQLite database, voices, voiceprints
 
 ## License
 
-Project-owned code is licensed under the [Apache License 2.0](LICENSE). Downloaded model weights are not included in the repository and remain subject to their upstream licenses; see [third-party and model notices](THIRD_PARTY_NOTICES.md).
-
-Sandevistan Audio is an unofficial cyberpunk-styled interface and is not affiliated with or endorsed by any related game, trademark owner, or rights holder.
+Project-owned code is licensed under the [Apache License 2.0](LICENSE). Downloaded model weights are not included in the repository and remain subject to their upstream licenses; see [third-party and model notices](THIRD_PARTY_NOTICES.md). The code license does not grant rights to third-party names or intellectual property; see the [brand and project status notice](BRAND_NOTICE.md).

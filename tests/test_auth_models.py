@@ -71,6 +71,17 @@ def test_tts_manifest_groups_pinned_checkpoints_by_public_model() -> None:
     )
 
 
+def test_manifest_license_evidence_is_pinned_to_model_revisions() -> None:
+    for model in model_manifest():
+        license_url = model["license_url"]
+        revision = model["revision"]
+        if model["provider"] == "huggingface":
+            assert f"/blob/{revision}/README.md" in license_url
+            assert "/blob/main/" not in license_url
+        elif model["provider"] == "modelscope":
+            assert license_url.endswith(f"/files?v={revision}")
+
+
 def test_huggingface_download_writes_revision_marker(tmp_path, monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 

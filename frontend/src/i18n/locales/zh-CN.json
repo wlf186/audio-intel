@@ -93,7 +93,9 @@
     "dataStoredLocally": "// 数据本地存储",
     "dataReadyHint": "READY 表示服务已启用离线模式并报告了本地数据目录。",
     "bindReadyHint": "服务配置的监听地址：{{bind}}。0.0.0.0 表示所有网卡。",
-    "bindUnknownHint": "当前无法确认服务监听地址。"
+    "bindUnknownHint": "当前无法确认服务监听地址。",
+    "unofficial": "非官方",
+    "unofficialHint": "独立非官方项目，未获得相关权利方的授权、赞助、认可或背书。"
   },
   "auth": {
     "title": "访问验证",
@@ -125,6 +127,8 @@
   "system": {
     "title": "系统状态",
     "subtitle": "硬件资源、工作进程、模型与本地存储一览",
+    "projectIdentityTitle": "独立非官方项目",
+    "projectIdentityBody": "本项目是独立、非官方、以非商业方式维护的开源项目，未获得 CD PROJEKT RED、R. Talsorian Games 或任何相关权利方的授权、赞助、认可或背书，与其不存在隶属关系。Sandevistan 名称及相关第三方知识产权的权利归各自权利人所有。",
     "cpuProfile": "CPU-only 精简部署",
     "cpuProfileDetail": "当前未安装 GPU 推理运行时，页面已禁用 GPU 选项；如需 GPU，请使用 --profile full 重新安装。",
     "loadFailed": "系统状态加载失败",

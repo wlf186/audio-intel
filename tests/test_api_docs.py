@@ -82,6 +82,8 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     assert len({operation["operationId"] for operation in operations}) == len(operations)
     assert all(operation.get("tags") for operation in operations)
     assert all("**English:**" in operation.get("description", "") for operation in operations)
+    assert "本项目是独立、非官方、以非商业方式维护的开源项目" in schema["info"]["description"]
+    assert "has not been authorized, sponsored, approved, or endorsed" in schema["info"]["description"]
     assert "/api/v1/capabilities.asr" not in schema["info"]["description"]
     assert "/api/v1/jobs/{id}" not in schema["info"]["description"]
     assert "/api/v1/jobs/{job_id}/events" in schema["info"]["description"]

@@ -6,6 +6,10 @@ from .model_registry import asr_models, tts_models
 
 
 API_DESCRIPTION = r"""
+> **项目身份 / Project status**
+>
+> 本项目是独立、非官方、以非商业方式维护的开源项目，未获得 CD PROJEKT RED、R. Talsorian Games 或任何相关权利方的授权、赞助、认可或背书，与其不存在隶属关系。`Sandevistan` 名称及相关第三方知识产权的权利归各自权利人所有。 / This is an independent, unofficial open-source project maintained on a non-commercial basis. It has not been authorized, sponsored, approved, or endorsed by CD PROJEKT RED, R. Talsorian Games, or any related rights holder, and is not affiliated with them. Rights in the Sandevistan name and related third-party intellectual property remain with their respective owners.
+
 ## 快速开始 / Quick start
 
 本页、`/openapi.json`、Swagger 代码/样式/图标、数据和模型推理均由本机提供；运行期间不访问 CDN、在线校验器或模型云服务。 / This page, its assets, data, and inference stay local at runtime.
