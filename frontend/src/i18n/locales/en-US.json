@@ -95,7 +95,7 @@
     "bindReadyHint": "Configured listen address: {{bind}}. 0.0.0.0 means all network interfaces.",
     "bindUnknownHint": "The service listen address cannot currently be confirmed.",
     "unofficial": "UNOFFICIAL",
-    "unofficialHint": "Independent, unofficial project; not authorized, sponsored, approved, or endorsed by related rights holders."
+    "unofficialDetail": "This is an independent, unofficial open-source project maintained on a non-commercial basis. It has not been authorized, sponsored, approved, or endorsed by CD PROJEKT RED, R. Talsorian Games, or any related rights holder, and is not affiliated with them. Rights in the Sandevistan name and related third-party intellectual property remain with their respective owners."
   },
   "auth": {
     "title": "Access verification",
@@ -127,8 +127,6 @@
   "system": {
     "title": "System status",
     "subtitle": "Hardware resources, workers, models, and local storage",
-    "projectIdentityTitle": "Independent unofficial project",
-    "projectIdentityBody": "This is an independent, unofficial open-source project maintained on a non-commercial basis. It has not been authorized, sponsored, approved, or endorsed by CD PROJEKT RED, R. Talsorian Games, or any related rights holder, and is not affiliated with them. Rights in the Sandevistan name and related third-party intellectual property remain with their respective owners.",
     "cpuProfile": "CPU-only deployment",
     "cpuProfileDetail": "GPU inference runtimes are not installed. GPU choices are disabled; reinstall with --profile full to enable them.",
     "loadFailed": "Could not load system status",
