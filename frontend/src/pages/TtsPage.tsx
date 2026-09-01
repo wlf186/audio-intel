@@ -49,6 +49,7 @@ type Props = {
   selectedJobId?: string
   onSelect: (job: JobSummary) => void
   gpuAvailable?: boolean
+  defaultComputeDevice: ComputeDevice
   maxUploadBytes?: number
   voiceprints: VoiceprintPerson[]
   asrModels: AsrModelCapability[]
@@ -118,6 +119,7 @@ export function TtsPage({
   selectedJobId,
   onSelect,
   gpuAvailable,
+  defaultComputeDevice,
   maxUploadBytes,
   voiceprints,
   asrModels,
@@ -129,14 +131,14 @@ export function TtsPage({
 }: Props) {
   const { t, i18n } = useTranslation()
   const [preferences, setPreferences] =
-    useState<TtsPreferences>(loadTtsPreferences)
+    useState<TtsPreferences>(()=>loadTtsPreferences(defaultComputeDevice))
   const [content, setContent] = useState<TtsContent>(()=>loadTtsContent(t('tts.defaultText')))
   const [referenceSource, setReferenceSource] =
     useState<ReferenceSource>('upload')
   const [referenceName, setReferenceName] = useState('')
   const [referenceFile,setReferenceFile]=useState<File>()
   const [referenceAsrModel,setReferenceAsrModel]=useState('qwen3-asr-0.6b')
-  const [referenceAsrDevice,setReferenceAsrDevice]=useState<ComputeDevice>('gpu')
+  const [referenceAsrDevice,setReferenceAsrDevice]=useState<ComputeDevice>(defaultComputeDevice)
   const [voices, setVoices] = useState<string[]>([])
   const [voicesLoading,setVoicesLoading]=useState(true)
   const [busy, setBusy] = useState(false)
@@ -496,7 +498,7 @@ export function TtsPage({
     }
   }
   const resetPreferences = () => {
-    const next = { ...defaultTtsPreferences }
+    const next = { ...defaultTtsPreferences, computeDevice: defaultComputeDevice }
     clearTtsPreferences()
     saveTtsPreferences(next)
     setPreferences(next)

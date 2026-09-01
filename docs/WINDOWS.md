@@ -7,7 +7,7 @@ Windows 自动化会在 GitHub 的 Windows runner 上验证依赖解析、后端
 ## 1. 机器与软件要求
 
 - Windows 11 x64，建议完成 Windows Update。
-- 16 GB 内存起步，32 GB 推荐；0.6B/1.7B 全部模型、隔离运行时和安装缓存约占 43 GiB，至少预留 55 GiB、建议 70 GiB。Windows 无法使用符号链接时缓存还可能额外占用空间。
+- 16 GB 内存起步，32 GB 推荐；默认 full 配置的 0.6B/1.7B 全部模型、隔离运行时和安装缓存约占 43 GiB，至少预留 55 GiB、建议 70 GiB。Windows 无法使用符号链接时缓存还可能额外占用空间。
 - 本地 NTFS 磁盘，建议克隆到短路径，例如 `C:\ai\audio-intel`。避免 OneDrive、网络盘和移动盘。
 - Git for Windows、Node.js 24 LTS（最低 22.20，自带 npm）。Python 3.12 和 uv 由项目安装到 `.runtime\`。
 - GPU 可选。GPU 模式需要 NVIDIA 显卡、可用的 `nvidia-smi` 和 **580 或更高版本驱动**。安装器使用官方 PyTorch 2.11 CUDA 13.0 wheel，通常不需要另装完整 CUDA Toolkit。
@@ -30,6 +30,8 @@ Set-Location audio-intel
 
 Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 ```
+
+上述 full 配置是默认推荐方案。只需 CPU 的开发者可选择 `.\service.cmd setup all --profile cpu`；它保留全部模型和功能，但不安装 CUDA、NVIDIA、Triton 运行时。Linux 实测的模型与项目运行时核心占用约 29 GiB，下载/安装缓存和任务数据另计；Windows 因缓存与无符号链接可能更大，建议至少预留 50 GiB。所选配置会持久化并供后续 setup/升级沿用。切换配置前必须停止全部服务并处理未终结任务，且只能通过 `setup all --profile full|cpu` 切换。
 
 浏览器访问 `http://127.0.0.1:20810`，API 文档位于 `http://127.0.0.1:20810/docs`。Swagger 的 JavaScript、CSS、图标和接口定义全部由本机服务提供，运行期不依赖 CDN 或在线校验器。
 
@@ -104,7 +106,7 @@ $env:AUDIO_INTEL_RUN_DIR = 'D:\audio-intel-state\run'
 .\service.cmd start all
 ```
 
-ASR 与 TTS 默认都选择 GPU 并开启单任务加速；无可用 NVIDIA GPU 时，应在页面选择 CPU，或由 API 显式传入 `compute_device=cpu`。默认准入限制为每类 5 个排队任务、2 个并行提交持久化和至少 5 GiB 数据卷空闲空间，可按需设置：
+ASR 与 TTS 在 full 配置中默认选择 GPU，在 CPU-only 配置中默认选择 CPU；两种配置都默认开启单任务加速。full 配置无可用 NVIDIA GPU 时，应在页面选择 CPU，或由 API 显式传入 `compute_device=cpu`。默认准入限制为每类 5 个排队任务、2 个并行提交持久化和至少 5 GiB 数据卷空闲空间，可按需设置：
 
 ```powershell
 $env:AUDIO_INTEL_MAX_QUEUED_ASR = '5'
@@ -113,14 +115,14 @@ $env:AUDIO_INTEL_MAX_CONCURRENT_SUBMISSIONS = '2'
 $env:AUDIO_INTEL_MIN_FREE_DISK_BYTES = '5368709120'
 ```
 
-## 4. GPU 验证
+## 4. full 配置 GPU 验证
 
 ```powershell
 nvidia-smi
 .\.runtime\asr\Scripts\python.exe -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU only')"
 ```
 
-驱动低于 580 时先从 NVIDIA 官方渠道更新。ASR 与 TTS 0.6B/1.7B 都按 `nvidia-smi` 报告的总显存使用 3840/7936 MiB 门槛，而不是当前空闲显存；因此报告 8151 MiB 的 8 GiB 显卡可选择 1.7B。可查询受保护的 `GET /api/v1/capabilities`，以 `asr.models[].compute_devices` 和 `tts.model_capabilities[].compute_devices` 判断具体模型。门槛只是准入条件，RTX 笔记本的 WDDM、桌面和浏览器仍可能占用显存并造成运行期 OOM；此时关闭其他 GPU 程序后重试，或为任务选择 CPU。服务不会把显式 API GPU 任务静默回退到 CPU，前端则会在所选模型不满足门槛时提示原因并按 CPU 创建本次任务。当前 Windows NVIDIA 真实推理仍未实机验收。
+本节只适用于 full 配置；CPU-only 配置中 `torch.version.cuda` 为空且 `torch.cuda.is_available()` 为 `False` 是预期结果，即使系统仍能通过 `nvidia-smi` 探测到物理显卡。驱动低于 580 时先从 NVIDIA 官方渠道更新。ASR 与 TTS 0.6B/1.7B 都按 `nvidia-smi` 报告的总显存使用 3840/7936 MiB 门槛，而不是当前空闲显存；因此报告 8151 MiB 的 8 GiB 显卡可选择 1.7B。可查询受保护的 `GET /api/v1/capabilities`，以 `deployment`、`asr.models[].compute_devices` 和 `tts.model_capabilities[].compute_devices` 判断具体模型。门槛只是准入条件，RTX 笔记本的 WDDM、桌面和浏览器仍可能占用显存并造成运行期 OOM；此时关闭其他 GPU 程序后重试，或为任务选择 CPU。服务不会把显式 API GPU 任务静默回退到 CPU；CPU-only 配置中的显式 GPU 请求返回 `503 gpu_runtime_not_installed`。当前 Windows NVIDIA 真实推理仍未实机验收。
 
 ## 5. 常见问题
 

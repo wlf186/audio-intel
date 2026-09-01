@@ -64,7 +64,7 @@
 ## 快速开始
 
 > [!IMPORTANT]
-> 完整 ASR + TTS 安装的固定模型、隔离运行时和安装缓存合计约 **43 GiB**。至少预留 **55 GiB**、建议 **70 GiB** 可用磁盘；完整能力建议至少 **16 GB 内存**，**32 GB** 更舒适。NVIDIA GPU 可选，全部能力也提供显式 CPU 路径。
+> 默认推荐的 full ASR + TTS 安装中，固定模型、隔离运行时和安装缓存合计约 **43 GiB**。至少预留 **55 GiB**、建议 **70 GiB** 可用磁盘；完整能力建议至少 **16 GB 内存**，**32 GB** 更舒适。NVIDIA GPU 可选，全部能力也提供显式 CPU 路径。
 
 ### Ubuntu 22.04 / 24.04 x86_64
 
@@ -98,6 +98,17 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 
 浏览器访问 <http://127.0.0.1:20810>。Web UI 支持简体中文和英文，可在页眉或登录对话框中切换，选择会保存在当前浏览器。中英双语交互式 API 指南位于 <http://127.0.0.1:20810/docs>，机器可读契约位于 `/openapi.json`。Swagger 资源和校验器均随服务本地托管。
 
+上述命令安装的是默认且推荐的 **full 全量配置**。开发者如明确希望精简 CPU-only 运行时，可保留全部 ASR/TTS 模型与功能，同时不安装 CUDA、NVIDIA 和 Triton 包：
+
+```bash
+./service.sh setup all --profile cpu
+./service.sh start all
+```
+
+原生 Windows 使用 `.\service.cmd setup all --profile cpu`，随后执行 `.\service.cmd start all`。
+
+CPU-only 配置在 Linux 上实测的模型与项目运行时核心占用约为 **29 GiB**，下载/安装缓存和任务数据另计；至少预留 **40 GiB**，建议 **50 GiB**，以容纳下载、升级和日常使用。推理使用 CPU FP32，速度可能明显慢于 GPU。所选配置会记录在 `.runtime`，后续安装/升级自动沿用。Web UI 会禁用 GPU 选项；API 省略设备字段时默认 CPU，显式请求 GPU 返回 `503`。切换配置前须停止服务并清空或取消未终结任务，然后执行 `setup all --profile full|cpu`。
+
 不需要完整模型集时，可以只安装或启动一条管线：
 
 ```bash
@@ -119,7 +130,7 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 | NVIDIA GPU | BF16；`nvidia-smi` 必须正常，驱动需支持固定的 PyTorch CUDA 运行时 |
 | GPU 准入 | 0.6B 模型：总显存 3840 MiB；1.7B 模型：总显存 7936 MiB |
 | 内存 | 完整安装最低 16 GB；建议 32 GB |
-| 磁盘 | 最低 55 GB 可用；模型、任务和升级建议 70 GB |
+| 磁盘 | full：最低 55 GiB、建议 70 GiB；CPU-only Linux 参考：最低 40 GiB、建议 50 GiB |
 
 GPU 准入读取报告的总显存而不是当前空闲显存，其他 GPU 进程仍可能导致 OOM。API 显式请求不可用的 GPU 时返回 `503`，不会静默切到 CPU；Web UI 会解释原因并为本次提交选择 CPU。
 

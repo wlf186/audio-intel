@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from . import __version__
 from .config import settings
+from .deployment import deployment_metadata
 from .gpu import COMPUTE_DEVICES, cached_gpu_snapshot, gpu_snapshot
 from .db import (
     MAX_VOICEPRINT_NOTE_CHARS,
@@ -493,6 +494,11 @@ def validate_compute_device(value: str) -> tuple[str, str]:
         raise HTTPException(status_code=422, detail="compute_device must be cpu or gpu")
     if normalized == "cpu":
         return normalized, "CPU"
+    if settings.deployment_profile == "cpu":
+        raise ApiProblem(
+            503, "gpu_runtime_not_installed",
+            "GPU compute is unavailable because this deployment uses CPU-only inference runtimes; reinstall with --profile full to enable GPU compute",
+        )
     snapshot = cached_gpu_snapshot(0, probe=gpu_snapshot)
     if snapshot is None:
         raise HTTPException(status_code=503, detail="GPU compute is unavailable; select CPU or check NVIDIA runtime")
@@ -505,9 +511,12 @@ def _asr_model_devices(model: dict[str, Any]) -> list[dict[str, Any]]:
     snapshot = gpu_snapshot(0)
     minimum = int(model.get("minimum_gpu_memory_mib") or 0)
     total = int(snapshot["memory_total_mib"]) if snapshot is not None else None
-    gpu_available = bool(installed and snapshot is not None and total is not None and total >= minimum)
+    gpu_runtime_installed = settings.deployment_profile == "full"
+    gpu_available = bool(installed and gpu_runtime_installed and snapshot is not None and total is not None and total >= minimum)
     if not installed:
         reason_code, reason = "model_not_installed", "Model files are not installed at the pinned revision"
+    elif not gpu_runtime_installed:
+        reason_code, reason = "gpu_runtime_not_installed", "GPU inference runtimes are not installed in the CPU-only deployment profile"
     elif snapshot is None:
         reason_code, reason = "gpu_unavailable", "No compatible NVIDIA GPU is available"
     elif total is not None and total < minimum:
@@ -558,6 +567,11 @@ def validate_asr_model_device(identifier: str, value: str) -> tuple[dict[str, An
         raise ApiProblem(503, "asr_model_unavailable", "The selected ASR model is not installed at the pinned revision")
     if normalized == "cpu":
         return model, normalized, "CPU"
+    if settings.deployment_profile == "cpu":
+        raise ApiProblem(
+            503, "gpu_runtime_not_installed",
+            "GPU compute is unavailable because this deployment uses CPU-only inference runtimes; reinstall with --profile full to enable GPU compute",
+        )
     snapshot = cached_gpu_snapshot(0, probe=gpu_snapshot)
     if snapshot is None:
         raise ApiProblem(503, "gpu_unavailable", "GPU compute is unavailable; select CPU or check NVIDIA runtime")
@@ -608,9 +622,12 @@ def _tts_model_devices(model: dict[str, Any]) -> list[dict[str, Any]]:
     snapshot = gpu_snapshot(0)
     minimum = int(model.get("minimum_gpu_memory_mib") or 0)
     total = int(snapshot["memory_total_mib"]) if snapshot is not None else None
-    gpu_available = bool(installed and snapshot is not None and total is not None and total >= minimum)
+    gpu_runtime_installed = settings.deployment_profile == "full"
+    gpu_available = bool(installed and gpu_runtime_installed and snapshot is not None and total is not None and total >= minimum)
     if not installed:
         reason_code, reason = "model_not_installed", "Model files are not installed at the pinned revisions"
+    elif not gpu_runtime_installed:
+        reason_code, reason = "gpu_runtime_not_installed", "GPU inference runtimes are not installed in the CPU-only deployment profile"
     elif snapshot is None:
         reason_code, reason = "gpu_unavailable", "No compatible NVIDIA GPU is available"
     elif total is not None and total < minimum:
@@ -671,6 +688,11 @@ def validate_tts_model_device(
         raise ApiProblem(503, "tts_model_unavailable", "The selected TTS checkpoint is not installed at the pinned revision")
     if normalized == "cpu":
         return model, checkpoint, normalized, "CPU"
+    if settings.deployment_profile == "cpu":
+        raise ApiProblem(
+            503, "gpu_runtime_not_installed",
+            "GPU compute is unavailable because this deployment uses CPU-only inference runtimes; reinstall with --profile full to enable GPU compute",
+        )
     snapshot = cached_gpu_snapshot(0, probe=gpu_snapshot)
     if snapshot is None:
         raise ApiProblem(503, "gpu_unavailable", "GPU compute is unavailable; select CPU or check NVIDIA runtime")
@@ -789,9 +811,15 @@ def validate_reference_language(value: Any) -> str:
 
 
 def compute_capabilities(default: str) -> list[dict[str, Any]]:
+    gpu_runtime_installed = settings.deployment_profile == "full"
     return [
         {"id": "cpu", "precision": "FP32", "available": True, "default": default == "cpu", "quantized": False},
-        {"id": "gpu", "precision": "BF16", "available": gpu_snapshot() is not None, "default": default == "gpu", "quantized": False},
+        {
+            "id": "gpu", "precision": "BF16", "available": gpu_runtime_installed and gpu_snapshot() is not None,
+            "default": default == "gpu", "quantized": False,
+            "unavailable_reason_code": None if gpu_runtime_installed else "gpu_runtime_not_installed",
+            "unavailable_reason": None if gpu_runtime_installed else "GPU inference runtimes are not installed in the CPU-only deployment profile",
+        },
     ]
 
 
@@ -804,6 +832,7 @@ def validate_boolean(value: Any, field: str) -> bool:
 def create_app() -> FastAPI:
     settings.ensure_directories()
     init_db()
+    default_device = settings.default_compute_device
     app = FastAPI(
         title="Sandevistan-Audio",
         description=API_DESCRIPTION,
@@ -1088,6 +1117,7 @@ def create_app() -> FastAPI:
         return {
             "services": sorted(settings.enabled_services),
             "offline": True,
+            "deployment": deployment_metadata(settings.deployment_profile),
             "asr": {
                 "model": default_model["name"],
                 "default_model": default_model["public_id"],
@@ -1292,7 +1322,7 @@ def create_app() -> FastAPI:
         context: str = Form("", description="一次性识别上下文；所选词表的 Vocabulary 段会追加在其后 / One-off recognition context followed by the Vocabulary section generated from selected lists"),
         hotword_list_ids: str = Form("", description="逗号分隔的本地词表 ID，最多 8 个；留空禁用已保存词表 / Comma-separated local list IDs, maximum 8; empty disables stored lists"),
         export_formats: str = Form("json,srt,vtt,txt", description="逗号分隔：json,srt,vtt,txt / Comma-separated export formats"),
-        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
+        compute_device: str = Form(default_device, description="cpu 或 gpu；省略时使用部署默认值且无静默回退 / cpu or gpu; omission uses the deployment default and there is no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         use_voiceprint_library: bool = Form(True, description="用声纹库匹配并命名说话人 / Match and label speakers from the voiceprint library"),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="启用质量中性的单任务自动批处理 / Enable quality-neutral single-job auto-batching"),
         idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
@@ -1359,7 +1389,7 @@ def create_app() -> FastAPI:
         response: Response,
         file: UploadFile = File(..., description="单人干净参考音频或录音容器 / Clean single-speaker audio or recording container"),
         model: str = Form(DEFAULT_ASR_MODEL_ID, description="参考转写使用的 ASR 模型 / ASR model for reference transcription", json_schema_extra={"enum": [item["public_id"] for item in asr_models()]}),
-        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
+        compute_device: str = Form(default_device, description="cpu 或 gpu；省略时使用部署默认值且无静默回退 / cpu or gpu; omission uses the deployment default and there is no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
         idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
@@ -1424,7 +1454,7 @@ def create_app() -> FastAPI:
         ),
         response_format: str = Form("wav", description="wav、flac 或 mp3", json_schema_extra={"enum": ["wav", "flac", "mp3"]}),
         display_name: str = Form("语音合成", description="任务显示名称 / Job display name"),
-        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
+        compute_device: str = Form(default_device, description="cpu 或 gpu；省略时使用部署默认值且无静默回退 / cpu or gpu; omission uses the deployment default and there is no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="启用质量中性的单任务自动批处理 / Enable quality-neutral single-job auto-batching"),
         idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
@@ -1812,7 +1842,7 @@ def create_app() -> FastAPI:
         file: UploadFile = File(..., description="单人干净音频或浏览器录音容器 / Clean single-speaker audio or browser recording container"),
         model: str = Form(DEFAULT_ASR_MODEL_ID, description="样本转写使用的 ASR 模型 / ASR model for sample transcription", json_schema_extra={"enum": [item["public_id"] for item in asr_models()]}),
         language: str = Form("Auto", description="转写语言；显式值限公开对齐语种 / Transcription language; explicit values are limited to public alignment languages", json_schema_extra={"enum": ASR_LANGUAGES}),
-        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
+        compute_device: str = Form(default_device, description="cpu 或 gpu；省略时使用部署默认值且无静默回退 / cpu or gpu; omission uses the deployment default and there is no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
         idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
@@ -2321,6 +2351,7 @@ def system_snapshot() -> dict[str, Any]:
         })
     return {
         "status": "ok", "version": __version__, "offline": True,
+        "deployment": deployment_metadata(settings.deployment_profile),
         "bind": f"{settings.host}:{settings.port}", "services": sorted(settings.enabled_services),
         "workers": workers, "hardware": hardware, "models": models,
         "storage": {key: str(value) for key, value in {
@@ -2341,6 +2372,7 @@ async def wait_for_job(job_id: str, timeout: float = 24 * 3600) -> dict[str, Any
 
 
 def add_openai_routes(app: FastAPI) -> None:
+    default_device = settings.default_compute_device
     @app.get(
         "/v1/models", response_model=OpenAIModelList, response_model_exclude_unset=True,
         tags=[OPENAI_TAG], summary="列出兼容模型 / List compatible models",
@@ -2404,7 +2436,7 @@ def add_openai_routes(app: FastAPI) -> None:
         response_format: str = Form("json", description="json、verbose_json、text、srt 或 vtt"),
         diarize: bool = Form(True, description="启用说话人分离 / Enable diarization"),
         speaker_count: str = Form("auto", description="auto 或 1–15 / auto or 1–15"),
-        compute_device: str = Form("gpu", description="cpu 或 gpu；无静默回退 / cpu or gpu; no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
+        compute_device: str = Form(default_device, description="cpu 或 gpu；省略时使用部署默认值且无静默回退 / cpu or gpu; omission uses the deployment default and there is no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         use_voiceprint_library: bool = Form(True, description="匹配声纹库 / Match voiceprint library"),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
         idempotency_key: str | None = Header(None, alias="Idempotency-Key", description=OPTIONAL_IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
@@ -2528,7 +2560,7 @@ def add_openai_routes(app: FastAPI) -> None:
         voice = payload.voice
         voice_mode = "profile" if voice.startswith("voice_") else "preset"
         selected_model, _, compute_device, compute_device_name = await run_in_threadpool(
-            validate_tts_model_device, payload.model, voice_mode, payload.compute_device,
+            validate_tts_model_device, payload.model, voice_mode, payload.compute_device or default_device,
         )
         instructions = validate_tts_instruction(selected_model, voice_mode, payload.instructions)
         request_data: dict[str, Any] = {

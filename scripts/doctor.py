@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from audio_intel.model_registry import model_installation, model_manifest
+from audio_intel.deployment import deployment_profile_path, read_deployment_profile
 
 
 def runtime_python(name: str) -> Path:
@@ -51,6 +52,19 @@ def check_port() -> str:
         sock.close()
 
 
+def runtime_profile(name: str) -> str:
+    python = runtime_python(name)
+    if not python.is_file():
+        return "missing"
+    try:
+        return subprocess.run(
+            [str(python), str(ROOT / "scripts" / "runtime_profile.py"), "detect"],
+            capture_output=True, text=True, timeout=10, check=True,
+        ).stdout.strip()
+    except Exception as exc:
+        return f"unavailable: {exc}"
+
+
 system = platform.system()
 machine = platform.machine().lower()
 report = {
@@ -63,9 +77,12 @@ report = {
     "disk_free_bytes": shutil.disk_usage(ROOT).free,
     "download_proxy_configured": any(os.getenv(name) for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")),
     "port_20810": check_port(),
+    "deployment_profile": read_deployment_profile(ROOT),
+    "deployment_profile_path": str(deployment_profile_path(ROOT)),
     "ffmpeg_required": False,
     "nvidia_smi": shutil.which("nvidia-smi") is not None,
     "runtime_environments": {name: runtime_python(name).is_file() for name in ("api", "asr", "tts", "aligner")},
+    "inference_runtime_profiles": {name: runtime_profile(name) for name in ("asr", "tts", "aligner")},
     "frontend": (ROOT / "frontend/dist/index.html").is_file(),
     "api_docs_local_assets": all(
         (ROOT / "frontend/dist/docs-assets" / name).is_file()

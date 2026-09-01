@@ -30,6 +30,8 @@ Real-model inference is required when changing model loading, precision, device 
 
 Keep the `api`, `asr`, `tts`, and internal `aligner` Python environments separate. Qwen ASR and Qwen TTS require incompatible Transformers versions.
 
+The recommended `full` deployment and opt-in `cpu` deployment use separate ASR, TTS, and aligner locks on both Linux and Windows. Keep profile selection in `.runtime/deployment-profile`; do not hand-mix CUDA and CPU packages or switch profiles by rebuilding one inference environment. Dependency changes must regenerate and validate every platform/profile lock together.
+
 Model identity and revision come only from `audio_intel/model_manifest.json`. Do not add runtime cloud fallbacks or accept user-supplied model repositories, configs, or checkpoints.
 
 ## Verification
@@ -74,6 +76,7 @@ The four native asynchronous submission endpoints must preserve first-accept `20
 
 ## Frontend changes
 
+- Add every user-visible translation key to both `frontend/src/i18n/locales/zh-CN.json` and `en-US.json`; do not reintroduce hard-coded user-facing copy. Run `corepack pnpm@10.15.1 --dir frontend check:i18n` (also included in typecheck and build) to verify key and interpolation parity.
 - Do not mount protected business pages or request protected resources before browser-session authentication succeeds.
 - Model remote resources as distinct loading, ready, and error states with a retry path.
 - Use accessible in-app dialogs instead of `window.confirm` or `window.prompt`.

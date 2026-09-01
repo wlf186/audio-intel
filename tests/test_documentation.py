@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PUBLIC_DOCS = (
     ROOT / "README.md",
     ROOT / "README_CN.md",
+    ROOT / "AGENTS.md",
     ROOT / "CONTRIBUTING.md",
     ROOT / "docs" / "API.md",
     ROOT / "docs" / "ARCHITECTURE.md",
@@ -86,3 +87,47 @@ def test_readme_assets_are_bounded_and_reproducible() -> None:
 def test_docs_do_not_link_to_removed_chinese_readme_anchor() -> None:
     stale = "README.md#局域网-https-与浏览器录音"
     assert all(stale not in path.read_text(encoding="utf-8") for path in PUBLIC_DOCS)
+
+
+def test_deployment_docs_keep_full_and_cpu_profile_contracts() -> None:
+    english = (ROOT / "README.md").read_text(encoding="utf-8")
+    chinese = (ROOT / "README_CN.md").read_text(encoding="utf-8")
+    windows = (ROOT / "docs" / "WINDOWS.md").read_text(encoding="utf-8")
+    architecture = (ROOT / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    dependencies = (ROOT / "docs" / "DEPENDENCIES.md").read_text(encoding="utf-8")
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "recommended **full** profile" in english
+    assert "默认且推荐的 **full 全量配置**" in chinese
+    for document in (english, chinese, windows):
+        assert r".\service.cmd setup all --profile cpu" in document
+    assert r"\.\service.cmd setup all --profile cpu" not in windows
+    assert "models plus project runtimes" in english
+    assert "下载/安装缓存和任务数据另计" in chinese
+
+    assert "default to GPU at submission time in the recommended full deployment" in architecture
+    assert "default to CPU in the CPU-only deployment" in architecture
+    assert "503 gpu_runtime_not_installed" in architecture
+    assert ".runtime/deployment-profile" in architecture
+    assert "complete executor process tree to exit" in architecture
+    assert "2.11.0+cu130（full）" in dependencies
+    assert "2.11.0+cpu（CPU-only）" in dependencies
+    assert "SQLite schema v9 data" in agents
+
+
+def test_api_markdown_examples_use_public_contract_values() -> None:
+    api_guide = (ROOT / "docs" / "API.md").read_text(encoding="utf-8")
+
+    assert "voice_mode=inline_clone" in api_guide
+    assert "voice_mode=clone" not in api_guide
+    assert "one comma-separated `hotword_list_ids` form field" in api_guide
+    assert "`gpu_runtime_not_installed` problem code" in api_guide
+
+
+def test_contributing_docs_require_translation_parity() -> None:
+    contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+
+    assert "frontend/src/i18n/locales/zh-CN.json" in contributing
+    assert "en-US.json" in contributing
+    assert "--dir frontend check:i18n" in contributing
+    assert "every platform/profile lock together" in contributing

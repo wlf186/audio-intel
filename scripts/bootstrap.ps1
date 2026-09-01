@@ -1,16 +1,40 @@
 param(
     [ValidateSet("all", "api", "asr", "tts")]
-    [string]$Target = "all"
+    [string]$Target = "all",
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$ExtraArgs
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$ExtraArgs = @($ExtraArgs)
 
 $RootDir = Split-Path -Parent $PSScriptRoot
 $RuntimeDir = Join-Path $RootDir ".runtime"
 $UvVersion = "0.12.5"
 $UvWindowsSha256 = "4c4d49d8738847d9b71ba319e49a5688c93eac0fe6204b1df24e98528dddf39a"
 $UvBin = Join-Path $RuntimeDir "bin\uv.exe"
+$ProfilePath = Join-Path $RuntimeDir "deployment-profile"
+
+$RequestedProfile = $null
+for ($index = 0; $index -lt $ExtraArgs.Count; $index++) {
+    if ($ExtraArgs[$index] -notin @("--profile", "-Profile")) {
+        throw "Unknown setup option: $($ExtraArgs[$index])"
+    }
+    if ($index + 1 -ge $ExtraArgs.Count) { throw "--profile requires full or cpu" }
+    $RequestedProfile = $ExtraArgs[$index + 1].ToLowerInvariant()
+    $index++
+}
+if ($null -ne $RequestedProfile -and $RequestedProfile -notin @("full", "cpu")) {
+    throw "Profile must be full or cpu"
+}
+$StoredProfile = if (Test-Path $ProfilePath) { (Get-Content $ProfilePath -Raw).Trim().ToLowerInvariant() } else { "full" }
+if ($StoredProfile -notin @("full", "cpu")) { throw "Invalid deployment profile in $ProfilePath" }
+$Profile = if ($null -ne $RequestedProfile) { $RequestedProfile } else { $StoredProfile }
+$ExistingProfileState = (Test-Path $ProfilePath) -or (Test-Path (Join-Path $RuntimeDir "asr")) -or (Test-Path (Join-Path $RuntimeDir "tts")) -or (Test-Path (Join-Path $RuntimeDir "aligner"))
+if ($null -ne $RequestedProfile -and $Profile -ne $StoredProfile -and $ExistingProfileState -and $Target -ne "all") {
+    throw "Changing an existing deployment profile requires: service.cmd setup all --profile $Profile"
+}
 
 if (-not [Environment]::Is64BitOperatingSystem) { throw "Only 64-bit Windows is supported" }
 
@@ -82,6 +106,26 @@ if (-not $uvReady) {
     Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+function Resolve-ProjectPath {
+    param([string]$EnvironmentName, [string]$Default)
+    $value = [Environment]::GetEnvironmentVariable($EnvironmentName, "Process")
+    if ([string]::IsNullOrWhiteSpace($value)) { $value = $Default }
+    if (-not [IO.Path]::IsPathRooted($value)) { $value = Join-Path $RootDir $value }
+    return [IO.Path]::GetFullPath($value)
+}
+
+if ($null -ne $RequestedProfile -and $Profile -ne $StoredProfile -and $ExistingProfileState) {
+    $guardPython = @(
+        (Join-Path $RuntimeDir "api\Scripts\python.exe"),
+        (Join-Path $RuntimeDir "asr\Scripts\python.exe"),
+        (Join-Path $RuntimeDir "tts\Scripts\python.exe")
+    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($null -eq $guardPython) { throw "Python is required to validate a profile switch" }
+    $runDir = Resolve-ProjectPath "AUDIO_INTEL_RUN_DIR" "run"
+    $database = Join-Path (Resolve-ProjectPath "AUDIO_INTEL_DATA_DIR" "data") "audio_intel.sqlite3"
+    Invoke-Native { & $guardPython (Join-Path $RootDir "scripts\runtime_profile.py") guard-switch --run-dir $runDir --database $database } "Validate profile switch"
+}
+
 function Get-PythonPath {
     param([string]$Name)
     return Join-Path $RuntimeDir "$Name\Scripts\python.exe"
@@ -109,12 +153,15 @@ function Install-Requirements {
 
 function Install-ModelEnvironment {
     param([string]$Name, [string]$Python, [string]$Requirements)
-    $lock = Join-Path $RootDir "requirements-lock\windows\$Name.txt"
+    $lockName = if ($Profile -eq "cpu") { "$Name-cpu" } else { $Name }
+    $torchBackend = if ($Profile -eq "cpu") { "cpu" } else { "cu130" }
+    $lock = Join-Path $RootDir "requirements-lock\windows\$lockName.txt"
     if (Test-Path $lock) {
-        Invoke-WithRetry { & $UvBin pip sync --python $Python --torch-backend cu130 --require-hashes --strict $lock } "Sync $Name environment"
+        Invoke-WithRetry { & $UvBin pip sync --python $Python --torch-backend $torchBackend --require-hashes --strict $lock } "Sync $Name environment"
     } else {
-        Invoke-WithRetry { & $UvBin pip install --python $Python --torch-backend cu130 -r (Join-Path $RootDir $Requirements) } "Install $Name dependencies"
+        Invoke-WithRetry { & $UvBin pip install --python $Python --torch-backend $torchBackend -r (Join-Path $RootDir $Requirements) } "Install $Name dependencies"
     }
+    Invoke-Native { & $Python (Join-Path $RootDir "scripts\runtime_profile.py") validate $Profile } "Validate $Name runtime profile"
 }
 
 function Invoke-Pnpm {
@@ -159,4 +206,8 @@ if ($Target -eq "all" -or $Target -eq "tts") {
     Invoke-Native { & $ttsPython (Join-Path $RootDir "scripts\download_models.py") tts } "Download TTS models"
 }
 
-Write-Host "[setup] $Target is ready. All runtime files are inside $RootDir"
+$profileTemporary = "$ProfilePath.tmp.$PID"
+Set-Content -Path $profileTemporary -Value $Profile -Encoding ascii -NoNewline
+Move-Item -Path $profileTemporary -Destination $ProfilePath -Force
+
+Write-Host "[setup] $Target is ready with the $Profile profile. All runtime files are inside $RootDir"

@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .deployment import DeploymentProfile, default_compute_device, read_deployment_profile
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -31,6 +33,7 @@ class Settings:
     run_dir: Path = _path("AUDIO_INTEL_RUN_DIR", "run")
     models_dir: Path = _path("AUDIO_INTEL_MODELS_DIR", "models")
     frontend_dir: Path = _path("AUDIO_INTEL_FRONTEND_DIR", "frontend/dist")
+    deployment_profile: DeploymentProfile = read_deployment_profile(ROOT)
     host: str = os.getenv("AUDIO_INTEL_HOST", "0.0.0.0")
     port: int = int(os.getenv("AUDIO_INTEL_PORT", "20810"))
     protocol: str = os.getenv("AUDIO_INTEL_PROTOCOL", "http").strip().lower() or "http"
@@ -61,6 +64,10 @@ class Settings:
     @property
     def database_path(self) -> Path:
         return self.data_dir / "audio_intel.sqlite3"
+
+    @property
+    def default_compute_device(self) -> str:
+        return default_compute_device(self.deployment_profile)
 
     @property
     def jobs_dir(self) -> Path:

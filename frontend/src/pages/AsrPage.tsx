@@ -102,6 +102,7 @@ type Props = {
   selectedJobId?: string
   onSelect: (job: JobSummary) => void
   gpuAvailable?: boolean
+  defaultComputeDevice: ComputeDevice
   maxSpeakers: number
   maxUploadBytes?: number
   asrLanguages?: string[]
@@ -117,10 +118,10 @@ type Props = {
   onRevealHandled: (token: number) => void
 }
 
-export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, maxSpeakers, maxUploadBytes, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
+export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const { t, i18n } = useTranslation()
   const [file, setFile] = useState<File>()
-  const [preferences, setPreferences] = useState<AsrPreferences>(() => loadAsrPreferences(maxSpeakers))
+  const [preferences, setPreferences] = useState<AsrPreferences>(() => loadAsrPreferences(maxSpeakers,defaultComputeDevice))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -435,7 +436,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
     }
   }
   const resetPreferences = () => {
-    const next = { ...defaultAsrPreferences, hotwordListIds: [] }
+    const next = { ...defaultAsrPreferences, computeDevice: defaultComputeDevice, hotwordListIds: [] }
     clearAsrPreferences()
     saveAsrPreferences(next)
     setPreferences(next)

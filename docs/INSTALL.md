@@ -2,9 +2,9 @@
 
 ## 1. 支持范围
 
-本文命令针对 Ubuntu 22.04/24.04 x86_64。原生 Windows 11 x64 使用独立的 [Windows 部署指南](WINDOWS.md)；macOS 和 ARM 尚未验证。项目没有官方容器镜像或完整 GPU 容器兼容性承诺，但 Linux 前台模式可作为 rootless 或 rootful OCI 容器的服务入口。CPU 可运行全部能力，但 ASR 与 TTS 默认都选择 GPU；无 GPU 时请在页面或 API 中选择 `cpu`。
+本文命令针对 Ubuntu 22.04/24.04 x86_64。原生 Windows 11 x64 使用独立的 [Windows 部署指南](WINDOWS.md)；macOS 和 ARM 尚未验证。项目没有官方容器镜像或完整 GPU 容器兼容性承诺，但 Linux 前台模式可作为 rootless 或 rootful OCI 容器的服务入口。CPU 可运行全部能力。默认推荐的 full 配置在提交时默认选择 GPU，也允许显式选择 CPU；开发者主动选择的 CPU-only 配置默认 CPU，并禁用 GPU 推理选项。
 
-建议资源：16 GB RAM 起步、32 GB RAM 推荐。0.6B/1.7B 全部模型、隔离运行时和安装缓存约占 43 GiB，因此至少预留 55 GiB、建议 70 GiB 可用磁盘，为任务数据、升级和默认 5 GiB 准入保护留出空间。已验证的 4 GiB RTX A1000 可运行 0.6B GPU 路径；1.7B GPU 路径需要 8 GiB 档设备并另行实机验收。安装脚本固定 Python 3.12、PyTorch 2.11.0 CUDA 13.0 和受控的模型 revision。
+建议资源：16 GB RAM 起步、32 GB RAM 推荐。默认 full 配置的 0.6B/1.7B 全部模型、隔离运行时和安装缓存约占 43 GiB，因此至少预留 55 GiB、建议 70 GiB 可用磁盘，为任务数据、升级和默认 5 GiB 准入保护留出空间。已验证的 4 GiB RTX A1000 可运行 0.6B GPU 路径；1.7B GPU 路径需要 8 GiB 档设备并另行实机验收。安装脚本固定 Python 3.12 和受控的模型 revision；full 配置固定 PyTorch 2.11.0 CUDA 13.0 wheel，CPU-only 配置固定官方 CPU wheel。
 
 ## 2. 系统前提
 
@@ -34,6 +34,18 @@ curl -fsS http://127.0.0.1:20810/api/v1/health
 
 `setup all` 创建 `.runtime/api`、`.runtime/asr`、`.runtime/tts` 和 `.runtime/aligner`，构建 `frontend/dist`，并将模型下载到 `models/`。`setup asr/all` 下载固定 revision 的 Qwen3-ASR 0.6B 与 1.7B；`setup tts/all` 下载 Qwen3-TTS 0.6B/1.7B 的 Base、CustomVoice，以及 1.7B VoiceDesign。TTS 与 Qwen ASR 要求互斥的 Transformers 版本，因此长参考音频的对齐使用独立 aligner 环境；不要把两个 Qwen 包装进同一环境。所有缓存和临时文件也留在仓库目录中。下载完成后，`service.sh start` 默认设置 Hugging Face 与 Transformers 离线模式。
 
+### 可选 CPU-only 精简配置
+
+默认并推荐 `setup all` 的 full 配置，以便同一安装随时使用 CPU 或 NVIDIA GPU。仅需要 CPU 的开发者可自行选择：
+
+```bash
+./service.sh setup all --profile cpu
+```
+
+此配置仍下载全部 0.6B/1.7B 模型并保留 ASR、TTS、克隆、VoiceDesign、声纹和热词功能，但三套推理环境改装 PyTorch CPU wheel，不安装 CUDA、NVIDIA 或 Triton 包。当前 Linux 实测的模型与项目运行时核心占用约 29 GiB，下载/安装缓存和任务数据另计；至少预留 40 GiB，建议 50 GiB。推理固定为 CPU FP32，可能明显更慢。
+
+配置写入 `.runtime/deployment-profile`，后续不带 `--profile` 的 setup/升级会自动沿用。切换配置仅支持 `setup all --profile full|cpu`；必须先 `./service.sh stop all` 并处理全部 queued/running/cancelling 任务。启动时会校验 ASR、TTS 与 aligner 环境和配置一致，防止混合运行时。`doctor` 和 `status` 会报告当前配置。
+
 默认 HTTP 足以支持本机访问；通过局域网 IP 使用浏览器麦克风时，可直接启用项目本地 CA 和 HTTPS，无需另建反向代理：
 
 ```bash
@@ -53,7 +65,7 @@ curl -fsS http://127.0.0.1:20810/api/v1/health
 
 后台模式通过 `./service.sh restart all` 重启。重启会先完成运行时和模型预检，再停止目标的完整进程树；若任一组件未能完整停止，命令返回非零且不会启动新实例。前台模式应向当前 `run all` 进程发送 `SIGTERM`（交互终端可按 `Ctrl+C`），等待它清理完成后再执行 `./service.sh run all`；容器中直接使用 Docker、Podman 或编排器的重启操作。不要在另一个 shell 中对前台实例执行 `restart all`，也不要让容器的 `CMD` 使用后台 `start all`。独立会话不会逃逸容器或 systemd 的 cgroup，容器重启策略仍由运行时负责。
 
-ASR 与 TTS GPU 能力均按所选模型判断：0.6B/1.7B 使用 `nvidia-smi` 报告的总显存门槛 3840/7936 MiB，而不是当前空闲显存。可从受保护的 `GET /api/v1/capabilities` 读取 `asr.models[].compute_devices` 和 `tts.model_capabilities[].compute_devices`；例如报告 8151 MiB 的 8 GiB 显卡可通过 1.7B 准入。准入门槛不排除其他 GPU 程序导致运行期 OOM，无 GPU 或显存不足时 API 消费方应显式选择 `compute_device=cpu`。
+full 配置中的 ASR 与 TTS GPU 能力均按所选模型判断：0.6B/1.7B 使用 `nvidia-smi` 报告的总显存门槛 3840/7936 MiB，而不是当前空闲显存。可从受保护的 `GET /api/v1/capabilities` 读取 `deployment`、`asr.models[].compute_devices` 和 `tts.model_capabilities[].compute_devices`；例如报告 8151 MiB 的 8 GiB 显卡可通过 1.7B 准入。准入门槛不排除其他 GPU 程序导致运行期 OOM，无 GPU 或显存不足时可显式选择 `compute_device=cpu`。CPU-only 配置不安装 GPU 推理运行时，即使系统能探测到物理显卡，显式 GPU 请求也会返回 `503 gpu_runtime_not_installed`。
 
 安装使用 `requirements-lock/linux/` 中带哈希的锁文件。uv 固定为 0.12.5，安装器会在解压前校验官方 SHA256。模型 `.complete` 不是布尔标记，其内容必须等于清单中的固定 revision；空文件或错误 revision 会触发修复下载。
 

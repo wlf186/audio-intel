@@ -24,7 +24,8 @@ PLATFORMS = {
 
 
 def compile_lock(
-    name: str, source: str, platform: str, output: Path, *, upgrade: bool = False,
+    name: str, source: str, platform: str, output: Path, *,
+    torch_backend: str | None = None, upgrade: bool = False,
 ) -> None:
     command = [
         str(UV), "pip", "compile", "--python-version", "3.12",
@@ -32,7 +33,7 @@ def compile_lock(
         "--output-file", str(output), str(ROOT / source),
     ]
     if name != "api":
-        command[3:3] = ["--torch-backend", "cu130"]
+        command[3:3] = ["--torch-backend", torch_backend or "cu130"]
     if upgrade:
         command.insert(3, "--upgrade")
     subprocess.run(command, cwd=ROOT, check=True)
@@ -55,14 +56,20 @@ def main() -> None:
         temporary_root = Path(temporary)
         for os_name, platform in PLATFORMS.items():
             for name, source in ENVIRONMENTS.items():
-                destination = ROOT / "requirements-lock" / os_name / f"{name}.txt"
-                output = temporary_root / os_name / f"{name}.txt" if arguments.check else destination
-                output.parent.mkdir(parents=True, exist_ok=True)
-                if arguments.check and destination.is_file():
-                    shutil.copyfile(destination, output)
-                compile_lock(name, source, platform, output, upgrade=arguments.upgrade)
-                if arguments.check and (not destination.is_file() or not filecmp.cmp(output, destination, shallow=False)):
-                    failures.append(str(destination.relative_to(ROOT)))
+                backends = [(None, None)] if name == "api" else [(None, "cu130"), ("-cpu", "cpu")]
+                for suffix, torch_backend in backends:
+                    filename = f"{name}{suffix or ''}.txt"
+                    destination = ROOT / "requirements-lock" / os_name / filename
+                    output = temporary_root / os_name / filename if arguments.check else destination
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    if arguments.check and destination.is_file():
+                        shutil.copyfile(destination, output)
+                    compile_lock(
+                        name, source, platform, output,
+                        torch_backend=torch_backend, upgrade=arguments.upgrade,
+                    )
+                    if arguments.check and (not destination.is_file() or not filecmp.cmp(output, destination, shallow=False)):
+                        failures.append(str(destination.relative_to(ROOT)))
     if failures:
         raise SystemExit("Dependency locks are stale: " + ", ".join(failures))
 

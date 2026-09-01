@@ -142,6 +142,22 @@ models_ready() {
   "$ROOT_DIR/.runtime/$component/bin/python" -c 'import sys; from audio_intel.config import settings; from audio_intel.model_registry import target_ready; raise SystemExit(0 if target_ready(settings.models_dir, sys.argv[1]) else 1)' "$component"
 }
 
+deployment_profile() {
+  local path="$ROOT_DIR/.runtime/deployment-profile" value="full"
+  if [[ -f "$path" ]]; then read -r value < "$path" || true; fi
+  value="${value,,}"
+  case "$value" in full|cpu) printf '%s\n' "$value" ;; *) echo "Invalid deployment profile in $path" >&2; return 1 ;; esac
+}
+
+runtime_profile_ready() {
+  local component="$1" profile
+  profile="$(deployment_profile)" || return 1
+  "$ROOT_DIR/.runtime/$component/bin/python" "$ROOT_DIR/scripts/runtime_profile.py" validate "$profile" || return 1
+  if [[ "$component" == "tts" ]]; then
+    "$ROOT_DIR/.runtime/aligner/bin/python" "$ROOT_DIR/scripts/runtime_profile.py" validate "$profile" || return 1
+  fi
+}
+
 ensure_ready() {
   local component="$1"
   if [[ "$AUDIO_INTEL_MOCK_MODE" == "1" && "$component" != "api" ]]; then
@@ -163,6 +179,10 @@ ensure_ready() {
   fi
   if [[ "$component" == "tts" && "$AUDIO_INTEL_MOCK_MODE" != "1" ]] && { [[ ! -x "$ROOT_DIR/.runtime/aligner/bin/python" ]] || ! models_ready tts; }; then
     "$ROOT_DIR/scripts/bootstrap.sh" tts
+  fi
+  if [[ "$AUDIO_INTEL_MOCK_MODE" != "1" && ( "$component" == "asr" || "$component" == "tts" ) ]] && ! runtime_profile_ready "$component"; then
+    echo "$component runtime does not match the configured deployment profile; rerun ./service.sh setup all --profile $(deployment_profile 2>/dev/null || echo full)" >&2
+    return 1
   fi
 }
 
@@ -473,6 +493,7 @@ case "$ACTION" in
     done
     configured="$(configured_mode 2>/dev/null || echo 'invalid TLS profile')"
     echo "next start: $configured"
+    echo "deployment profile: $(deployment_profile 2>/dev/null || echo invalid)"
     if pid_alive api; then
       actual="$(running_endpoint 2>/dev/null || true)"
       configured_protocol="${configured%% *}"
@@ -480,7 +501,7 @@ case "$ACTION" in
     fi
     ;;
   logs) tail -n 120 -F "$LOG_DIR"/$( [[ "$TARGET" == all ]] && echo '*.log' || echo "$TARGET.log" ) ;;
-  setup) "$ROOT_DIR/scripts/bootstrap.sh" "$TARGET" ;;
+  setup) "$ROOT_DIR/scripts/bootstrap.sh" "$TARGET" "${@:3}" ;;
   doctor) python3 "$ROOT_DIR/scripts/doctor.py" ;;
-  *) echo "Usage: ./service.sh {start|run|stop|restart|status|logs|setup|doctor} [all|asr|tts|api] | tls {enable|disable|status|create|renew|fingerprint}" >&2; exit 2 ;;
+  *) echo "Usage: ./service.sh {start|run|stop|restart|status|logs|doctor} [all|asr|tts|api] | setup [all|asr|tts|api] [--profile full|cpu] | tls {enable|disable|status|create|renew|fingerprint}" >&2; exit 2 ;;
 esac

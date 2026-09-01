@@ -23,9 +23,9 @@ HTTP 是默认协议；启用 HTTPS 时，把示例中的 `AUDIO_INTEL_BASE_URL`
 
 Native asynchronous ASR, TTS, clone-reference analysis, and voiceprint upload require an 8–128 character `Idempotency-Key`. The first accepted request returns `202`; replaying the same request returns the original job with `200` and `Idempotency-Replayed: true`; changing the request under the same key returns `409 idempotency_key_conflict`. Admission rejection returns `429`, a stable `code`, and `Retry-After`; keep the same key for that retry.
 
-ASR 与 TTS 默认使用 `compute_device=gpu` 且启用 `accelerate_single_task`。TTS 输出语种默认 `Auto`；已知文本语种时建议显式选择，预置音色优先使用 `/api/v1/capabilities` 返回的母语映射。一次性克隆参考音频应先调用 `/api/v1/tts/clone-references` 自动转写，再核对参考文本和语种后提交 TTS。
+ASR 与 TTS 在默认 full 部署中使用 `compute_device=gpu`，CPU-only 部署则默认 `cpu`；两者均默认启用 `accelerate_single_task`。调用方应读取 `/api/v1/capabilities` 的 `deployment` 与模型级设备能力。TTS 输出语种默认 `Auto`；已知文本语种时建议显式选择，预置音色优先使用能力响应返回的母语映射。一次性克隆参考音频应先调用 `/api/v1/tts/clone-references` 自动转写，再核对参考文本和语种后提交 TTS。
 
-ASR and TTS default to GPU with single-task acceleration enabled. TTS output language defaults to `Auto`; choose an explicit language when known, and prefer each preset speaker's native language reported by `/api/v1/capabilities`. Analyze one-off clone references first, then review the transcript and reference language before synthesis.
+ASR and TTS default to `compute_device=gpu` in the recommended full deployment and to `cpu` in a CPU-only deployment; both enable single-task acceleration by default. Read `deployment` and model-scoped device capabilities from `/api/v1/capabilities`. TTS output language defaults to `Auto`; choose an explicit language when known, and prefer each preset speaker's native language reported by `/api/v1/capabilities`. Analyze one-off clone references first, then review the transcript and reference language before synthesis.
 
 ASR 默认模型为 `qwen3-asr-0.6b`，也可选择 `qwen3-asr-1.7b`。消费方应读取 `asr.models[].compute_devices`，按模型判断设备能力；GPU 门槛使用报告的**总显存**而非当前空闲显存。0.6B/1.7B 的门槛分别为 3840/7936 MiB，因此报告 8151 MiB 的 8 GiB 显卡可选择 1.7B。门槛是准入条件，不保证运行时不会受其他 GPU 进程影响而 OOM。显式 API GPU 请求不可用时返回 `503`，不会自动改为 CPU。
 
@@ -517,6 +517,10 @@ ASR_SERVICE_RESPONSE = {
                 "code": "gpu_unavailable",
                 "detail": "GPU compute is unavailable; select CPU or check NVIDIA runtime",
             },
+            "gpu_runtime_not_installed": {
+                "code": "gpu_runtime_not_installed",
+                "detail": "GPU compute is unavailable because this deployment uses CPU-only inference runtimes; reinstall with --profile full to enable GPU compute",
+            },
             "insufficient_gpu_memory": {
                 "code": "insufficient_gpu_memory",
                 "detail": "Qwen3-ASR-1.7B requires at least 7936 MiB total GPU memory; detected 4096 MiB",
@@ -560,6 +564,10 @@ TTS_SERVICE_RESPONSE = {
             "gpu_unavailable": {
                 "code": "gpu_unavailable",
                 "detail": "GPU compute is unavailable; select CPU or check NVIDIA runtime",
+            },
+            "gpu_runtime_not_installed": {
+                "code": "gpu_runtime_not_installed",
+                "detail": "GPU compute is unavailable because this deployment uses CPU-only inference runtimes; reinstall with --profile full to enable GPU compute",
             },
             "insufficient_gpu_memory": {
                 "code": "insufficient_gpu_memory",

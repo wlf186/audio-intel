@@ -85,6 +85,10 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     assert "/api/v1/capabilities.asr" not in schema["info"]["description"]
     assert "/api/v1/jobs/{id}" not in schema["info"]["description"]
     assert "/api/v1/jobs/{job_id}/events" in schema["info"]["description"]
+    assert "默认 full 部署中使用 `compute_device=gpu`，CPU-only 部署则默认 `cpu`" in schema["info"]["description"]
+    assert "default to `compute_device=gpu` in the recommended full deployment" in schema["info"]["description"]
+    assert "to `cpu` in a CPU-only deployment" in schema["info"]["description"]
+    assert "Read `deployment` and model-scoped device capabilities" in schema["info"]["description"]
     browser_example = schema["info"]["description"].split(
         "同源浏览器 fetch：HttpOnly 会话", 1,
     )[1].split("</details>", 1)[0]
@@ -147,7 +151,8 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     assert "/api/v1/tts/clone-references" in schema["paths"]
     speech_schema = schema["components"]["schemas"]["OpenAISpeechRequest"]["properties"]
     assert speech_schema["language"]["default"] == "Auto"
-    assert speech_schema["compute_device"]["default"] == "gpu"
+    assert "default" not in speech_schema["compute_device"]
+    assert "deployment default" in speech_schema["compute_device"]["description"]
     assert speech_schema["accelerate_single_task"]["default"] is True
     assert speech_schema["instructions"]["maxLength"] == 1000
     assert "1.7B preset" in speech_schema["instructions"]["description"]
@@ -177,7 +182,7 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         assert unsupported["code"] == "unsupported_tts_control"
         assert "model and voice mode" in unsupported["detail"]
         service_examples = schema["paths"][path]["post"]["responses"]["503"]["content"]["application/problem+json"]["examples"]
-        assert set(service_examples) == {"tts_model_unavailable", "gpu_unavailable", "insufficient_gpu_memory"}
+        assert set(service_examples) == {"tts_model_unavailable", "gpu_unavailable", "gpu_runtime_not_installed", "insufficient_gpu_memory"}
     assert schema["components"]["schemas"]["AsrCapability"]["properties"]["default_language"]["type"] == "string"
     asr_capability = schema["components"]["schemas"]["AsrCapability"]["properties"]
     assert {"default_model", "models", "hotword_library"} <= set(asr_capability)
@@ -299,7 +304,7 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         assert body["properties"]["compute_device"]["enum"] == ["cpu", "gpu"]
         service_examples = operation["responses"]["503"]["content"]["application/problem+json"]["examples"]
         assert set(service_examples) == {
-            "asr_model_unavailable", "gpu_unavailable", "insufficient_gpu_memory",
+            "asr_model_unavailable", "gpu_unavailable", "gpu_runtime_not_installed", "insufficient_gpu_memory",
         }
 
     asr_body_ref = schema["paths"]["/api/v1/asr/jobs"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"]

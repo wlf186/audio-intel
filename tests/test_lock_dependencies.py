@@ -29,10 +29,10 @@ def test_check_uses_existing_lock_as_resolution_baseline(
     destination.write_text("example==1.0\n", encoding="utf-8")
 
     def fake_compile(
-        name: str, source: str, platform: str, output: Path, *, upgrade: bool = False,
+        name: str, source: str, platform: str, output: Path, *, torch_backend: str | None = None, upgrade: bool = False,
     ) -> None:
-        assert (name, source, platform, upgrade) == (
-            "api", "requirements-api.txt", "linux-target", False,
+        assert (name, source, platform, torch_backend, upgrade) == (
+            "api", "requirements-api.txt", "linux-target", None, False,
         )
         assert output.read_text(encoding="utf-8") == "example==1.0\n"
 
@@ -51,7 +51,7 @@ def test_check_reports_changed_or_missing_lock(
         destination.write_text("example==1.0\n", encoding="utf-8")
 
     def fake_compile(
-        name: str, source: str, platform: str, output: Path, *, upgrade: bool = False,
+        name: str, source: str, platform: str, output: Path, *, torch_backend: str | None = None, upgrade: bool = False,
     ) -> None:
         output.write_text("example==2.0\n", encoding="utf-8")
 

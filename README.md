@@ -67,7 +67,7 @@
 ## Quick Start
 
 > [!IMPORTANT]
-> A complete ASR + TTS installation uses about **43 GiB** for pinned models, isolated runtimes, and installation caches. Reserve at least **55 GiB** of free disk space; **70 GiB** is recommended. Start with **16 GB RAM**; **32 GB** is more comfortable. An NVIDIA GPU is optional—every capability also has an explicit CPU path.
+> The recommended full ASR + TTS installation uses about **43 GiB** for pinned models, isolated runtimes, and installation caches. Reserve at least **55 GiB** of free disk space; **70 GiB** is recommended. Start with **16 GB RAM**; **32 GB** is more comfortable. An NVIDIA GPU is optional—every capability also has an explicit CPU path.
 
 ### Ubuntu 22.04 / 24.04 x86_64
 
@@ -101,6 +101,17 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 
 Open <http://127.0.0.1:20810>. The bilingual interactive API guide is served at <http://127.0.0.1:20810/docs>, and the machine-readable contract is at `/openapi.json`. Swagger assets and validation are hosted locally.
 
+The commands above install the recommended **full** profile. Developers who deliberately want a smaller CPU-only runtime can keep every ASR/TTS model and feature while omitting CUDA, NVIDIA, and Triton packages:
+
+```bash
+./service.sh setup all --profile cpu
+./service.sh start all
+```
+
+On native Windows, use `.\service.cmd setup all --profile cpu` followed by `.\service.cmd start all`.
+
+The measured Linux core footprint for the CPU-only profile—models plus project runtimes—is about **29 GiB**. Download/install caches and task data are additional; reserve at least **40 GiB**, with **50 GiB** recommended for downloads, upgrades, and normal use. Inference uses CPU FP32 and can be substantially slower. The selected profile is stored under `.runtime` and reused by later setup/upgrade commands. The UI disables GPU choices, omitted API device fields default to CPU, and explicit GPU requests return `503`. To switch profiles, stop the service, drain or cancel nonterminal jobs, then run `setup all --profile full|cpu`.
+
 Install or start only one pipeline when you do not need the complete model set:
 
 ```bash
@@ -122,7 +133,7 @@ See the [Linux installation guide](docs/INSTALL.md) or [native Windows guide](do
 | NVIDIA GPU | BF16; `nvidia-smi` must work and the driver must support the pinned PyTorch CUDA runtime |
 | GPU admission | 0.6B models: 3840 MiB total VRAM; 1.7B models: 7936 MiB total VRAM |
 | Memory | 16 GB minimum for full setup; 32 GB recommended |
-| Disk | 55 GB free minimum; 70 GB recommended for models, data, and upgrades |
+| Disk | Full: 55 GiB free minimum, 70 GiB recommended; CPU-only Linux reference: 40 GiB minimum, 50 GiB recommended |
 
 GPU admission uses total reported VRAM, not current free VRAM. Other GPU processes can still cause an out-of-memory failure. Explicit API requests for an unavailable GPU return `503` instead of silently switching to CPU; the Web UI explains the reason and selects CPU for that submission.
 

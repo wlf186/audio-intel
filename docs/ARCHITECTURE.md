@@ -15,6 +15,8 @@ The project deliberately uses four Python environments:
 
 Qwen ASR and Qwen TTS require incompatible Transformers versions and must never be installed into the same environment. The aligner is an internal TTS dependency, not a public worker or service target; `setup tts` owns both TTS environments.
 
+The recommended `full` deployment installs CUDA-capable inference environments that can run either CPU or GPU work. The opt-in `cpu` deployment installs CPU-only Torch environments without CUDA, NVIDIA, or Triton packages. The selected profile is persisted in `.runtime/deployment-profile`; setup chooses matching hashed locks, and service startup rejects mixed or mismatched ASR, TTS, and aligner environments. Profile changes require a stopped service, no nonterminal jobs, and `setup all --profile full|cpu`.
+
 The API is the only HTTP process. ASR and TTS each have a persistent FIFO queue and one supervisor. A supervisor owns one reusable same-kind executor at a time.
 
 ```text
@@ -82,7 +84,7 @@ A CPU TTS executor can retain one checkpoint during its warm window. Switching c
 
 ## Devices and GPU coordination
 
-ASR and TTS default to GPU at submission time. Every supported path can explicitly select CPU:
+ASR and TTS default to GPU at submission time in the recommended full deployment and default to CPU in the CPU-only deployment. Every full-deployment path can explicitly select CPU:
 
 - CPU uses FP32.
 - GPU uses BF16 without quantization.
@@ -95,7 +97,7 @@ GPU qualification is model-scoped and based on total memory reported by `nvidia-
 | 0.6B | 3840 MiB total VRAM |
 | 1.7B | 7936 MiB total VRAM |
 
-Admission does not guarantee current free memory. External GPU processes can still produce a runtime OOM. Explicit API GPU requests that fail capability checks return `503`; they never silently fall back to CPU.
+Admission does not guarantee current free memory. External GPU processes can still produce a runtime OOM. Explicit API GPU requests that fail capability checks return `503`; they never silently fall back to CPU. A CPU-only deployment reports `gpu_runtime_installed=false`, removes GPU from every model-scoped capability, and returns `503 gpu_runtime_not_installed` for an explicit GPU request before accepting a job or upload. Physical GPU telemetry may still be visible under `/api/v1/system` and does not imply that a GPU inference runtime is installed.
 
 ASR and TTS share a project-local GPU file lock, so only one service task loads a large GPU model at a time. The lock coordinates this project only and cannot prevent external CUDA use.
 
@@ -110,6 +112,8 @@ ASR and TTS share a project-local GPU file lock, so only one service task loads 
 - OOM retry follows `16 → 12 → 8 → 6 → 4 → 2 → 1` within the same task.
 
 Acceleration does not change model identity, precision, ASR chunking, diarization semantics, or the TTS decoder's sequential block order. Task results record the model-adjusted targets, effective stage batches, hardware diagnostics, penalty steps, and OOM fallback count.
+
+Batch OOM recovery only reduces the effective batch within the same task. A model-load OOM or an OOM that remains at batch 1 is terminal: the task fails without CPU fallback or automatic retry, captures before/after memory and visible-GPU-process diagnostics, and the supervisor waits for the complete executor process tree to exit before starting a clean replacement.
 
 ## Progress, ETA, and events
 
@@ -135,7 +139,7 @@ tmp/          per-task temporary files
 cache/        uv, pip, Hugging Face, ModelScope, and Torch caches
 logs/         API, ASR, and TTS logs
 run/          supervisor PIDs, executor identities, and GPU lock
-.runtime/     isolated api/asr/tts/aligner Python environments
+.runtime/     deployment profile and isolated api/asr/tts/aligner Python environments
 ```
 
 Inputs and results persist by default. Permanent deletion applies path-containment checks, rejects unsafe active imports, removes files and database rows, then performs database cleanup. Back up `data/` before migrations or manual recovery.

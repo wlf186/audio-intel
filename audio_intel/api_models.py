@@ -279,9 +279,16 @@ class ApiLimits(PublicModel):
     min_free_disk_bytes: int
 
 
+class DeploymentCapability(PublicModel):
+    profile: Literal["full", "cpu"] = Field(description="已安装的推理运行时配置 / Installed inference runtime profile")
+    default_compute_device: ComputeDevice = Field(description="省略设备参数时使用的计算设备 / Compute device used when omitted")
+    gpu_runtime_installed: bool = Field(description="是否安装 GPU 推理运行时 / Whether GPU inference runtimes are installed")
+
+
 class CapabilitiesResponse(PublicModel):
     services: list[JobKind]
     offline: bool
+    deployment: DeploymentCapability
     asr: AsrCapability
     tts: TtsCapability
     limits: ApiLimits
@@ -353,6 +360,7 @@ class SystemResponse(PublicModel):
     status: str
     version: str
     offline: bool
+    deployment: DeploymentCapability
     bind: str
     services: list[JobKind]
     workers: list[WorkerResponse]
@@ -761,8 +769,8 @@ class OpenAISpeechRequest(PublicModel):
         description="1.7B 预置音色的可选自然语言风格、韵律和情绪指令；其它组合必须为空 / Optional natural-language style, prosody, and emotion instruction for a 1.7B preset voice; must be empty for other combinations",
         json_schema_extra={"maxLength": 1000},
     )
-    compute_device: str = Field(
-        "gpu", description="计算设备；GPU 不可用时返回 503 / Compute device; unavailable GPU returns 503",
+    compute_device: str | None = Field(
+        None, description="计算设备；省略时使用部署默认值，GPU 不可用时返回 503 / Compute device; omission uses the deployment default and unavailable GPU returns 503",
         json_schema_extra={"enum": ["gpu", "cpu"]},
     )
     accelerate_single_task: bool = Field(

@@ -90,6 +90,8 @@ $report = [ordered]@{
     long_paths_enabled = $longPaths -eq 1
     download_proxy_configured = -not [string]::IsNullOrWhiteSpace($env:HTTP_PROXY) -or -not [string]::IsNullOrWhiteSpace($env:HTTPS_PROXY)
     port_20810 = Test-PortAvailable
+    deployment_profile = if (Test-Path (Join-Path $RootDir ".runtime\deployment-profile")) { (Get-Content (Join-Path $RootDir ".runtime\deployment-profile") -Raw).Trim() } else { "full" }
+    inference_runtime_profiles = [ordered]@{}
     nvidia_smi = $null -ne $nvidia
     gpu = $gpu
     cuda_13_minimum_driver = "580"
@@ -97,6 +99,20 @@ $report = [ordered]@{
     frontend = Test-Path (Join-Path $RootDir "frontend\dist\index.html")
     api_docs_local_assets = (Test-Path (Join-Path $RootDir "frontend\dist\docs-assets\swagger-ui-bundle.js")) -and (Test-Path (Join-Path $RootDir "frontend\dist\docs-assets\swagger-ui.css"))
     models = $modelStatus
+}
+
+foreach ($name in @("asr", "tts", "aligner")) {
+    $python = Join-Path $RootDir ".runtime\$name\Scripts\python.exe"
+    if (-not (Test-Path $python)) {
+        $report.inference_runtime_profiles[$name] = "missing"
+        continue
+    }
+    try {
+        $detected = & $python (Join-Path $RootDir "scripts\runtime_profile.py") detect
+        $report.inference_runtime_profiles[$name] = if ($LASTEXITCODE -eq 0) { ($detected | Out-String).Trim() } else { "unavailable" }
+    } catch {
+        $report.inference_runtime_profiles[$name] = "unavailable: $($_.Exception.Message)"
+    }
 }
 
 $report | ConvertTo-Json -Depth 6

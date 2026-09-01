@@ -125,6 +125,8 @@
   "system": {
     "title": "系统状态",
     "subtitle": "硬件资源、工作进程、模型与本地存储一览",
+    "cpuProfile": "CPU-only 精简部署",
+    "cpuProfileDetail": "当前未安装 GPU 推理运行时，页面已禁用 GPU 选项；如需 GPU，请使用 --profile full 重新安装。",
     "loadFailed": "系统状态加载失败",
     "loading": "正在读取系统状态",
     "loadingDetail": "正在连接本地服务并读取硬件、模型和工作进程信息…",
@@ -174,8 +176,10 @@
     "gpuMemoryDetected": "该模型至少需要 {{required}} MiB 显存，当前检测到 {{detected}} MiB；本次自动使用 CPU。",
     "gpuMemoryRequired": "该模型至少需要 {{required}} MiB 显存；本次自动使用 CPU。",
     "gpuFallback": "当前模型无法使用 GPU，本次自动使用 CPU。",
+    "gpuRuntimeNotInstalled": "当前 CPU-only 部署未安装 GPU 推理运行时。如需 GPU，请使用 --profile full 重新安装。",
     "fileTooLarge": "文件大小 {{size}}，超过服务允许的 {{limit}} 上限。请选择更小的文件。"
   },
+  "capabilities": {"loading": "正在读取部署能力…", "loadFailed": "部署能力加载失败。"},
   "jobs": {
     "estimated": "估算",
     "safelyStopping": "正在安全停止",

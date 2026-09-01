@@ -9,6 +9,7 @@ export function formatLocalDateTime(value:string|undefined,locale:string,t:TFunc
 }
 
 export function computeUnavailableReason(capability:ComputeCapability|undefined,t:TFunction,fallback?:string){
+ if(capability?.unavailable_reason_code==='gpu_runtime_not_installed')return t('errors.gpuRuntimeNotInstalled')
  if(capability?.unavailable_reason_code==='insufficient_gpu_memory'){
   const required=capability.minimum_memory_mib
   const detected=capability.total_memory_mib

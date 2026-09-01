@@ -9,6 +9,7 @@ import {SystemPage} from './pages/SystemPage'
 import {VoiceprintsPage} from './pages/VoiceprintsPage'
 import {HotwordsPage} from './pages/HotwordsPage'
 import {AuthGate} from './components/AuthGate'
+import {ResourceStatePanel} from './components/ResourceStatePanel'
 import {newestJobsFirst} from './lib/jobs'
 import {useTranslation} from 'react-i18next'
 
@@ -32,6 +33,7 @@ export default function App(){
  const [hotwordLists,setHotwordLists]=useState<HotwordList[]>([])
  const [jobsError,setJobsError]=useState('')
  const [capabilitiesError,setCapabilitiesError]=useState('')
+ const [capabilitiesState,setCapabilitiesState]=useState<ResourceState>('loading')
  const [systemError,setSystemError]=useState('')
  const [auth,setAuth]=useState<AuthSession>()
  const [authError,setAuthError]=useState('')
@@ -58,7 +60,7 @@ export default function App(){
  const updateDetail=useCallback((id:string,resource:JobDetailResource)=>{detailRef.current={...detailRef.current,[id]:resource};setJobDetails(detailRef.current)},[])
  const loadJobDetail=useCallback((summary:JobSummary,force=false)=>{const version=jobVersion(summary);const cached=detailRef.current[summary.id];if(!force&&cached?.version===version&&(cached.state==='ready'||cached.state==='loading'))return;const key=`${summary.id}|${version}`;let request=detailRequests.current.get(key);updateDetail(summary.id,{state:'loading',version});if(!request){request=api.job(summary.id);detailRequests.current.set(key,request);request.finally(()=>detailRequests.current.delete(key)).catch(()=>undefined)}void request.then(job=>updateDetail(summary.id,{state:'ready',version,job})).catch(error=>updateDetail(summary.id,{state:'error',version,error:(error as Error).message}))},[updateDetail])
  const refreshJobs=useCallback(async()=>{if(!authenticated)return;const sequence=++refreshSequence.current;try{const response=await api.jobs();if(sequence===refreshSequence.current){mergeJobs(response.items);setJobsReady(true);setJobsError('')}}catch(error){if(sequence===refreshSequence.current)setJobsError((error as Error).message)}},[authenticated,mergeJobs])
- const refreshSystem=useCallback(async()=>{if(!authenticated)return;try{setHealth(await api.system());setSystemError('')}catch(error){setSystemError((error as Error).message)}},[authenticated])
+ const refreshSystem=useCallback(async()=>{if(!authenticated)return;try{const response=await api.system();setHealth({...response,deployment:response.deployment||{profile:'full',default_compute_device:'gpu',gpu_runtime_installed:true}});setSystemError('')}catch(error){setSystemError((error as Error).message)}},[authenticated])
  const refresh=useCallback(async()=>{await Promise.all([refreshJobs(),refreshSystem()])},[refreshJobs,refreshSystem])
  useEffect(()=>{let active=true;void (async()=>{try{const status=await api.auth();const legacy=sessionStorage.getItem('audio-intel:key');if(status.required&&!status.authenticated&&legacy){try{await api.login(legacy);status.authenticated=true}finally{sessionStorage.removeItem('audio-intel:key')}}if(active)setAuth(status)}catch(error){if(active)setAuthError((error as Error).message)}})();const unauthorized=()=>{setJobsReady(false);setAuth(current=>current?{...current,authenticated:false}:{required:true,authenticated:false})};addEventListener('audio-intel:unauthorized',unauthorized);return()=>{active=false;removeEventListener('audio-intel:unauthorized',unauthorized)}},[])
  useEffect(()=>{if(!authenticated)return;void refresh()},[authenticated,refresh])
@@ -67,10 +69,11 @@ export default function App(){
  useEffect(()=>{if(!authenticated||eventsConnected)return;const timer=setInterval(()=>void refreshJobs(),5000);return()=>clearInterval(timer)},[authenticated,eventsConnected,refreshJobs])
  const refreshResources=useCallback(async()=>{
   if(!authenticated)return
-  const loadCapabilities=async()=>setCapabilities(await api.capabilities())
+  const loadCapabilities=async()=>{setCapabilities(undefined);setCapabilitiesState('loading');setCapabilities(await api.capabilities());setCapabilitiesState('ready')}
   const results=await Promise.allSettled([loadCapabilities(),refreshVoiceprints(),refreshHotwordLists()])
   const capabilityResult=results[0]
   setCapabilitiesError(capabilityResult.status==='rejected'?(capabilityResult.reason as Error).message:'')
+  if(capabilityResult.status==='rejected')setCapabilitiesState('error')
  },[authenticated,refreshHotwordLists,refreshVoiceprints])
  useEffect(()=>{void refreshResources()},[refreshResources])
  const hasPendingVoiceprint=voiceprints.some(person=>person.samples.some(sample=>sample.state==='pending'))
@@ -85,14 +88,15 @@ export default function App(){
  const onJobsRemoved=useCallback((ids:string[])=>{const removed=new Set(ids);setJobs(current=>current.filter(job=>!removed.has(job.id)));setPinnedJobs(current=>{const next={...current};for(const kind of ['asr','tts'] as const)if(next[kind]&&removed.has(next[kind]!.id))delete next[kind];return next});setSelected(current=>{const next={...current};for(const kind of ['asr','tts'] as const)if(next[kind]&&removed.has(next[kind]!))delete next[kind];return next})},[])
  const gpuAvailable=health?Boolean(health.hardware.gpu):undefined
  const login=async(key:string)=>{await api.login(key);setJobsReady(false);setVoiceprintsState('loading');setHotwordsState('loading');setAuth({required:true,authenticated:true});setAuthError('')}
- const logout=async()=>{await api.logout();setJobs([]);setJobsReady(false);setPinnedJobs({});setSelected({});detailRef.current={};setJobDetails({});setHealth(undefined);setSystemError('');setCapabilities(undefined);setJobsError('');setCapabilitiesError('');setVoiceprints([]);setVoiceprintsState('loading');setHotwordLists([]);setHotwordsState('loading');setAuth({required:true,authenticated:false})}
+ const logout=async()=>{await api.logout();setJobs([]);setJobsReady(false);setPinnedJobs({});setSelected({});detailRef.current={};setJobDetails({});setHealth(undefined);setSystemError('');setCapabilities(undefined);setCapabilitiesState('loading');setJobsError('');setCapabilitiesError('');setVoiceprints([]);setVoiceprintsState('loading');setHotwordLists([]);setHotwordsState('loading');setAuth({required:true,authenticated:false})}
  const connectionError=jobsError||capabilitiesError
  const retryConnection=()=>{setJobsError('');setCapabilitiesError('');void Promise.all([refresh(),refreshResources()])}
+ const capabilityPanel=<ResourceStatePanel state={capabilitiesState} loadingLabel={t('capabilities.loading')} errorLabel={capabilitiesError||t('capabilities.loadFailed')} retry={()=>void refreshResources()}/>
  return <><AppShell page={page} setPage={next=>navigate(next)} health={health} systemError={systemError} connectionError={connectionError} authRequired={auth?.required&&authenticated} onLogout={()=>void logout()} onRetry={authenticated?retryConnection:undefined}>
-  {authenticated&&page==='asr'?<AsrPage jobs={workspaceJobs} jobDetails={jobDetails} loadJobDetail={loadJobDetail} onJobSubmitted={onJobSubmitted} onJobResultUpdated={onJobResultUpdated} selectedJobId={selected.asr} onSelect={openJob} gpuAvailable={gpuAvailable} maxSpeakers={capabilities?.asr.speaker_count.max||15} maxUploadBytes={capabilities?.limits.max_upload_bytes} asrLanguages={capabilities?.asr.languages} alignerLanguages={capabilities?.asr.aligner_languages} asrModels={capabilities?.asr.models||[]} hotwordLists={hotwordLists} hotwordsState={hotwordsState} hotwordLimits={capabilities?.asr.hotword_library} voiceprints={voiceprints} refreshVoiceprints={refreshVoiceprints} refreshPeopleAndHotwords={refreshPeopleAndHotwords} revealRequest={reveal?.kind==='asr'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
-  {authenticated&&page==='tts'?<TtsPage jobs={workspaceJobs} jobDetails={jobDetails} loadJobDetail={loadJobDetail} onJobSubmitted={onJobSubmitted} selectedJobId={selected.tts} onSelect={openJob} gpuAvailable={gpuAvailable} maxUploadBytes={capabilities?.limits.max_upload_bytes} voiceprints={voiceprints} asrModels={capabilities?.asr.models||[]} ttsModels={capabilities?.tts?.model_capabilities||[]} ttsLanguages={capabilities?.tts?.languages} referenceLanguages={capabilities?.asr.aligner_languages} revealRequest={reveal?.kind==='tts'?reveal:undefined} onRevealHandled={onRevealHandled}/>:null}
-  {authenticated&&page==='hotwords'?<HotwordsPage items={hotwordLists} state={hotwordsState} limits={capabilities?.asr.hotword_library} refresh={refreshHotwordLists}/>:null}
-  {authenticated&&page==='voiceprints'?<VoiceprintsPage people={voiceprints} state={voiceprintsState} refresh={refreshVoiceprints} refreshPeopleAndHotwords={refreshPeopleAndHotwords} onJobSubmitted={onJobSubmitted} gpuAvailable={gpuAvailable} maxUploadBytes={capabilities?.limits.max_upload_bytes} asrModels={capabilities?.asr.models||[]} asrLanguages={capabilities?.asr.languages}/>:null}
+  {authenticated&&page==='asr'?(capabilities?<AsrPage jobs={workspaceJobs} jobDetails={jobDetails} loadJobDetail={loadJobDetail} onJobSubmitted={onJobSubmitted} onJobResultUpdated={onJobResultUpdated} selectedJobId={selected.asr} onSelect={openJob} gpuAvailable={gpuAvailable} defaultComputeDevice={capabilities.deployment?.default_compute_device||'gpu'} maxSpeakers={capabilities.asr.speaker_count?.max||15} maxUploadBytes={capabilities.limits.max_upload_bytes} asrLanguages={capabilities.asr.languages} alignerLanguages={capabilities.asr.aligner_languages} asrModels={capabilities.asr.models||[]} hotwordLists={hotwordLists} hotwordsState={hotwordsState} hotwordLimits={capabilities.asr.hotword_library} voiceprints={voiceprints} refreshVoiceprints={refreshVoiceprints} refreshPeopleAndHotwords={refreshPeopleAndHotwords} revealRequest={reveal?.kind==='asr'?reveal:undefined} onRevealHandled={onRevealHandled}/>:capabilityPanel):null}
+  {authenticated&&page==='tts'?(capabilities?<TtsPage jobs={workspaceJobs} jobDetails={jobDetails} loadJobDetail={loadJobDetail} onJobSubmitted={onJobSubmitted} selectedJobId={selected.tts} onSelect={openJob} gpuAvailable={gpuAvailable} defaultComputeDevice={capabilities.deployment?.default_compute_device||'gpu'} maxUploadBytes={capabilities.limits.max_upload_bytes} voiceprints={voiceprints} asrModels={capabilities.asr.models||[]} ttsModels={capabilities.tts?.model_capabilities||[]} ttsLanguages={capabilities.tts?.languages} referenceLanguages={capabilities.asr.aligner_languages} revealRequest={reveal?.kind==='tts'?reveal:undefined} onRevealHandled={onRevealHandled}/>:capabilityPanel):null}
+  {authenticated&&page==='hotwords'?(capabilities?<HotwordsPage items={hotwordLists} state={hotwordsState} limits={capabilities.asr.hotword_library} refresh={refreshHotwordLists}/>:capabilityPanel):null}
+  {authenticated&&page==='voiceprints'?(capabilities?<VoiceprintsPage people={voiceprints} state={voiceprintsState} refresh={refreshVoiceprints} refreshPeopleAndHotwords={refreshPeopleAndHotwords} onJobSubmitted={onJobSubmitted} gpuAvailable={gpuAvailable} defaultComputeDevice={capabilities.deployment?.default_compute_device||'gpu'} maxUploadBytes={capabilities.limits.max_upload_bytes} asrModels={capabilities.asr.models||[]} asrLanguages={capabilities.asr.languages}/>:capabilityPanel):null}
   {authenticated&&page==='jobs'?<JobsPage liveJobs={jobs} liveJobsReady={jobsReady} query={jobHistoryQuery} setQuery={setJobHistoryQuery} refreshRecentJobs={refreshJobs} openJob={openJob} onJobUpdated={onJobUpdated} onJobsRemoved={onJobsRemoved}/>:null}
   {authenticated&&page==='system'?<SystemPage health={health} systemError={systemError} retry={refreshSystem}/>:null}
  </AppShell>{!auth||!authenticated?<AuthGate loading={!auth&&!authError} error={authError} onLogin={login}/>:null}</>

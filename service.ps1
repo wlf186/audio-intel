@@ -237,6 +237,15 @@ function Ensure-Ready {
         if (-not $modelsReady -or -not $alignerReady) {
             & (Join-Path $RootDir "scripts\bootstrap.ps1") $Component
         }
+        $profilePath = Join-Path $RuntimeDir "deployment-profile"
+        $profile = if (Test-Path $profilePath) { (Get-Content $profilePath -Raw).Trim().ToLowerInvariant() } else { "full" }
+        if ($profile -notin @("full", "cpu")) { throw "Invalid deployment profile in $profilePath" }
+        & (Get-RuntimePython $Component) (Join-Path $RootDir "scripts\runtime_profile.py") validate $profile
+        if ($LASTEXITCODE -ne 0) { throw "$Component runtime does not match the configured deployment profile; rerun service.cmd setup all --profile $profile" }
+        if ($Component -eq "tts") {
+            & (Get-RuntimePython "aligner") (Join-Path $RootDir "scripts\runtime_profile.py") validate $profile
+            if ($LASTEXITCODE -ne 0) { throw "aligner runtime does not match the configured deployment profile; rerun service.cmd setup all --profile $profile" }
+        }
     }
 }
 
@@ -464,6 +473,9 @@ switch ($Action) {
         }
         $configured = Get-ConfiguredMode
         Write-Host "next start: $configured"
+        $deploymentProfilePath = Join-Path $RuntimeDir "deployment-profile"
+        $deploymentProfile = if (Test-Path $deploymentProfilePath) { (Get-Content $deploymentProfilePath -Raw).Trim() } else { "full" }
+        Write-Host "deployment profile: $deploymentProfile"
         $actual = Get-RunningEndpoint
         if (-not [string]::IsNullOrWhiteSpace($actual)) {
             $configuredProtocol = ($configured -split " ")[0]
@@ -484,6 +496,6 @@ switch ($Action) {
         }
         Get-Content -Path $paths -Tail 120 -Wait
     }
-    "setup" { & (Join-Path $RootDir "scripts\bootstrap.ps1") $Target }
+    "setup" { & (Join-Path $RootDir "scripts\bootstrap.ps1") $Target @ExtraArgs }
     "doctor" { & (Join-Path $RootDir "scripts\doctor.ps1") }
 }

@@ -29,6 +29,7 @@ type Props = {
   refreshPeopleAndHotwords: () => Promise<void>
   onJobSubmitted: (job: Job) => void
   gpuAvailable?: boolean
+  defaultComputeDevice: ComputeDevice
   maxUploadBytes?: number
   asrModels: AsrModelCapability[]
   asrLanguages?: string[]
@@ -42,6 +43,7 @@ export function VoiceprintsPage({
   refreshPeopleAndHotwords,
   onJobSubmitted,
   gpuAvailable,
+  defaultComputeDevice,
   maxUploadBytes,
   asrModels,
   asrLanguages = publicAsrLanguages,
@@ -52,7 +54,7 @@ export function VoiceprintsPage({
   const [source, setSource] = useState<SampleSource>('upload')
   const [file, setFile] = useState<File>()
   const [language, setLanguage] = useState('Auto')
-  const [computeDevice, setComputeDevice] = useState<ComputeDevice>('gpu')
+  const [computeDevice, setComputeDevice] = useState<ComputeDevice>(defaultComputeDevice)
   const [model, setModel] = useState('qwen3-asr-0.6b')
   const [busy, setBusy] = useState(false)
   const [sampleProgress,setSampleProgress]=useState<UploadProgress>()

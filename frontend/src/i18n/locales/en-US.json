@@ -125,6 +125,8 @@
   "system": {
     "title": "System status",
     "subtitle": "Hardware resources, workers, models, and local storage",
+    "cpuProfile": "CPU-only deployment",
+    "cpuProfileDetail": "GPU inference runtimes are not installed. GPU choices are disabled; reinstall with --profile full to enable them.",
     "loadFailed": "Could not load system status",
     "loading": "Reading system status",
     "loadingDetail": "Connecting to the local service and reading hardware, model, and worker information…",
@@ -174,8 +176,10 @@
     "gpuMemoryDetected": "This model requires at least {{required}} MiB of GPU memory; {{detected}} MiB was detected. This submission will use CPU.",
     "gpuMemoryRequired": "This model requires at least {{required}} MiB of GPU memory. This submission will use CPU.",
     "gpuFallback": "The selected model cannot use the GPU. This submission will use CPU.",
+    "gpuRuntimeNotInstalled": "This CPU-only deployment does not include GPU inference runtimes. Reinstall with --profile full to enable GPU compute.",
     "fileTooLarge": "The file is {{size}}, which exceeds the service limit of {{limit}}. Choose a smaller file."
   },
+  "capabilities": {"loading": "Reading deployment capabilities…", "loadFailed": "Could not read deployment capabilities."},
   "jobs": {
     "estimated": "estimated",
     "safelyStopping": "Stopping safely",

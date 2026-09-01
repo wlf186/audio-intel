@@ -17,6 +17,67 @@ def idem() -> dict[str, str]:
     return {"Idempotency-Key": str(uuid.uuid4())}
 
 
+def test_cpu_deployment_capabilities_defaults_and_gpu_rejection(tmp_path, monkeypatch) -> None:
+    local = replace(
+        settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
+        enabled_services=frozenset({"asr", "tts"}), min_free_disk_bytes=0,
+        deployment_profile="cpu", mock_mode=True, max_queued_asr=10,
+    )
+    physical_gpu = {
+        "name": "Installed NVIDIA GPU", "memory_used_mib": 100,
+        "memory_free_mib": 15900, "memory_total_mib": 16000, "utilization": 0,
+    }
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    monkeypatch.setattr(api_module, "gpu_snapshot", lambda *_: physical_gpu)
+    monkeypatch.setattr(api_module, "cached_gpu_snapshot", lambda *_args, **_kwargs: physical_gpu)
+
+    with TestClient(api_module.create_app()) as client:
+        capabilities = client.get("/api/v1/capabilities").json()
+        system = client.get("/api/v1/system").json()
+        asr = client.post(
+            "/api/v1/asr/jobs", headers=idem(),
+            files={"file": ("sample.wav", b"RIFF-cpu", "audio/wav")},
+        )
+        tts = client.post(
+            "/api/v1/tts/jobs", headers=idem(),
+            data={"text": "CPU deployment", "voice_mode": "preset", "speaker": "Vivian"},
+        )
+        clone = client.post(
+            "/api/v1/tts/clone-references", headers=idem(),
+            files={"file": ("reference.wav", b"RIFF-reference", "audio/wav")},
+        )
+        person = client.post("/api/v1/voiceprints/people", json={"name": "CPU Profile"}).json()
+        voiceprint = client.post(
+            f"/api/v1/voiceprints/people/{person['id']}/samples/upload", headers=idem(),
+            files={"file": ("voiceprint.wav", b"RIFF-voiceprint", "audio/wav")},
+        )
+        before = len(client.get("/api/v1/jobs").json()["items"])
+        gpu = client.post(
+            "/api/v1/asr/jobs", headers=idem(),
+            files={"file": ("gpu.wav", b"RIFF-gpu", "audio/wav")},
+            data={"compute_device": "gpu"},
+        )
+        after = len(client.get("/api/v1/jobs").json()["items"])
+
+    assert capabilities["deployment"] == {
+        "profile": "cpu", "default_compute_device": "cpu", "gpu_runtime_installed": False,
+    }
+    assert system["deployment"] == capabilities["deployment"]
+    assert system["hardware"]["gpu"]["name"] == "Installed NVIDIA GPU"
+    for group in (capabilities["asr"]["models"], capabilities["tts"]["model_capabilities"]):
+        for model in group:
+            gpu_capability = next(item for item in model["compute_devices"] if item["id"] == "gpu")
+            assert gpu_capability["available"] is False
+            assert gpu_capability["unavailable_reason_code"] == "gpu_runtime_not_installed"
+    assert asr.status_code == 202 and asr.json()["request"]["compute_device"] == "cpu"
+    assert tts.status_code == 202 and tts.json()["request"]["compute_device"] == "cpu"
+    assert clone.status_code == 202 and clone.json()["request"]["compute_device"] == "cpu"
+    assert voiceprint.status_code == 202 and voiceprint.json()["job"]["request"]["compute_device"] == "cpu"
+    assert gpu.status_code == 503 and gpu.json()["code"] == "gpu_runtime_not_installed"
+    assert after == before
+
+
 def test_native_submissions_require_and_enforce_idempotency(tmp_path, monkeypatch) -> None:
     local = replace(
         settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",

@@ -29,7 +29,7 @@ function stringList(value:unknown){if(!Array.isArray(value))return[];const seen=
 function write(storage:Storage,key:string,value:unknown){try{storage.setItem(key,JSON.stringify(value))}catch{/* Preferences remain usable in memory when browser storage is unavailable. */}}
 function remove(storage:Storage,key:string){try{storage.removeItem(key)}catch{/* Ignore disabled browser storage. */}}
 
-function normalizeAsr(value:Record<string,unknown>,maxSpeakers:number):AsrPreferences{
+function normalizeAsr(value:Record<string,unknown>,maxSpeakers:number,defaultDevice:ComputeDevice):AsrPreferences{
  const speaker=text(value.speakerCount??value.speakers,defaultAsrPreferences.speakerCount)
  const speakerNumber=Number(speaker)
  return {
@@ -37,40 +37,40 @@ function normalizeAsr(value:Record<string,unknown>,maxSpeakers:number):AsrPrefer
   language:asrLanguages.has(text(value.language,''))?text(value.language,''):defaultAsrPreferences.language,
   speakerCount:speaker==='auto'||Number.isInteger(speakerNumber)&&speakerNumber>=1&&speakerNumber<=maxSpeakers?speaker:'auto',
   align:bool(value.align,defaultAsrPreferences.align),useVoiceprints:bool(value.useVoiceprints,defaultAsrPreferences.useVoiceprints),
-  computeDevice:device(value.computeDevice,defaultAsrPreferences.computeDevice),accelerateSingleTask:bool(value.accelerateSingleTask,defaultAsrPreferences.accelerateSingleTask),
+  computeDevice:device(value.computeDevice,defaultDevice),accelerateSingleTask:bool(value.accelerateSingleTask,defaultAsrPreferences.accelerateSingleTask),
   hotwordListIds:stringList(value.hotwordListIds),
  }
 }
 
-function normalizeTts(value:Record<string,unknown>):TtsPreferences{
+function normalizeTts(value:Record<string,unknown>,defaultDevice:ComputeDevice):TtsPreferences{
  const model=value.model==='qwen3-tts-1.7b'?'qwen3-tts-1.7b':'qwen3-tts-0.6b'
  const mode=value.mode==='inline_clone'?'inline_clone':value.mode==='voice_design'&&model==='qwen3-tts-1.7b'?'voice_design':'preset'
  const cloneSource=value.cloneSource==='voiceprint'?'voiceprint':'upload'
  const language=text(value.language,'')
  return {model,mode,cloneSource,speaker:text(value.speaker,defaultTtsPreferences.speaker),language:ttsLanguages.has(language)?language:defaultTtsPreferences.language,
-  computeDevice:device(value.computeDevice,defaultTtsPreferences.computeDevice),personId:text(value.personId,''),sampleId:text(value.sampleId,''),
+  computeDevice:device(value.computeDevice,defaultDevice),personId:text(value.personId,''),sampleId:text(value.sampleId,''),
   accelerateSingleTask:bool(value.accelerateSingleTask,defaultTtsPreferences.accelerateSingleTask)}
 }
 
-export function loadAsrPreferences(maxSpeakers:number):AsrPreferences{
+export function loadAsrPreferences(maxSpeakers:number,defaultDevice:ComputeDevice='gpu'):AsrPreferences{
  const stored=parsed(localStorage,asrPreferencesKey)
- if(stored)return normalizeAsr(stored,maxSpeakers)
+ if(stored)return normalizeAsr(stored,maxSpeakers,defaultDevice)
  const legacy:Record<string,unknown>={}
  try{
   const oldDevice=sessionStorage.getItem(legacyAsrSessionKeys[0]);if(oldDevice)legacy.computeDevice=oldDevice
   const oldVoiceprints=sessionStorage.getItem(legacyAsrSessionKeys[1]);if(oldVoiceprints!==null)legacy.useVoiceprints=oldVoiceprints!=='false'
   const oldAcceleration=sessionStorage.getItem(legacyAsrSessionKeys[2])??sessionStorage.getItem(legacyAsrSessionKeys[3]);if(oldAcceleration!==null)legacy.accelerateSingleTask=oldAcceleration==='true'
  }catch{/* Use defaults when session storage is unavailable. */}
- const previous=legacyAsrPreferencesKeys.map(key=>parsed(localStorage,key)).find(Boolean);const migrated=normalizeAsr({...previous,...legacy},maxSpeakers);saveAsrPreferences(migrated);legacyAsrSessionKeys.forEach(key=>remove(sessionStorage,key));legacyAsrPreferencesKeys.forEach(key=>remove(localStorage,key));return migrated
+ const previous=legacyAsrPreferencesKeys.map(key=>parsed(localStorage,key)).find(Boolean);const migrated=normalizeAsr({...previous,...legacy},maxSpeakers,defaultDevice);saveAsrPreferences(migrated);legacyAsrSessionKeys.forEach(key=>remove(sessionStorage,key));legacyAsrPreferencesKeys.forEach(key=>remove(localStorage,key));return migrated
 }
 export function saveAsrPreferences(value:AsrPreferences){write(localStorage,asrPreferencesKey,value)}
 export function clearAsrPreferences(){remove(localStorage,asrPreferencesKey)}
 
-export function loadTtsPreferences():TtsPreferences{
+export function loadTtsPreferences(defaultDevice:ComputeDevice='gpu'):TtsPreferences{
  const stored=parsed(localStorage,ttsPreferencesKey)
- if(stored)return normalizeTts(stored)
+ if(stored)return normalizeTts(stored,defaultDevice)
  const legacy=parsed(localStorage,legacyTtsKeys[0])||legacyTtsKeys.slice(1).map(key=>parsed(sessionStorage,key)).find(Boolean)
- const migrated=normalizeTts(legacy||{});saveTtsPreferences(migrated);remove(localStorage,legacyTtsKeys[0]);return migrated
+ const migrated=normalizeTts(legacy||{},defaultDevice);saveTtsPreferences(migrated);remove(localStorage,legacyTtsKeys[0]);return migrated
 }
 export function saveTtsPreferences(value:TtsPreferences){write(localStorage,ttsPreferencesKey,value)}
 export function clearTtsPreferences(){remove(localStorage,ttsPreferencesKey)}

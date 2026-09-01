@@ -7,6 +7,36 @@ function routeJobList(page:Page,handler:(route:Route)=>Promise<unknown>|unknown)
 test.beforeEach(async({page})=>{await page.route('**/api/v1/capabilities',async route=>{const response=await route.fetch();const body=await response.json();body.events={...body.events,sse:false};await route.fulfill({response,json:body})})})
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:'ignoreErrors'})})
 
+test('CPU-only deployment defaults to CPU and disables GPU controls',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.addInitScript(()=>{localStorage.clear();sessionStorage.clear()})
+ await page.route('**/api/v1/capabilities',async route=>{
+  const response=await route.fetch()
+  const body=await response.json()
+  body.deployment={profile:'cpu',default_compute_device:'cpu',gpu_runtime_installed:false}
+  for(const model of body.asr.models)for(const device of model.compute_devices)if(device.id==='gpu')Object.assign(device,{available:false,default:false,unavailable_reason_code:'gpu_runtime_not_installed',unavailable_reason:'GPU inference runtimes are not installed'})
+  for(const model of body.tts.model_capabilities)for(const device of model.compute_devices)if(device.id==='gpu')Object.assign(device,{available:false,default:false,unavailable_reason_code:'gpu_runtime_not_installed',unavailable_reason:'GPU inference runtimes are not installed'})
+  body.events={...body.events,sse:false}
+  await route.fulfill({response,json:body})
+ })
+ await page.route('**/api/v1/system',async route=>{const response=await route.fetch();const body=await response.json();body.deployment={profile:'cpu',default_compute_device:'cpu',gpu_runtime_installed:false};await route.fulfill({response,json:body})})
+ await page.goto('/#asr')
+ const asrDevice=page.getByLabel('ASR 计算设备')
+ await expect(asrDevice).toHaveValue('cpu')
+ await expect(asrDevice.locator('option[value="gpu"]')).toHaveAttribute('disabled','')
+ await page.locator('nav').getByRole('button',{name:/语音合成/}).click()
+ const ttsDevice=page.getByLabel('TTS 计算设备')
+ await expect(ttsDevice).toHaveValue('cpu')
+ await expect(ttsDevice.locator('option[value="gpu"]')).toHaveAttribute('disabled','')
+ await page.locator('nav').getByRole('button',{name:/系统状态/}).click()
+ await expect(page.getByText('CPU-only 精简部署')).toBeVisible()
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ expect(errors).toEqual([])
+})
+
 test('HTTPS certificate help is available before authentication without protected requests',async({page})=>{
  const errors:string[]=[]
  const protectedRequests:string[]=[]

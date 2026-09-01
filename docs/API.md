@@ -47,6 +47,8 @@ REQUEST_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
 
 Admission protects per-kind queue limits, concurrent uploads, and minimum free disk. Reservations are process-local, so the supported service runs one API process.
 
+`GET /api/v1/capabilities` and `GET /api/v1/system` expose `deployment.profile`, `deployment.default_compute_device`, and `deployment.gpu_runtime_installed`. Full deployments default omitted device fields to GPU. CPU-only deployments default them to CPU and mark every model-scoped GPU capability unavailable with `gpu_runtime_not_installed`; an explicit GPU submission returns that stable `503` problem code before a job or upload is accepted. Physical GPU telemetry may still appear under `system.hardware.gpu` and does not imply that a GPU inference runtime is installed.
+
 ### Submit ASR
 
 ```bash
@@ -69,7 +71,7 @@ curl --fail-with-body -sS \
 
 Omit the `Authorization` header when authentication is disabled. Supported explicit aligned languages are Chinese, English, Cantonese, French, German, Italian, Japanese, Korean, Portuguese, Russian, and Spanish. `Auto` can detect other model languages, but those results remain at sentence/segment timestamp granularity.
 
-Saved hotword lists are selected with repeated or encoded `hotword_list_ids` form values as described by `/docs`. A task stores an immutable hotword snapshot, so later library edits do not rewrite history.
+Saved hotword lists are selected through one comma-separated `hotword_list_ids` form field as described by `/docs`. A task stores an immutable hotword snapshot, so later library edits do not rewrite history.
 
 ### Submit preset TTS
 
@@ -97,7 +99,7 @@ Read `GET /api/v1/capabilities` before displaying TTS controls. The 0.6B models 
 1. Submit a reference audio file to `POST /api/v1/tts/clone-references` with its own idempotency key.
 2. Poll the returned ASR analysis job until it succeeds.
 3. Review the detected reference text and language.
-4. Submit `POST /api/v1/tts/jobs` with `voice_mode=clone` and the resulting `reference_job_id`.
+4. Submit `POST /api/v1/tts/jobs` with `voice_mode=inline_clone` and the resulting `reference_job_id`.
 
 The older direct `reference_audio` plus `reference_text` TTS form remains compatible, but the analysis-job flow is preferred because it is inspectable and reusable from task history.
 
@@ -196,6 +198,6 @@ curl --fail-with-body -sS \
 | `409` | Idempotency key reused with different request content |
 | `422` | Unsupported language, model, voice mode, control, or validation input |
 | `429` | Submission concurrency, queue capacity, or disk admission limit |
-| `503` | Requested GPU or model revision is unavailable |
+| `503` | Requested GPU or model revision is unavailable; CPU-only deployments use the stable `gpu_runtime_not_installed` problem code for explicit GPU requests |
 
 GPU requests never silently fall back to CPU. Retry `429` using its `Retry-After` value and the original idempotency key. Treat `503` as a capability/configuration issue and explicitly select `compute_device=cpu` if that matches user intent.
