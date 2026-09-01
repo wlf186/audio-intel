@@ -1,313 +1,222 @@
-# Sandevistan-Audio
+<p align="center">
+  <img src="frontend/public/sandevistan-audio.svg" width="104" alt="Sandevistan Audio logo">
+</p>
 
-面向单机离线使用的 ASR、说话人分离、精确时间戳与 TTS 服务。前端和后端默认统一监听 `0.0.0.0:20810`，可通过 `AUDIO_INTEL_HOST` 和 `AUDIO_INTEL_PORT` 修改；模型、缓存、输入、结果、数据库、日志和 Python 运行时默认位于项目目录，也可用 `.env.example` 中的目录变量覆盖。
+<h1 align="center">Sandevistan Audio</h1>
 
-## 快速复原
+<p align="center">
+  <strong>A private, offline-first workstation for speech recognition and synthesis.</strong>
+</p>
 
-自动安装支持 **Ubuntu 22.04/24.04 x86_64** 和 **Windows 11 x64 原生环境**。完整 ASR + TTS 建议至少 16 GB 内存（32 GB 更舒适）；0.6B/1.7B 全部模型、隔离运行时和安装缓存合计约 43 GiB，因此至少预留 55 GiB、建议 70 GiB 可用磁盘，为任务数据、升级和 5 GiB 准入保护留出空间。NVIDIA GPU 可选；GPU 模式要求 `nvidia-smi` 正常且驱动兼容 PyTorch CUDA 13.0，CPU 模式不需要显卡。Windows 自动化会在 Windows CI 验证，但真实模型尚无 Windows GPU 实机验收记录。
+<p align="center">
+  Turn one Linux or Windows machine into a private speech workstation: transcribe and diarize audio with word-level timestamps, manage voiceprints and hotwords, and synthesize or clone speech through a local Web UI or API.
+</p>
 
-Linux 需要 Git、curl、tar、Node.js 22.20+（推荐 Node.js 24 LTS）与 Corepack；复制本地 `/docs` 的 Bash API 示例时还需要 `jq`，但服务运行本身不依赖它。Python 3.12 和固定版本的 uv 会安装到项目目录：
+<p align="center">
+  After model setup, inference runs offline and task data stays on your machine.
+</p>
+
+<p align="center">
+  <a href="README_CN.md">简体中文</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#api-and-integrations">API</a> ·
+  <a href="#documentation">Documentation</a> ·
+  <a href="https://github.com/wlf186/audio-intel/releases">Releases</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/wlf186/audio-intel/actions/workflows/linux.yml"><img alt="Linux quality gates" src="https://github.com/wlf186/audio-intel/actions/workflows/linux.yml/badge.svg"></a>
+  <a href="https://github.com/wlf186/audio-intel/actions/workflows/windows.yml"><img alt="Native Windows smoke" src="https://github.com/wlf186/audio-intel/actions/workflows/windows.yml/badge.svg"></a>
+  <a href="https://github.com/wlf186/audio-intel/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/wlf186/audio-intel"></a>
+  <a href="LICENSE"><img alt="Code license: Apache 2.0" src="https://img.shields.io/badge/code%20license-Apache--2.0-blue"></a>
+</p>
+
+![Sandevistan Audio local ASR workspace showing a speaker-separated transcript and export controls](docs/assets/readme/asr-workspace.webp)
+
+> [!NOTE]
+> The Web UI is currently in Simplified Chinese. The local Swagger API guide is bilingual, and this README provides the complete English setup and integration path.
+
+## What it does
+
+| Area | Capabilities |
+| --- | --- |
+| **Speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, hotwords, voiceprint naming, and JSON/SRT/VTT/TXT export |
+| **Speech synthesis** | Qwen3-TTS 0.6B/1.7B, preset voices, reference-based voice cloning, 1.7B VoiceDesign, and WAV/FLAC/MP3 output |
+| **Local operations** | Persistent SQLite job queues, upload and inference progress, local ETA history, SSE updates, cancellation, retry, task history, and safe purge |
+| **Integration** | Native asynchronous APIs, OpenAI-compatible transcription and speech endpoints, local Web UI, CPU FP32, and NVIDIA GPU BF16 |
+
+### Built for private, repeatable workflows
+
+- **Local after setup.** Model revisions are pinned and runtime loading is forced offline; inputs, results, voices, the database, and logs stay in project-controlled directories.
+- **One workstation, complete workflow.** Transcribe meetings, produce subtitles, identify known speakers, maintain scenario hotwords, synthesize speech, and clone voices without assembling separate services.
+- **Observable long-running jobs.** Queue position, stage progress, activity, ETA warm-up, ETags, and SSE are available without putting full task results into global list or event payloads.
+- **Careful process isolation.** ASR and TTS use separate, incompatible Python environments and reusable supervised executors. Cancellation reaches a terminal state only after the complete task process tree exits.
+- **Model-aware controls.** The UI and API expose only controls supported by the selected Qwen checkpoint and voice mode instead of silently ignoring unsupported input.
+
+### Typical uses
+
+- Turn multi-speaker meetings into named transcripts and subtitle files.
+- Run a private local voice studio with preset voices, cloning, and 1.7B voice design.
+- Add a durable speech backend to local tools through asynchronous or OpenAI-compatible APIs.
+
+<p align="center">
+  <img src="docs/assets/readme/tts-workspace.webp" width="49%" alt="Sandevistan Audio TTS workspace with preset voice synthesis">
+  <img src="docs/assets/readme/job-history.webp" width="49%" alt="Sandevistan Audio persistent ASR and TTS job history">
+</p>
+
+## Quick Start
+
+> [!IMPORTANT]
+> A complete ASR + TTS installation uses about **43 GiB** for pinned models, isolated runtimes, and installation caches. Reserve at least **55 GiB** of free disk space; **70 GiB** is recommended. Start with **16 GB RAM**; **32 GB** is more comfortable. An NVIDIA GPU is optional—every capability also has an explicit CPU path.
+
+### Ubuntu 22.04 / 24.04 x86_64
+
+Install Git, curl, tar, Node.js 22.20+ (Node.js 24 LTS recommended), and Corepack. Python 3.12 and pinned project runtimes are installed inside the repository.
 
 ```bash
 git clone https://github.com/wlf186/audio-intel.git
 cd audio-intel
 
-# 检查机器与本地资源
 ./service.sh doctor
-
-# 首次安装项目内运行时、前端和全部模型（下载量较大且支持断点续传）
 ./service.sh setup all
-
-# 启动 API、ASR、TTS；完成安装后模型推理强制离线
 ./service.sh start all
 
-curl http://127.0.0.1:20810/api/v1/health
+curl -fsS http://127.0.0.1:20810/api/v1/health
 ```
 
-Windows 11 原生环境建议使用本地 NTFS 短路径和 Node.js 24 LTS：
+### Native Windows 11 x64
+
+Use a short local NTFS path and Node.js 24 LTS:
 
 ```powershell
 git clone https://github.com/wlf186/audio-intel.git C:\ai\audio-intel
 Set-Location C:\ai\audio-intel
+
 .\service.cmd doctor
 .\service.cmd setup all
 .\service.cmd start all
+
 Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 ```
 
-浏览器访问 `http://127.0.0.1:20810`，完整中英双语 API 消费指南与可交互契约位于 `http://127.0.0.1:20810/docs`，机器可读定义位于 `/openapi.json`。Swagger 代码、样式、图标和校验器均随服务本地托管，运行期不访问 CDN。
+Open <http://127.0.0.1:20810>. The bilingual interactive API guide is served at <http://127.0.0.1:20810/docs>, and the machine-readable contract is at `/openapi.json`. Swagger assets and validation are hosted locally.
 
-### 局域网 HTTPS 与浏览器录音
-
-HTTP 是默认协议。通过局域网 IP 使用麦克风录音时，浏览器通常要求 HTTPS 安全上下文。项目提供基于已安装 `mkcert` 的纯本地证书助手；它使用 `data/tls/ca` 下的项目专用 CA，不调用 `mkcert -install`，生成过程不访问网络。首次启用只需：
+Install or start only one pipeline when you do not need the complete model set:
 
 ```bash
-./service.sh tls enable
-./service.sh start all
-```
-
-`tls enable` 自动把 localhost、主机名和所有活动网卡的可用地址写入证书，并保留旧证书已有的 SAN；可重复使用 `--host 192.168.1.20` 追加容器内无法发现的宿主机、VPN IP 或指定域名。HTTPS 模式和证书路径保存在不会提交的 `<AUDIO_INTEL_DATA_DIR>/tls/service-profile.json`（默认是 `data/tls/service-profile.json`），因此换终端后普通的 `start`、`restart` 和 Linux `run` 都会继续使用 HTTPS，无需导出环境变量。查看配置、证书和实际运行协议：
-
-```bash
-./service.sh tls status
-./service.sh status
-```
-
-启用或禁用默认只保存下次启动配置，不会中断正在处理的任务。应用到后台服务时再显式重启，也可以执行 `./service.sh tls enable --restart` 或 `./service.sh tls disable --restart`；两条命令都会执行完整的 `restart all`，重启 API、ASR 和 TTS。`tls disable` 只切回 HTTP，保留 CA、服务器证书和私钥。底层的 `tls create`、`renew` 和 `fingerprint` 命令继续保留，但不会代替 `enable` 保存服务模式。
-
-`service.sh` 不会自动读取通用 `.env`。显式设置的 `AUDIO_INTEL_PROTOCOL` 和 `AUDIO_INTEL_TLS_*` 仍优先于保存的 profile，供外部证书或临时覆盖使用；脚本检测到冲突时会提示。`status` 始终读取实际 API 进程，若运行协议与下次启动配置不同会明确警告。
-
-Windows 使用相同命令：`service.cmd tls enable`、`service.cmd tls status` 和 `service.cmd tls disable --restart`。地址变化后重新执行 `tls enable`；缺少 SAN 或临近过期时只更换服务器叶证书并保留根 CA。`tls fingerprint` 输出供客户端核对的 SHA-256 指纹。`mkcert` 必须预先安装或以离线二进制放入 `PATH`。
-
-启用 HTTPS 后，20810 端口仅接受 HTTPS，不能同时通过 HTTP 访问，也不自动重定向。`restart` 会先验证协议、证书和私钥，验证失败不会停止当前服务；`status` 显示实际运行进程的协议。HTTP 模式若配置了任何 TLS 文件会直接报错，避免误以为连接已加密。
-
-登录页和全局右上角的“HTTPS 证书”入口可在认证前下载公开根证书并显示指纹。若客户端浏览器还无法打开首次自签名连接，可把服务端的 `data/tls/audio-intel-root-ca.cer` 通过可信文件传输发送到客户端；它是公开证书，不包含私钥。安装前先与服务端 `tls fingerprint` 的输出通过可信渠道比对：
-
-- Windows：打开下载的 `sandevistan-audio-root-ca.cer`（或服务端生成的 `data\tls\audio-intel-root-ca.cer`），安装到“受信任的根证书颁发机构”（当前用户或本地计算机），再重启 Chrome/Edge。管理员可对实际文件路径运行 `certutil -addstore -f Root <证书路径>`。
-- iOS：打开 `.cer` 安装描述文件，再到“设置 → 通用 → 关于本机 → 证书信任设置”启用完全信任，然后重启浏览器。
-- 桌面 Chrome/Edge 可临时在证书警告页选择“高级 → 继续”。连接会加密，但服务器身份没有验证，主动中间人仍可能截获 API Key 和音频；不保证 Safari、iOS、Firefox 或未来浏览器支持这种方式。
-
-根 CA 私钥 `data/tls/ca/rootCA-key.pem` 和服务器私钥 `data/tls/server-key.pem` 绝不能分发。根私钥泄漏后必须替换 CA，并在所有客户端重新安装。
-
-只需要部分能力时可减少模型下载：
-
-```bash
-./service.sh setup asr   # 或 tts / api
-
-./service.sh start asr
-./service.sh start tts
-
+./service.sh setup asr   # or: tts / api
+./service.sh start asr   # or: tts / api
 ./service.sh status
 ./service.sh logs all
 ./service.sh stop all
 ```
 
-`start` 会在 Linux 中将各组件作为独立会话和进程组后台运行，并在 API 和 worker 真正就绪后返回；关闭普通终端、调用脚本退出或上游仅清理启动命令所在进程组，不会连带停止服务。容器入口、需要前台监督的部署，或会在命令结束后回收整个 cgroup 的远程执行环境应改用前台模式：
+See the [Linux installation guide](docs/INSTALL.md) or [native Windows guide](docs/WINDOWS.md) for prerequisites, proxies, partial installations, foreground/container operation, and upgrades.
 
-```bash
-./service.sh run all
-```
+## Compatibility and hardware
 
-`run` 接收 `SIGTERM`/`SIGINT`，关闭完整 worker 进程树后退出；容器的 `CMD` 可直接使用 `./service.sh run all`。该模式不依赖 systemd，也不区分 rootless 或 rootful：只需运行用户对配置的数据、缓存、日志和 `run` 目录具有写权限。不要把 `run` 与已由 `start` 启动的组件混用。
+| Item | Supported baseline |
+| --- | --- |
+| Operating systems | Ubuntu 22.04/24.04 x86_64; native Windows 11 x64 |
+| CPU | All ASR and TTS capabilities, FP32 |
+| NVIDIA GPU | BF16; `nvidia-smi` must work and the driver must support the pinned PyTorch CUDA runtime |
+| GPU admission | 0.6B models: 3840 MiB total VRAM; 1.7B models: 7936 MiB total VRAM |
+| Memory | 16 GB minimum for full setup; 32 GB recommended |
+| Disk | 55 GB free minimum; 70 GB recommended for models, data, and upgrades |
 
-两种模式的重启方式不同：由 `start all` 启动的后台服务使用 `./service.sh restart all`；该命令先完成启动预检，再停止旧进程树，任一组件未能完整停止时不会启动新实例。前台 `run all` 应在原终端按 `Ctrl+C` 后重新执行同一命令，容器中则由 Docker、Podman 或编排器重启容器。不要从另一个终端对正在运行的 `run all` 执行 `restart all`，否则前台管理进程会因其子进程被停止而退出；若所在平台会回收整个 cgroup，新建的后台进程仍属于同一生命周期并可能被回收。
+GPU admission uses total reported VRAM, not current free VRAM. Other GPU processes can still cause an out-of-memory failure. Explicit API requests for an unavailable GPU return `503` instead of silently switching to CPU; the Web UI explains the reason and selects CPU for that submission.
 
-需要代理时，在安装前导出标准代理变量；curl、uv、Hugging Face 与 ModelScope 会继承它们：
+macOS and ARM are not validated. There is no official container image. Linux foreground mode can be used as an OCI container entrypoint, but the caller remains responsible for building the runtimes and models into the image or mounting them. Native Windows lifecycle behavior is covered by CI; real-model Windows GPU inference has not yet been validated.
 
-```bash
-export HTTP_PROXY=http://127.0.0.1:7890
-export HTTPS_PROXY=$HTTP_PROXY
-./service.sh setup all
-```
-
-Linux 详细步骤见 [安装与复原](docs/INSTALL.md)，Windows 原生部署见 [Windows 11 指南](docs/WINDOWS.md)，通用问题见 [故障排查](docs/TROUBLESHOOTING.md)。局域网可用本机 IP 访问；普通 HTTP 下浏览器录音权限受浏览器安全策略限制，文件上传不受影响。
-
-全局右上角集中提供“HTTPS 证书”和“API 文档”入口，系统状态页只展示硬件、模型、worker 与存储信息，不再重复相同的离线状态和文档入口。桌面界面右上角的 `OFFLINE_MODE` 表示模型运行时是否启用离线加载，不表示服务只监听 `localhost`；窄屏会显示“检查中”“本地可用”“离线未启用”或“连接中断”等紧凑状态。页脚的 `DATA_LOCAL READY` 表示服务同时报告了离线模式和本地数据目录，`NET_LISTEN` 则动态显示 `/api/v1/system` 返回的实际监听地址与端口。健康检查尚未完成或服务失联时，这些位置不会继续展示过期的监听地址。
-
-ASR、TTS、TTS 克隆参考分析和声纹样本入库在提交文件时会区分“准备上传”“正在上传”和“上传完成，正在创建任务”，并显示可用的字节进度。创建任务前可以取消上传；文件或麦克风录音仍保留在当前页面，可直接重试并复用同一个幂等键。服务公开上传上限时，页面会在发起请求前拒绝过大的文件。
-
-ASR 与 TTS 参数分别以轻量、带版本的 `localStorage` 配置保存在当前浏览器中，两个页面的“恢复默认配置”只重置本页参数，不会清除已选文件或正在编辑的文本。ASR 热词表勾选也属于本页参数，刷新、切换页面、重开浏览器和成功提交任务后会继续沿用；取消勾选或恢复 ASR 默认配置后才会清除。已删除或已变为空词表的记忆会在词表成功加载后自动移除，加载失败不会误清空。TTS 合成文本、表达指令、参考文本和分析引用只保留在当前 `sessionStorage` 会话；热词库未保存的编辑草稿也只在当前标签页会话中保留，保存词表或点击“取消并清空”后即删除。音频文件不会写入浏览器存储；清除站点数据或对应存储项后会自动恢复默认配置，仅清理 HTTP 缓存通常不会删除这些偏好和草稿。
-
-## 运行架构
+## How it works
 
 ```text
-20810 FastAPI + 本地 Web UI
+20810 FastAPI + local React Web UI
         │
-        ├── SQLite WAL 异步任务队列 ── ASR worker 监督器
-        │       └── 队列突发期复用、空闲后可重启的任务执行器
-        │           FSMN-VAD (CPU) → CAM++ (CPU)
-        │           → Qwen3-ASR-0.6B / 1.7B (CPU FP32 / GPU BF16 阶段子进程)
-        │           → 阶段子进程退出释放模型内存
-        │           → ForcedAligner-0.6B (与 ASR 使用同一设备)
-        │           → JSON / SRT / VTT / TXT
+        ├── SQLite WAL ASR queue ── ASR supervisor
+        │       └── reusable task executor
+        │           VAD → diarization → Qwen3-ASR → forced alignment
+        │           └── JSON / SRT / VTT / TXT
         │
-        └── SQLite WAL 异步任务队列 ── TTS worker 监督器
-                └── 队列突发期复用、空闲后可重启的任务执行器
-                    Qwen3-TTS 0.6B / 1.7B CustomVoice、Base 或 VoiceDesign（按任务加载一个）
-                    └── 超长克隆参考 → 独立 aligner 环境（按需启动后退出）
-                    CPU FP32 / GPU BF16 + SDPA + 默认开启、可关闭的单任务自动批处理 → WAV / FLAC / MP3
+        └── SQLite WAL TTS queue ── TTS supervisor
+                └── reusable task executor
+                    Qwen3-TTS preset / clone / VoiceDesign
+                    └── WAV / FLAC / MP3
 ```
 
-ASR 公开支持 `Auto`，以及 Chinese、English、Cantonese、French、German、Italian、Japanese、Korean、Portuguese、Russian、Spanish 这 11 种可进行 ForcedAligner 字/词级对齐的语言；显式传入其他语言会返回 `422`。Auto 仍可能检测出模型支持的其他语种，此时任务正常完成并返回句段级时间戳，页面会明确提示本次未执行字词对齐。ASR 按 FSMN-VAD 的语音区间合并为约 20–60 秒的块，并利用可用的字词时间戳把大块重新切成连续的说话人轮次；即使选择“仅句级时间戳”，多人任务也会在内部对齐后隐藏字词明细。短录音会绕过 FunASR 少于 20 个声纹窗口时的单人回退，已知人数使用 KMeans，自动人数使用短音频余弦聚类。CAM++ 采用 single-active-speaker 模式，真正重叠语音仍只会归属给一位说话人。
+ASR, TTS, and the internal long-reference aligner use separate Python environments because Qwen ASR and Qwen TTS require incompatible Transformers versions. ASR and TTS GPU jobs share a project-local lock so only one large model occupies the GPU at a time. Used executors stay warm briefly for burst traffic and are recycled only after their same-kind queue remains empty and the old process tree has exited.
 
-ASR 默认使用 `qwen3-asr-0.6b`，也可在普通转写、TTS 克隆参考分析、声纹样本上传和 OpenAI 兼容转写中选择 `qwen3-asr-1.7b`。`setup asr/all` 会下载两个固定 revision；运行期只从本地模型目录离线加载。1.7B 的 CPU 路径始终可选。GPU 能力按 `nvidia-smi` 报告的总显存而不是当前空闲显存判断，并为驱动或硬件保留区预留 256 MiB 容差：1.7B 的 8 GiB 档门槛为 7936 MiB，0.6B 的 4 GiB 档门槛为 3840 MiB，因此报告 8151 MiB 的 8 GiB 显卡可选择 1.7B。该门槛只决定准入，其他 GPU 进程仍可能导致实际推理 OOM。显式 API GPU 请求不满足条件时返回 `503`，页面则显示原因并按 CPU 创建本次任务。1.7B 复用单任务自动批处理和 OOM 降档机制，并采用更保守的起始批次；当前 4 GiB RTX A1000 只能实机覆盖 0.6B GPU 路径，1.7B GPU 仍需在 8 GiB 设备上验收。
+The default-on single-task acceleration increases internal batch sizes according to hardware and model size without changing model identity, precision, diarization semantics, ASR chunking, or the sequential TTS decoder. OOM retries step down to batch 1 inside the same task. See [Architecture and capabilities](docs/ARCHITECTURE.md) for the full execution, cancellation, model, progress, and capability contracts.
 
-“热词库”包含自定义场景词表，以及“声纹库人名（全名）”和“声纹库人名（去姓）”两个系统只读词表。两表都来自已开启“加入热词库”的声纹人员：前者保存完整姓名，后者仅对能可靠识别的中文姓名和英文姓名生成去姓名字，不包含备注或昵称。两表均不能修改或删除，也不会自动应用到任务；普通 ASR 或 OpenAI 兼容转写仍须通过 `hotword_list_ids` 按需选择。一次最多选择 8 个词表，提交时会规范化、去重并生成 Qwen ASR 的 `Vocabulary: ...` 上下文，同时保存不可变词表快照，因此后续人员改名、切换开关或删除词表不会改变历史任务及幂等重放。自定义词表固定每行一个热词；克隆参考和声纹入库不使用热词。
+## API and integrations
 
-ASR 与 TTS 默认都使用 GPU。两者均可按任务选择 `cpu` 或 `gpu`：CPU 使用 FP32，GPU 使用 BF16，不使用量化；GPU 任务通过项目内的全局锁串行执行，避免同时装载多个大模型。TTS 与 ASR 一样按 `nvidia-smi` 报告的总显存执行 3840/7936 MiB 准入；因此 8151 MiB 的 8 GiB 卡可选择 1.7B。0.6B TTS 的 CustomVoice 和 Base 已在 4 GiB RTX A1000 上以 BF16 直接加载 CUDA 完成真实推理验证；总显存达到门槛只代表允许尝试，若其它上下文使当前空闲显存不足，仍可能 OOM。API 显式请求不合格 GPU 时返回 `503`，页面会说明原因并将本次任务切到 CPU。系统页报告设备范围当前已用、当前空闲和按 `max(total-used-free, 0)` 得到的系统保留估算；终态 CUDA OOM 会记录现场诊断并完整重建执行器，不会自动重试或回退 CPU。ASR 的 FSMN-VAD 和 CAM++ 始终在 CPU 上运行，设备选项会同时切换 ASR 主模型和 ForcedAligner；GPU 模式下 CAM++ 会在 CPU 内部批处理，并与 GPU 识别和对齐重叠执行。自动说话人数会对低支持度的疑似拆分簇执行一次保守的整段声纹复核，只有滑窗和整段两个视角均有充分区分度时才合并；手动指定人数不受该复核影响。
+The four native asynchronous submission surfaces—ASR, TTS, clone-reference analysis, and voiceprint sample upload—require an 8–128 character `Idempotency-Key`. First acceptance returns `202`; a same-request replay returns `200`; reusing a key with different input returns `409`.
 
-ASR/TTS 提交页默认开启“单任务加速”；原生 API 与 OpenAI 兼容端点的布尔参数 `accelerate_single_task` 也默认为 `true`，可显式传入 `false` 关闭。开启后只按当前 CPU 核心/可用内存或 GPU 总显存自动扩大任务内部批次，不增加任务并发，也不改变模型、精度、分块、说话人算法或 TTS 声码器的逐块解码。GPU 分档为 `<8/8/12/16/24/32+ GB → 2/4/6/8/12/16`；CPU 在物理核心与可用内存同时达到 `8+12/16+24/32+48/48+64` 时使用 `2/4/6/8`。ASR 与 TTS 的 1.7B 模型都会在硬件分档基础上降低两个批次档位，采用更保守的起始值；关闭加速时固定为 batch 1。发生 OOM 会按 `16→12→8→6→4→2→1` 在当前任务内重试。任务结果的 `acceleration` 会记录模型修正后的任务/阶段目标、实际批次、硬件诊断、降档步数和 OOM 回退。GPU 不可用时仍明确返回 `503`，不会静默回退到 CPU。可通过 `GET /api/v1/capabilities` 查询当前设备能力、说话人数上限与开关默认值。
-
-“声纹库”人员包含必填名字、最多 20 字的选填备注，以及默认开启的“加入热词库”开关；同一人员可保存多个独立样本。样本既可从 ASR 段落加入，也可上传或用浏览器麦克风录制。ASR 的 `use_voiceprint_library` 默认开启，只在说话人分离后用 CAM++ 匹配并命名，不改变聚类、说话人 ID 或分段；有备注时标签为“名字（备注）”，并写入 JSON/TXT/SRT/VTT。名字和备注都是任务历史快照，之后修改人员资料不会回写既有任务。
-
-TTS 默认使用 `qwen3-tts-0.6b`，也可切换 `qwen3-tts-1.7b`。预置音色按所选大小加载 CustomVoice；声音克隆按所选大小加载 Base 的 ICL 路径，要求干净参考音频和逐字准确的参考文本，并固定 `x_vector_only_mode=False`；1.7B 还可加载 VoiceDesign，根据必填自然语言描述直接设计新音色。页面上传或录制一次性参考音频后，会先创建一个可查询、可在任务记录中查看的 ASR 分析任务，自动填写参考文本和语种，用户核对后再提交 TTS；API 消费方可用 `/api/v1/tts/clone-references` 和 `reference_job_id` 完成同一流程，旧的 `reference_audio` + `reference_text` 提交方式仍兼容。超过 15 秒的库样本会在完整词边界截断。每个 TTS 执行器同一时间只驻留一个 CPU checkpoint；相同 checkpoint 可在连续任务及空闲窗口内复用，切换 checkpoint 或转为 GPU 前会先清理。GPU checkpoint 逐任务释放。
-
-TTS 输出 `language` 默认是 `Auto`，支持中、英、日、韩、德、法、俄、葡、西、意语。已知文本语种时建议显式选择；预置音色应优先选择 `/api/v1/capabilities` 中 `preset_speaker_native_languages` 指示的母语。一次性克隆的 `reference_language` 独立控制参考音频的识别和长音频对齐，不应与输出语种混淆。
-
-## 本地目录
-
-```text
-models/       模型权重
-data/         SQLite、原始输入、持久化结果、声音档案
-tmp/          任务临时文件（成功或失败后自动清理）
-cache/        uv、pip、Hugging Face、ModelScope、Torch 缓存
-logs/         API / ASR / TTS 日志
-run/          监督器 PID 与执行器身份元数据
-.runtime/     uv 与隔离的 api/asr/tts/aligner Python 环境
-```
-
-输入与结果默认一直保留，只有调用带 `purge=true` 的删除 API 或在前端确认永久删除后才会清理。
-
-## 原生异步 API
+Minimal native ASR submission using the CPU path:
 
 ```bash
 BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
 ASR_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
-# 创建场景词表并取得真实 ID；已有词表也可直接复用其 ID。
-HOTWORD_LIST_ID=$(curl --fail-with-body -sS \
-  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d "{\"name\":\"项目术语-$ASR_KEY\",\"terms\":[\"Qwen3-ASR\",\"Sandevistan-Audio\"]}" \
-  "$BASE_URL/api/v1/asr/hotword-lists" | \
-  python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
-# ASR
-curl -F file=@meeting.wav \
-  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+
+curl --fail-with-body -sS \
   -H "Idempotency-Key: $ASR_KEY" \
-  -F language=Auto -F speaker_count=auto \
-  -F model=qwen3-asr-0.6b -F hotword_list_ids="$HOTWORD_LIST_ID" \
-  -F diarize=true -F align=true -F use_voiceprint_library=true \
-  -F compute_device=gpu -F accelerate_single_task=true \
+  -F file=@meeting.wav \
+  -F language=Auto \
+  -F diarize=true \
+  -F align=true \
+  -F compute_device=cpu \
   "$BASE_URL/api/v1/asr/jobs"
-
-# 提交响应返回前词表内容已经写入任务快照，演示词表可以立即删除。
-curl --fail-with-body -sS -X DELETE \
-  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
-  "$BASE_URL/api/v1/asr/hotword-lists/$HOTWORD_LIST_ID"
-
-# TTS 预置音色
-TTS_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
-curl -F text='你好，这是本地语音。' \
-  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
-  -H "Idempotency-Key: $TTS_KEY" \
-  -F language=Chinese -F voice_mode=preset -F speaker=Vivian \
-  -F response_format=wav -F compute_device=gpu -F accelerate_single_task=true \
-  "$BASE_URL/api/v1/tts/jobs"
-
-# 按 status_url / poll_after_seconds 轮询到 succeeded 后才能读取 result_url。
-# 完整的错误处理、429 重试、克隆、Python、Node 与 SSE 示例见本地 /docs。
-curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" "$BASE_URL/api/v1/jobs/JOB_ID"
-curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" "$BASE_URL/api/v1/jobs/JOB_ID/result"
-
-# 批量永久删除任务（排队任务会先原子取消，运行中任务会逐项拒绝）
-curl -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
-  -d '{"job_ids":["JOB_ID_1","JOB_ID_2"],"purge":true}' \
-  "$BASE_URL/api/v1/jobs/batch-delete"
-
-# ASR 原始音源（支持 Range，可直接用于播放器）
-curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" "$BASE_URL/api/v1/jobs/JOB_ID/source" -o source.wav
 ```
 
-以下仅列出主要端点；完整且实时的接口定义以 `/docs` 和 `/openapi.json` 为准：
-
-- `POST /api/v1/asr/jobs`、`POST /api/v1/tts/clone-references`、`POST /api/v1/tts/jobs`
-- `GET|POST /api/v1/asr/hotword-lists`、`PATCH|DELETE /api/v1/asr/hotword-lists/{item_id}`
-- `GET /api/v1/jobs`、`GET /api/v1/jobs/{job_id}`、`GET /api/v1/jobs/{job_id}/result`
-- `GET /api/v1/queue`、`GET /api/v1/jobs/{job_id}/events`（单任务 SSE）
-- `POST /api/v1/jobs/{job_id}/cancel`、`POST /api/v1/jobs/{job_id}/retry`
-- `DELETE /api/v1/jobs/{job_id}?purge=true`
-- `POST /api/v1/jobs/batch-delete`（最多 100 个 ID，返回逐项结果与实际释放空间）
-- `GET /api/v1/jobs/{job_id}/artifacts/{name}`
-- `GET /api/v1/jobs/{job_id}/source`（ASR 原始音源；`?download=true` 强制下载）
-- `PATCH /api/v1/jobs/{job_id}/speakers/{speaker_id}`
-- `GET|POST /api/v1/voiceprints/people`、`PATCH|DELETE /api/v1/voiceprints/people/{person_id}`
-- `POST /api/v1/voiceprints/people/{person_id}/samples/from-asr`（同一说话人的段落分别入库）
-- `POST /api/v1/voiceprints/people/{person_id}/samples/upload`、`DELETE /api/v1/voiceprints/people/{person_id}/samples/{sample_id}`
-- `GET /api/v1/voiceprints/samples/{sample_id}/audio`
-- `POST /api/v1/tts/voices`、`GET /api/v1/tts/voices`、`DELETE /api/v1/tts/voices/{voice_id}`
-- `GET /api/v1/health`（公开最小探针）、`GET /api/v1/system`（详细且受保护）、`GET /api/v1/capabilities`
-- `GET /api/v1/tls/bootstrap`、`GET /api/v1/tls/root-ca.cer|pem`（公开 HTTPS 信任引导，只返回配置的根证书）
-- `GET|POST|DELETE /api/v1/auth/session`
-- `GET /api/v1/events`（全局 SSE）
-- `GET /v1/models` 与 OpenAI 兼容音频端点
-
-上述四个原生异步提交端点（ASR、TTS、克隆参考分析、声纹样本上传）都必须发送 8–128 字符的 `Idempotency-Key`。每次逻辑提交生成一个新键；超时、断线或 `429` 后必须用原键重试。首次接受返回 `202`，相同请求重放返回原任务和 `200`，同键更改请求返回 `409`。`429` 会同时返回稳定错误码、`Retry-After` 和当前容量信息。
-
-`GET /api/v1/jobs` 支持 `kind`、`state`、`q`、`limit`、`offset` 服务端分页，始终按 `created_at DESC, id DESC` 稳定排序；它只返回轻量任务摘要，不含 `request`/`result`。`count` 是本页数量，`total` 是筛选后的任务总数，`has_more` 表示是否还有下一页；需要完整请求快照和结果时再读取 `GET /api/v1/jobs/{job_id}`。
-
-全局 `/api/v1/events` 首帧为 `snapshot`（最近 100 条任务摘要与 worker），之后仅在业务状态变化时发送 `update`（变更摘要、`removed_job_ids` 和当前 worker）；空闲期间约 15 秒发送 `{}` 心跳。执行器存活心跳不会改变任务 `updated_at`、ETag 或触发全局业务更新。全局流不含完整结果，前端仅在打开成功任务时按需读取详情并缓存。
-
-TTS 高级控制以 `GET /api/v1/capabilities` 返回的 `tts.model_capabilities[]` 为准：0.6B 不接受自然语言指令；1.7B CustomVoice 的预置音色可选 `instruct`，VoiceDesign 则必须用 `instruct` 描述声线、语速、音调、韵律和情绪；Base 克隆模式不接受指令。官方公共推理接口没有独立数值语速/音高参数，本项目也不开放 `temperature`、`top_k`、`top_p`、`repetition_penalty` 等固定采样项。OpenAI 兼容 `instructions` 仅覆盖 1.7B 预置音色；VoiceDesign 请使用原生异步接口。不支持的组合返回 `422`，不会静默忽略。
-
-排队任务响应中的 `queue.position` 是同类 FIFO 队列中从 1 开始的位置，任务开始运行后为 `null`。`progress` 是单调的最佳整体进度；模型实际提供细粒度活动时，ASR 推理与 TTS 解码按约 0.5 秒的最小写入间隔持久化。模型加载只报告 `model_load` 的开始和完成边界，阻塞加载期间可能长时间没有新活动，服务不会伪造百分比或心跳。消费方必须查看 `progress_detail.basis`：`estimated` 表示百分比包含最佳估算，不能当作精确完成量；`current/total/unit` 是已确认的阶段单元，`activity` 则描述当前推理调用的 `model_load`、`codec_frame`、`output_token` 或 `model_layer` 活动，其中 `activity.basis` 单独说明活动总量是否估算。`estimate` 在至少积累 5 个相同模型、设备和相近任务特征的本机历史样本后返回耗时区间和置信度；0.6B 与 1.7B 分别热身，它只是建议，不是 SLA。SSE 断线时应重新连接并用任务状态接口校准，也可按 `poll_after_seconds` 轮询并使用 ETag/`If-None-Match`。`processing_seconds` 是累计实际处理耗时，不包含排队等待，并会跨失败重试累加；运行中任务配合 `processing_as_of` 可实时显示。`compute_device` 返回 `cpu` 或 `gpu`，`compute_device_name` 返回任务提交/执行时持久化的具体设备名；GPU 名称动态取自实际 `cuda:0`，不会因以后更换硬件而改写历史记录。ASR/TTS worker 使用常驻监督器管理可复用的任务执行进程；同类队列排空后默认保留 60 秒热窗口，再确认旧进程树退出并创建干净执行器。新任务会取消空闲计时，API 与浏览器会话不受执行器回收影响。取消仍先等待短暂的协作退出，随后在必要时终止当前任务的完整进程树，确认 GPU 与文件锁释放后才进入“已取消”。默认协作等待 1 秒，可通过 `AUDIO_INTEL_CANCEL_GRACE_SECONDS` 调整；空闲窗口可通过 `AUDIO_INTEL_EXECUTOR_IDLE_SECONDS` 调整，设为 `0` 表示队列排空后立即回收。永久删除会清理任务输入、输出、错误文件、临时目录和 SQLite 记录，并在批次结束后执行安全擦除、WAL 截断与数据库压缩。
-
-## OpenAI 兼容消费
+OpenAI-compatible synchronous transcription:
 
 ```bash
-BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
-curl -F file=@meeting.wav -F model=qwen3-asr-0.6b -F compute_device=gpu \
-  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
-  -F prompt='项目会议' -F response_format=verbose_json \
+curl --fail-with-body -sS \
+  -F file=@meeting.wav \
+  -F model=qwen3-asr-0.6b \
+  -F compute_device=cpu \
+  -F response_format=verbose_json \
   "$BASE_URL/v1/audio/transcriptions"
-
-curl -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
-  -d '{"model":"qwen3-tts-0.6b","input":"你好","voice":"Vivian","language":"Chinese","response_format":"wav","compute_device":"gpu"}' \
-  "$BASE_URL/v1/audio/speech" -o speech.wav
 ```
 
-兼容端点是同步等待接口；长任务建议使用原生异步 API。
+Add `Authorization: Bearer $AUDIO_INTEL_API_KEY` when authentication is configured. Use the native asynchronous APIs for long tasks; they expose queue state, progress, ETA, ETag polling, and SSE. See the [API guide](docs/API.md) for TTS, cloning, hotwords, voiceprints, cancellation, retries, artifacts, Range requests, and event reconciliation.
 
-## 配置与安全
+## Documentation
 
-默认不开启鉴权，适合可信本机/局域网。对不可信网络暴露前设置 Bearer Key：
+| Guide | Contents |
+| --- | --- |
+| [Installation](docs/INSTALL.md) | Linux prerequisites, full and partial setup, proxy, directories, and service modes |
+| [Native Windows](docs/WINDOWS.md) | Windows setup, lifecycle behavior, firewall, and troubleshooting |
+| [API](docs/API.md) | Native asynchronous and OpenAI-compatible usage contracts |
+| [Architecture and capabilities](docs/ARCHITECTURE.md) | Pipelines, models, devices, acceleration, queues, progress, and cancellation |
+| [Local HTTPS](docs/HTTPS.md) | Project CA, certificate trust, SAN renewal, and fingerprint verification |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | GPU, models, uploads, queues, progress, and process cleanup |
+| [Upgrade](docs/UPGRADE.md) | Data backup, schema compatibility, and upgrade steps |
+| [Dependency maintenance](docs/DEPENDENCIES.md) | Runtime separation, pins, locks, and security-audit notes |
+| [Contributing](CONTRIBUTING.md) | Development setup, verification, and pull-request expectations |
+
+## Security and data ownership
+
+Authentication is disabled by default for trusted local networks. Before exposing the service beyond a trusted machine or LAN, configure a strong `AUDIO_INTEL_API_KEY` and TLS:
 
 ```bash
 AUDIO_INTEL_API_KEY='replace-with-a-long-random-value' ./service.sh start all
 ```
 
-浏览器首次访问会提示输入 Key，并将其换成只存在内存中的 HttpOnly 同源会话 Cookie；原始 Key 不进入 URL 或浏览器存储，服务重启后需重新登录。CLI 和外部客户端继续使用 `Authorization: Bearer ...`。`/api/v1/health` 始终公开但只暴露状态、版本和离线标志；HTTPS 信任引导端点也可在登录前读取配置的公开根证书。硬件、进程、模型路径、媒体和任务数据仍受保护。
+Browser login exchanges the key for an opaque HttpOnly same-origin session cookie; the raw key is not stored in browser storage or URLs. `/api/v1/health` remains a deliberately minimal public probe. Detailed system information, media, models, tasks, and results remain protected.
 
-可复制 `.env.example` 为 `.env`，编辑后用 `set -a; source .env; set +a` 加载；`service.sh` 不会隐式读取环境文件。常用变量包括 `AUDIO_INTEL_HOST`、`AUDIO_INTEL_PORT`、`AUDIO_INTEL_API_KEY`、`AUDIO_INTEL_CANCEL_GRACE_SECONDS`、`AUDIO_INTEL_EXECUTOR_IDLE_SECONDS`，以及 `AUDIO_INTEL_MAX_QUEUED_ASR`、`AUDIO_INTEL_MAX_QUEUED_TTS`、`AUDIO_INTEL_MAX_CONCURRENT_SUBMISSIONS`、`AUDIO_INTEL_MIN_FREE_DISK_BYTES` 四项准入保护配置。目录覆盖、上传限制、文本限制和全部默认值以 `.env.example` 为准。不要提交 `.env`，也不要在未配置 TLS 和访问控制时直接暴露到公网。
+For microphone recording over a LAN IP, browsers usually require HTTPS. The project includes an offline, project-specific `mkcert` helper; follow the [local HTTPS guide](docs/HTTPS.md). Do not expose port 20810 directly to the public internet without authentication and trusted TLS.
 
-## 验证
+Models, task inputs, generated outputs, the SQLite database, voices, voiceprints, caches, logs, and runtimes stay in project-local directories by default. Inputs and results persist until explicitly purged.
 
-```bash
-.runtime/api/bin/python -m pytest -q
-.runtime/api/bin/python scripts/lock_dependencies.py --check
-corepack pnpm@10.15.1 --dir frontend typecheck
-corepack pnpm@10.15.1 --dir frontend test:e2e
-AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all  # 仅供快速管线验收，不是生产默认值
-./scripts/smoke_test.sh
-```
+## Support and contributing
 
-服务启动后，可用相同输入交替执行关闭/开启任务并输出中位耗时、加速倍数及每次实际批次：
-
-```bash
-.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py asr --model qwen3-asr-1.7b --device cpu --audio meeting.wav
-.runtime/api/bin/python scripts/benchmark_single_task_acceleration.py tts --model qwen3-tts-1.7b --device cpu
-```
-
-Windows mock 全链路验证：
-
-```powershell
-$env:AUDIO_INTEL_MOCK_MODE = '1'
-.\service.cmd start all
-.\.runtime\api\Scripts\python.exe scripts\smoke_test.py
-.\service.cmd stop all
-```
-
-生产默认值始终是真实模型模式；mock 模式只用于验证任务队列、API、导出和 UI。依赖版本、锁文件和当前无法升级的模型运行时公告见 [依赖维护说明](docs/DEPENDENCIES.md)，升级步骤见 [升级指南](docs/UPGRADE.md)。
-
-真实模型的可恢复两小时设备矩阵测试（先分别使用 CPU/GPU 合成，再使用同一份 CPU 合成音频分别执行 CPU/GPU ASR）：
-
-```bash
-.runtime/asr/bin/python -u scripts/stress_device_matrix.py
-```
-
-本轮验收目标为约 2 小时（`7200±130` 秒），过程和最终报告保存在 `data/stress/device-matrix-2h/`；中断后执行同一命令会从已提交的任务继续，不会重复已完成阶段。
+- Report reproducible bugs or request features through [GitHub Issues](https://github.com/wlf186/audio-intel/issues).
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing runtime boundaries, model loading, device routing, process supervision, or public APIs.
+- Review [Releases](https://github.com/wlf186/audio-intel/releases) and the [upgrade guide](docs/UPGRADE.md) before updating an existing installation.
 
 ## License
 
-本项目自有代码以 [Apache License 2.0](LICENSE) 发布。模型权重不会包含在 Git 仓库中，下载后仍适用各上游模型许可证；详见 [第三方组件与模型声明](THIRD_PARTY_NOTICES.md)。本项目为非官方的赛博朋克风格界面，与相关游戏、商标或权利人不存在隶属或背书关系。
+Project-owned code is licensed under the [Apache License 2.0](LICENSE). Downloaded model weights are not included in the repository and remain subject to their upstream licenses; see [third-party and model notices](THIRD_PARTY_NOTICES.md).
+
+Sandevistan Audio is an unofficial cyberpunk-styled interface and is not affiliated with or endorsed by any related game, trademark owner, or rights holder.

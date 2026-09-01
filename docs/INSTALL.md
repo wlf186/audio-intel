@@ -41,7 +41,7 @@ curl -fsS http://127.0.0.1:20810/api/v1/health
 ./service.sh start all
 ```
 
-`tls enable` 自动收集 localhost、主机名和活动网卡地址，并保留旧证书已有的 SAN；也可通过重复的 `--host` 追加容器无法发现的宿主机/VPN 地址。模式保存在 `<AUDIO_INTEL_DATA_DIR>/tls/service-profile.json`（默认是 `data/tls/service-profile.json`），新终端中的普通 `start`、`restart` 和 `run` 会自动沿用。地址变化后重新执行 `tls enable`；需要立即应用到后台服务时加 `--restart`。`tls enable --restart` 和 `tls disable --restart` 都会执行 `restart all`，重启 API、ASR 和 TTS；后者切回 HTTP 但不删除证书。20810 在 HTTPS 模式下只接受 HTTPS，不提供同端口 HTTP，也不自动重定向。客户端安装根证书和指纹核对步骤见 [README](../README.md#局域网-https-与浏览器录音)。
+`tls enable` 自动收集 localhost、主机名和活动网卡地址，并保留旧证书已有的 SAN；也可通过重复的 `--host` 追加容器无法发现的宿主机/VPN 地址。模式保存在 `<AUDIO_INTEL_DATA_DIR>/tls/service-profile.json`（默认是 `data/tls/service-profile.json`），新终端中的普通 `start`、`restart` 和 `run` 会自动沿用。地址变化后重新执行 `tls enable`；需要立即应用到后台服务时加 `--restart`。`tls enable --restart` 和 `tls disable --restart` 都会执行 `restart all`，重启 API、ASR 和 TTS；后者切回 HTTP 但不删除证书。20810 在 HTTPS 模式下只接受 HTTPS，不提供同端口 HTTP，也不自动重定向。客户端安装根证书、核对指纹和私钥保护步骤见[局域网 HTTPS 指南](HTTPS.md)。
 
 `start` 是后台模式；各组件在独立会话和进程组中运行，API 和 worker 真正就绪后命令才返回。关闭普通终端、调用脚本退出或上游仅清理启动命令所在进程组，不会停止这些后台组件。将服务作为容器主进程运行、需要前台监督，或所在执行器会在命令返回后清理整个 cgroup 时，使用：
 
