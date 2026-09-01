@@ -4,6 +4,23 @@ import {chromium} from '../frontend/node_modules/@playwright/test/index.mjs'
 
 const baseUrl=process.env.AUDIO_INTEL_CAPTURE_BASE_URL||'http://127.0.0.1:20910'
 const outputDir=resolve(process.argv[2]||'docs/assets/readme')
+const localeStorageKey='audio-intel:ui-locale:v1'
+const captureLocales=[
+ {
+  locale:'zh-CN',directory:'zh-CN',asrLanguage:'Chinese',asrFile:'meeting-zh.wav',
+  asrText:'欢迎使用完全本地化',
+  ttsLanguage:'Chinese',ttsName:'本地语音工作站演示',
+  ttsText:'欢迎使用 Sandevistan Audio。这是一套完全本地运行的语音智能服务。',
+  headings:{asr:'音频转写',tts:'语音合成',jobs:'任务记录'},
+ },
+ {
+  locale:'en-US',directory:'en-US',asrLanguage:'English',asrFile:'meeting-en.wav',
+  asrText:'Welcome to your fully',
+  ttsLanguage:'English',ttsName:'Local speech workstation demo',
+  ttsText:'Welcome to Sandevistan Audio, a private speech intelligence service running entirely on your machine.',
+  headings:{asr:'Transcription',tts:'Speech synthesis',jobs:'Task history'},
+ },
+]
 
 function demoWav(seconds=12,rate=16000){
  const sampleCount=seconds*rate
@@ -39,11 +56,11 @@ async function waitForJob(id){
  throw new Error(`job ${id} did not finish before the capture deadline`)
 }
 
-async function seedDemoJobs(){
+async function seedDemoJobs(config){
  const asrForm=new FormData()
- asrForm.set('file',new Blob([demoWav()],{type:'audio/wav'}),'meeting-demo.wav')
- asrForm.set('display_name','meeting-demo.wav')
- asrForm.set('language','Auto')
+ asrForm.set('file',new Blob([demoWav()],{type:'audio/wav'}),config.asrFile)
+ asrForm.set('display_name',config.asrFile)
+ asrForm.set('language',config.asrLanguage)
  asrForm.set('speaker_count','auto')
  asrForm.set('model','qwen3-asr-0.6b')
  asrForm.set('diarize','true')
@@ -54,9 +71,9 @@ async function seedDemoJobs(){
  const asr=await submit('/api/v1/asr/jobs',asrForm)
 
  const ttsForm=new FormData()
- ttsForm.set('text','欢迎使用 Sandevistan Audio。这是一套完全本地运行的语音智能服务。')
- ttsForm.set('display_name','本地语音工作站演示')
- ttsForm.set('language','Chinese')
+ ttsForm.set('text',config.ttsText)
+ ttsForm.set('display_name',config.ttsName)
+ ttsForm.set('language',config.ttsLanguage)
  ttsForm.set('voice_mode','preset')
  ttsForm.set('speaker','Vivian')
  ttsForm.set('model','qwen3-tts-0.6b')
@@ -66,6 +83,33 @@ async function seedDemoJobs(){
  const tts=await submit('/api/v1/tts/jobs',ttsForm)
 
  await Promise.all([waitForJob(asr.id),waitForJob(tts.id)])
+ return new Set([asr.id,tts.id])
+}
+
+async function captureContext(browser,config,jobIds){
+ const context=await browser.newContext({viewport:{width:1584,height:950},deviceScaleFactor:1,locale:config.locale})
+ await context.addInitScript(({key,locale})=>{
+  try{localStorage.setItem(key,locale)}catch{}
+ },{key:localeStorageKey,locale:config.locale})
+ await context.route('**/api/v1/**',async route=>{
+  const request=route.request()
+  const pathname=new URL(request.url()).pathname
+  if(request.method()!=='GET'||!['/api/v1/jobs','/api/v1/capabilities'].includes(pathname))return route.continue()
+  const response=await route.fetch()
+  if(!response.ok())return route.fulfill({response})
+  const payload=await response.json()
+  if(pathname==='/api/v1/jobs'){
+   payload.items=(payload.items||[]).filter(job=>jobIds.has(job.id))
+   payload.count=payload.items.length
+   payload.total=payload.items.length
+   payload.offset=0
+   payload.has_more=false
+  }else{
+   payload.events={...(payload.events||{}),sse:false}
+  }
+  return route.fulfill({response,json:payload})
+ })
+ return context
 }
 
 async function webpFromPng(browser,png,quality=.9){
@@ -83,13 +127,24 @@ async function webpFromPng(browser,png,quality=.9){
  return Buffer.from(encoded,'base64')
 }
 
-async function capturePage(browser,hash,readySelector,name){
+async function capturePage(browser,context,config,hash,readySelector,name){
  const errors=[]
- const page=await browser.newPage({viewport:{width:1584,height:950},deviceScaleFactor:1})
+ const page=await context.newPage()
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  page.on('pageerror',error=>errors.push(error.message))
  await page.goto(`${baseUrl}/#${hash}`,{waitUntil:'networkidle'})
+ await page.getByRole('heading',{name:config.headings[hash],exact:true}).waitFor({state:'visible'})
  await page.locator(readySelector).first().waitFor({state:'visible'})
+ if(hash==='asr')await page.getByText(config.asrText,{exact:false}).first().waitFor({state:'visible'})
+ if(hash==='tts'){
+  const editor=page.locator('.text-editor textarea')
+  await editor.fill(config.ttsText)
+  if(await editor.inputValue()!==config.ttsText){
+   throw new Error(`${config.locale} TTS draft does not match the localized capture content`)
+  }
+ }
+ const documentLocale=await page.locator('html').getAttribute('lang')
+ if(documentLocale!==config.locale)throw new Error(`${hash} resolved ${documentLocale} instead of ${config.locale}`)
  await page.waitForTimeout(500)
  await page.evaluate(()=>{
   window.scrollTo({top:0,left:0,behavior:'auto'})
@@ -99,10 +154,24 @@ async function capturePage(browser,hash,readySelector,name){
  })
  const png=await page.screenshot({type:'png',fullPage:false})
  const webp=await webpFromPng(browser,png)
- await writeFile(resolve(outputDir,name),webp)
+ await writeFile(resolve(outputDir,config.directory,name),webp)
  await page.close()
- if(errors.length)throw new Error(`${hash} emitted browser errors: ${errors.join(' | ')}`)
+ if(errors.length)throw new Error(`${config.locale} ${hash} emitted browser errors: ${errors.join(' | ')}`)
  return webp
+}
+
+async function captureLocale(browser,config){
+ await mkdir(resolve(outputDir,config.directory),{recursive:true})
+ const jobIds=await seedDemoJobs(config)
+ const context=await captureContext(browser,config,jobIds)
+ try{
+  const hero=await capturePage(browser,context,config,'asr','.segments article','asr-workspace.webp')
+  await capturePage(browser,context,config,'tts','.audio-card','tts-workspace.webp')
+  await capturePage(browser,context,config,'jobs','.jobs-table [role="rowheader"]','job-history.webp')
+  return hero
+ }finally{
+  await context.close()
+ }
 }
 
 async function captureSocialPreview(browser,hero){
@@ -126,15 +195,17 @@ async function captureSocialPreview(browser,hero){
 }
 
 await mkdir(outputDir,{recursive:true})
-await seedDemoJobs()
 const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium',args:['--no-sandbox']})
 try{
- const hero=await capturePage(browser,'asr','.segments article','asr-workspace.webp')
- await capturePage(browser,'tts','.audio-card','tts-workspace.webp')
- await capturePage(browser,'jobs','.jobs-table .table-row','job-history.webp')
- await captureSocialPreview(browser,hero)
+ let englishHero
+ for(const config of captureLocales){
+  const hero=await captureLocale(browser,config)
+  if(config.locale==='en-US')englishHero=hero
+ }
+ if(!englishHero)throw new Error('English README hero was not generated')
+ await captureSocialPreview(browser,englishHero)
 }finally{
  await browser.close()
 }
 
-console.log(`README assets written to ${outputDir}`)
+console.log(`Localized README assets written to ${outputDir}`)

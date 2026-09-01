@@ -27,6 +27,16 @@ def test_utilities() -> None:
     assert waveform_peaks([0, -0.5, 0.2, 1], 2) == [0.5, 1.0]
 
 
+def test_mock_asr_examples_follow_explicit_capture_language() -> None:
+    english_language, english_examples = asr_pipeline._mock_transcription_examples("English")
+    chinese_language, chinese_examples = asr_pipeline._mock_transcription_examples("Chinese")
+
+    assert english_language == "English"
+    assert english_examples[0].startswith("Welcome")
+    assert chinese_language == "Chinese"
+    assert chinese_examples[0].startswith("欢迎")
+
+
 def test_model_progress_is_throttled_and_boundary_can_be_forced(monkeypatch) -> None:
     emitted = []
     clock = iter((1.0, 1.1, 1.7, 1.8))

@@ -31,7 +31,7 @@
   <a href="LICENSE"><img alt="自有代码许可证：Apache 2.0" src="https://img.shields.io/badge/code%20license-Apache--2.0-blue"></a>
 </p>
 
-![Sandevistan Audio 本地 ASR 工作区，展示说话人分离结果与导出控件](docs/assets/readme/asr-workspace.webp)
+![Sandevistan Audio 本地 ASR 工作区，展示说话人分离结果与导出控件](docs/assets/readme/zh-CN/asr-workspace.webp)
 
 ## 主要能力
 
@@ -57,8 +57,8 @@
 - 通过异步或 OpenAI 兼容 API，为本地工具提供持久化语音后端。
 
 <p align="center">
-  <img src="docs/assets/readme/tts-workspace.webp" width="49%" alt="Sandevistan Audio 预置音色语音合成工作区">
-  <img src="docs/assets/readme/job-history.webp" width="49%" alt="Sandevistan Audio 持久化 ASR 与 TTS 任务记录">
+  <img src="docs/assets/readme/zh-CN/tts-workspace.webp" width="49%" alt="Sandevistan Audio 预置音色语音合成工作区">
+  <img src="docs/assets/readme/zh-CN/job-history.webp" width="49%" alt="Sandevistan Audio 持久化 ASR 与 TTS 任务记录">
 </p>
 
 ## 快速开始

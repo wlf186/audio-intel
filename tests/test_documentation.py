@@ -71,17 +71,26 @@ def test_readmes_keep_parallel_information_architecture() -> None:
 
 def test_readme_assets_are_bounded_and_reproducible() -> None:
     asset_dir = ROOT / "docs" / "assets" / "readme"
-    expected = {
-        "asr-workspace.webp": 500_000,
-        "tts-workspace.webp": 500_000,
-        "job-history.webp": 500_000,
-        "social-preview.png": 1_000_000,
-    }
-    for name, maximum_bytes in expected.items():
-        path = asset_dir / name
-        assert path.is_file()
-        assert path.stat().st_size < maximum_bytes
-    assert (ROOT / "scripts" / "capture_readme_assets.mjs").is_file()
+    for locale in ("en-US", "zh-CN"):
+        for name in ("asr-workspace.webp", "tts-workspace.webp", "job-history.webp"):
+            path = asset_dir / locale / name
+            assert path.is_file()
+            assert path.stat().st_size < 500_000
+    assert (asset_dir / "social-preview.png").stat().st_size < 1_000_000
+    for stale_name in ("asr-workspace.webp", "tts-workspace.webp", "job-history.webp"):
+        assert not (asset_dir / stale_name).exists()
+
+    english = (ROOT / "README.md").read_text(encoding="utf-8")
+    chinese = (ROOT / "README_CN.md").read_text(encoding="utf-8")
+    assert english.count("docs/assets/readme/en-US/") == 3
+    assert "docs/assets/readme/zh-CN/" not in english
+    assert chinese.count("docs/assets/readme/zh-CN/") == 3
+    assert "docs/assets/readme/en-US/" not in chinese
+
+    capture_script = (ROOT / "scripts" / "capture_readme_assets.mjs").read_text(encoding="utf-8")
+    assert "audio-intel:ui-locale:v1" in capture_script
+    assert "locale:'zh-CN'" in capture_script
+    assert "locale:'en-US'" in capture_script
 
 
 def test_docs_do_not_link_to_removed_chinese_readme_anchor() -> None:

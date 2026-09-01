@@ -8,7 +8,7 @@ import { Modal } from '../components/Modal'
 import { InfoTooltip } from '../components/InfoTooltip'
 import { clearAsrPreferences, defaultAsrPreferences, loadAsrPreferences, publicAlignerLanguages, publicAsrLanguages, saveAsrPreferences, type AsrPreferences } from '../lib/preferences'
 import { visibleWorkspaceJobs } from '../lib/jobs'
-import { computeUnavailableReason } from '../lib/presentation'
+import { computeUnavailableReason, hotwordListDisplayName } from '../lib/presentation'
 import { SubmissionProgress } from '../components/SubmissionProgress'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -214,7 +214,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
     if (!item.term_count) return t('asr.hotwords.emptySystemList')
     const ids = new Set(selectedHotwordIds)
     ids.add(item.id)
-    return hotwordLimitIssue(ids.size, hotwordStats(hotwordLists, ids), hotwordLimits, t('asr.hotwords.selectionWouldExceed',{name:item.name}), t)
+    return hotwordLimitIssue(ids.size, hotwordStats(hotwordLists, ids), hotwordLimits, t('asr.hotwords.selectionWouldExceed',{name:hotwordListDisplayName(item,t)}), t)
   }
   const updatePreference = <K extends keyof AsrPreferences>(key: K, value: AsrPreferences[K]) =>
     setPreferences((current) => {
@@ -506,7 +506,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
                     })}
                   />
                   <span>
-                    {item.name}
+                    {hotwordListDisplayName(item,t)}
                     {item.kind === 'system' ? <em>{t('hotwords.system')}</em> : null}
                   </span>
                   <small className="hotword-option-count">{t('asr.hotwords.termCount',{count:item.term_count})}</small>

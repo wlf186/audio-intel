@@ -811,6 +811,18 @@ def write_asr_exports(job_id: str, result: dict[str, Any], formats: list[str]) -
     return result
 
 
+def _mock_transcription_examples(requested_language: str | None) -> tuple[str, list[str]]:
+    if requested_language == "English":
+        return "English", [
+            "Welcome to your fully local speech intelligence workstation.",
+            "Transcripts, speakers, and timestamps stay inside this project.",
+        ]
+    return "Chinese", [
+        "欢迎使用完全本地化的语音智能工作台。",
+        "识别、说话人和时间戳都会保存在当前项目中。",
+    ]
+
+
 def process_job(context: JobContext) -> dict[str, Any]:
     request = context.job["request"]
     compute_device = request.get("compute_device", "gpu")
@@ -896,8 +908,13 @@ def process_job(context: JobContext) -> dict[str, Any]:
     try:
         context.progress(0.32, f"qwen3_asr_{compute_device}")
         if settings.mock_mode:
-            examples = ["欢迎使用完全本地化的语音智能工作台。", "识别、说话人和时间戳都会保存在当前项目中。"]
-            transcribed = {"chunks": [{**item, "text": examples[i % len(examples)], "language": "Chinese"} for i, item in enumerate(chunks)]}
+            mock_language, examples = _mock_transcription_examples(request.get("language"))
+            transcribed = {
+                "chunks": [
+                    {**item, "text": examples[i % len(examples)], "language": mock_language}
+                    for i, item in enumerate(chunks)
+                ]
+            }
         else:
             transcribed = run_model_stage(context, "transcribe", {
                 "model_path": str(settings.models_dir / asr_model["name"]),
@@ -936,7 +953,7 @@ def process_job(context: JobContext) -> dict[str, Any]:
         if should_align and settings.mock_mode:
             for item in items:
                 text = item["text"]
-                units = list(text)
+                units = text.split() if item.get("language") == "English" else list(text)
                 step = (item["end"] - item["start"]) / max(len(units), 1)
                 item["words"] = [{"text": unit, "start": round(item["start"] + i * step, 3), "end": round(item["start"] + (i + 1) * step, 3)} for i, unit in enumerate(units)]
         elif should_align:

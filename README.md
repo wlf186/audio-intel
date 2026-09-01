@@ -31,7 +31,7 @@
   <a href="LICENSE"><img alt="Code license: Apache 2.0" src="https://img.shields.io/badge/code%20license-Apache--2.0-blue"></a>
 </p>
 
-![Sandevistan Audio local ASR workspace showing a speaker-separated transcript and export controls](docs/assets/readme/asr-workspace.webp)
+![Sandevistan Audio local ASR workspace showing a speaker-separated transcript and export controls](docs/assets/readme/en-US/asr-workspace.webp)
 
 > [!NOTE]
 > The Web UI supports Simplified Chinese and English. Use the language selector in the header or sign-in dialog; the choice is stored locally in the browser. The local Swagger API guide is also bilingual.
@@ -60,8 +60,8 @@
 - Add a durable speech backend to local tools through asynchronous or OpenAI-compatible APIs.
 
 <p align="center">
-  <img src="docs/assets/readme/tts-workspace.webp" width="49%" alt="Sandevistan Audio TTS workspace with preset voice synthesis">
-  <img src="docs/assets/readme/job-history.webp" width="49%" alt="Sandevistan Audio persistent ASR and TTS job history">
+  <img src="docs/assets/readme/en-US/tts-workspace.webp" width="49%" alt="Sandevistan Audio TTS workspace with preset voice synthesis">
+  <img src="docs/assets/readme/en-US/job-history.webp" width="49%" alt="Sandevistan Audio persistent ASR and TTS job history">
 </p>
 
 ## Quick Start

@@ -1,4 +1,4 @@
-import type {ComputeCapability,JobSummary} from './types'
+import type {ComputeCapability,HotwordList,JobSummary} from './types'
 import type {TFunction} from 'i18next'
 
 export function formatLocalDateTime(value:string|undefined,locale:string,t:TFunction){
@@ -17,6 +17,12 @@ export function computeUnavailableReason(capability:ComputeCapability|undefined,
   if(required)return t('errors.gpuMemoryRequired',{required})
  }
  return capability?.unavailable_reason||fallback||t('errors.gpuFallback')
+}
+
+export function hotwordListDisplayName(item:HotwordList,t:TFunction){
+ if(item.id==='hotwords_voiceprint_people')return t('hotwords.systemNames.full')
+ if(item.id==='hotwords_voiceprint_people_short')return t('hotwords.systemNames.short')
+ return item.name
 }
 
 export function workerStateLabel(value:string,t:TFunction){

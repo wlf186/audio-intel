@@ -14,7 +14,11 @@ test('detects, switches, and persists the interface language without reloading p
   if(path==='/api/v1/health')return route.fulfill({json:{status:'ok'}})
   if(path==='/api/v1/system')return route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{data:'/tmp/data'}}})
   if(path==='/api/v1/jobs')return route.fulfill({json:{items:[],count:0,total:0,limit:100,offset:0,has_more:false}})
-  if(path==='/api/v1/voiceprints/people'||path==='/api/v1/asr/hotword-lists')return route.fulfill({json:{items:[]}})
+  if(path==='/api/v1/voiceprints/people')return route.fulfill({json:{items:[]}})
+  if(path==='/api/v1/asr/hotword-lists')return route.fulfill({json:{items:[
+   {id:'hotwords_voiceprint_people',name:'声纹库人名（全名）',kind:'system',terms:[],term_count:0},
+   {id:'hotwords_voiceprint_people_short',name:'声纹库人名（去姓）',kind:'system',terms:[],term_count:0},
+  ]}})
   if(path==='/api/v1/tts/voices')return route.fulfill({json:{preset_speakers:['Vivian']}})
   if(path==='/api/v1/capabilities')return route.fulfill({json:{asr:{models:[],languages:['Auto','Chinese','English'],aligner_languages:['Chinese','English'],speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},tts:{model_capabilities:[],languages:['Auto','Chinese','English']},limits:{},events:{sse:false}}})
   return route.fulfill({status:404,json:{detail:'not found'}})
@@ -43,5 +47,12 @@ test('detects, switches, and persists the interface language without reloading p
  await expect(switcher).toBeVisible()
  expect((await switcher.boundingBox())!.height).toBeGreaterThanOrEqual(44)
  await page.screenshot({path:'/tmp/audio-intel-i18n-mobile.png',fullPage:false})
+ await page.setViewportSize({width:1280,height:900})
+ await page.goto('/#asr')
+ await expect(page.getByRole('checkbox',{name:/Voiceprint names \(full\)/})).toBeVisible()
+ await expect(page.getByRole('checkbox',{name:/Voiceprint names \(without surname\)/})).toBeVisible()
+ await page.getByRole('combobox',{name:'Interface language'}).selectOption('zh-CN')
+ await expect(page.getByRole('checkbox',{name:/声纹库人名（全名）/})).toBeVisible()
+ await expect(page.getByRole('checkbox',{name:/声纹库人名（去姓）/})).toBeVisible()
  expect(errors).toEqual([])
 })
