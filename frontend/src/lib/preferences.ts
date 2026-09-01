@@ -9,7 +9,7 @@ export const ttsPreferencesKey='audio-intel:tts-preferences:v2'
 export const ttsContentKey='audio-intel:tts-content:v2'
 export const defaultAsrPreferences:AsrPreferences={model:'qwen3-asr-0.6b',language:'Auto',speakerCount:'auto',align:true,useVoiceprints:true,computeDevice:'gpu',accelerateSingleTask:true,hotwordListIds:[]}
 export const defaultTtsPreferences:TtsPreferences={model:'qwen3-tts-0.6b',mode:'preset',cloneSource:'upload',speaker:'Vivian',language:'Auto',computeDevice:'gpu',personId:'',sampleId:'',accelerateSingleTask:true}
-export const defaultTtsContent:TtsContent={text:'欢迎使用 Sandevistan-Audio。这是一套完全本地运行的语音智能服务。',instruct:'',refText:'',refLanguage:'Auto',refJobId:''}
+export const defaultTtsContent:TtsContent={text:'',instruct:'',refText:'',refLanguage:'Auto',refJobId:''}
 export const publicAlignerLanguages=['Chinese','English','Cantonese','French','German','Italian','Japanese','Korean','Portuguese','Russian','Spanish']
 export const publicAsrLanguages=['Auto',...publicAlignerLanguages]
 
@@ -75,12 +75,12 @@ export function loadTtsPreferences():TtsPreferences{
 export function saveTtsPreferences(value:TtsPreferences){write(localStorage,ttsPreferencesKey,value)}
 export function clearTtsPreferences(){remove(localStorage,ttsPreferencesKey)}
 
-export function loadTtsContent():TtsContent{
+export function loadTtsContent(defaultText=defaultTtsContent.text):TtsContent{
  const stored=parsed(sessionStorage,ttsContentKey)
  const legacy=stored?undefined:legacyTtsContentKeys.map(key=>parsed(sessionStorage,key)).find(Boolean)
  const source=stored||legacy||{}
  const content={
-  text:text(source.text,defaultTtsContent.text),instruct:text(source.instruct,defaultTtsContent.instruct),refText:text(source.refText,defaultTtsContent.refText),
+  text:text(source.text,defaultText),instruct:text(source.instruct,defaultTtsContent.instruct),refText:text(source.refText,defaultTtsContent.refText),
   refLanguage:text(source.refLanguage,defaultTtsContent.refLanguage),refJobId:text(source.refJobId,defaultTtsContent.refJobId),
  }
  write(sessionStorage,ttsContentKey,content);legacyTtsContentKeys.forEach(key=>remove(sessionStorage,key));return content

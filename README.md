@@ -34,7 +34,7 @@
 ![Sandevistan Audio local ASR workspace showing a speaker-separated transcript and export controls](docs/assets/readme/asr-workspace.webp)
 
 > [!NOTE]
-> The Web UI is currently in Simplified Chinese. The local Swagger API guide is bilingual, and this README provides the complete English setup and integration path.
+> The Web UI supports Simplified Chinese and English. Use the language selector in the header or sign-in dialog; the choice is stored locally in the browser. The local Swagger API guide is also bilingual.
 
 ## What it does
 

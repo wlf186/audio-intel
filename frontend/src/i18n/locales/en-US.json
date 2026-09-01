@@ -1,0 +1,252 @@
+{
+  "common": {
+    "language": {
+      "label": "Interface language",
+      "zh-CN": "简体中文",
+      "en-US": "English"
+    },
+    "actions": {
+      "retry": "Retry",
+      "reload": "Reload",
+      "close": "Close",
+      "cancel": "Cancel",
+      "save": "Save",
+      "deletePermanently": "Delete permanently",
+      "view": "View",
+      "edit": "Edit",
+      "copy": "Copy",
+      "copied": "Copied",
+      "download": "Download"
+    },
+    "states": {
+      "loading": "Loading",
+      "ready": "Ready",
+      "error": "Error",
+      "unavailable": "Unavailable",
+      "unknown": "Unknown",
+      "checking": "Checking",
+      "processing": "Processing…"
+    },
+    "languages": {
+      "Auto": "Auto detect",
+      "Chinese": "Chinese",
+      "English": "English",
+      "Cantonese": "Cantonese",
+      "Japanese": "Japanese",
+      "Korean": "Korean",
+      "German": "German",
+      "French": "French",
+      "Russian": "Russian",
+      "Portuguese": "Portuguese",
+      "Spanish": "Spanish",
+      "Italian": "Italian"
+    },
+    "units": {
+      "bytes": "{{value}} B",
+      "kilobytes": "{{value}} KB",
+      "megabytes": "{{value}} MB",
+      "gigabytes": "{{value}} GB",
+      "seconds": "{{count}} sec",
+      "minutes": "{{count}} min",
+      "hours": "{{count}} hr"
+    },
+    "fallback": {
+      "noHeartbeat": "No heartbeat",
+      "unknownTime": "Unknown time"
+    },
+    "dialog": {"closeNamed": "Close {{title}}"},
+    "separator": {"semicolon": "; "},
+    "accelerationHelp": "View single-task acceleration details"
+  },
+  "shell": {
+    "skipToMain": "Skip to main content",
+    "mainNavigation": "Main navigation",
+    "workspace": "Workspace",
+    "pages": {
+      "asr": {"full": "Transcription", "short": "ASR"},
+      "tts": {"full": "Speech synthesis", "short": "TTS"},
+      "hotwords": {"full": "Hotword library", "short": "Hotwords"},
+      "voiceprints": {"full": "Voiceprint library", "short": "Voices"},
+      "jobs": {"full": "Task history", "short": "Tasks"},
+      "system": {"full": "System status", "short": "System"}
+    },
+    "returnToAsr": "Return to transcription",
+    "offline": {
+      "checkingCompact": "Checking",
+      "checkingLabel": "Checking local offline mode",
+      "errorCompact": "Disconnected",
+      "errorLabel": "Local service connection lost",
+      "activeCompact": "Local ready",
+      "activeLabel": "Local service connected with offline inference enabled",
+      "inactiveCompact": "Online mode",
+      "inactiveLabel": "Local service connected without offline inference enabled",
+      "scopeHint": "{{label}}; offline mode does not mean the service only listens on localhost."
+    },
+    "logout": "Sign out of the local session",
+    "certificate": "HTTPS certificate",
+    "openCertificateHelp": "Open HTTPS certificate help",
+    "apiDocs": "API docs",
+    "docsCompact": "Docs",
+    "openApiDocs": "Open API documentation",
+    "connectionError": "Service connection error: {{message}}",
+    "reconnect": "Reconnect",
+    "dataStoredLocally": "// data stored locally",
+    "dataReadyHint": "READY means offline mode is enabled and a local data directory was reported.",
+    "bindReadyHint": "Configured listen address: {{bind}}. 0.0.0.0 means all network interfaces.",
+    "bindUnknownHint": "The service listen address cannot currently be confirmed."
+  },
+  "auth": {
+    "title": "Access verification",
+    "checking": "Checking the local service…",
+    "description": "This service requires an API key. The key is used only for this login exchange and is never stored in browser storage or a URL.",
+    "installCertificate": "Install the HTTPS root certificate first",
+    "keyPlaceholder": "Enter AUDIO_INTEL_API_KEY",
+    "validating": "Verifying…",
+    "enter": "Enter workspace",
+    "back": "Back to sign in"
+  },
+  "tls": {
+    "modalTitle": "HTTPS certificates and browser recording",
+    "closeHelp": "Close HTTPS certificate help",
+    "loadFailed": "Could not load certificate information: {{message}}",
+    "loading": "Reading HTTPS certificate information…",
+    "httpNotice": "The service is using HTTP. Browser recording over a LAN IP requires HTTPS.",
+    "httpSetup": "After generating a certificate, set <code>AUDIO_INTEL_PROTOCOL=https</code> and restart the service. See the project documentation for complete steps.",
+    "missingCa": "HTTPS is enabled, but the server has no downloadable root CA configured. You can continue past the certificate warning in desktop Chrome or Edge, but this does not verify the server identity.",
+    "safety": "Install the root certificate and verify its fingerprint before entering an API key or uploading audio. The download is a public certificate and contains no private key.",
+    "downloadCer": "Download Windows / iOS certificate",
+    "downloadPem": "Download PEM",
+    "fingerprintCheck": "Compare this fingerprint over a trusted channel with <code>./service.sh tls fingerprint</code> on the server, or <code>service.cmd tls fingerprint</code> on Windows.",
+    "windowsStep": "Open the .cer file and install it under Trusted Root Certification Authorities, optionally for Current User. Restart Chrome or Edge.",
+    "iosStep": "Open the .cer file and install the profile. Then enable full trust under Settings → General → About → Certificate Trust Settings and restart the browser.",
+    "temporaryAccess": "Desktop Chrome or Edge can use Advanced → Continue on the warning page. The connection remains encrypted, but the server identity is unverified and an active man-in-the-middle could intercept the API key and audio. Safari, iOS, and Firefox are not guaranteed to support this path.",
+    "temporaryAccessLabel": "Temporary access:"
+  },
+  "system": {
+    "title": "System status",
+    "subtitle": "Hardware resources, workers, models, and local storage",
+    "loadFailed": "Could not load system status",
+    "loading": "Reading system status",
+    "loadingDetail": "Connecting to the local service and reading hardware, model, and worker information…",
+    "retry": "Check again",
+    "cpuUsage": "CPU usage",
+    "memory": "Memory",
+    "systemMemory": "System memory",
+    "gpuNotDetected": "Not detected",
+    "gpuUnavailable": "GPU unavailable",
+    "gpuAvailable": "{{value}} MiB available",
+    "gpuReserved": "{{value}} MiB system-reserved estimate",
+    "gpuReservedHint": "Estimated as total minus used and free memory; this usually reflects driver or firmware reservation and has no process attribution",
+    "projectDisk": "Project disk",
+    "modelStatus": "Model status",
+    "asrComponents": "ASR and shared components",
+    "installedCount": "{{installed}} / {{total}} installed",
+    "needsAttention": "Needs attention",
+    "modelStates": {
+      "installed": "Installed",
+      "missing": "Download required",
+      "empty_marker": "Empty marker",
+      "revision_mismatch": "Revision mismatch",
+      "incomplete": "Incomplete files"
+    },
+    "noModels": "No models configured",
+    "workers": "Workers",
+    "waiting": "Waiting for a task",
+    "workerStates": {
+      "idle": "Idle",
+      "running": "Running",
+      "stopping": "Stopping",
+      "stopped": "Stopped",
+      "starting": "Starting",
+      "failed": "Failed"
+    },
+    "noWorkers": "No workers found",
+    "localDirectories": "Local directories"
+  },
+  "errors": {
+    "requestFailed": "Request failed (HTTP {{status}})",
+    "invalidTaskEvent": "Invalid task event format",
+    "network": "Unable to connect to the local service. Confirm that it is running and try again.",
+    "uploadTimeout": "The upload timed out. Check the connection and try again.",
+    "uploadCancelled": "Upload cancelled",
+    "secureId": "This browser cannot generate a secure submission identifier. Upgrade the browser and try again.",
+    "retryAfter": "{{detail}}; try again in {{seconds}} seconds.",
+    "gpuMemoryDetected": "This model requires at least {{required}} MiB of GPU memory; {{detected}} MiB was detected. This submission will use CPU.",
+    "gpuMemoryRequired": "This model requires at least {{required}} MiB of GPU memory. This submission will use CPU.",
+    "gpuFallback": "The selected model cannot use the GPU. This submission will use CPU.",
+    "fileTooLarge": "The file is {{size}}, which exceeds the service limit of {{limit}}. Choose a smaller file."
+  },
+  "jobs": {
+    "estimated": "estimated",
+    "safelyStopping": "Stopping safely",
+    "states": {"queued": "Waiting", "running": "Processing", "succeeded": "Completed", "failed": "Failed", "cancelled": "Cancelled"},
+    "stages": {"queued": "Waiting", "starting": "Starting", "loading_tts_model": "Loading TTS model", "waiting_for_gpu": "Waiting for GPU", "preparing_voice_clone": "Preparing voice clone", "synthesis": "Synthesizing speech", "writing_output": "Writing output", "decoding_audio": "Decoding audio", "vad": "Detecting speech activity", "diarization": "Separating speakers", "transcription": "Transcribing speech", "alignment": "Aligning words", "merging": "Merging speakers and timestamps", "completed": "Completed", "succeeded": "Completed", "failed": "Failed", "cancelled": "Cancelled", "cancelling": "Releasing compute resources"},
+    "units": {"text_chunk": "text chunks", "audio_chunk": "audio chunks", "codec_frame": "codec frames", "output_token": "output tokens", "model_layer": "model layers", "item": "items", "batch": "batches"},
+    "progress": {"count": "{{unit}} {{current}}/{{total}}", "estimatedTotal": " (estimated total)", "currentBatch": "Current batch {{count}} {{unit}}{{estimateMark}}"},
+    "mini": {"queue": "Queue position {{position}} / {{depth}}", "waitingGpu": "Waiting for GPU resources", "remaining": "About {{lower}}–{{upper}} remaining", "warming": "Learning ETA · {{count}}/5 samples"},
+    "history": {
+      "title": "Task history", "loading": "Reading task history…", "summary": "{{count}} matching tasks. Inputs, results, and exports are persisted in the project directory.", "kindFilter": "Filter by task type",
+      "kind": {"all": "All", "asr": "ASR", "tts": "TTS"},
+      "search": "Search tasks", "searchPlaceholder": "Task name or ID", "status": "Task status", "allStates": "All statuses", "state": {"queued": "Waiting", "running": "Processing", "succeeded": "Completed", "failed": "Failed", "cancelled": "Cancelled"},
+      "pageSize": "Rows per page", "pageSizeOption": "{{count}} rows", "newJobsRegion": "New task notice", "newJobs": "New tasks are available; this page will not move automatically.", "showNewest": "View the first page", "batchActions": "Batch task actions", "selected": "tasks selected", "cleaning": "Cleaning safely…", "deleteSelected": "Delete selected tasks permanently",
+      "copiedId": "Copied full task ID {{id}}", "selectAll": "Select all actionable tasks on this page", "columns": {"task": "Task", "kind": "Type", "status": "Status", "created": "Created", "elapsed": "Elapsed", "progress": "Progress", "actions": "Actions"},
+      "notStarted": "Not started", "queue": "Queue {{position}}/{{depth}}", "estimate": "Estimated {{lower}}–{{upper}} · {{confidence}} confidence", "confidence": {"high": "high", "medium": "medium", "low": "low"}, "etaWarming": "Learning ETA {{count}}/5",
+      "copyFailed": "Could not copy the task ID automatically. Copy it manually: {{id}}", "cancelledNotice": "The task stopped safely and can now be retried or permanently deleted.", "cancellingNotice": "The stop request was submitted. The system is still confirming that compute processes have exited.",
+      "deletedNotice": "Deleted {{count}} tasks and reclaimed {{size}}; {{database}}.", "databaseCompacted": "the database was compacted safely", "databaseNotCompacted": "database compaction did not complete", "deleteFailed": "{{count}} tasks were not deleted: {{message}}", "compactionFailed": "Safe SQLite compaction failed. Check the service logs.",
+      "selectTask": "Select task {{name}}", "selectTaskShort": "Select task", "cancelBeforeSelect": "Cancel a running task before selecting it", "fullId": "Full task ID: {{id}}", "shortId": "Task ID: {{id}}…", "copiedFullIdWithValue": "Copied full task ID {{id}}", "copyFullIdWithValue": "Copy full task ID {{id}}", "copiedFullId": "Copied full task ID", "copyFullId": "Copy full task ID",
+      "createdShort": "Created", "attempts": "{{count}} attempts", "actualProcessing": "Actual processing", "taskProgress": "{{name}} task progress {{percent}}%", "viewResult": "View result", "viewTaskResult": "View result for {{name}}", "viewFailure": "View failure details", "viewTaskFailure": "View failure details for {{name}}", "cancelTask": "Cancel task", "stoppingNamed": "Stopping {{name}} safely", "cancelNamed": "Cancel task {{name}}", "retryNamed": "Retry task {{name}}", "deleteNamed": "Permanently delete task {{name}}",
+      "loadingTasks": "Loading tasks…", "noMatches": "No matching tasks", "empty": "No tasks yet", "adjustFilters": "Adjust the type, status, or search filters.", "emptyHelp": "Transcription and speech synthesis tasks will appear here after submission.",
+      "pagination": "Task pagination", "pageSummary": "Page {{current}} / {{total}} · {{count}} total", "firstPage": "First page", "previousPage": "Previous page", "pageNumber": "Page {{value}}", "nextPage": "Next page", "lastPage": "Last page",
+      "deleteTitle": "Permanently delete tasks", "deleteDescription": "Permanently delete the selected {{count}} tasks? {{queued}}Inputs, outputs, temporary files, and database records will be removed and cannot be recovered.", "queuedDelete": "{{count}} queued tasks will be cancelled first. ", "failureDetails": "Task failure details", "closeFailure": "Close failure details", "errorCode": "Error code", "technicalDetails": "Technical details", "noErrorDetails": "The service provided no additional error details."
+    },
+    "failure": {
+      "memoryTitle": "Insufficient GPU or system memory",
+      "memoryAdvice": "Free compute resources and retry, or submit again using CPU or a smaller model.",
+      "workerTitle": "Worker process exited unexpectedly",
+      "workerAdvice": "Check system status and service logs before retrying the task.",
+      "inputTitle": "The input or task parameters could not be processed",
+      "inputAdvice": "Check the input file and task settings, then submit again.",
+      "defaultTitle": "Task processing failed",
+      "defaultAdvice": "Retry the task. If it continues to fail, review the technical details and service logs."
+    }
+  },
+  "hotwords": {
+    "title": "Hotword library", "subtitle": "Maintain scenario vocabularies and select them when creating an ASR task", "scenarioLists": "Scenario vocabularies", "loading": "Loading scenario vocabularies…", "loadFailed": "Could not load scenario vocabularies.", "system": "System", "termPreview": "{{count}} terms · {{terms}}{{more}}", "termSeparator": ", ", "viewNamed": "View {{name}}", "editNamed": "Edit {{name}}", "deleteNamed": "Delete {{name}}", "empty": "No vocabularies yet. Create one for a project, client, or specialist domain.",
+    "systemList": "System vocabulary", "editList": "Edit vocabulary", "newList": "New vocabulary", "name": "Scenario name", "namePlaceholder": "For example: Medical terms or Project codes", "characterCount": "{{current}} / {{max}} characters", "terms": "Hotwords", "termsPlaceholder": "Enter one hotword per line", "systemTermCount": "{{count}} terms; {{help}}", "termCountHelp": "{{current}} / {{max}} terms; one hotword is stored per line. Commas and semicolons remain inside a term, and duplicates are merged.",
+    "shortSystemHelp": "The system conservatively derives surname-free names and skips ambiguous cases.", "fullSystemHelp": "Automatically syncs full names for voiceprint people with Add to hotword library enabled.", "shortSystemNote": "The system generates this surname-free list automatically. It is not a nickname list and cannot be edited or deleted.", "fullSystemNote": "The system synchronizes full names into this list. It cannot be edited or deleted.", "systemAdjustment": "Change its contents with the Add to hotword library switch in each voiceprint profile.", "systemNames": {"full": "Voiceprint names (full)", "short": "Voiceprint names (without surname)"},
+    "saving": "Saving…", "save": "Save vocabulary", "clear": "Cancel and clear", "editorUnavailable": "Editor unavailable", "editorPreparing": "Preparing editor", "editorErrorHelp": "The vocabularies could not be loaded. Retry on the left; the unsaved draft will be preserved.", "editorLoadingHelp": "You can view or edit vocabularies after loading completes.", "missingDraft": "The original vocabulary no longer exists. Unsaved content was restored as a new-vocabulary draft.", "saved": "Vocabulary saved.", "deleted": "Vocabulary deleted; historical tasks retain their submitted hotword snapshots.", "deleteTitle": "Delete vocabulary", "deleteDescription": "Permanently delete “{{name}}”? Submitted tasks will retain their own hotword snapshots.",
+    "validation": {"listLimit": "You can create at most {{count}} custom vocabularies. Delete an existing vocabulary before creating another.", "required": "Enter a scenario name and at least one hotword.", "nameLength": "The scenario name cannot exceed {{count}} characters.", "invalidTerm": "The hotword “{{term}}” is invalid. A hotword cannot exceed {{count}} characters or contain control characters.", "termLimit": "A vocabulary can contain at most {{count}} hotwords."}
+  },
+  "submission": {"preparing": "Preparing to upload {{label}}", "uploading": "Uploading {{label}}", "creating": "{{label}} uploaded; creating the task", "sent": "{{size}} sent", "status": "{{label}} submission status", "progress": "{{label}} upload progress", "serverCreating": "Upload complete; the server is creating the task", "preparingGeneric": "Preparing upload", "keepOpen": "The server is validating and persisting the file before adding the task to the queue. Keep this page open.", "connecting": "Establishing the upload connection…", "cancel": "Cancel upload"},
+  "audio": {"pauseSynthesis": "Pause the current synthesis result", "playSynthesis": "Play the current synthesis result", "playbackError": "This browser cannot play the audio encoding.", "position": "Audio playback position", "waveform": "Audio waveform", "noWaveform": "No waveform data"},
+  "recorder": {"unsupportedEnvironment": "Browser recording is not supported in this environment.", "secureContext": "Microphone recording requires localhost, 127.0.0.1, or HTTPS. You can still upload an audio file.", "unsupportedBrowser": "This browser does not support microphone recording. You can still upload an audio file.", "permissionDenied": "Microphone permission was denied. Allow microphone access in the browser site settings and try again.", "notFound": "No microphone was detected. Connect a device and try again.", "notReadable": "The microphone is temporarily unavailable and may be in use by another application.", "startFailedDetail": "Could not start recording: {{message}}", "startFailed": "Could not start recording. Check the microphone and try again.", "recordingFailed": "An error occurred while recording. Record the audio again.", "empty": "No valid audio was captured. Record the audio again."},
+  "voiceprints": {
+    "hotwordIncludedLabel":"Included in name hotwords","hotwordExcludedLabel":"Not included in name hotwords","shortRecordingWarning":"Recording is under 5 seconds; a longer sample is recommended.",
+    "newPersonDialogTitle":"New voiceprint person","nameRequiredLabel":"Name (required)","asrModelAria":"Voiceprint import ASR model","sampleLanguageAria":"Voiceprint sample language","computeDeviceAria":"Voiceprint import compute device","transcribeAndImportAction":"Transcribe and import automatically","confirmAndImportAction":"Confirm transcript and import","selectSampleAction":"Select single-speaker audio sample","sampleTaskCreatedNotice":"Created the voiceprint sample import ASR task.",
+    "title":"Voiceprint library","subtitle":"Manage people and clean voice samples for recognition and cloning","newPerson":"New person","loadingPeople":"Loading people…","loadFailed":"Could not load the voiceprint library.","sampleCount":"{{count}} samples","hotwordIncluded":"Included in hotwords","hotwordExcluded":"Not included in hotwords","personSummary":"{{count}} samples · {{hotword}}","hotwordSync":"hotwords synced","hotwordNoSync":"hotwords not synced","editPersonNamed":"Edit {{name}}","deletePersonNamed":"Delete {{name}}","addMethod":"Choose how to add a sample","uploadFile":"Upload file","microphone":"Microphone","selectSample":"Select a voice sample","cleanSampleHelp":"Use clean speech from one person for better matching and cloning.","recording":"Recording","recordingProgress":"Recording progress","stopAndPreview":"Stop and preview","cancelRecording":"Cancel recording","requestingMicrophone":"Requesting microphone permission…","recordingComplete":"Recording complete","shortRecording":"This recording is short; 5–15 seconds is recommended.","recordingLocalOnly":"The recording stays in this browser until you submit it.","recordAgain":"Record again","recordDirectly":"Record a sample now","recordingAdvice":"Record in a quiet place with one speaker.","startRecording":"Start recording","sampleLabel":"Voiceprint sample","uploadAgain":"Upload again","asrModel":"Sample ASR model","notInstalled":" (not installed)","sampleLanguage":"Sample language","computeDevice":"Compute device","modelCpuFallback":"This model will use CPU automatically.","sampleNumber":"Sample {{number}}","sampleStates":{"ready":"Ready","pending":"Processing","failed":"Failed"},"waitingAnalysis":"Waiting for analysis","deleteSampleNamed":"Delete sample {{id}}","extracting":"Extracting voiceprint","embedding":{"ready":"Voiceprint ready","failed":"Voiceprint failed","pending":"Voiceprint pending"},"ttsTruncated":"TTS will truncate this sample","noSamples":"No samples yet","noSamplesHelp":"Upload or record a clean sample to enable matching and cloning.","createFirst":"Create the first person","createFirstHelp":"Add a person before importing voice samples.","preparingLibrary":"Preparing voiceprint library","preparingHelp":"Loading people and samples…","unavailable":"Voiceprint library unavailable","unavailableHelp":"The library could not be loaded. Retry without losing local input.",
+    "creatingTask":"Creating task…","uploadPercent":"Uploading {{percent}}%","preparingUpload":"Preparing upload…","transcribeAndImport":"Transcribe and import","confirmAndImport":"Confirm and import","personUpdated":"Person updated.","personCreated":"Person created.","personDeleted":"Person deleted.","sampleTaskCreated":"Sample analysis task created.","refreshAfterCreateFailed":"The task was created, but refresh failed: {{message}}","uploadCancelled":"Upload cancelled; the selected sample is preserved.","sampleDeleted":"Sample deleted.","newPersonTitle":"New person","editPersonTitle":"Edit person","closePersonEditor":"Close person editor","editorHelp":"Names are used for voiceprint matches and may optionally sync to hotwords.","nameRequired":"Name","noteOptional":"Note (optional)","notePlaceholder":"Alias, phone number, or company","noteCount":"{{current}} / 20 characters","addToHotwords":"Add to hotword library","addToHotwordsHelp":"Syncs the full name and, when reliably derived, a surname-free form.","saving":"Saving…","savePerson":"Save person","deletePersonTitle":"Delete person","deleteSampleTitle":"Delete sample","deletePersonDescription":"Permanently delete {{name}} and all samples?","deleteSampleDescription":"Permanently delete this sample?"
+  },
+  "asr": {
+    "computeDeviceAria":"ASR compute device",
+    "title":"Transcription","subtitle":"Upload audio to get speakers, word timestamps, and subtitle files","restoreDefaults":"Restore defaults","defaultsRestored":"ASR defaults restored.","model":"ASR model","notInstalled":" (not installed)","language":"Recognition language","speakerCount":"Speaker count","auto":"Auto","computeDevice":"Compute device","modelUnavailable":" (unavailable for this model)","defaultMark":" (default)","computeHelp":"ASR and alignment switch together; VAD and diarization always use CPU.","acceleration":"Single-task acceleration","accelerationHelp":"Automatically increases internal batch size based on CPU cores and memory or GPU memory. Benefits are larger for long audio; model, precision, chunking, and diarization stay unchanged, with automatic fallback on low memory.","exportFormat":"Export formats","uploadLabel":"ASR audio","taskList":"Task list",
+    "dropzone":{"title":"Drop audio here","reselect":"Click to select another file","formats":"Common audio and video formats supported"},"timestamps":{"label":"Timestamps","word":"Segment + word level","segment":"Segment level only"},"voiceprints":{"label":"Use the voiceprint library to identify people","help":"Only matched speakers are named automatically; segmentation is unchanged."},
+    "hotwords":{"label":"Hotword lists (optional)","termCount":"{{count}} terms","emptyHelp":"No hotword lists configured. Create one in Hotwords, or leave blank to disable hotwords.","summary":"Selected {{lists}}/{{maxLists}} lists · {{terms}}/{{maxTerms}} terms · {{characters}}/{{maxCharacters}} characters","removeOne":"Deselect at least one list before submitting.","currentSelection":"The current hotword selection exceeds the per-task limit","emptySystemList":"This system list has no usable terms and cannot be selected.","selectionWouldExceed":"Selecting “{{name}}” would exceed the per-task limit","listLimit":"{{count}} lists (limit {{max}})","termLimit":"{{count}} unique terms (limit {{max}})","characterLimit":"{{count}} prompt characters (limit {{max}})","limitIssue":"{{prefix}}: {{violations}}."},
+    "submit":{"creating":"Creating task…","uploading":"Uploading {{percent}}%","preparing":"Preparing upload…","start":"Start transcription"},"notices":{"submitted":"Task submitted. Track progress in Task history.","uploadCancelled":"Upload cancelled; the selected file is preserved for resubmission.","renamed":"Renamed {{from}} to {{to}}","addedToVoiceprints":"Selected segments were added to the voiceprint library."},
+    "segment":{"select":"Select segment {{number}}","renameNamed":"Rename speaker {{name}}","renameHelp":"Rename this speaker within the current task","collapseWords":"Hide word timestamps","viewWords":"View {{count}} word timestamps","play":"Play segment {{number}}"},
+    "results":{"loading":"Loading transcript","loadingHelp":"The task summary is ready; loading the full result on demand.","loadFailed":"Could not load transcript","tryLater":"Try again later.","downloadNamed":"Download {{name}}","playbackError":"This browser cannot play this audio encoding. Download the source file to play it.","pause":"Pause","play":"Play","wordAlignment":"Word-level alignment","segmentTimestamps":"Segment timestamps","alignmentDowngraded":"Detected {{language}}; word-level alignment is unavailable for this language, so segment timestamps were returned.","downloadSource":"Download source file","search":"Search transcript","filterSpeaker":"Filter by speaker","allSpeakers":"All speakers","segmentSummary":"Showing {{visible}} / {{matches}} matching / {{total}} total","selectionActions":"Segment selection actions","selectedSegments":"{{count}} {{speaker}} segments selected","addToVoiceprints":"Add to voiceprint library","clearSelection":"Clear segment selection","matchSummary":"Showing {{visible}} / {{total}} matching segments","loadMore":"Load more","noMatches":"No matching transcript segments","empty":"No transcript yet","emptyHelp":"Upload audio and start a task on the left; the result will appear here when processing completes."},
+    "rename":{"title":"Rename speaker","close":"Close rename dialog","help":"All segments and export files for {{name}} will be updated.","newName":"New name","save":"Save name"},"library":{"title":"Add to voiceprint library","close":"Close add-to-library dialog","help":"Save {{count}} {{speaker}} segments as individual samples.","person":"Person","newPerson":"New person","newPersonName":"New person name","namePlaceholder":"No match found; create a person","matched":"Matched: ","confirm":"Confirm import","nameRequired":"This speaker name does not match the voiceprint library. Enter a new person name."}
+  },
+  "tts": {
+    "computeDeviceAria":"TTS compute device",
+    "defaultText":"Welcome to Sandevistan-Audio, a fully local speech intelligence service.",
+    "title":"Speech synthesis","subtitleCpu":"Offline CPU generation at full precision, optimized for quality","subtitleGpu":"Native-precision GPU acceleration without quantization","restoreDefaults":"Restore defaults","text":"Text to synthesize","model":"TTS model","defaultMark":" (default)","notInstalled":" (not installed)","unavailableMark":" (unavailable)","modelHelp":"1.7B supports instruction control and voice design; 0.6B starts faster.","outputLanguage":"Output language","languageHelp":"Select a known language explicitly; use Auto for unknown or mixed languages.","voice":"Voice","loadingVoices":"Loading voices…","voiceprintPerson":"Voiceprint person","emptyVoiceprints":"Voiceprint library is empty","computeDevice":"Compute device","gpuFallback":"The selected model cannot use the current GPU. This submission will use CPU.","computeHelp":"Explicit API requests for an unavailable GPU return 503; this page selects CPU according to model capability.","acceleration":"Single-task acceleration","accelerationHelp":"Automatically increases internal batch size based on CPU cores and memory or GPU memory. Benefits are larger for long text; model, precision, and decoding remain unchanged, with automatic fallback on low memory.","taskList":"Task list",
+    "mode":{"label":"TTS voice mode","preset":"Preset voice","clone":"Voice clone","design":"Voice design"},"cloneSource":{"label":"Voice clone source","upload":"One-time reference","voiceprint":"Voiceprint library"},
+    "validation":{"submitting":"Submitting task…","textRequired":"Enter text to synthesize.","modelMissing":"The selected TTS model is not fully installed.","instructionRequired":"Voice design requires a voice and expression instruction.","referenceRequired":"Complete automatic reference-audio recognition and confirm the transcript first.","sampleRequired":"Select a voiceprint sample with a completed transcript."},
+    "notices":{"instructionClearedForModel":"The selected model or voice mode does not support natural-language instructions, so the instruction was cleared.","instructionClearedForMode":"This voice mode does not support natural-language instructions, so the instruction was cleared.","referenceCreated":"The clone-reference ASR task was created. Confirm the text when recognition completes, then generate speech.","referenceUploadCancelled":"Upload cancelled; the reference audio is preserved for retry.","referenceCleared":"The current clone reference was cleared.","submitted":"Task submitted. Track progress in Task history.","defaultsRestored":"TTS defaults restored."},
+    "reference":{"panel":"One-time clone reference","title":"Automatic clone-reference recognition","help":"ASR automatically detects language, text, and timestamps from single-speaker audio.","clear":"Clear clone reference","asrModel":"Clone-reference ASR model","computeDevice":"Clone-reference ASR compute device","cpuFallback":"This model will use CPU automatically.","source":"Clone reference source","creating":"Creating clone-reference analysis task…","uploading":"Uploading clone reference…","analyzing":"Analyzing clone reference…","creatingShort":"Creating task…","uploadPercent":"Uploading {{percent}}%","preparing":"Preparing upload…","jobPrefix":"TTS clone reference analysis · ","select":"Select reference audio for automatic analysis","audioAdvice":"Use 5–15 seconds of quiet, single-speaker audio. Longer audio is truncated at word boundaries.","recordingProgress":"TTS clone-reference recording progress","recordingComplete":"Reference recording complete","useAndAnalyze":"Use and analyze automatically","recordDirectly":"Record a clone reference","recordHelp":"Preview after stopping, then submit for automatic recognition.","uploadLabel":"Clone reference audio","states":{"queued":"Waiting for ASR analysis","running":"Analyzing with ASR","succeeded":"Reference recognized","failed":"Reference recognition failed","cancelled":"Reference analysis cancelled"},"analysisProgress":"Clone-reference analysis progress","failedFallback":"Reference audio could not be recognized.","retry":"Retry analysis","loadingResult":"Loading reference recognition result…","loadFailed":"Could not load reference recognition result.","reloadResult":"Reload result","language":"Reference language","transcript":"Recognized text (editable)","transcriptPlaceholder":"Verify that the text matches the reference audio exactly.","correctionHelp":"The current corrected text will be used; audio over 15 seconds will be precisely realigned to it.","missing":"The reference analysis task no longer exists. Upload or record again."},
+    "sample":{"label":"Voiceprint sample","ariaLabel":"TTS voiceprint sample","number":"Sample {{number}}","autoTruncate":"auto truncate","empty":"No samples are available for TTS","truncateHelp":"Before cloning, this sample will be precisely truncated to 15 seconds or less at word boundaries."},
+    "instruction":{"separator":", ","panel":"Advanced TTS instruction","designLabel":"Voice and expression instruction","styleLabel":"Style and expression instruction (optional)","designPlaceholder":"For example: a warm, mature female voice with a slightly low pitch, relaxed pace, and restrained joy.","stylePlaceholder":"For example: speak slightly slowly in a gentle, happy tone.","help":"Describe pace, pitch, and emotion in natural language, not numeric parameters.","examples":"Instruction examples","example":{"slowSteady":"slow and steady pace","brisk":"brisk pace and tight rhythm","highPitch":"higher pitch with clear variation","lowGentle":"speak in a low, gentle voice","happy":"happy and excited","sad":"sad but restrained","angry":"clearly angry with crisp articulation"}},
+    "submit":{"submitting":"Submitting…","generate":"Generate speech"},"quality":{"title":"Local quality policy","official":"Official {{model}} weights · no quantization","cpu":"CPU FP32; compatibility first.","gpu":"GPU BF16; official native-precision acceleration.","noInstruction":"The current model and voice mode derive prosody from text and punctuation and do not accept advanced natural-language instructions.","instruction":"Official natural-language instruction control is enabled; separate rate, pitch, and low-level sampling controls remain disabled."},
+    "results":{"title":"Current synthesis result","loading":"Loading the full synthesis result on demand…","loadFailed":"Could not load synthesis result.","designedVoice":"Designed voice","clonedVoice":"Cloned voice","instruction":"Instruction: {{value}}","download":"Download {{format}}","empty":"Completed synthesis can be previewed and downloaded here."}
+  }
+}

@@ -96,7 +96,7 @@ Set-Location C:\ai\audio-intel
 Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 ```
 
-浏览器访问 <http://127.0.0.1:20810>。中英双语交互式 API 指南位于 <http://127.0.0.1:20810/docs>，机器可读契约位于 `/openapi.json`。Swagger 资源和校验器均随服务本地托管。
+浏览器访问 <http://127.0.0.1:20810>。Web UI 支持简体中文和英文，可在页眉或登录对话框中切换，选择会保存在当前浏览器。中英双语交互式 API 指南位于 <http://127.0.0.1:20810/docs>，机器可读契约位于 `/openapi.json`。Swagger 资源和校验器均随服务本地托管。
 
 不需要完整模型集时，可以只安装或启动一条管线：
 

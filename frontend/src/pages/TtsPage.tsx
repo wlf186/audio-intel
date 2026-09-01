@@ -39,6 +39,7 @@ import { progressPresentation, visibleWorkspaceJobs } from '../lib/jobs'
 import { handleTabKeys } from '../lib/tabs'
 import { computeUnavailableReason } from '../lib/presentation'
 import { SubmissionProgress } from '../components/SubmissionProgress'
+import { useTranslation } from 'react-i18next'
 
 type Props = {
   jobs: JobSummary[]
@@ -107,16 +108,7 @@ const fallbackTtsModels: TtsModelCapability[] = [{
   },
   checkpoints: [],
 }]
-const instructionExamples = [
-  '语速缓慢而沉稳',
-  '语速明快，节奏紧凑',
-  '音调偏高且起伏明显',
-  '低沉温柔地表达',
-  '带着开心和兴奋的情绪',
-  '用悲伤克制的语气说',
-  '用明显愤怒但吐字清晰的语气说',
-]
-const languageLabels:Record<string,string>={Auto:'自动检测',Chinese:'中文',English:'英语',Cantonese:'粤语',Japanese:'日语',Korean:'韩语',German:'德语',French:'法语',Russian:'俄语',Portuguese:'葡萄牙语',Spanish:'西班牙语',Italian:'意大利语'}
+const instructionExampleKeys = ['slowSteady','brisk','highPitch','lowGentle','happy','sad','angry'] as const
 
 export function TtsPage({
   jobs,
@@ -135,9 +127,10 @@ export function TtsPage({
   revealRequest,
   onRevealHandled,
 }: Props) {
+  const { t, i18n } = useTranslation()
   const [preferences, setPreferences] =
     useState<TtsPreferences>(loadTtsPreferences)
-  const [content, setContent] = useState<TtsContent>(loadTtsContent)
+  const [content, setContent] = useState<TtsContent>(()=>loadTtsContent(t('tts.defaultText')))
   const [referenceSource, setReferenceSource] =
     useState<ReferenceSource>('upload')
   const [referenceName, setReferenceName] = useState('')
@@ -181,7 +174,7 @@ export function TtsPage({
   const referenceJob = jobs.find((job) => job.id === draft.refJobId)
   const referenceDetail = referenceJob ? jobDetails[referenceJob.id]?.job : undefined
   const referenceProgress = referenceJob
-    ? progressPresentation(referenceJob)
+    ? progressPresentation(referenceJob,t)
     : undefined
   const referenceReady =
     referenceJob?.state === 'succeeded' && Boolean(referenceDetail?.result?.text)
@@ -217,8 +210,8 @@ export function TtsPage({
   const selectedReferenceModel=asrModels.find(item=>item.id===referenceAsrModel)||asrModels.find(item=>item.default)
   const referenceGpu=selectedReferenceModel?.compute_devices.find(item=>item.id==='gpu')
   const effectiveReferenceDevice:ComputeDevice=referenceAsrDevice==='gpu'&&(referenceGpu?.available===false||gpuAvailable===false)?'cpu':referenceAsrDevice
-  const referenceBusyReason=referenceUploadProgress?.phase==='creating'?'正在创建克隆参考分析任务…':referenceUploadProgress?'正在上传克隆参考…':'正在分析克隆参考…'
-  const submitBlockReason=busy?'正在提交任务…':referenceBusy?referenceBusyReason:!draft.text.trim()?'请输入需要合成的文本。':!selectedTtsModel?.installed?'所选 TTS 模型尚未完整安装。':instructionRequired&&!draft.instruct.trim()?'音色设计需要填写音色与表达指令。':draft.mode==='inline_clone'&&draft.cloneSource==='upload'&&(!referenceReady||!draft.refText.trim())?'请先完成参考音频自动识别，并确认识别文本。':draft.mode==='inline_clone'&&draft.cloneSource==='voiceprint'&&!sample?'请选择一个已完成转写的声纹样本。':''
+  const referenceBusyReason=referenceUploadProgress?.phase==='creating'?t('tts.reference.creating'):referenceUploadProgress?t('tts.reference.uploading'):t('tts.reference.analyzing')
+  const submitBlockReason=busy?t('tts.validation.submitting'):referenceBusy?referenceBusyReason:!draft.text.trim()?t('tts.validation.textRequired'):!selectedTtsModel?.installed?t('tts.validation.modelMissing'):instructionRequired&&!draft.instruct.trim()?t('tts.validation.instructionRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='upload'&&(!referenceReady||!draft.refText.trim())?t('tts.validation.referenceRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='voiceprint'&&!sample?t('tts.validation.sampleRequired'):''
 
   useEffect(() => {
     saveTtsContent(content)
@@ -333,20 +326,20 @@ export function TtsPage({
     })
     if (clearsInstruction && content.instruct) {
       setContent((current) => ({ ...current, instruct: '' }))
-      setNotice('所选模型或音色模式不支持自然语言指令，已清空指令。')
+      setNotice(t('tts.notices.instructionClearedForModel'))
     }
   }
   const selectMode = (mode: TtsPreferences['mode']) => {
     updatePreference('mode', mode)
     if (!selectedTtsModel?.controls.instruction_voice_modes.includes(mode) && content.instruct) {
       setContent((current) => ({ ...current, instruct: '' }))
-      setNotice('该音色模式不支持自然语言指令，已清空指令。')
+      setNotice(t('tts.notices.instructionClearedForMode'))
     }
   }
   const addInstructionExample = (example: string) =>
     setContent((current) => {
       if (current.instruct.includes(example)) return current
-      const separator = current.instruct.trim() ? '，' : ''
+      const separator = current.instruct.trim() ? t('tts.instruction.separator') : ''
       return { ...current, instruct: `${current.instruct.trim()}${separator}${example}` }
     })
   const cancelActiveReference = async () => {
@@ -357,7 +350,7 @@ export function TtsPage({
         .catch(() => undefined)
   }
   const analyzeReference = async (file: File) => {
-    const limitError=uploadLimitMessage(file,maxUploadBytes)
+    const limitError=uploadLimitMessage(file,maxUploadBytes,t,i18n.resolvedLanguage||'zh-CN')
     setReferenceError('')
     setReferenceNotice('')
     if(limitError){setReferenceError(limitError);return false}
@@ -384,10 +377,10 @@ export function TtsPage({
         refLanguage: 'Auto',
       }))
       onJobSubmitted(job)
-      setNotice('已创建克隆参考 ASR 分析任务，识别完成后可确认文本并生成。')
+      setNotice(t('tts.notices.referenceCreated'))
       return true
     } catch (cause) {
-      if(isUploadCancelled(cause))setReferenceNotice('上传已取消，参考音频仍保留，可直接重试。')
+      if(isUploadCancelled(cause))setReferenceNotice(t('tts.notices.referenceUploadCancelled'))
       else setReferenceError((cause as Error).message)
       return false
     } finally {
@@ -434,19 +427,19 @@ export function TtsPage({
     setReferenceError('')
     setReferenceNotice('')
     recorder.discard()
-    setNotice('已清除当前克隆参考。')
+    setNotice(t('tts.notices.referenceCleared'))
   }
   const submit = async () => {
     if (!draft.text.trim()) {
-      setError('请输入需要合成的文本。')
+      setError(t('tts.validation.textRequired'))
       return
     }
     if (!selectedTtsModel?.installed) {
-      setError('所选 TTS 模型尚未完整安装。')
+      setError(t('tts.validation.modelMissing'))
       return
     }
     if (instructionRequired && !draft.instruct.trim()) {
-      setError('音色设计需要填写音色与表达指令。')
+      setError(t('tts.validation.instructionRequired'))
       return
     }
     if (
@@ -454,7 +447,7 @@ export function TtsPage({
       draft.cloneSource === 'upload' &&
       (!referenceReady || !draft.refText.trim())
     ) {
-      setError('请先完成参考音频的自动识别，并确认识别文本。')
+      setError(t('tts.validation.referenceRequired'))
       return
     }
     if (
@@ -462,7 +455,7 @@ export function TtsPage({
       draft.cloneSource === 'voiceprint' &&
       !sample
     ) {
-      setError('请选择一个已完成转写的声纹样本。')
+      setError(t('tts.validation.sampleRequired'))
       return
     }
     setBusy(true)
@@ -473,7 +466,7 @@ export function TtsPage({
       data.set('model', selectedTtsModel.id)
       data.set('language', draft.language)
       data.set('response_format', 'wav')
-      data.set('display_name', draft.text.slice(0, 18) || '语音合成')
+      data.set('display_name', draft.text.slice(0, 18) || t('tts.title'))
       data.set('compute_device', effectiveTtsDevice)
       data.set('accelerate_single_task', String(draft.accelerateSingleTask))
       if (draft.mode === 'preset') {
@@ -495,7 +488,7 @@ export function TtsPage({
       }
       const job = await api.submitTts(data)
       onJobSubmitted(job)
-      setNotice('任务已提交，可在任务记录查看进度。')
+      setNotice(t('tts.notices.submitted'))
     } catch (cause) {
       setError((cause as Error).message)
     } finally {
@@ -508,7 +501,7 @@ export function TtsPage({
     saveTtsPreferences(next)
     setPreferences(next)
     setContent((current) => ({ ...current, instruct: '' }))
-    setNotice('已恢复 TTS 默认配置。')
+    setNotice(t('tts.notices.defaultsRestored'))
     setError('')
   }
 
@@ -517,11 +510,11 @@ export function TtsPage({
       <section className="tts-editor" data-module="TTS_CONSOLE / SYN_02">
         <div className="section-title">
           <div>
-            <h1 tabIndex={-1}>语音合成</h1>
+            <h1 tabIndex={-1}>{t('tts.title')}</h1>
             <p>
               {effectiveTtsDevice === 'cpu'
-                ? 'CPU 全精度离线生成，音质优先'
-                : 'GPU 原生精度加速，无量化'}
+                ? t('tts.subtitleCpu')
+                : t('tts.subtitleGpu')}
             </p>
           </div>
           <div className="section-actions">
@@ -540,14 +533,14 @@ export function TtsPage({
               onClick={resetPreferences}
             >
               <RotateCcw size={14} />
-              恢复默认配置
+              {t('tts.restoreDefaults')}
             </button>
           </div>
         </div>
         <div
           className="tabs"
           role="tablist"
-          aria-label="TTS 音色模式"
+          aria-label={t('tts.mode.label')}
           onKeyDown={handleTabKeys}
         >
           <button
@@ -559,7 +552,7 @@ export function TtsPage({
             className={draft.mode === 'preset' ? 'active' : ''}
             onClick={() => selectMode('preset')}
           >
-            预置音色
+            {t('tts.mode.preset')}
           </button>
           <button
             id="tts-mode-clone"
@@ -570,7 +563,7 @@ export function TtsPage({
             className={draft.mode === 'inline_clone' ? 'active' : ''}
             onClick={() => selectMode('inline_clone')}
           >
-            声音克隆
+            {t('tts.mode.clone')}
           </button>
           {selectedTtsModel?.voice_modes.includes('voice_design') ? (
             <button
@@ -582,7 +575,7 @@ export function TtsPage({
               className={draft.mode === 'voice_design' ? 'active' : ''}
               onClick={() => selectMode('voice_design')}
             >
-              音色设计
+              {t('tts.mode.design')}
             </button>
           ) : null}
         </div>
@@ -598,7 +591,7 @@ export function TtsPage({
           }
         >
           <label className="text-editor">
-            合成文本
+            {t('tts.text')}
             <textarea
               value={draft.text}
               maxLength={50000}
@@ -610,7 +603,7 @@ export function TtsPage({
             <div
               className="clone-source"
               role="tablist"
-              aria-label="声音克隆来源"
+              aria-label={t('tts.cloneSource.label')}
               onKeyDown={handleTabKeys}
             >
               <button
@@ -622,7 +615,7 @@ export function TtsPage({
                 onClick={() => updatePreference('cloneSource', 'upload')}
               >
                 <Upload size={15} />
-                一次性参考
+                {t('tts.cloneSource.upload')}
               </button>
               <button
                 role="tab"
@@ -633,30 +626,30 @@ export function TtsPage({
                 onClick={() => updatePreference('cloneSource', 'voiceprint')}
               >
                 <Fingerprint size={15} />
-                声纹库
+                {t('tts.cloneSource.voiceprint')}
               </button>
             </div>
           ) : null}
           <div className="two-cols">
             <label>
-              TTS 模型
+              {t('tts.model')}
               <select
-                aria-label="TTS 模型"
+                aria-label={t('tts.model')}
                 value={selectedTtsModel?.id || draft.model}
                 onChange={(event) => selectModel(event.target.value)}
               >
                 {availableTtsModels.map((model) => (
                   <option key={model.id} value={model.id} disabled={!model.installed}>
-                    {model.name}{model.default ? '（默认）' : ''}{model.installed ? '' : '（未安装）'}
+                    {model.name}{model.default ? t('tts.defaultMark') : ''}{model.installed ? '' : t('tts.notInstalled')}
                   </option>
                 ))}
               </select>
               <small className="device-hint">
-                1.7B 提供指令控制与音色设计；0.6B 启动更快。
+                {t('tts.modelHelp')}
               </small>
             </label>
             <label>
-              输出语种
+              {t('tts.outputLanguage')}
               <select
                 value={draft.language}
                 onChange={(event) =>
@@ -664,26 +657,26 @@ export function TtsPage({
                 }
               >
                 {ttsLanguages.map((language) => (
-                  <option key={language} value={language}>{languageLabels[language]||language}</option>
+                  <option key={language} value={language}>{t(`common.languages.${language}`,{defaultValue:language})}</option>
                 ))}
               </select>
               <small className="device-hint">
-                已知语种时显式选择；未知或混合语种使用 Auto。
+                {t('tts.languageHelp')}
               </small>
             </label>
           </div>
           {draft.mode === 'preset' ? (
             <div className="two-cols">
               <label>
-                音色
+                {t('tts.voice')}
                 <select
-                  aria-label="音色"
+                  aria-label={t('tts.voice')}
                   value={draft.speaker}
                   onChange={(event) =>
                     updatePreference('speaker', event.target.value)
                   }
                 >
-                  {voicesLoading?<option value={draft.speaker}>正在加载音色…</option>:null}
+                  {voicesLoading?<option value={draft.speaker}>{t('tts.loadingVoices')}</option>:null}
                   {voices.map((voice) => (
                     <option key={voice}>{voice}</option>
                   ))}
@@ -693,7 +686,7 @@ export function TtsPage({
           ) : draft.mode === 'inline_clone' && draft.cloneSource === 'voiceprint' ? (
             <div className="two-cols">
               <label>
-                声纹人员
+                {t('tts.voiceprintPerson')}
                 <select
                   value={person?.id || ''}
                   disabled={!voiceprints.length}
@@ -716,7 +709,7 @@ export function TtsPage({
                       </option>
                     ))
                   ) : (
-                    <option value="">声纹库为空</option>
+                    <option value="">{t('tts.emptyVoiceprints')}</option>
                   )}
                 </select>
               </label>
@@ -725,19 +718,19 @@ export function TtsPage({
           {draft.mode === 'inline_clone' && draft.cloneSource === 'upload' ? (
             <section
               className="clone-reference-panel"
-              aria-label="一次性克隆参考"
+              aria-label={t('tts.reference.panel')}
             >
               <div className="clone-reference-head">
                 <div>
-                  <b>克隆参考自动识别</b>
+                  <b>{t('tts.reference.title')}</b>
                   <small>
-                    选择单人音频后由 ASR 自动识别语种、文本和时间戳。
+                    {t('tts.reference.help')}
                   </small>
                 </div>
                 {draft.refJobId ? (
                   <button
                     className="icon-button danger"
-                    aria-label="清除克隆参考"
+                    aria-label={t('tts.reference.clear')}
                     onClick={() => void clearReference()}
                   >
                     <Trash2 />
@@ -745,19 +738,19 @@ export function TtsPage({
                 ) : null}
               </div>
               <div className="sample-options reference-asr-options">
-                <select aria-label="克隆参考 ASR 模型" value={referenceAsrModel} disabled={referenceBusy||microphoneActive} onChange={event=>setReferenceAsrModel(event.target.value)}>
-                  {(asrModels.length?asrModels:[{id:'qwen3-asr-0.6b',name:'Qwen3-ASR 0.6B',installed:true} as AsrModelCapability]).map(item=><option key={item.id} value={item.id} disabled={!item.installed}>{item.name}{item.installed?'':'（未安装）'}</option>)}
+                <select aria-label={t('tts.reference.asrModel')} value={referenceAsrModel} disabled={referenceBusy||microphoneActive} onChange={event=>setReferenceAsrModel(event.target.value)}>
+                  {(asrModels.length?asrModels:[{id:'qwen3-asr-0.6b',name:'Qwen3-ASR 0.6B',installed:true} as AsrModelCapability]).map(item=><option key={item.id} value={item.id} disabled={!item.installed}>{item.name}{item.installed?'':t('tts.notInstalled')}</option>)}
                 </select>
-                <select aria-label="克隆参考 ASR 计算设备" value={effectiveReferenceDevice} disabled={referenceBusy||microphoneActive} onChange={event=>setReferenceAsrDevice(event.target.value as ComputeDevice)}>
+                <select aria-label={t('tts.reference.computeDevice')} value={effectiveReferenceDevice} disabled={referenceBusy||microphoneActive} onChange={event=>setReferenceAsrDevice(event.target.value as ComputeDevice)}>
                   <option value="gpu" disabled={gpuAvailable===false||referenceGpu?.available===false}>GPU</option>
                   <option value="cpu">CPU</option>
                 </select>
-                {referenceAsrDevice==='gpu'&&effectiveReferenceDevice==='cpu'?<small className="device-hint">{computeUnavailableReason(referenceGpu,'当前模型自动使用 CPU。')}</small>:null}
+                {referenceAsrDevice==='gpu'&&effectiveReferenceDevice==='cpu'?<small className="device-hint">{computeUnavailableReason(referenceGpu,t,t('tts.reference.cpuFallback'))}</small>:null}
               </div>
               <div
                 className="sample-source-tabs"
                 role="tablist"
-                aria-label="克隆参考来源"
+                aria-label={t('tts.reference.source')}
                 onKeyDown={handleTabKeys}
               >
                 <button
@@ -771,7 +764,7 @@ export function TtsPage({
                   onClick={() => setReferenceSource('upload')}
                 >
                   <Upload size={15} />
-                  上传文件
+                  {t('voiceprints.uploadFile')}
                 </button>
                 <button
                   id="tts-reference-record"
@@ -784,7 +777,7 @@ export function TtsPage({
                   onClick={() => setReferenceSource('record')}
                 >
                   <Mic2 size={15} />
-                  麦克风录音
+                  {t('voiceprints.microphone')}
                 </button>
               </div>
               {referenceSource === 'upload' ? (
@@ -802,16 +795,16 @@ export function TtsPage({
                     <Upload size={16} />
                     {referenceBusy
                       ? referenceUploadProgress?.phase === 'creating'
-                        ? '正在创建分析任务…'
+                        ? t('tts.reference.creatingShort')
                         : referenceUploadProgress?.phase === 'uploading' && referenceUploadProgress.percent !== undefined
-                          ? `正在上传 ${referenceUploadProgress.percent}%`
-                          : '正在准备上传…'
+                          ? t('tts.reference.uploadPercent',{percent:referenceUploadProgress.percent})
+                          : t('tts.reference.preparing')
                       : referenceName ||
                         referenceJob?.display_name.replace(
-                          'TTS 克隆参考分析 · ',
+                          t('tts.reference.jobPrefix'),
                           '',
                         ) ||
-                        '选择后自动分析参考音频'}
+                        t('tts.reference.select')}
                   </button>
                   <input
                     hidden
@@ -823,8 +816,7 @@ export function TtsPage({
                     }
                   />
                   <p>
-                    建议 5–15
-                    秒、环境安静且只有一位说话人；较长音频会按字词边界截断。
+                    {t('tts.reference.audioAdvice')}
                   </p>
                 </div>
               ) : (
@@ -843,28 +835,28 @@ export function TtsPage({
                     <div className="recording-live" role="status">
                       <span className="recording-dot" aria-hidden="true" />
                       <div>
-                        <b>正在录音</b>
+                        <b>{t('voiceprints.recording')}</b>
                         <strong>{formatTime(elapsed, false)} / 00:00:30</strong>
                       </div>
                       <progress
                         max={recorder.maxSeconds}
                         value={elapsed}
-                        aria-label="TTS 克隆参考录音进度"
+                        aria-label={t('tts.reference.recordingProgress')}
                       />
                       <button className="record-stop" onClick={recorder.stop}>
                         <CircleStop size={17} />
-                        停止并试听
+                        {t('voiceprints.stopAndPreview')}
                       </button>
                     </div>
                   ) : recorder.phase === 'requesting' ? (
                     <div className="recorder-requesting" role="status">
                       <Mic2 />
-                      <p>正在请求麦克风权限…</p>
+                      <p>{t('voiceprints.requestingMicrophone')}</p>
                     </div>
                   ) : recorder.recorded ? (
                     <div className="recording-preview">
                       <div>
-                        <b>参考录音完成</b>
+                        <b>{t('tts.reference.recordingComplete')}</b>
                         <span>
                           {formatTime(recorder.recorded.durationSeconds, false)}
                         </span>
@@ -882,26 +874,26 @@ export function TtsPage({
                         <Sparkles size={15} />
                     {referenceBusy
                       ? referenceUploadProgress?.phase === 'creating'
-                        ? '正在创建任务…'
+                        ? t('tts.reference.creatingShort')
                         : referenceUploadProgress?.phase === 'uploading' && referenceUploadProgress.percent !== undefined
-                          ? `正在上传 ${referenceUploadProgress.percent}%`
-                          : '正在准备上传…'
-                      : '使用并自动分析'}
+                          ? t('tts.reference.uploadPercent',{percent:referenceUploadProgress.percent})
+                          : t('tts.reference.preparing')
+                      : t('tts.reference.useAndAnalyze')}
                       </button>
                       <button
                         className="button secondary"
                         onClick={() => void recorder.start()}
                       >
                         <RefreshCw size={15} />
-                        重新录制
+                        {t('voiceprints.recordAgain')}
                       </button>
                     </div>
                   ) : (
                     <div className="recorder-ready">
                       <Mic2 />
                       <div>
-                        <b>直接录制克隆参考</b>
-                        <p>停止后可先试听，再确认提交自动识别。</p>
+                        <b>{t('tts.reference.recordDirectly')}</b>
+                        <p>{t('tts.reference.recordHelp')}</p>
                       </div>
                       <button
                         className="record-start"
@@ -909,7 +901,7 @@ export function TtsPage({
                         onClick={() => void recorder.start()}
                       >
                         <span aria-hidden="true" />
-                        开始录音
+                        {t('voiceprints.startRecording')}
                       </button>
                       {recorder.error ? (
                         <p className="recording-error" role="alert">
@@ -922,7 +914,7 @@ export function TtsPage({
               )}
               {referenceUploadProgress ? (
                 <SubmissionProgress
-                  label="克隆参考音频"
+                  label={t('tts.reference.uploadLabel')}
                   progress={referenceUploadProgress}
                   onCancel={() => referenceUploadController.current?.abort()}
                 />
@@ -930,9 +922,9 @@ export function TtsPage({
               {referenceError ? (
                 <div className="submission-feedback" role="alert">
                   <p className="error">{referenceError}</p>
-                  {referenceFile && !uploadLimitMessage(referenceFile,maxUploadBytes) ? (
+                  {referenceFile && !uploadLimitMessage(referenceFile,maxUploadBytes,t,i18n.resolvedLanguage||'zh-CN') ? (
                     <button className="button secondary" disabled={referenceBusy} onClick={() => void analyzeReference(referenceFile)}>
-                      <RefreshCw size={15} />重新上传
+                      <RefreshCw size={15} />{t('voiceprints.uploadAgain')}
                     </button>
                   ) : null}
                 </div>
@@ -942,7 +934,7 @@ export function TtsPage({
                   <p className="notice">{referenceNotice}</p>
                   {referenceFile ? (
                     <button className="button secondary" disabled={referenceBusy} onClick={() => void analyzeReference(referenceFile)}>
-                      <RefreshCw size={15} />重新上传
+                      <RefreshCw size={15} />{t('voiceprints.uploadAgain')}
                     </button>
                   ) : null}
                 </div>
@@ -952,18 +944,18 @@ export function TtsPage({
                   <div className="clone-analysis-status">
                     <b>
                       {referenceJob.state === 'queued'
-                        ? '等待 ASR 分析'
+                        ? t('tts.reference.states.queued')
                         : referenceJob.state === 'running'
-                          ? '正在 ASR 分析'
+                          ? t('tts.reference.states.running')
                           : referenceJob.state === 'succeeded'
-                            ? '参考识别完成'
+                            ? t('tts.reference.states.succeeded')
                             : referenceJob.state === 'failed'
-                              ? '参考识别失败'
-                              : '参考分析已取消'}
+                              ? t('tts.reference.states.failed')
+                              : t('tts.reference.states.cancelled')}
                     </b>
                     <span>
                       {referenceProgress?.percent}%
-                      {referenceProgress?.estimated ? ' 估算' : ''} ·{' '}
+                      {referenceProgress?.estimated ? ` ${t('jobs.estimated')}` : ''} ·{' '}
                       {referenceProgress?.stage}
                       {referenceProgress?.detail
                         ? ` · ${referenceProgress.detail}`
@@ -975,14 +967,14 @@ export function TtsPage({
                     <progress
                       max={1}
                       value={referenceJob.progress}
-                      aria-label="克隆参考分析进度"
+                      aria-label={t('tts.reference.analysisProgress')}
                     />
                   ) : null}
                   {referenceJob.state === 'failed' ||
                   referenceJob.state === 'cancelled' ? (
                     <>
                       <p className="error">
-                        {referenceJob.error_message || '参考音频未能完成识别。'}
+                        {referenceJob.error_message || t('tts.reference.failedFallback')}
                       </p>
                       <button
                         className="button secondary"
@@ -990,25 +982,25 @@ export function TtsPage({
                         onClick={() => void retryReference()}
                       >
                         <RefreshCw size={15} />
-                        重试分析
+                        {t('tts.reference.retry')}
                       </button>
                     </>
                   ) : null}
                   {referenceJob.state === 'succeeded' && jobDetails[referenceJob.id]?.state === 'loading' ? (
-                    <p className="notice" role="status">正在加载参考音频识别结果…</p>
+                    <p className="notice" role="status">{t('tts.reference.loadingResult')}</p>
                   ) : null}
                   {referenceJob.state === 'succeeded' && jobDetails[referenceJob.id]?.state === 'error' ? (
                     <div role="alert">
-                      <p className="error">{jobDetails[referenceJob.id]?.error || '参考识别结果加载失败。'}</p>
+                      <p className="error">{jobDetails[referenceJob.id]?.error || t('tts.reference.loadFailed')}</p>
                       <button className="button secondary" onClick={() => loadJobDetail(referenceJob, true)}>
-                        <RefreshCw size={15} />重新加载结果
+                        <RefreshCw size={15} />{t('tts.reference.reloadResult')}
                       </button>
                     </div>
                   ) : null}
                   {referenceReady ? (
                     <div className="clone-analysis-result">
                       <label>
-                        参考音频语种
+                        {t('tts.reference.language')}
                         <select
                           value={draft.refLanguage}
                           onChange={(event) =>
@@ -1016,19 +1008,19 @@ export function TtsPage({
                           }
                         >
                           {availableReferenceLanguages.map((language) => (
-                            <option key={language} value={language}>{languageLabels[language]||language}</option>
+                            <option key={language} value={language}>{t(`common.languages.${language}`,{defaultValue:language})}</option>
                           ))}
                         </select>
                       </label>
                       <label>
-                        自动识别文本（可修正）
+                        {t('tts.reference.transcript')}
                         <textarea
                           className="short"
                           value={draft.refText}
                           onChange={(event) =>
                             updateContent('refText', event.target.value)
                           }
-                          placeholder="请核对文本与参考音频逐字一致。"
+                          placeholder={t('tts.reference.transcriptPlaceholder')}
                         />
                       </label>
                       {referenceDetail?.result?.artifacts?.some(
@@ -1041,15 +1033,14 @@ export function TtsPage({
                         />
                       ) : null}
                       <small>
-                        修正后将使用当前文本；超过 15
-                        秒时会按修正内容重新精确对齐。
+                        {t('tts.reference.correctionHelp')}
                       </small>
                     </div>
                   ) : null}
                 </div>
               ) : draft.refJobId ? (
                 <p className="error">
-                  参考分析任务已不存在，请重新上传或录音。
+                  {t('tts.reference.missing')}
                 </p>
               ) : null}
             </section>
@@ -1057,9 +1048,9 @@ export function TtsPage({
           {draft.mode === 'inline_clone' &&
           draft.cloneSource === 'voiceprint' ? (
             <label>
-              声纹样本
+              {t('tts.sample.label')}
               <select
-                aria-label="TTS 声纹样本"
+                aria-label={t('tts.sample.ariaLabel')}
                 value={sample?.id || ''}
                 disabled={!eligibleSamples.length}
                 onChange={(event) =>
@@ -1069,29 +1060,29 @@ export function TtsPage({
                 {eligibleSamples.length ? (
                   eligibleSamples.map((item, index) => (
                     <option key={item.id} value={item.id}>
-                      样本 {eligibleSamples.length - index} ·{' '}
+                      {t('tts.sample.number',{number:eligibleSamples.length-index})} ·{' '}
                       {formatTime(item.duration || 0)}
-                      {item.duration && item.duration > 15 ? ' · 自动截断' : ''}
+                      {item.duration && item.duration > 15 ? ` · ${t('tts.sample.autoTruncate')}` : ''}
                     </option>
                   ))
                 ) : (
-                  <option value="">没有可用于 TTS 的样本</option>
+                  <option value="">{t('tts.sample.empty')}</option>
                 )}
               </select>
               {sample ? (
                 <small className="sample-summary">
                   {sample.language} · {sample.transcript}
                   {sample.duration && sample.duration > 15
-                    ? ' · 克隆前将按字词边界精确截断至 15 秒以内。'
+                    ? ` · ${t('tts.sample.truncateHelp')}`
                     : ''}
                 </small>
               ) : null}
             </label>
           ) : null}
           {instructionSupported ? (
-            <section className="tts-instruction-panel" aria-label="TTS 高级指令">
+            <section className="tts-instruction-panel" aria-label={t('tts.instruction.panel')}>
               <label>
-                {draft.mode === 'voice_design' ? '音色与表达指令' : '风格与表达指令（可选）'}
+                {draft.mode === 'voice_design' ? t('tts.instruction.designLabel') : t('tts.instruction.styleLabel')}
                 <textarea
                   name="instruct"
                   className="short"
@@ -1099,18 +1090,20 @@ export function TtsPage({
                   maxLength={selectedTtsModel.controls.max_instruction_chars}
                   placeholder={
                     draft.mode === 'voice_design'
-                      ? '例如：温暖成熟的女性声音，音调略低，语速舒缓，带着克制的喜悦。'
-                      : '例如：语速稍慢，用温柔而开心的语气说。'
+                      ? t('tts.instruction.designPlaceholder')
+                      : t('tts.instruction.stylePlaceholder')
                   }
                   onChange={(event) => updateContent('instruct', event.target.value)}
                 />
                 <small>
                   {draft.instruct.length} / {selectedTtsModel.controls.max_instruction_chars}；
-                  语速、音调和情绪均通过自然语言描述，不是数值参数。
+                  {t('tts.instruction.help')}
                 </small>
               </label>
-              <div className="instruction-examples" aria-label="指令示例">
-                {instructionExamples.map((example) => (
+              <div className="instruction-examples" aria-label={t('tts.instruction.examples')}>
+                {instructionExampleKeys.map((key) => {
+                  const example=t(`tts.instruction.example.${key}`)
+                  return (
                   <button
                     key={example}
                     type="button"
@@ -1118,14 +1111,15 @@ export function TtsPage({
                   >
                     {example}
                   </button>
-                ))}
+                  )
+                })}
               </div>
             </section>
           ) : null}
           <label className="device-control">
-            计算设备
+            {t('tts.computeDevice')}
             <select
-              aria-label="TTS 计算设备"
+              aria-label={t('tts.computeDeviceAria')}
               value={effectiveTtsDevice}
               onChange={(event) =>
                 updatePreference(
@@ -1135,17 +1129,17 @@ export function TtsPage({
               }
             >
               <option value="gpu" disabled={gpuAvailable === false || ttsGpu?.available === false}>
-                GPU · BF16{gpuAvailable === false || ttsGpu?.available === false ? '（不可用）' : '（默认）'}
+                GPU · BF16{gpuAvailable === false || ttsGpu?.available === false ? t('tts.unavailableMark') : t('tts.defaultMark')}
               </option>
               <option value="cpu">CPU · FP32</option>
             </select>
             {draft.computeDevice === 'gpu' && effectiveTtsDevice === 'cpu' ? (
               <small className="device-hint">
-                {computeUnavailableReason(ttsGpu,'所选模型无法使用当前 GPU，本次自动使用 CPU。')}
+                {computeUnavailableReason(ttsGpu,t,t('tts.gpuFallback'))}
               </small>
             ) : (
               <small className="device-hint">
-                API 显式请求不可用 GPU 时返回 503；页面会按模型能力改用 CPU。
+                {t('tts.computeHelp')}
               </small>
             )}
           </label>
@@ -1158,11 +1152,11 @@ export function TtsPage({
                   updatePreference('accelerateSingleTask', event.target.checked)
                 }
               />
-              <span>单任务加速</span>
+              <span>{t('tts.acceleration')}</span>
             </label>
             <InfoTooltip
               id="tts-acceleration-help"
-              text="按 CPU 核心与可用内存或 GPU 显存自动提高任务内部批次。长文本收益更明显；不改变模型、精度或解码方式，内存不足时会自动回退。"
+              text={t('tts.accelerationHelp')}
             />
           </div>
           <div className="submission-actions">
@@ -1184,24 +1178,24 @@ export function TtsPage({
               onClick={() => void submit()}
             >
               <Sparkles size={18} />
-              {busy ? '正在提交…' : '生成语音'}
+              {busy ? t('tts.submit.submitting') : t('tts.submit.generate')}
             </button>
           </div>
           <div className="quality-note">
-            <b>本地质量策略</b>
+            <b>{t('tts.quality.title')}</b>
             <span>
-              官方 {selectedTtsModel?.name.replace('Qwen3-TTS ', '') || '0.6B'} 权重 · 无量化 ·{' '}
+              {t('tts.quality.official',{model:selectedTtsModel?.name.replace('Qwen3-TTS ','')||'0.6B'})} ·{' '}
               {effectiveTtsDevice === 'cpu'
-                ? 'CPU FP32；兼容性优先。'
-                : 'GPU BF16；官方原生精度加速。'}
+                ? t('tts.quality.cpu')
+                : t('tts.quality.gpu')}
             </span>
             {!instructionSupported ? (
               <small className="tts-control-note">
-                当前模型与音色模式根据文本语义和标点自动处理韵律，不接受自然语言高级指令。
+                {t('tts.quality.noInstruction')}
               </small>
             ) : (
               <small className="tts-control-note">
-                当前使用官方自然语言指令控制；独立语速、音高与底层采样参数仍保持关闭。
+                {t('tts.quality.instruction')}
               </small>
             )}
           </div>
@@ -1212,24 +1206,24 @@ export function TtsPage({
         className="tts-preview"
         data-module="RENDER_QUEUE / Q_02"
       >
-        <h2>当前合成结果</h2>
+        <h2>{t('tts.results.title')}</h2>
         {selectedSummary && jobDetails[selectedSummary.id]?.state === 'loading' ? (
           <div className="empty small" role="status">
             <Sparkles />
-            <p>正在按需加载完整合成结果…</p>
+            <p>{t('tts.results.loading')}</p>
           </div>
         ) : selectedSummary && jobDetails[selectedSummary.id]?.state === 'error' ? (
           <div className="empty small" role="alert">
             <Sparkles />
-            <p>{jobDetails[selectedSummary.id]?.error || '合成结果加载失败。'}</p>
-            <button onClick={() => loadJobDetail(selectedSummary, true)}>重新加载</button>
+            <p>{jobDetails[selectedSummary.id]?.error || t('tts.results.loadFailed')}</p>
+            <button onClick={() => loadJobDetail(selectedSummary, true)}>{t('common.actions.reload')}</button>
           </div>
         ) : selected?.result ? (
           <div className="audio-card">
             <div>
               <b>{selected.display_name}</b>
               <span>
-                {selected.result.speaker || (selected.request.voice_mode === 'voice_design' ? '设计音色' : '克隆音色')} ·{' '}
+                {selected.result.speaker || (selected.request.voice_mode === 'voice_design' ? t('tts.results.designedVoice') : t('tts.results.clonedVoice'))} ·{' '}
                 {selected.result.model_name || selected.result.model || (selected.request.model as string | undefined) || 'Qwen3-TTS 0.6B'} ·{' '}
                 {selected.result.duration}s ·{' '}
                 {(
@@ -1242,7 +1236,7 @@ export function TtsPage({
                 {selected.result.precision || ''}
               </span>
               {selected.result.instruct ? (
-                <small className="tts-result-instruction">指令：{selected.result.instruct}</small>
+                <small className="tts-result-instruction">{t('tts.results.instruction',{value:selected.result.instruct})}</small>
               ) : null}
             </div>
             {selected.result.artifacts?.[0] ? (
@@ -1264,17 +1258,17 @@ export function TtsPage({
                 )}
               >
                 <Download size={16} />
-                下载 {selected.result.format?.toUpperCase() || 'WAV'}
+                {t('tts.results.download',{format:selected.result.format?.toUpperCase()||'WAV'})}
               </a>
             ) : null}
           </div>
         ) : (
           <div className="empty small">
             <Sparkles />
-            <p>合成完成后可在这里试听和下载</p>
+            <p>{t('tts.results.empty')}</p>
           </div>
         )}
-        <h2>任务列表</h2>
+        <h2>{t('tts.taskList')}</h2>
         {visibleJobs.map((job) => (
           <JobMini
             key={job.id}

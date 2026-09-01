@@ -10,6 +10,8 @@ import { clearAsrPreferences, defaultAsrPreferences, loadAsrPreferences, publicA
 import { visibleWorkspaceJobs } from '../lib/jobs'
 import { computeUnavailableReason } from '../lib/presentation'
 import { SubmissionProgress } from '../components/SubmissionProgress'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 const segmentBatchSize=40
 function nameKey(value: string) {
   return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase()
@@ -31,32 +33,33 @@ function hotwordStats(lists: HotwordList[], ids: Set<string>) {
     promptChars: terms.length ? `Vocabulary: ${terms.join(', ')}.`.length : 0,
   }
 }
-function hotwordLimitIssue(listCount: number, stats: { terms: number; promptChars: number }, limits: HotwordLibraryCapability | undefined, prefix: string) {
+function hotwordLimitIssue(listCount: number, stats: { terms: number; promptChars: number }, limits: HotwordLibraryCapability | undefined, prefix: string, t: TFunction) {
   const violations: string[] = []
   const maxLists = limits?.max_selected_lists || 8
   const maxTerms = limits?.max_selected_terms || 500
   const maxPromptChars = limits?.max_prompt_chars || 8000
-  if (listCount > maxLists) violations.push(`${listCount} 个词表（上限 ${maxLists} 个）`)
-  if (stats.terms > maxTerms) violations.push(`${stats.terms} 个唯一热词（上限 ${maxTerms} 个）`)
-  if (stats.promptChars > maxPromptChars) violations.push(`${stats.promptChars} 个提示字符（上限 ${maxPromptChars} 个）`)
-  return violations.length ? `${prefix}：${violations.join('；')}。` : ''
+  if (listCount > maxLists) violations.push(t('asr.hotwords.listLimit', { count: listCount, max: maxLists }))
+  if (stats.terms > maxTerms) violations.push(t('asr.hotwords.termLimit', { count: stats.terms, max: maxTerms }))
+  if (stats.promptChars > maxPromptChars) violations.push(t('asr.hotwords.characterLimit', { count: stats.promptChars, max: maxPromptChars }))
+  return violations.length ? t('asr.hotwords.limitIssue', { prefix, violations: violations.join(t('common.separator.semicolon')) }) : ''
 }
 
 const SegmentRow = memo(function SegmentRow({ segment, speaker, active, currentTime, onPlay, onSeekWord, selected, selectionSpeaker, onToggle, onRename }: { segment: Segment; speaker?: Speaker; active: boolean; currentTime: number; onPlay: (segment: Segment) => void; onSeekWord: (start: number) => void; selected: boolean; selectionSpeaker?: string; onToggle: (segment: Segment) => void; onRename: (segment: Segment) => void }) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const disabled = Boolean(selectionSpeaker && selectionSpeaker !== segment.speaker)
   const match = speaker?.label_source === 'voiceprint' ? speaker.voiceprint_match : undefined
   return (
     <article className={`${active ? 'active ' : ''}${selected ? 'selected-segment' : ''}`}>
       <div className="segment-select">
-        <input type="checkbox" checked={selected} disabled={disabled} aria-label={`选择片段 ${segment.id + 1}`} onChange={() => onToggle(segment)} />
+        <input type="checkbox" checked={selected} disabled={disabled} aria-label={t('asr.segment.select', { number: segment.id + 1 })} onChange={() => onToggle(segment)} />
       </div>
       <div className="segment-time">
         <b>{formatTime(segment.start)}</b>
         <span>—</span>
         <b>{formatTime(segment.end)}</b>
       </div>
-      <button className={`speaker s${Number(segment.speaker.split('_')[1]) % 4}`} aria-label={`重命名说话人 ${segment.speaker_label}`} title="重命名当前任务中的说话人" onClick={() => onRename(segment)}>
+      <button className={`speaker s${Number(segment.speaker.split('_')[1]) % 4}`} aria-label={t('asr.segment.renameNamed', { name: segment.speaker_label })} title={t('asr.segment.renameHelp')} onClick={() => onRename(segment)}>
         <i />
         <span className="speaker-identity">
           <b>{match?.name || segment.speaker_label}</b>
@@ -79,11 +82,11 @@ const SegmentRow = memo(function SegmentRow({ segment, speaker, active, currentT
         )}
         {segment.words?.length ? (
           <button className="word-toggle" onClick={() => setExpanded((value) => !value)}>
-            {expanded ? '收起字词时间戳' : `查看 ${segment.words.length} 个字词时间戳`}
+            {expanded ? t('asr.segment.collapseWords') : t('asr.segment.viewWords', { count: segment.words.length })}
           </button>
         ) : null}
       </div>
-      <button className="icon-button" aria-label={`播放片段 ${segment.id + 1}`} onClick={() => onPlay(segment)}>
+      <button className="icon-button" aria-label={t('asr.segment.play', { number: segment.id + 1 })} onClick={() => onPlay(segment)}>
         <Play size={17} />
       </button>
     </article>
@@ -115,6 +118,7 @@ type Props = {
 }
 
 export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, maxSpeakers, maxUploadBytes, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
+  const { t, i18n } = useTranslation()
   const [file, setFile] = useState<File>()
   const [preferences, setPreferences] = useState<AsrPreferences>(() => loadAsrPreferences(maxSpeakers))
   const [busy, setBusy] = useState(false)
@@ -201,15 +205,15 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   const effectiveComputeDevice: ComputeDevice = computeDevice === 'gpu' && gpuCapability?.available === false ? 'cpu' : computeDevice
   const selectedHotwordIds = useMemo(() => new Set(preferences.hotwordListIds), [preferences.hotwordListIds])
   const selectedHotwordStats = useMemo(() => hotwordStats(hotwordLists, selectedHotwordIds), [hotwordLists, selectedHotwordIds])
-  const selectedHotwordIssue = hotwordLimitIssue(selectedHotwordIds.size, selectedHotwordStats, hotwordLimits, '当前热词选择已超出单次任务限制')
-  const fileLimitError=file?uploadLimitMessage(file,maxUploadBytes):''
-  const submitLabel=uploadProgress?.phase==='creating'?'正在创建任务…':uploadProgress?.phase==='uploading'&&uploadProgress.percent!==undefined?`正在上传 ${uploadProgress.percent}%`:uploadProgress?'正在准备上传…':busy?'正在处理…':'开始转写'
+  const selectedHotwordIssue = hotwordLimitIssue(selectedHotwordIds.size, selectedHotwordStats, hotwordLimits, t('asr.hotwords.currentSelection'), t)
+  const fileLimitError=file?uploadLimitMessage(file,maxUploadBytes,t,i18n.resolvedLanguage||'zh-CN'):''
+  const submitLabel=uploadProgress?.phase==='creating'?t('asr.submit.creating'):uploadProgress?.phase==='uploading'&&uploadProgress.percent!==undefined?t('asr.submit.uploading',{percent:uploadProgress.percent}):uploadProgress?t('asr.submit.preparing'):busy?t('common.states.processing'):t('asr.submit.start')
   const hotwordSelectionIssue = (item: HotwordList) => {
     if (selectedHotwordIds.has(item.id)) return ''
-    if (!item.term_count) return '该系统词表当前没有可用词条，暂不可选择。'
+    if (!item.term_count) return t('asr.hotwords.emptySystemList')
     const ids = new Set(selectedHotwordIds)
     ids.add(item.id)
-    return hotwordLimitIssue(ids.size, hotwordStats(hotwordLists, ids), hotwordLimits, `选择“${item.name}”后将超出单次任务限制`)
+    return hotwordLimitIssue(ids.size, hotwordStats(hotwordLists, ids), hotwordLimits, t('asr.hotwords.selectionWouldExceed',{name:item.name}), t)
   }
   const updatePreference = <K extends keyof AsrPreferences>(key: K, value: AsrPreferences[K]) =>
     setPreferences((current) => {
@@ -307,10 +311,10 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
       const job = await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
       onJobSubmitted(job)
       setFile(undefined)
-      setNotice('任务已提交，可在任务记录查看进度。')
+      setNotice(t('asr.notices.submitted'))
       if (input.current) input.current.value = ''
     } catch (cause) {
-      if(isUploadCancelled(cause))setNotice('上传已取消，已选文件仍保留，可直接重新提交。')
+      if(isUploadCancelled(cause))setNotice(t('asr.notices.uploadCancelled'))
       else setError((cause as Error).message)
     } finally {
       uploadController.current=undefined
@@ -327,7 +331,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
       if (player.paused) await player.play()
       else player.pause()
     } catch {
-      setMediaError('当前浏览器无法播放该音频编码，请下载原文件后播放。')
+      setMediaError(t('asr.results.playbackError'))
     }
   }
   const playSegment = useCallback(async (segment: Segment) => {
@@ -340,7 +344,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
     try {
       await player.play()
     } catch {
-      setMediaError('当前浏览器无法播放该音频编码，请下载原文件后播放。')
+      setMediaError(t('asr.results.playbackError'))
     }
   }, [])
   const seekWord = useCallback((start: number) => {
@@ -389,7 +393,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
       const next = await api.renameSpeaker(selected.id, renameSpeaker.id, renameValue.trim())
       onJobResultUpdated(selected.id, next)
       setRenameSpeaker(undefined)
-      setNotice(`已将 ${renameSpeaker.label} 重命名为 ${renameValue.trim()}`)
+      setNotice(t('asr.notices.renamed',{from:renameSpeaker.label,to:renameValue.trim()}))
     } catch (cause) {
       setError((cause as Error).message)
     } finally {
@@ -414,7 +418,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
       let personId = targetPersonId
       let created = false
       if (!personId) {
-        if (!newPersonName.trim()) throw new Error('当前说话人名称未匹配声纹库，请输入新人员名称。')
+        if (!newPersonName.trim()) throw new Error(t('asr.library.nameRequired'))
         const person = await api.addVoiceprintPerson(newPersonName.trim(), newPersonNote.trim() || null, newPersonHotword)
         personId = person.id
         created = true
@@ -423,7 +427,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
       await (created ? refreshPeopleAndHotwords() : refreshVoiceprints())
       setSelectedSegments(new Set())
       setLibraryOpen(false)
-      setNotice('选中段落已加入声纹库。')
+      setNotice(t('asr.notices.addedToVoiceprints'))
     } catch (cause) {
       setError((cause as Error).message)
     } finally {
@@ -435,7 +439,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
     clearAsrPreferences()
     saveAsrPreferences(next)
     setPreferences(next)
-    setNotice('已恢复 ASR 默认配置。')
+    setNotice(t('asr.defaultsRestored'))
     setError('')
   }
 
@@ -444,43 +448,43 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
       <aside className="control-panel" data-module="AUDIO_INPUT / UP_01">
         <div className="control-heading">
           <div>
-            <h1>音频转写</h1>
-            <p className="subtitle">上传音频，获得说话人、逐字时间戳与字幕文件</p>
+            <h1>{t('asr.title')}</h1>
+            <p className="subtitle">{t('asr.subtitle')}</p>
           </div>
           <button className="reset-settings" type="button" onClick={resetPreferences}>
             <RotateCcw size={14} />
-            恢复默认配置
+            {t('asr.restoreDefaults')}
           </button>
         </div>
         <input ref={input} hidden type="file" accept="audio/*,video/*" disabled={busy} onChange={(event) => chooseFile(event.target.files?.[0])} />
         <button className="dropzone" disabled={busy} onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={chooseDropped}>
           <UploadCloud size={44} />
-          <b>{file?.name || '拖放音频到这里'}</b>
-          <span>{file ? '点击可重新选择' : '支持常见音视频格式'}</span>
+          <b>{file?.name || t('asr.dropzone.title')}</b>
+          <span>{file ? t('asr.dropzone.reselect') : t('asr.dropzone.formats')}</span>
         </button>
         <label>
-          识别模型
-          <select aria-label="ASR 模型" value={model} onChange={(event) => updatePreference('model', event.target.value)}>
+          {t('asr.model')}
+          <select aria-label={t('asr.model')} value={model} onChange={(event) => updatePreference('model', event.target.value)}>
             {models.map((item) => (
               <option key={item.id} value={item.id} disabled={!item.installed}>
                 {item.name}
-                {item.installed ? '' : '（未安装）'}
+                {item.installed ? '' : t('asr.notInstalled')}
               </option>
             ))}
           </select>
         </label>
         <label>
-          识别语言
+          {t('asr.language')}
           <select value={language} onChange={(event) => updatePreference('language', event.target.value)}>
             {asrLanguages.map((item) => (
               <option key={item} value={item}>
-                {item === 'Auto' ? '自动检测' : item}
+                {item === 'Auto' ? t('common.languages.Auto') : item}
               </option>
             ))}
           </select>
         </label>
         <fieldset className="hotword-picker">
-          <legend>热词表（可选）</legend>
+          <legend>{t('asr.hotwords.label')}</legend>
           {hotwordLists.length ? (
             hotwordLists.map((item) => {
               const issue = hotwordSelectionIssue(item)
@@ -502,9 +506,9 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
                   />
                   <span>
                     {item.name}
-                    {item.kind === 'system' ? <em>系统</em> : null}
+                    {item.kind === 'system' ? <em>{t('hotwords.system')}</em> : null}
                   </span>
-                  <small className="hotword-option-count">{item.term_count} 词</small>
+                  <small className="hotword-option-count">{t('asr.hotwords.termCount',{count:item.term_count})}</small>
                   {issue ? (
                     <small id={issueId} className="hotword-option-issue">
                       {issue}
@@ -514,60 +518,60 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
               )
             })
           ) : (
-            <small className="device-hint">未配置热词表；可前往“热词库”创建。留空表示不启用热词。</small>
+            <small className="device-hint">{t('asr.hotwords.emptyHelp')}</small>
           )}
           {hotwordLists.length ? (
             <small className={`hotword-selection-summary${selectedHotwordIssue ? ' invalid' : ''}`}>
-              已选 {selectedHotwordIds.size}/{hotwordLimits?.max_selected_lists || 8} 表 · {selectedHotwordStats.terms}/{hotwordLimits?.max_selected_terms || 500} 词 · {selectedHotwordStats.promptChars}/{hotwordLimits?.max_prompt_chars || 8000} 字符
+              {t('asr.hotwords.summary',{lists:selectedHotwordIds.size,maxLists:hotwordLimits?.max_selected_lists||8,terms:selectedHotwordStats.terms,maxTerms:hotwordLimits?.max_selected_terms||500,characters:selectedHotwordStats.promptChars,maxCharacters:hotwordLimits?.max_prompt_chars||8000})}
             </small>
           ) : null}
           {selectedHotwordIssue ? (
             <p id="asr-hotword-limit-error" className="hotword-limit-error" role="alert">
-              {selectedHotwordIssue} 请取消至少一个词表后再提交。
+              {selectedHotwordIssue} {t('asr.hotwords.removeOne')}
             </p>
           ) : null}
         </fieldset>
         <label>
-          说话人数
+          {t('asr.speakerCount')}
           <select value={speakers} onChange={(event) => updatePreference('speakerCount', event.target.value)}>
-            <option value="auto">自动</option>
+            <option value="auto">{t('asr.auto')}</option>
             {Array.from({ length: maxSpeakers }, (_, index) => index + 1).map((value) => (
               <option key={value}>{value}</option>
             ))}
           </select>
         </label>
         <label>
-          时间戳
+          {t('asr.timestamps.label')}
           <select value={align ? 'word' : 'segment'} onChange={(event) => updatePreference('align', event.target.value === 'word')}>
-            <option value="word">句级 + 字词级</option>
-            <option value="segment">仅句级</option>
+            <option value="word">{t('asr.timestamps.word')}</option>
+            <option value="segment">{t('asr.timestamps.segment')}</option>
           </select>
         </label>
         <label className="toggle-label">
           <input type="checkbox" checked={useVoiceprints} onChange={(event) => updatePreference('useVoiceprints', event.target.checked)} />
-          <span>允许使用声纹库识别人员</span>
-          <small className="device-hint">只为匹配到的 Speaker 自动命名，不改变分段结果。</small>
+          <span>{t('asr.voiceprints.label')}</span>
+          <small className="device-hint">{t('asr.voiceprints.help')}</small>
         </label>
         <label>
-          计算设备
-          <select aria-label="ASR 计算设备" value={effectiveComputeDevice} onChange={(event) => updatePreference('computeDevice', event.target.value as ComputeDevice)}>
+          {t('asr.computeDevice')}
+          <select aria-label={t('asr.computeDeviceAria')} value={effectiveComputeDevice} onChange={(event) => updatePreference('computeDevice', event.target.value as ComputeDevice)}>
             <option value="gpu" disabled={gpuCapability?.available === false}>
               GPU · BF16
-              {gpuCapability?.available === false ? '（该模型不可用）' : '（默认）'}
+              {gpuCapability?.available === false ? t('asr.modelUnavailable') : t('asr.defaultMark')}
             </option>
             <option value="cpu">CPU · FP32</option>
           </select>
-          {computeDevice === 'gpu' && effectiveComputeDevice === 'cpu' ? <small className="device-hint">{computeUnavailableReason(gpuCapability)}</small> : <small className="device-hint">ASR 与时间对齐同步切换；VAD 和说话人分离始终使用 CPU。</small>}
+          {computeDevice === 'gpu' && effectiveComputeDevice === 'cpu' ? <small className="device-hint">{computeUnavailableReason(gpuCapability,t)}</small> : <small className="device-hint">{t('asr.computeHelp')}</small>}
         </label>
         <div className="acceleration-control">
           <label>
             <input type="checkbox" checked={accelerateSingleTask} onChange={(event) => updatePreference('accelerateSingleTask', event.target.checked)} />
-            <span>单任务加速</span>
+            <span>{t('asr.acceleration')}</span>
           </label>
-          <InfoTooltip id="asr-acceleration-help" text="按 CPU 核心与可用内存或 GPU 显存自动提高任务内部批次。长音频收益更明显；不改变模型、精度、分块或说话人算法，内存不足时会自动回退。" />
+          <InfoTooltip id="asr-acceleration-help" text={t('asr.accelerationHelp')} />
         </div>
         <label>
-          导出格式<div className="select-like">JSON · SRT · VTT · TXT</div>
+          {t('asr.exportFormat')}<div className="select-like">JSON · SRT · VTT · TXT</div>
         </label>
         <div className="submission-actions">
           {error||fileLimitError ? (
@@ -580,14 +584,14 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
               {notice}
             </p>
           ) : null}
-          {uploadProgress?<SubmissionProgress label="ASR 音频" progress={uploadProgress} onCancel={()=>uploadController.current?.abort()}/>:null}
+          {uploadProgress?<SubmissionProgress label={t('asr.uploadLabel')} progress={uploadProgress} onCancel={()=>uploadController.current?.abort()}/>:null}
           <button className="primary" disabled={busy || !chosenModel.installed || Boolean(selectedHotwordIssue) || Boolean(fileLimitError)} aria-describedby={selectedHotwordIssue ? 'asr-hotword-limit-error' : undefined} onClick={submit}>
             <Play size={18} />
             {submitLabel}
           </button>
         </div>
         <section className="aside-jobs">
-          <h2>任务列表</h2>
+          <h2>{t('asr.taskList')}</h2>
           {visibleJobs.map((job) => (
             <JobMini key={job.id} job={job} isSelected={job.id === selectedSummary?.id} onOpen={(item) => item.state === 'succeeded' && onSelect(item)} />
           ))}
@@ -597,15 +601,15 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
         {selectedSummary && detail?.state === 'loading' ? (
           <div className="empty" role="status">
             <FileAudio size={52} />
-            <h2>正在加载转写结果</h2>
-            <p>任务摘要已就绪，正在按需读取完整结果。</p>
+            <h2>{t('asr.results.loading')}</h2>
+            <p>{t('asr.results.loadingHelp')}</p>
           </div>
         ) : selectedSummary && detail?.state === 'error' ? (
           <div className="empty" role="alert">
             <FileAudio size={52} />
-            <h2>转写结果加载失败</h2>
-            <p>{detail.error || '请稍后重试。'}</p>
-            <button onClick={() => loadJobDetail(selectedSummary, true)}>重新加载</button>
+            <h2>{t('asr.results.loadFailed')}</h2>
+            <p>{detail.error || t('asr.results.tryLater')}</p>
+            <button onClick={() => loadJobDetail(selectedSummary, true)}>{t('common.actions.reload')}</button>
           </div>
         ) : selected && result ? (
           <>
@@ -619,7 +623,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
               </span>
               <div className="artifact-links">
                 {result.artifacts?.map((item) => (
-                  <a key={item.name} className="button" href={artifactUrl(selected.id, item.name)} title={`下载 ${item.name}`}>
+                  <a key={item.name} className="button" href={artifactUrl(selected.id, item.name)} title={t('asr.results.downloadNamed',{name:item.name})}>
                     <Download size={15} />
                     {item.name.split('.').pop()?.toUpperCase()}
                   </a>
@@ -634,7 +638,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
               onEnded={() => setPlaying(false)}
-              onError={() => setMediaError('当前浏览器无法播放该音频编码，请下载原文件后播放。')}
+              onError={() => setMediaError(t('asr.results.playbackError'))}
               onTimeUpdate={(event) => {
                 const value = event.currentTarget.currentTime
                 setCurrentTime(value)
@@ -653,50 +657,49 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
               </div>
             </div>
             <div className="player-row">
-              <button className="round" aria-label={playing ? '暂停' : '播放'} onClick={play}>
+              <button className="round" aria-label={playing ? t('asr.results.pause') : t('asr.results.play')} onClick={play}>
                 {playing ? <Pause /> : <Play />}
               </button>
               <strong>{formatTime(currentTime)}</strong>
               <span>/ {formatTime(duration)}</span>
               <span className="grow" />
               <span>
-                {result.language} · {result.timestamp_precision === 'word_or_character' ? '字词级对齐' : '句级时间戳'}
+                {result.language} · {result.timestamp_precision === 'word_or_character' ? t('asr.results.wordAlignment') : t('asr.results.segmentTimestamps')}
               </span>
             </div>
             {alignmentDowngraded ? (
               <p className="notice alignment-notice" role="note">
-                自动检测为 {result.language}
-                ；该语种暂不支持字词级对齐，本次已返回句段级时间戳。
+                {t('asr.results.alignmentDowngraded',{language:result.language})}
               </p>
             ) : null}
             {mediaError ? (
               <p className="media-error">
-                {mediaError} <a href={sourceUrl(selected.id, true)}>下载原文件</a>
+                {mediaError} <a href={sourceUrl(selected.id, true)}>{t('asr.results.downloadSource')}</a>
               </p>
             ) : null}
             <div className="transcript-tools">
               <Search size={18} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索转写内容" />
-              <select aria-label="按说话人过滤" value={speakerFilter} onChange={(event) => changeSpeakerFilter(event.target.value)}>
-                <option value="all">全部说话人</option>
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('asr.results.search')} />
+              <select aria-label={t('asr.results.filterSpeaker')} value={speakerFilter} onChange={(event) => changeSpeakerFilter(event.target.value)}>
+                <option value="all">{t('asr.results.allSpeakers')}</option>
                 {result.speakers?.map((speaker) => (
                   <option key={speaker.id} value={speaker.id}>
                     {speaker.label}
                   </option>
                 ))}
               </select>
-              <span>已展示 {Math.min(visibleSegmentCount,segments.length)} / 匹配 {segments.length} / 总计 {result.segments?.length || 0}</span>
+              <span>{t('asr.results.segmentSummary',{visible:Math.min(visibleSegmentCount,segments.length),matches:segments.length,total:result.segments?.length||0})}</span>
             </div>
             {selectedSegments.size ? (
-              <div className="segment-selection" aria-label="段落选择操作">
+              <div className="segment-selection" aria-label={t('asr.results.selectionActions')}>
                 <b>
-                  {selectedSegments.size} 个 {selectionLabel} 段落已选择
+                  {t('asr.results.selectedSegments',{count:selectedSegments.size,speaker:selectionLabel})}
                 </b>
                 <button onClick={openLibrary}>
                   <UserPlus size={16} />
-                  加入声纹库
+                  {t('asr.results.addToVoiceprints')}
                 </button>
-                <button className="icon-button" aria-label="清除段落选择" onClick={() => setSelectedSegments(new Set())}>
+                <button className="icon-button" aria-label={t('asr.results.clearSelection')} onClick={() => setSelectedSegments(new Set())}>
                   <X />
                 </button>
               </div>
@@ -706,11 +709,11 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
                 <>{visibleSegments.map((segment) => {
                   const active = currentTime >= segment.start && currentTime < segment.end
                   return <SegmentRow key={segment.id} segment={segment} speaker={speakerById.get(segment.speaker)} active={active} currentTime={active ? currentTime : -1} onPlay={playSegment} onSeekWord={seekWord} selected={selectedSegments.has(segment.id)} selectionSpeaker={selectionSpeaker} onToggle={toggleSegment} onRename={openRename} />
-                })}{visibleSegments.length<segments.length?<div ref={loadMoreSentinel} className="segment-load-more"><span>已展示 {visibleSegments.length} / {segments.length} 个匹配片段</span><button type="button" className="button" onClick={loadMoreSegments}>加载更多</button></div>:null}</>
+                })}{visibleSegments.length<segments.length?<div ref={loadMoreSentinel} className="segment-load-more"><span>{t('asr.results.matchSummary',{visible:visibleSegments.length,total:segments.length})}</span><button type="button" className="button" onClick={loadMoreSegments}>{t('asr.results.loadMore')}</button></div>:null}</>
               ) : (
                 <div className="empty search-empty">
                   <Search size={38} />
-                  <p>没有匹配的转写片段</p>
+                  <p>{t('asr.results.noMatches')}</p>
                 </div>
               )}
             </div>
@@ -718,37 +721,37 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
         ) : (
           <div className="empty">
             <FileAudio size={52} />
-            <h2>还没有转写结果</h2>
-            <p>从左侧上传音频并启动任务；处理完成后会在这里展示。</p>
+            <h2>{t('asr.results.empty')}</h2>
+            <p>{t('asr.results.emptyHelp')}</p>
           </div>
         )}
       </section>
       {renameSpeaker ? (
-        <Modal title="重命名说话人" closeLabel="关闭重命名" onClose={() => setRenameSpeaker(undefined)}>
-          <p>{renameSpeaker.label} 的所有段落和导出文件都会同步更新。</p>
+        <Modal title={t('asr.rename.title')} closeLabel={t('asr.rename.close')} onClose={() => setRenameSpeaker(undefined)}>
+          <p>{t('asr.rename.help',{name:renameSpeaker.label})}</p>
           <label>
-            新名称
+            {t('asr.rename.newName')}
             <input value={renameValue} maxLength={80} onChange={(event) => setRenameValue(event.target.value)} />
           </label>
           <button className="primary" disabled={busy || !renameValue.trim()} onClick={saveRename}>
-            保存名称
+            {t('asr.rename.save')}
           </button>
         </Modal>
       ) : null}
       {libraryOpen ? (
-        <Modal title="加入声纹库" closeLabel="关闭加入声纹库" onClose={() => setLibraryOpen(false)}>
+        <Modal title={t('asr.library.title')} closeLabel={t('asr.library.close')} onClose={() => setLibraryOpen(false)}>
           <p>
-            将 {selectedSegments.size} 个 {selectionLabel} 段落分别保存为独立样本。
+            {t('asr.library.help',{count:selectedSegments.size,speaker:selectionLabel})}
           </p>
           {voiceprints.length ? (
             <label>
-              指定人员
+              {t('asr.library.person')}
               <select value={targetPersonId} onChange={(event) => setTargetPersonId(event.target.value)}>
-                <option value="">新建人员</option>
+                <option value="">{t('asr.library.newPerson')}</option>
                 {voiceprints.map((person) => (
                   <option key={person.id} value={person.id}>
                     {person.name}
-                    {person.note ? '（' + person.note + '）' : ''} · {person.sample_count} 个样本
+                    {person.note ? `(${person.note})` : ''} · {t('voiceprints.sampleCount',{count:person.sample_count})}
                   </option>
                 ))}
               </select>
@@ -757,27 +760,27 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
           {!targetPersonId ? (
             <>
               <label>
-                新人员名字
-                <input value={newPersonName} maxLength={80} placeholder="当前名称未匹配，请创建人员" onChange={(event) => setNewPersonName(event.target.value)} />
+                {t('asr.library.newPersonName')}
+                <input value={newPersonName} maxLength={80} placeholder={t('asr.library.namePlaceholder')} onChange={(event) => setNewPersonName(event.target.value)} />
               </label>
               <label>
-                备注（选填）
-                <input value={newPersonNote} maxLength={20} placeholder="外号、手机号或公司名称" onChange={(event) => setNewPersonNote(event.target.value)} />
+                {t('voiceprints.noteOptional')}
+                <input value={newPersonNote} maxLength={20} placeholder={t('voiceprints.notePlaceholder')} onChange={(event) => setNewPersonNote(event.target.value)} />
               </label>
               <label className="toggle-label person-hotword-toggle">
                 <input type="checkbox" checked={newPersonHotword} onChange={(event) => setNewPersonHotword(event.target.checked)} />
-                <span>加入热词库</span>
-                <small>自动同步到“声纹库人名（全名）”，可靠提取时也同步到“去姓”词表。</small>
+                <span>{t('voiceprints.addToHotwords')}</span>
+                <small>{t('voiceprints.addToHotwordsHelp')}</small>
               </label>
             </>
           ) : (
             <p className="notice">
-              已匹配：
+              {t('asr.library.matched')}
               {voiceprints.find((person) => person.id === targetPersonId)?.name}
             </p>
           )}
           <button className="primary" disabled={busy || (!targetPersonId && !newPersonName.trim())} onClick={addToLibrary}>
-            {busy ? '正在保存…' : '确认加入'}
+            {busy ? t('voiceprints.saving') : t('asr.library.confirm')}
           </button>
         </Modal>
       ) : null}

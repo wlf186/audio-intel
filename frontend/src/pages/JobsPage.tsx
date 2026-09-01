@@ -6,9 +6,12 @@ import {progressPresentation} from '../lib/jobs'
 import {formatLocalDateTime,jobFailurePresentation} from '../lib/presentation'
 import {ConfirmDialog} from '../components/ConfirmDialog'
 import {Modal} from '../components/Modal'
+import {useTranslation} from 'react-i18next'
+import type {TFunction} from 'i18next'
+import {resolvedLocale} from '../i18n'
 
-const kindLabels:Record<JobHistoryQuery['kind'],string>={all:'全部',asr:'ASR',tts:'TTS'}
-const stateLabels:Record<JobState,string>={queued:'等待处理',running:'正在处理',succeeded:'已完成',failed:'失败',cancelled:'已取消'}
+const kinds:JobHistoryQuery['kind'][]=['all','asr','tts']
+const states:JobState[]=['queued','running','succeeded','failed','cancelled']
 const pageSizes=[25,50,100] as const
 
 function formatDuration(seconds:number){
@@ -19,10 +22,10 @@ function formatDuration(seconds:number){
  return `${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(remaining).padStart(2,'0')}`
 }
 
-function elapsed(job:JobSummary,now:number){
+function elapsed(job:JobSummary,now:number,t:TFunction){
  let seconds=job.processing_seconds||0
  if(job.state==='running'&&job.processing_as_of)seconds+=Math.max(0,(now-Date.parse(job.processing_as_of))/1000)
- if(seconds<1&&!job.started_at)return '未开始'
+ if(seconds<1&&!job.started_at)return t('jobs.history.notStarted')
  return formatDuration(seconds)
 }
 
@@ -33,14 +36,14 @@ function deviceName(job:JobSummary){
  return device==='cpu'?'CPU':'GPU'
 }
 
-function compactSeconds(value:number){if(value<60)return `${Math.max(1,Math.round(value))}秒`;if(value<3600)return `${Math.max(1,Math.round(value/60))}分钟`;return `${(value/3600).toFixed(1)}小时`}
-function queueEstimate(job:JobSummary){
+function compactSeconds(value:number,t:TFunction){if(value<60)return t('common.units.seconds',{count:Math.max(1,Math.round(value))});if(value<3600)return t('common.units.minutes',{count:Math.max(1,Math.round(value/60))});return t('common.units.hours',{count:(value/3600).toFixed(1)})}
+function queueEstimate(job:JobSummary,t:TFunction){
  const parts:string[]=[]
- if(job.state==='queued'&&job.queue?.position)parts.push(`队列 ${job.queue.position}/${job.queue.depth}`)
- if(job.queue?.waiting_for==='gpu')parts.push('等待 GPU')
+ if(job.state==='queued'&&job.queue?.position)parts.push(t('jobs.history.queue',{position:job.queue.position,depth:job.queue.depth}))
+ if(job.queue?.waiting_for==='gpu')parts.push(t('jobs.stages.waiting_for_gpu'))
  const range=job.estimate?.remaining_seconds
- if(range)parts.push(`预计 ${compactSeconds(range.lower)}–${compactSeconds(range.upper)} · ${job.estimate?.confidence==='high'?'高':job.estimate?.confidence==='medium'?'中':'低'}置信度`)
- else if(job.estimate?.state==='warming_up'&&['queued','running'].includes(job.state))parts.push(`ETA 学习中 ${job.estimate.sample_count}/5`)
+ if(range)parts.push(t('jobs.history.estimate',{lower:compactSeconds(range.lower,t),upper:compactSeconds(range.upper,t),confidence:t(`jobs.history.confidence.${job.estimate?.confidence||'low'}`)}))
+ else if(job.estimate?.state==='warming_up'&&['queued','running'].includes(job.state))parts.push(t('jobs.history.etaWarming',{count:job.estimate.sample_count}))
  return parts.join(' · ')
 }
 
@@ -80,6 +83,8 @@ type Props={
 }
 
 export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJobs,openJob,onJobUpdated,onJobsRemoved}:Props){
+ const {t}=useTranslation()
+ const locale=resolvedLocale()
  const [page,setPage]=useState<JobListResponse>()
  const [search,setSearch]=useState(query.search)
  const [selected,setSelected]=useState<Set<string>>(()=>new Set())
@@ -139,7 +144,7 @@ export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJob
  const updateQuery=(patch:Partial<JobHistoryQuery>)=>{setSelected(new Set());setError('');setNotice('');setHasNewJobs(false);setQuery(current=>({...current,...patch,offset:patch.offset??0}))}
  const toggle=(id:string)=>setSelected(current=>{const next=new Set(current);if(next.has(id))next.delete(id);else next.add(id);return next})
  const toggleAll=()=>setSelected(current=>allSelected?new Set([...current].filter(id=>!eligible.some(job=>job.id===id))):new Set(eligible.map(job=>job.id)))
- const copyJobId=async(id:string)=>{try{await copyText(id);setCopiedId(id);if(copyResetTimer.current!==undefined)clearTimeout(copyResetTimer.current);copyResetTimer.current=window.setTimeout(()=>setCopiedId(current=>current===id?'':current),2000)}catch{setError(current=>[current,`无法自动复制任务 ID，请手动复制：${id}`].filter(Boolean).join('；'))}}
+ const copyJobId=async(id:string)=>{try{await copyText(id);setCopiedId(id);if(copyResetTimer.current!==undefined)clearTimeout(copyResetTimer.current);copyResetTimer.current=window.setTimeout(()=>setCopiedId(current=>current===id?'':current),2000)}catch{setError(current=>[current,t('jobs.history.copyFailed',{id})].filter(Boolean).join(t('common.separator.semicolon')))}}
  const refreshAll=async()=>{await Promise.all([requestPage(),refreshRecentJobs()])}
  const act=async(operation:()=>Promise<unknown>)=>{setError('');setNotice('');try{await operation();await refreshAll()}catch(cause){setError((cause as Error).message)}}
  const updateSnapshot=(snapshot:JobSummary)=>{setPage(current=>current?{...current,items:current.items.map(job=>job.id===snapshot.id?snapshot:job)}:current);onJobUpdated(snapshot)}
@@ -150,8 +155,8 @@ export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJob
    updateSnapshot(snapshot)
    const deadline=Date.now()+4000
    while(snapshot.state==='running'&&Date.now()<deadline){await new Promise(resolve=>window.setTimeout(resolve,250));snapshot=await api.job(job.id);updateSnapshot(snapshot)}
-   if(snapshot.state==='cancelled')setNotice('任务已安全停止，现在可以重试或永久删除。')
-   else if(snapshot.state==='running')setNotice('停止请求已提交，系统仍在确认计算进程退出。')
+   if(snapshot.state==='cancelled')setNotice(t('jobs.history.cancelledNotice'))
+   else if(snapshot.state==='running')setNotice(t('jobs.history.cancellingNotice'))
   }catch(cause){setError((cause as Error).message)}finally{setCancellingIds(current=>{const next=new Set(current);next.delete(job.id);return next})}
  }
  const remove=(ids:string[])=>setPendingDelete(ids)
@@ -167,9 +172,9 @@ export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJob
    setSelected(current=>new Set([...current].filter(id=>!deletedSet.has(id))))
    onJobsRemoved(deletedIds)
    await refreshAll()
-   setNotice(`已删除 ${result.deleted_count} 个任务，释放 ${size(result.reclaimed_bytes)}；${result.database_compacted?'数据库已安全压缩':'数据库压缩未完成'}。`)
-   if(result.failed.length)setError(`${result.failed_count} 个任务未删除：${result.failed.map(item=>item.message).join('；')}`)
-   if(!result.database_compacted)setError(current=>[current,result.maintenance_error||'SQLite 安全压缩失败，请检查服务日志。'].filter(Boolean).join('；'))
+   setNotice(t('jobs.history.deletedNotice',{count:result.deleted_count,size:size(result.reclaimed_bytes,locale),database:t(result.database_compacted?'jobs.history.databaseCompacted':'jobs.history.databaseNotCompacted')}))
+   if(result.failed.length)setError(t('jobs.history.deleteFailed',{count:result.failed_count,message:result.failed.map(item=>item.message).join(t('common.separator.semicolon'))}))
+   if(!result.database_compacted)setError(current=>[current,result.maintenance_error||t('jobs.history.compactionFailed')].filter(Boolean).join(t('common.separator.semicolon')))
    setPendingDelete([])
   }catch(cause){setError((cause as Error).message)}finally{setBusy(false)}
  }
@@ -181,36 +186,36 @@ export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJob
  const queuedDeletes=deleteTargets.filter(job=>job.state==='queued').length
 
  return <section className="page-pad jobs-page hud-page" data-module="TASK_HISTORY / LOG_03">
-  <div className="page-heading"><div><h1 tabIndex={-1}>任务记录</h1><p>{loading&&!page?'正在读取任务记录…':`共 ${total} 个匹配任务，输入、结果和导出文件均持久化在项目目录。`}</p></div><div className="filter" role="group" aria-label="任务类型筛选">{Object.entries(kindLabels).map(([value,label])=><button type="button" aria-pressed={query.kind===value} className={query.kind===value?'active':''} onClick={()=>updateQuery({kind:value as JobHistoryQuery['kind']})} key={value}>{label}</button>)}</div></div>
+  <div className="page-heading"><div><h1 tabIndex={-1}>{t('jobs.history.title')}</h1><p>{loading&&!page?t('jobs.history.loading'):t('jobs.history.summary',{count:total})}</p></div><div className="filter" role="group" aria-label={t('jobs.history.kindFilter')}>{kinds.map(value=><button type="button" aria-pressed={query.kind===value} className={query.kind===value?'active':''} onClick={()=>updateQuery({kind:value})} key={value}>{t(`jobs.history.kind.${value}`)}</button>)}</div></div>
   <div className="job-query-bar">
-   <label className="job-search"><span>搜索任务</span><span className="search-field"><Search aria-hidden="true"/><input value={search} maxLength={128} placeholder="任务名称或 ID" onChange={event=>setSearch(event.target.value)}/></span></label>
-   <label><span>任务状态</span><select value={query.state} onChange={event=>updateQuery({state:event.target.value as JobHistoryQuery['state']})}><option value="all">全部状态</option>{Object.entries(stateLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
-   <label><span>每页数量</span><select value={query.limit} onChange={event=>updateQuery({limit:Number(event.target.value) as JobHistoryQuery['limit']})}>{pageSizes.map(value=><option key={value} value={value}>{value} 条</option>)}</select></label>
+   <label className="job-search"><span>{t('jobs.history.search')}</span><span className="search-field"><Search aria-hidden="true"/><input value={search} maxLength={128} placeholder={t('jobs.history.searchPlaceholder')} onChange={event=>setSearch(event.target.value)}/></span></label>
+   <label><span>{t('jobs.history.status')}</span><select value={query.state} onChange={event=>updateQuery({state:event.target.value as JobHistoryQuery['state']})}><option value="all">{t('jobs.history.allStates')}</option>{states.map(value=><option key={value} value={value}>{t(`jobs.history.state.${value}`)}</option>)}</select></label>
+   <label><span>{t('jobs.history.pageSize')}</span><select value={query.limit} onChange={event=>updateQuery({limit:Number(event.target.value) as JobHistoryQuery['limit']})}>{pageSizes.map(value=><option key={value} value={value}>{t('jobs.history.pageSizeOption',{count:value})}</option>)}</select></label>
   </div>
-  {hasNewJobs?<div className="new-jobs-banner" role="region" aria-label="新任务提示"><span>有新任务，当前页不会自动位移。</span><button type="button" onClick={showNewest}>返回第一页查看</button></div>:null}
-  {selected.size?<div className="selection-bar" role="region" aria-label="批量任务操作"><span><b>{selected.size}</b> 个任务已选择</span><button disabled={busy} onClick={()=>void remove([...selected])}>{busy?<LoaderCircle className="spin"/>:<Trash2/>}{busy?'正在安全清理…':'永久删除所选任务'}</button></div>:null}
-  {notice?<p className="notice" role="status">{notice}</p>:null}{error?<p className="error" role="alert">{error}</p>:null}{copiedId?<span className="sr-only" role="status" aria-live="polite">已复制完整任务 ID {copiedId}</span>:null}
-  <div className="jobs-table" role="table" aria-label="任务记录" aria-busy={loading}><div className="table-head" role="row"><span className="select-cell" role="columnheader"><input ref={selectAll} type="checkbox" aria-label="全选当前页可操作任务" checked={allSelected} disabled={!eligible.length||busy} onChange={toggleAll}/></span><span role="columnheader">任务</span><span role="columnheader">类型</span><span role="columnheader">状态</span><span role="columnheader">创建时间</span><span role="columnheader">耗时</span><span role="columnheader">进度</span><span role="columnheader">操作</span></div>{items.map(job=>{
+  {hasNewJobs?<div className="new-jobs-banner" role="region" aria-label={t('jobs.history.newJobsRegion')}><span>{t('jobs.history.newJobs')}</span><button type="button" onClick={showNewest}>{t('jobs.history.showNewest')}</button></div>:null}
+  {selected.size?<div className="selection-bar" role="region" aria-label={t('jobs.history.batchActions')}><span><b>{selected.size}</b> {t('jobs.history.selected',{count:selected.size})}</span><button disabled={busy} onClick={()=>void remove([...selected])}>{busy?<LoaderCircle className="spin"/>:<Trash2/>}{busy?t('jobs.history.cleaning'):t('jobs.history.deleteSelected')}</button></div>:null}
+  {notice?<p className="notice" role="status">{notice}</p>:null}{error?<p className="error" role="alert">{error}</p>:null}{copiedId?<span className="sr-only" role="status" aria-live="polite">{t('jobs.history.copiedId',{id:copiedId})}</span>:null}
+  <div className="jobs-table" role="table" aria-label={t('jobs.history.title')} aria-busy={loading}><div className="table-head" role="row"><span className="select-cell" role="columnheader"><input ref={selectAll} type="checkbox" aria-label={t('jobs.history.selectAll')} checked={allSelected} disabled={!eligible.length||busy} onChange={toggleAll}/></span><span role="columnheader">{t('jobs.history.columns.task')}</span><span role="columnheader">{t('jobs.history.columns.kind')}</span><span role="columnheader">{t('jobs.history.columns.status')}</span><span role="columnheader">{t('jobs.history.columns.created')}</span><span role="columnheader">{t('jobs.history.columns.elapsed')}</span><span role="columnheader">{t('jobs.history.columns.progress')}</span><span role="columnheader">{t('jobs.history.columns.actions')}</span></div>{items.map(job=>{
    const canDelete=job.state!=='running'
    const stopping=job.state==='running'&&(job.stage==='cancelling'||cancellingIds.has(job.id))
    const device=deviceName(job)
-   const estimate=queueEstimate(job)
-   const live=progressPresentation(job)
-   const stageLabel=stopping?'正在释放计算资源':live.stage
-   const failure=job.state==='failed'?jobFailurePresentation(job):undefined
+   const estimate=queueEstimate(job,t)
+   const live=progressPresentation(job,t)
+   const stageLabel=stopping?t('jobs.stages.cancelling'):live.stage
+   const failure=job.state==='failed'?jobFailurePresentation(job,t):undefined
    return <div className={`table-row ${selected.has(job.id)?'selected':''}`} role="row" key={job.id}>
-    <span className="select-cell" role="cell"><label><input type="checkbox" aria-label={`选择任务 ${job.display_name}`} checked={selected.has(job.id)} disabled={!canDelete||busy} title={canDelete?'选择任务':'运行中的任务需先取消'} onChange={()=>toggle(job.id)}/></label></span>
-    <span className="job-name" role="rowheader"><b>{job.display_name}</b><small className="job-meta"><span className="job-id" title={`完整任务 ID：${job.id}`}>任务 ID：{job.id.slice(0,12)}…</span><button type="button" className={`copy-job-id ${copiedId===job.id?'copied':''}`} aria-label={`${copiedId===job.id?'已复制':'复制'}完整任务 ID ${job.id}`} title={copiedId===job.id?'已复制完整任务 ID':'复制完整任务 ID'} onClick={()=>void copyJobId(job.id)}>{copiedId===job.id?<Check/>:<Copy/>}</button><span aria-hidden="true">·</span><span>{device}</span></small></span>
-    <span className="kind" role="cell" data-label="类型">{job.kind.toUpperCase()}</span>
-    <span className={`status ${job.state}`} role="cell" data-label="状态">{stopping?'正在安全停止':stateLabels[job.state]}</span>
-    <span className="created" role="cell" data-label="创建">{formatLocalDateTime(job.created_at)}</span>
-    <span className="elapsed" role="cell" data-label="耗时">{elapsed(job,now)}<small>{(job.attempts||0)>1?`${job.attempts} 次尝试`:'实际处理'}</small></span>
-    <span className="job-progress-cell" role="cell" data-label="进度"><span className="progress-summary">{live.percent}%{live.estimated?' 估算':''} · {stageLabel}</span>{['queued','running'].includes(job.state)?<progress max={100} value={live.percent} aria-label={`${job.display_name} 任务进度 ${live.percent}%`}/>:null}{failure?<small className="job-failure-summary"><b>{failure.title}</b><span>{failure.advice}</span></small>:null}{live.detail?<small className="progress-activity">{live.detail}</small>:null}{estimate?<small className="queue-estimate">{estimate}</small>:null}</span>
-    <span className="actions" role="cell">{job.state==='succeeded'?<button title="查看结果" aria-label={`查看任务结果 ${job.display_name}`} onClick={()=>openJob(job)}><Eye/></button>:null}{job.state==='failed'?<button title="查看失败详情" aria-label={`查看失败详情 ${job.display_name}`} onClick={()=>setFailureDetails(job)}><CircleAlert/></button>:null}{['queued','running'].includes(job.state)?<button title={stopping?'正在安全停止':'取消任务'} aria-label={stopping?`正在安全停止 ${job.display_name}`:`取消任务 ${job.display_name}`} disabled={stopping} onClick={()=>void cancelJob(job)}>{stopping?<LoaderCircle className="spin"/>:<XCircle/>}</button>:null}{['failed','cancelled'].includes(job.state)?<button title="重试" aria-label={`重试任务 ${job.display_name}`} onClick={()=>void act(()=>api.retry(job.id))}><RotateCcw/></button>:null}{canDelete?<button title="永久删除" aria-label={`永久删除任务 ${job.display_name}`} disabled={busy} onClick={()=>void remove([job.id])}><Trash2/></button>:null}</span>
+    <span className="select-cell" role="cell"><label><input type="checkbox" aria-label={t('jobs.history.selectTask',{name:job.display_name})} checked={selected.has(job.id)} disabled={!canDelete||busy} title={canDelete?t('jobs.history.selectTaskShort'):t('jobs.history.cancelBeforeSelect')} onChange={()=>toggle(job.id)}/></label></span>
+    <span className="job-name" role="rowheader"><b>{job.display_name}</b><small className="job-meta"><span className="job-id" title={t('jobs.history.fullId',{id:job.id})}>{t('jobs.history.shortId',{id:job.id.slice(0,12)})}</span><button type="button" className={`copy-job-id ${copiedId===job.id?'copied':''}`} aria-label={t(copiedId===job.id?'jobs.history.copiedFullIdWithValue':'jobs.history.copyFullIdWithValue',{id:job.id})} title={t(copiedId===job.id?'jobs.history.copiedFullId':'jobs.history.copyFullId')} onClick={()=>void copyJobId(job.id)}>{copiedId===job.id?<Check/>:<Copy/>}</button><span aria-hidden="true">·</span><span>{device}</span></small></span>
+    <span className="kind" role="cell" data-label={t('jobs.history.columns.kind')}>{job.kind.toUpperCase()}</span>
+    <span className={`status ${job.state}`} role="cell" data-label={t('jobs.history.columns.status')}>{stopping?t('jobs.safelyStopping'):t(`jobs.history.state.${job.state}`)}</span>
+    <span className="created" role="cell" data-label={t('jobs.history.createdShort')}>{formatLocalDateTime(job.created_at,locale,t)}</span>
+    <span className="elapsed" role="cell" data-label={t('jobs.history.columns.elapsed')}>{elapsed(job,now,t)}<small>{(job.attempts||0)>1?t('jobs.history.attempts',{count:job.attempts}):t('jobs.history.actualProcessing')}</small></span>
+    <span className="job-progress-cell" role="cell" data-label={t('jobs.history.columns.progress')}><span className="progress-summary">{live.percent}%{live.estimated?` ${t('jobs.estimated')}`:''} · {stageLabel}</span>{['queued','running'].includes(job.state)?<progress max={100} value={live.percent} aria-label={t('jobs.history.taskProgress',{name:job.display_name,percent:live.percent})}/>:null}{failure?<small className="job-failure-summary"><b>{failure.title}</b><span>{failure.advice}</span></small>:null}{live.detail?<small className="progress-activity">{live.detail}</small>:null}{estimate?<small className="queue-estimate">{estimate}</small>:null}</span>
+    <span className="actions" role="cell">{job.state==='succeeded'?<button title={t('jobs.history.viewResult')} aria-label={t('jobs.history.viewTaskResult',{name:job.display_name})} onClick={()=>openJob(job)}><Eye/></button>:null}{job.state==='failed'?<button title={t('jobs.history.viewFailure')} aria-label={t('jobs.history.viewTaskFailure',{name:job.display_name})} onClick={()=>setFailureDetails(job)}><CircleAlert/></button>:null}{['queued','running'].includes(job.state)?<button title={stopping?t('jobs.safelyStopping'):t('jobs.history.cancelTask')} aria-label={t(stopping?'jobs.history.stoppingNamed':'jobs.history.cancelNamed',{name:job.display_name})} disabled={stopping} onClick={()=>void cancelJob(job)}>{stopping?<LoaderCircle className="spin"/>:<XCircle/>}</button>:null}{['failed','cancelled'].includes(job.state)?<button title={t('common.actions.retry')} aria-label={t('jobs.history.retryNamed',{name:job.display_name})} onClick={()=>void act(()=>api.retry(job.id))}><RotateCcw/></button>:null}{canDelete?<button title={t('common.actions.deletePermanently')} aria-label={t('jobs.history.deleteNamed',{name:job.display_name})} disabled={busy} onClick={()=>void remove([job.id])}><Trash2/></button>:null}</span>
    </div>
-  })}{loading&&!items.length?<div className="jobs-loading" role="status"><LoaderCircle className="spin"/>正在加载任务…</div>:!loading&&!items.length?<div className="jobs-empty"><p>{hasFilters?'没有匹配的任务':'还没有任务'}</p><span>{hasFilters?'请调整类型、状态或搜索条件。':'提交音频转写或语音合成后，任务会显示在这里。'}</span></div>:null}</div>
-  {total>0?<nav className="job-pagination" aria-label="任务分页"><span>第 {currentPage} / {Math.ceil(total/query.limit)} 页 · 共 {total} 条</span><div><button aria-label="第一页" disabled={currentPage===1} onClick={()=>goToPage(1)}><ChevronsLeft/></button><button aria-label="上一页" disabled={currentPage===1} onClick={()=>goToPage(currentPage-1)}><ChevronLeft/></button>{pages.map((value,index)=><span key={value} className={`page-number-slot ${value===currentPage?'current':''}`}>{index>0&&value-pages[index-1]>1?<i aria-hidden="true">…</i>:null}<button aria-label={`第 ${value} 页`} aria-current={value===currentPage?'page':undefined} className={value===currentPage?'active':''} onClick={()=>goToPage(value)}>{value}</button></span>)}<button aria-label="下一页" disabled={currentPage===totalPages} onClick={()=>goToPage(currentPage+1)}><ChevronRight/></button><button aria-label="最后一页" disabled={currentPage===totalPages} onClick={()=>goToPage(totalPages)}><ChevronsRight/></button></div></nav>:null}
-  {pendingDelete.length?<ConfirmDialog title="永久删除任务" description={`永久删除选中的 ${deleteTargets.length} 个任务？${queuedDeletes?`其中 ${queuedDeletes} 个排队任务会先取消。`:''} 输入、输出、临时文件和数据库记录都将被清除，且不可恢复。`} confirmLabel="永久删除" danger busy={busy} onClose={()=>setPendingDelete([])} onConfirm={()=>void confirmRemove()}/>:null}
-  {failureDetails?<Modal title="任务失败详情" closeLabel="关闭失败详情" onClose={()=>setFailureDetails(undefined)}><div className="failure-details"><h3>{jobFailurePresentation(failureDetails).title}</h3><p>{jobFailurePresentation(failureDetails).advice}</p><dl><div><dt>任务</dt><dd>{failureDetails.display_name}</dd></div><div><dt>错误码</dt><dd><code>{failureDetails.error_code||'UnknownError'}</code></dd></div></dl><label>技术详情<textarea readOnly value={failureDetails.error_message||'服务未提供更多错误信息。'}/></label><div className="modal-actions"><button className="button" onClick={()=>setFailureDetails(undefined)}>关闭</button></div></div></Modal>:null}
+  })}{loading&&!items.length?<div className="jobs-loading" role="status"><LoaderCircle className="spin"/>{t('jobs.history.loadingTasks')}</div>:!loading&&!items.length?<div className="jobs-empty"><p>{hasFilters?t('jobs.history.noMatches'):t('jobs.history.empty')}</p><span>{hasFilters?t('jobs.history.adjustFilters'):t('jobs.history.emptyHelp')}</span></div>:null}</div>
+  {total>0?<nav className="job-pagination" aria-label={t('jobs.history.pagination')}><span>{t('jobs.history.pageSummary',{current:currentPage,total:Math.ceil(total/query.limit),count:total})}</span><div><button aria-label={t('jobs.history.firstPage')} disabled={currentPage===1} onClick={()=>goToPage(1)}><ChevronsLeft/></button><button aria-label={t('jobs.history.previousPage')} disabled={currentPage===1} onClick={()=>goToPage(currentPage-1)}><ChevronLeft/></button>{pages.map((value,index)=><span key={value} className={`page-number-slot ${value===currentPage?'current':''}`}>{index>0&&value-pages[index-1]>1?<i aria-hidden="true">…</i>:null}<button aria-label={t('jobs.history.pageNumber',{value})} aria-current={value===currentPage?'page':undefined} className={value===currentPage?'active':''} onClick={()=>goToPage(value)}>{value}</button></span>)}<button aria-label={t('jobs.history.nextPage')} disabled={currentPage===totalPages} onClick={()=>goToPage(currentPage+1)}><ChevronRight/></button><button aria-label={t('jobs.history.lastPage')} disabled={currentPage===totalPages} onClick={()=>goToPage(totalPages)}><ChevronsRight/></button></div></nav>:null}
+  {pendingDelete.length?<ConfirmDialog title={t('jobs.history.deleteTitle')} description={t('jobs.history.deleteDescription',{count:deleteTargets.length,queued:queuedDeletes?t('jobs.history.queuedDelete',{count:queuedDeletes}):''})} confirmLabel={t('common.actions.deletePermanently')} danger busy={busy} onClose={()=>setPendingDelete([])} onConfirm={()=>void confirmRemove()}/>:null}
+  {failureDetails?<Modal title={t('jobs.history.failureDetails')} closeLabel={t('jobs.history.closeFailure')} onClose={()=>setFailureDetails(undefined)}><div className="failure-details"><h3>{jobFailurePresentation(failureDetails,t).title}</h3><p>{jobFailurePresentation(failureDetails,t).advice}</p><dl><div><dt>{t('jobs.history.columns.task')}</dt><dd>{failureDetails.display_name}</dd></div><div><dt>{t('jobs.history.errorCode')}</dt><dd><code>{failureDetails.error_code||'UnknownError'}</code></dd></div></dl><label>{t('jobs.history.technicalDetails')}<textarea readOnly value={failureDetails.error_message||t('jobs.history.noErrorDetails')}/></label><div className="modal-actions"><button className="button" onClick={()=>setFailureDetails(undefined)}>{t('common.actions.close')}</button></div></div></Modal>:null}
  </section>
 }

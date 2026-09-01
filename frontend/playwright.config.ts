@@ -11,6 +11,7 @@ export default defineConfig({
   browserName:'chromium',
   headless:true,
   viewport:{width:1440,height:900},
+  locale:'zh-CN',
   launchOptions:process.platform==='linux'?{executablePath:'/usr/bin/chromium',args:['--no-sandbox']}:undefined,
  },
 })

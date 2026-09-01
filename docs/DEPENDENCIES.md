@@ -11,7 +11,7 @@
 
 qwen-tts 0.1.1 与 qwen-asr 0.0.6 精确要求不同 Transformers 版本，严禁同环境安装。Torch 2.11 要求 `setuptools<82`，因此模型环境固定到已修复已知旧版公告且满足该约束的 setuptools 81.0.0。
 
-前端固定 pnpm 10.15.1，支持 Node 22.20+，CI 和文档推荐 Node 24 LTS；当前锁定 React 19、TypeScript 5.9 和 Vite 7。TypeScript 6、Vite 8、lucide-react 1.x 以及 Torch/Qwen 大版本升级不属于例行补丁，应单独做兼容与真实模型验证。
+前端固定 pnpm 10.15.1，支持 Node 22.20+，CI 和文档推荐 Node 24 LTS；当前锁定 React 19、TypeScript 5.9、Vite 7、i18next 26 和 react-i18next 17。TypeScript 6、Vite 8、lucide-react 1.x 以及 Torch/Qwen 大版本升级不属于例行补丁，应单独做兼容与真实模型验证。
 
 `mkcert` 是局域网直连 HTTPS 证书生成的可选系统工具，不属于 Python 或前端运行时锁。证书助手只从 `PATH` 调用它，并通过项目专用 `<AUDIO_INTEL_DATA_DIR>/tls/ca`（默认 `data/tls/ca`）设置 `CAROOT`；不会运行 `mkcert -install`。不使用内置证书助手、或由外部反向代理终止 TLS 时无需安装。
 

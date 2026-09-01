@@ -43,6 +43,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - 新增同类队列位置、稳定阶段/细粒度进度、本机历史 ETA 区间、`GET /api/v1/queue`、单任务 SSE 和 ETag 条件轮询。TTS 解码与 ASR 推理的顶层 `progress` 现在会持续变化；`progress_detail.basis=estimated` 时百分比是最佳估算，`activity` 提供当前调用的模型活动。新增响应字段是兼容性扩展，但使用严格反序列化模型的客户端需要先允许这些字段。ETA 是热身后才出现的建议区间，不是 SLA。
 - Windows 上的 ASR 子进程进度通信改为不可变编号快照，修复父进程读取进度时覆盖同一路径可能触发的 `PermissionError: [WinError 5]`。进度频率、API 和识别结果不变；TTS 仍直接写入任务进度，不使用该文件通信机制。
 - ASR/TTS 页面参数现在分别保存在浏览器 localStorage，并提供页面级“恢复默认配置”；清除站点数据后会恢复默认。ASR 偏好升级到 v3，自动迁移 v2 设置并将热词表勾选作为长期偏好保存；刷新、切页、重开浏览器和成功提交后继续沿用，恢复 ASR 默认配置时清空。TTS 偏好仍为包含 `model` 的 v2，未保存模型时仍使用 0.6B。TTS 文本、`instruct`、参考文本和分析引用仅保留在 sessionStorage；热词库未保存草稿同样只在当前标签页会话保留，保存或“取消并清空”后删除。文件和未确认的麦克风录音不会持久化。
+- Web UI 新增简体中文/英文切换。显式选择保存在 localStorage 的 `audio-intel:ui-locale:v1`，跨刷新和重开浏览器保留；未选择时按浏览器语言检测，无法检测时使用简体中文。清除站点数据会同时清除该选择；不改变 API、任务数据或原有草稿生命周期。
 - ASR 新增 1.7B 模型选择和热词库。默认仍是 0.6B；旧客户端省略 `model` 和 `hotword_list_ids` 时行为不变。`setup asr/all` 会额外下载固定 revision、当前约 4.4 GiB 的 1.7B 权重。GPU 按标称 4/8 GiB 档位并扣除 256 MiB 报告容差判断，因此 0.6B/1.7B 的实际门槛分别是 3840/7936 MiB，判断口径是报告的总显存而非当前空闲显存。门槛只决定准入，不保证其他 GPU 程序不会造成运行期 OOM。
 - Capabilities 新增 `asr.default_model`、`asr.models[]` 和 `asr.hotword_library`，ASR 结果新增模型身份与 `hotword_context`。这些都是兼容性扩展；严格反序列化客户端应先允许新字段，并按 `asr.models[].compute_devices` 判断所选模型，而不是继续使用只代表默认模型的顶层 `asr.compute_devices`。
 - 声纹库新增浏览器麦克风录音入口，继续复用现有样本上传 API，不新增数据库字段或迁移。远程普通 HTTP 访问仍可能被浏览器拒绝麦克风权限，可继续使用文件上传。

@@ -1,4 +1,6 @@
 import type {AuthSession,BatchDeleteResult,Capabilities,Health,HotwordList,Job,JobListQuery,JobListResponse,JobResult,Probe,TlsBootstrap,VoiceprintPerson,VoiceprintSample} from './types'
+import type {TFunction} from 'i18next'
+import i18n from '../i18n'
 
 export class HttpError extends Error{status:number;retryAfter?:number;constructor(status:number,message:string,retryAfter?:number){super(message);this.status=status;this.retryAfter=retryAfter}}
 export type SubmissionPhase='preparing'|'uploading'|'creating'
@@ -23,18 +25,18 @@ function detailMessage(detail:unknown,status:number){
     if(typeof entry.message==='string')return entry.message
     if(typeof entry.title==='string')return entry.title
   }
-  return `请求失败（HTTP ${status}）`
+  return i18n.t('errors.requestFailed',{status})
 }
 export async function request<T>(path:string,init:RequestInit={}):Promise<T>{
   const headers=new Headers(init.headers)
   let response:Response
-  try{response=await fetch(path,{...init,headers,credentials:'same-origin'})}catch(cause){throw new Error(cause instanceof TypeError?'无法连接本地服务，请确认服务已启动后重试。':(cause as Error).message)}
-  if(!response.ok){const body=await response.json().catch(()=>({detail:response.statusText,retry_after_seconds:undefined}));if(response.status===401)window.dispatchEvent(new Event('audio-intel:unauthorized'));const retryAfter=Number(response.headers.get('Retry-After')||body.retry_after_seconds)||undefined;const detail=detailMessage(body.detail||body.title,response.status);throw new HttpError(response.status,retryAfter?`${detail}；请在 ${retryAfter} 秒后重试。`:detail,retryAfter)}
+  try{response=await fetch(path,{...init,headers,credentials:'same-origin'})}catch(cause){throw new Error(cause instanceof TypeError?i18n.t('errors.network'):(cause as Error).message)}
+  if(!response.ok){const body=await response.json().catch(()=>({detail:response.statusText,retry_after_seconds:undefined}));if(response.status===401)window.dispatchEvent(new Event('audio-intel:unauthorized'));const retryAfter=Number(response.headers.get('Retry-After')||body.retry_after_seconds)||undefined;const detail=detailMessage(body.detail||body.title,response.status);throw new HttpError(response.status,retryAfter?i18n.t('errors.retryAfter',{detail,seconds:retryAfter}):detail,retryAfter)}
   if(response.status===204)return undefined as T; return response.json()
 }
 function requestForm<T>(path:string,data:FormData,key:string,{onProgress,signal}:SubmissionOptions={}):Promise<T>{
   return new Promise((resolve,reject)=>{
-    if(signal?.aborted){reject(new DOMException('上传已取消','AbortError'));return}
+    if(signal?.aborted){reject(new DOMException(i18n.t('errors.uploadCancelled'),'AbortError'));return}
     const xhr=new XMLHttpRequest()
     let settled=false
     let loadedBytes=0
@@ -65,11 +67,11 @@ function requestForm<T>(path:string,data:FormData,key:string,{onProgress,signal}
       const responseBody=(body&&typeof body==='object'?body:{}) as {detail?:unknown;title?:unknown;retry_after_seconds?:unknown}
       const retryAfter=Number(xhr.getResponseHeader('Retry-After')||responseBody.retry_after_seconds)||undefined
       const detail=detailMessage(responseBody.detail||responseBody.title,xhr.status)
-      reject(new HttpError(xhr.status,retryAfter?`${detail}；请在 ${retryAfter} 秒后重试。`:detail,retryAfter))
+      reject(new HttpError(xhr.status,retryAfter?i18n.t('errors.retryAfter',{detail,seconds:retryAfter}):detail,retryAfter))
     })
-    xhr.onerror=()=>finish(()=>reject(new Error('无法连接本地服务，请确认服务已启动后重试。')))
-    xhr.ontimeout=()=>finish(()=>reject(new Error('上传请求超时，请检查网络后重试。')))
-    xhr.onabort=()=>finish(()=>reject(new DOMException('上传已取消','AbortError')))
+    xhr.onerror=()=>finish(()=>reject(new Error(i18n.t('errors.network'))))
+    xhr.ontimeout=()=>finish(()=>reject(new Error(i18n.t('errors.uploadTimeout'))))
+    xhr.onabort=()=>finish(()=>reject(new DOMException(i18n.t('errors.uploadCancelled'),'AbortError')))
     signal?.addEventListener('abort',abort,{once:true})
     emit({phase:'preparing',loadedBytes:0})
     xhr.send(data)
@@ -79,7 +81,7 @@ function queryString(values:JobListQuery){const params=new URLSearchParams();for
 const pendingSubmissionKeys=new Map<string,string>()
 function createIdempotencyKey(){
   const cryptoApi=globalThis.crypto
-  if(!cryptoApi||typeof cryptoApi.getRandomValues!=='function')throw new Error('当前浏览器无法生成安全的提交标识，请升级浏览器后重试。')
+  if(!cryptoApi||typeof cryptoApi.getRandomValues!=='function')throw new Error(i18n.t('errors.secureId'))
   if(typeof cryptoApi.randomUUID==='function')return cryptoApi.randomUUID()
   const bytes=cryptoApi.getRandomValues(new Uint8Array(16))
   bytes[6]=(bytes[6]&0x0f)|0x40
@@ -133,5 +135,5 @@ export const api={
 export function artifactUrl(jobId:string,name:string){return `/api/v1/jobs/${jobId}/artifacts/${encodeURIComponent(name)}`}
 export function sourceUrl(jobId:string,download=false){return `/api/v1/jobs/${jobId}/source${download?'?download=true':''}`}
 export function formatTime(value=0,decimal=true){const ms=Math.max(0,Math.round(value*1000));const h=Math.floor(ms/3600000);const m=Math.floor(ms%3600000/60000);const s=Math.floor(ms%60000/1000);return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}${decimal?'.'+String(ms%1000).padStart(3,'0'):''}`}
-export function size(value=0){if(value<1024)return `${value} B`;if(value<1048576)return `${(value/1024).toFixed(1)} KB`;return `${(value/1048576).toFixed(1)} MB`}
-export function uploadLimitMessage(file:File,maxBytes?:number){return maxBytes&&file.size>maxBytes?`文件大小 ${size(file.size)}，超过服务允许的 ${size(maxBytes)} 上限。请选择更小的文件。`:''}
+export function size(value=0,locale='zh-CN'){const format=(amount:number,digits=0)=>new Intl.NumberFormat(locale,{minimumFractionDigits:digits,maximumFractionDigits:digits}).format(amount);if(value<1024)return `${format(value)} B`;if(value<1048576)return `${format(value/1024,1)} KB`;return `${format(value/1048576,1)} MB`}
+export function uploadLimitMessage(file:File,maxBytes:number|undefined,t:TFunction,locale:string){return maxBytes&&file.size>maxBytes?t('errors.fileTooLarge',{size:size(file.size,locale),limit:size(maxBytes,locale)}):''}

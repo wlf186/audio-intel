@@ -10,6 +10,7 @@ import {VoiceprintsPage} from './pages/VoiceprintsPage'
 import {HotwordsPage} from './pages/HotwordsPage'
 import {AuthGate} from './components/AuthGate'
 import {newestJobsFirst} from './lib/jobs'
+import {useTranslation} from 'react-i18next'
 
 const pages=new Set<Page>(['asr','tts','hotwords','voiceprints','jobs','system'])
 const jobLimit=100
@@ -21,6 +22,7 @@ function jobVersion(job:JobSummary){return job.updated_at||job.created_at}
 function summaryOf(job:Job):JobSummary{const {request:_,result:__,...summary}=job;return summary}
 
 export default function App(){
+ const {t}=useTranslation()
  const [page,setPage]=useState<Page>(pageFromHash)
  const [jobs,setJobs]=useState<JobSummary[]>([])
  const [jobsReady,setJobsReady]=useState(false)
@@ -61,7 +63,7 @@ export default function App(){
  useEffect(()=>{let active=true;void (async()=>{try{const status=await api.auth();const legacy=sessionStorage.getItem('audio-intel:key');if(status.required&&!status.authenticated&&legacy){try{await api.login(legacy);status.authenticated=true}finally{sessionStorage.removeItem('audio-intel:key')}}if(active)setAuth(status)}catch(error){if(active)setAuthError((error as Error).message)}})();const unauthorized=()=>{setJobsReady(false);setAuth(current=>current?{...current,authenticated:false}:{required:true,authenticated:false})};addEventListener('audio-intel:unauthorized',unauthorized);return()=>{active=false;removeEventListener('audio-intel:unauthorized',unauthorized)}},[])
  useEffect(()=>{if(!authenticated)return;void refresh()},[authenticated,refresh])
  useEffect(()=>{if(!authenticated)return;const timer=setInterval(()=>void refreshSystem(),page==='system'?2000:10000);return()=>clearInterval(timer)},[authenticated,page,refreshSystem])
- useEffect(()=>{if(!authenticated||capabilities?.events?.sse!==true){setEventsConnected(false);return}const source=new EventSource(capabilities.events.global_url);const connected=()=>{setEventsConnected(true);setJobsError('')};const snapshot=(event:MessageEvent<string>)=>{try{const payload=JSON.parse(event.data) as {jobs?:JobSummary[]};if(payload.jobs){mergeJobs(payload.jobs);setJobsReady(true)}connected()}catch{setJobsError('任务事件格式无效')}};const update=(event:MessageEvent<string>)=>{try{const payload=JSON.parse(event.data) as {jobs?:JobSummary[];removed_job_ids?:string[]};mergeJobUpdates(payload.jobs||[],payload.removed_job_ids||[]);connected()}catch{setJobsError('任务事件格式无效')}};source.addEventListener('snapshot',snapshot as EventListener);source.addEventListener('update',update as EventListener);source.addEventListener('heartbeat',connected);source.onopen=()=>setEventsConnected(true);source.onerror=()=>setEventsConnected(false);return()=>{source.close();setEventsConnected(false)}},[authenticated,capabilities?.events?.sse,capabilities?.events?.global_url,mergeJobs,mergeJobUpdates])
+ useEffect(()=>{if(!authenticated||capabilities?.events?.sse!==true){setEventsConnected(false);return}const source=new EventSource(capabilities.events.global_url);const connected=()=>{setEventsConnected(true);setJobsError('')};const snapshot=(event:MessageEvent<string>)=>{try{const payload=JSON.parse(event.data) as {jobs?:JobSummary[]};if(payload.jobs){mergeJobs(payload.jobs);setJobsReady(true)}connected()}catch{setJobsError(t('errors.invalidTaskEvent'))}};const update=(event:MessageEvent<string>)=>{try{const payload=JSON.parse(event.data) as {jobs?:JobSummary[];removed_job_ids?:string[]};mergeJobUpdates(payload.jobs||[],payload.removed_job_ids||[]);connected()}catch{setJobsError(t('errors.invalidTaskEvent'))}};source.addEventListener('snapshot',snapshot as EventListener);source.addEventListener('update',update as EventListener);source.addEventListener('heartbeat',connected);source.onopen=()=>setEventsConnected(true);source.onerror=()=>setEventsConnected(false);return()=>{source.close();setEventsConnected(false)}},[authenticated,capabilities?.events?.sse,capabilities?.events?.global_url,mergeJobs,mergeJobUpdates,t])
  useEffect(()=>{if(!authenticated||eventsConnected)return;const timer=setInterval(()=>void refreshJobs(),5000);return()=>clearInterval(timer)},[authenticated,eventsConnected,refreshJobs])
  const refreshResources=useCallback(async()=>{
   if(!authenticated)return

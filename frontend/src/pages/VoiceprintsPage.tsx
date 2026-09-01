@@ -19,6 +19,8 @@ import { publicAsrLanguages } from '../lib/preferences'
 import type { AsrModelCapability, ComputeDevice, Job, ResourceState, VoiceprintPerson } from '../lib/types'
 import { handleTabKeys } from '../lib/tabs'
 import { computeUnavailableReason } from '../lib/presentation'
+import {useTranslation} from 'react-i18next'
+import {resolvedLocale} from '../i18n'
 
 type Props = {
   people: VoiceprintPerson[]
@@ -44,6 +46,8 @@ export function VoiceprintsPage({
   asrModels,
   asrLanguages = publicAsrLanguages,
 }: Props) {
+  const {t}=useTranslation()
+  const locale=resolvedLocale()
   const [selectedId, setSelectedId] = useState('')
   const [source, setSource] = useState<SampleSource>('upload')
   const [file, setFile] = useState<File>()
@@ -74,8 +78,8 @@ export function VoiceprintsPage({
   const modelGpu=selectedModel?.compute_devices.find(item=>item.id==='gpu')
   const effectiveComputeDevice:ComputeDevice=computeDevice==='gpu'&&(modelGpu?.available===false||gpuAvailable===false)?'cpu':computeDevice
   const selectedSampleFile=source==='upload'?file:recorder.recorded?.file
-  const fileLimitError=selectedSampleFile?uploadLimitMessage(selectedSampleFile,maxUploadBytes):''
-  const submitLabel=sampleProgress?.phase==='creating'?'正在创建入库任务…':sampleProgress?.phase==='uploading'&&sampleProgress.percent!==undefined?`正在上传 ${sampleProgress.percent}%`:sampleProgress?'正在准备上传…':source==='upload'?'自动转写并入库':'确认转写并入库'
+  const fileLimitError=selectedSampleFile?uploadLimitMessage(selectedSampleFile,maxUploadBytes,t,locale):''
+  const submitLabel=sampleProgress?.phase==='creating'?t('voiceprints.creatingTask'):sampleProgress?.phase==='uploading'&&sampleProgress.percent!==undefined?t('voiceprints.uploadPercent',{percent:sampleProgress.percent}):sampleProgress?t('voiceprints.preparingUpload'):source==='upload'?t('voiceprints.transcribeAndImportAction'):t('voiceprints.confirmAndImportAction')
   useEffect(() => {
     if (selected && !selectedId) setSelectedId(selected.id)
   }, [selected, selectedId])
@@ -124,7 +128,7 @@ export function VoiceprintsPage({
         :await api.addVoiceprintPerson(personName.trim(),personNote.trim()||null,includeInHotwordLibrary)
       setSelectedId(person.id)
       setEditorMode(undefined)
-      setNotice(editing?'人员资料已更新；历史任务标签保持不变。':'人员已创建。')
+      setNotice(t(editing?'voiceprints.personUpdated':'voiceprints.personCreated'))
     },refreshPeopleAndHotwords)
   }
   const removePerson = () => {
@@ -137,12 +141,12 @@ export function VoiceprintsPage({
       await api.removeVoiceprintPerson(selected.id)
       setSelectedId('')
       setConfirmDelete(undefined)
-      setNotice('人员及其声纹样本已删除。')
+      setNotice(t('voiceprints.personDeleted'))
     },refreshPeopleAndHotwords)
   }
   const submitSample = async (sampleFile: File, kind: SampleSource) => {
     if (!selected) return
-    const limitError=uploadLimitMessage(sampleFile,maxUploadBytes)
+    const limitError=uploadLimitMessage(sampleFile,maxUploadBytes,t,locale)
     setSampleError('')
     setSampleNotice('')
     if(limitError){setSampleError(limitError);return}
@@ -160,15 +164,15 @@ export function VoiceprintsPage({
       data.set('compute_device', effectiveComputeDevice)
       const response = await api.uploadVoiceprintSample(personId, data,{signal:controller.signal,onProgress:setSampleProgress})
       onJobSubmitted(response.job)
-      setSampleNotice('已创建“声纹样本入库”ASR 任务，可在任务记录查看进度。')
+      setSampleNotice(t('voiceprints.sampleTaskCreatedNotice'))
       if (kind === 'record') recorder.discard()
       else {
         setFile(undefined)
         if (fileRef.current) fileRef.current.value = ''
       }
-      await refresh().catch(cause=>setError(`任务已创建，但刷新声纹列表失败：${(cause as Error).message}`))
+      await refresh().catch(cause=>setError(t('voiceprints.refreshAfterCreateFailed',{message:(cause as Error).message})))
     } catch(cause) {
-      if(isUploadCancelled(cause))setSampleNotice('上传已取消，音频仍保留，可直接重试。')
+      if(isUploadCancelled(cause))setSampleNotice(t('voiceprints.uploadCancelled'))
       else setSampleError((cause as Error).message)
     } finally {
       sampleUploadController.current=undefined
@@ -197,7 +201,7 @@ export function VoiceprintsPage({
     void run(async () => {
       await api.removeVoiceprintSample(selected.id, sampleId)
       setConfirmDelete(undefined)
-      setNotice('声纹样本已删除。')
+      setNotice(t('voiceprints.sampleDeleted'))
     })
   }
   const elapsed = Math.min(
@@ -208,8 +212,8 @@ export function VoiceprintsPage({
     <div className="voiceprint-page page-pad hud-page">
       <div className="page-heading">
         <div>
-          <h1 tabIndex={-1}>声纹库</h1>
-          <p>本地保存人员声纹，用于 ASR 自动命名和 TTS 声音克隆</p>
+          <h1 tabIndex={-1}>{t('voiceprints.title')}</h1>
+          <p>{t('voiceprints.subtitle')}</p>
         </div>
         <span className="online">
           <Fingerprint size={15} />
@@ -229,9 +233,9 @@ export function VoiceprintsPage({
       <div className="voiceprint-layout">
         <aside className="people-panel">
           <button className="create-person-button" disabled={state!=='ready'||busy||microphoneActive} onClick={openCreate}>
-            <Plus size={17}/>新建人员
+            <Plus size={17}/>{t('voiceprints.newPerson')}
           </button>
-          <ResourceStatePanel state={state} loadingLabel="正在加载声纹人员…" errorLabel="声纹库加载失败。" retry={()=>void refresh()}/>
+          <ResourceStatePanel state={state} loadingLabel={t('voiceprints.loadingPeople')} errorLabel={t('voiceprints.loadFailed')} retry={()=>void refresh()}/>
           {state==='ready'&&people.length ? (
             people.map((person) => (
               <button
@@ -244,8 +248,8 @@ export function VoiceprintsPage({
                 <span>
                   <b>{person.name}</b>
                   {person.note?<em>{person.note}</em>:null}
-                  <small>{person.sample_count} 个样本</small>
-                  <small>{person.include_in_hotword_library?'已加入人名热词':'未加入人名热词'}</small>
+                  <small>{t('voiceprints.sampleCount',{count:person.sample_count})}</small>
+                  <small>{t(person.include_in_hotword_library?'voiceprints.hotwordIncludedLabel':'voiceprints.hotwordExcludedLabel')}</small>
                 </span>
               </button>
             ))
@@ -259,12 +263,12 @@ export function VoiceprintsPage({
                   <h2>{selected.name}</h2>
                   {selected.note?<p className="person-note">{selected.note}</p>:null}
                   <p>
-                    {selected.sample_count} 个独立样本 · {selected.include_in_hotword_library?'同步到全名与可用的去姓热词':'不加入人名热词'} · 人员资料修改不会重写历史任务
+                    {t('voiceprints.personSummary',{count:selected.sample_count,hotword:t(selected.include_in_hotword_library?'voiceprints.hotwordSync':'voiceprints.hotwordNoSync')})}
                   </p>
                 </div>
                 <button
                   className="icon-button"
-                  aria-label={`编辑人员 ${selected.name}`}
+                  aria-label={t('voiceprints.editPersonNamed',{name:selected.name})}
                   disabled={busy || microphoneActive}
                   onClick={openEdit}
                 >
@@ -272,7 +276,7 @@ export function VoiceprintsPage({
                 </button>
                 <button
                   className="icon-button danger"
-                  aria-label={`删除人员 ${selected.name}`}
+                  aria-label={t('voiceprints.deletePersonNamed',{name:selected.name})}
                   disabled={busy || microphoneActive}
                   onClick={removePerson}
                 >
@@ -282,7 +286,7 @@ export function VoiceprintsPage({
               <div
                 className="sample-source-tabs"
                 role="tablist"
-                aria-label="添加声纹样本方式"
+                aria-label={t('voiceprints.addMethod')}
                 onKeyDown={handleTabKeys}
               >
                 <button
@@ -296,7 +300,7 @@ export function VoiceprintsPage({
                   onClick={() => setSource('upload')}
                 >
                   <Upload size={15} />
-                  上传文件
+                  {t('voiceprints.uploadFile')}
                 </button>
                 <button
                   id="voiceprint-record-tab"
@@ -309,7 +313,7 @@ export function VoiceprintsPage({
                   onClick={() => setSource('record')}
                 >
                   <Mic2 size={15} />
-                  麦克风录音
+                  {t('voiceprints.microphone')}
                 </button>
               </div>
               {source === 'upload' ? (
@@ -332,9 +336,9 @@ export function VoiceprintsPage({
                     onClick={() => fileRef.current?.click()}
                   >
                     <Upload size={16} />
-                    {file?.name || '选择单人语音样本'}
+                    {file?.name || t('voiceprints.selectSampleAction')}
                   </button>
-                  <p>选择干净、仅包含当前人员声音的音频或视频文件。</p>
+                  <p>{t('voiceprints.cleanSampleHelp')}</p>
                 </div>
               ) : (
                 <div
@@ -356,34 +360,34 @@ export function VoiceprintsPage({
                     >
                       <span className="recording-dot" aria-hidden="true" />
                       <div>
-                        <b>正在录音</b>
+                        <b>{t('voiceprints.recording')}</b>
                         <strong>{formatTime(elapsed, false)} / 00:00:30</strong>
                       </div>
                       <progress
                         max={recorder.maxSeconds}
                         value={elapsed}
-                        aria-label="录音进度"
+                        aria-label={t('voiceprints.recordingProgress')}
                       />
                       <button className="record-stop" onClick={recorder.stop}>
                         <CircleStop size={17} />
-                        停止并试听
+                        {t('voiceprints.stopAndPreview')}
                       </button>
                       <button
                         className="button secondary"
                         onClick={recorder.discard}
                       >
-                        取消录音
+                        {t('voiceprints.cancelRecording')}
                       </button>
                     </div>
                   ) : recorder.phase === 'requesting' ? (
                     <div className="recorder-requesting" role="status">
                       <Mic2 />
-                      <p>正在请求麦克风权限…</p>
+                      <p>{t('voiceprints.requestingMicrophone')}</p>
                     </div>
                   ) : recorder.recorded ? (
                     <div className="recording-preview">
                       <div>
-                        <b>录音完成</b>
+                        <b>{t('voiceprints.recordingComplete')}</b>
                         <span>
                           {formatTime(recorder.recorded.durationSeconds, false)}{' '}
                           · {recorder.recorded.mimeType.split(';')[0]}
@@ -396,10 +400,10 @@ export function VoiceprintsPage({
                       />
                       {recorder.recorded.durationSeconds < 5 ? (
                         <p className="recording-warning">
-                          录音不足 5 秒，仍可入库，但建议重录 5–15 秒清晰语音。
+                          {t('voiceprints.shortRecordingWarning')}
                         </p>
                       ) : (
-                        <p>录音仅暂存在当前页面，确认后才会发送到本地服务。</p>
+                        <p>{t('voiceprints.recordingLocalOnly')}</p>
                       )}
                       <button
                         className="button secondary"
@@ -407,18 +411,15 @@ export function VoiceprintsPage({
                         onClick={startRecording}
                       >
                         <RotateCcw size={15} />
-                        重新录制
+                        {t('voiceprints.recordAgain')}
                       </button>
                     </div>
                   ) : (
                     <div className="recorder-ready">
                       <Mic2 />
                       <div>
-                        <b>直接录制单人语音</b>
-                        <p>
-                          建议录制 5–15 秒，最长 30
-                          秒；请保持环境安静并自然说话。
-                        </p>
+                        <b>{t('voiceprints.recordDirectly')}</b>
+                        <p>{t('voiceprints.recordingAdvice')}</p>
                       </div>
                       <button
                         className="record-start"
@@ -426,7 +427,7 @@ export function VoiceprintsPage({
                         onClick={startRecording}
                       >
                         <span aria-hidden="true" />
-                        开始录音
+                        {t('voiceprints.startRecording')}
                       </button>
                       {recorder.error ? (
                         <p className="recording-error" role="alert">
@@ -439,7 +440,7 @@ export function VoiceprintsPage({
               )}
               {sampleProgress ? (
                 <SubmissionProgress
-                  label="声纹样本"
+                  label={t('voiceprints.sampleLabel')}
                   progress={sampleProgress}
                   onCancel={() => sampleUploadController.current?.abort()}
                 />
@@ -449,7 +450,7 @@ export function VoiceprintsPage({
                   <p className="error">{sampleError || fileLimitError}</p>
                   {sampleError && selectedSampleFile ? (
                     <button className="button secondary" disabled={busy} onClick={() => void submitSample(selectedSampleFile,source)}>
-                      <RotateCcw size={15}/>重新上传
+                      <RotateCcw size={15}/>{t('voiceprints.uploadAgain')}
                     </button>
                   ) : null}
                 </div>
@@ -457,31 +458,31 @@ export function VoiceprintsPage({
               {sampleNotice ? (
                 <div className="submission-feedback" role="status">
                   <p className="notice">{sampleNotice}</p>
-                  {selectedSampleFile && sampleNotice.includes('取消') ? (
+                  {selectedSampleFile && sampleNotice===t('voiceprints.uploadCancelled') ? (
                     <button className="button secondary" disabled={busy} onClick={() => void submitSample(selectedSampleFile,source)}>
-                      <RotateCcw size={15}/>重新上传
+                      <RotateCcw size={15}/>{t('voiceprints.uploadAgain')}
                     </button>
                   ) : null}
                 </div>
               ) : null}
               <div className="sample-options voiceprint-sample-options">
-                <select aria-label="声纹入库 ASR 模型" value={model} disabled={busy||microphoneActive} onChange={event=>setModel(event.target.value)}>
-                  {(asrModels.length?asrModels:[{id:'qwen3-asr-0.6b',name:'Qwen3-ASR 0.6B',installed:true} as AsrModelCapability]).map(item=><option key={item.id} value={item.id} disabled={!item.installed}>{item.name}{item.installed?'':'（未安装）'}</option>)}
+                <select aria-label={t('voiceprints.asrModelAria')} value={model} disabled={busy||microphoneActive} onChange={event=>setModel(event.target.value)}>
+                  {(asrModels.length?asrModels:[{id:'qwen3-asr-0.6b',name:'Qwen3-ASR 0.6B',installed:true} as AsrModelCapability]).map(item=><option key={item.id} value={item.id} disabled={!item.installed}>{item.name}{item.installed?'':t('voiceprints.notInstalled')}</option>)}
                 </select>
                 <select
-                  aria-label="声纹样本语言"
+                  aria-label={t('voiceprints.sampleLanguageAria')}
                   value={language}
                   disabled={busy || microphoneActive}
                   onChange={(event) => setLanguage(event.target.value)}
                 >
                   {asrLanguages.map((item) => (
                     <option key={item} value={item}>
-                      {item === 'Auto' ? '自动检测' : item}
+                      {t(`common.languages.${item}` as 'common.languages.Auto',{defaultValue:item})}
                     </option>
                   ))}
                 </select>
                 <select
-                  aria-label="声纹入库计算设备"
+                  aria-label={t('voiceprints.computeDeviceAria')}
                   value={effectiveComputeDevice}
                   disabled={busy || microphoneActive}
                   onChange={(event) =>
@@ -493,7 +494,7 @@ export function VoiceprintsPage({
                   </option>
                   <option value="cpu">CPU</option>
                 </select>
-                {computeDevice==='gpu'&&effectiveComputeDevice==='cpu'?<small className="device-hint">{computeUnavailableReason(modelGpu,'当前模型自动使用 CPU。')}</small>:null}
+                {computeDevice==='gpu'&&effectiveComputeDevice==='cpu'?<small className="device-hint">{computeUnavailableReason(modelGpu,t,t('voiceprints.modelCpuFallback'))}</small>:null}
                 <button
                   className="primary"
                   disabled={
@@ -516,22 +517,22 @@ export function VoiceprintsPage({
                   selected.samples.map((sample, index) => (
                     <article key={sample.id}>
                       <div className="sample-head">
-                        <b>样本 {selected.samples.length - index}</b>
+                        <b>{t('voiceprints.sampleNumber',{number:selected.samples.length-index})}</b>
                         <span className={`sample-state ${sample.state}`}>
                           {sample.state === 'ready'
-                            ? '可用'
+                            ? t('voiceprints.sampleStates.ready')
                             : sample.state === 'pending'
-                              ? '处理中'
-                              : '失败'}
+                              ? t('voiceprints.sampleStates.pending')
+                              : t('voiceprints.sampleStates.failed')}
                         </span>
                         <span>
                           {sample.duration
                             ? formatTime(sample.duration)
-                            : '等待分析'}
+                            : t('voiceprints.waitingAnalysis')}
                         </span>
                         <button
                           className="icon-button danger"
-                          aria-label={`删除声纹样本 ${sample.id}`}
+                          aria-label={t('voiceprints.deleteSampleNamed',{id:sample.id})}
                           disabled={sample.state === 'pending'}
                           onClick={() => removeSample(sample.id)}
                         >
@@ -544,17 +545,17 @@ export function VoiceprintsPage({
                       <p>
                         {sample.transcript ||
                           sample.error_message ||
-                          '正在自动转写并提取声纹…'}
+                          t('voiceprints.extracting')}
                       </p>
                       <small>
                         {sample.language} · CAM++{' '}
                         {sample.embedding_status === 'ready'
-                          ? '已索引'
+                          ? t('voiceprints.embedding.ready')
                           : sample.embedding_status === 'failed'
-                            ? '索引失败'
-                            : '将在下次 ASR 时索引'}
+                            ? t('voiceprints.embedding.failed')
+                            : t('voiceprints.embedding.pending')}
                         {sample.duration && sample.duration > 15
-                          ? ' · TTS 使用时精确截断至 15 秒以内'
+                          ? t('voiceprints.ttsTruncated')
                           : ''}
                       </small>
                     </article>
@@ -563,9 +564,9 @@ export function VoiceprintsPage({
                   <div className="empty small">
                     <Fingerprint />
                     <p>
-                      暂无样本
+                      {t('voiceprints.noSamples')}
                       <br />
-                      上传文件、浏览器录音，或从 ASR 结果选择段落加入
+                      {t('voiceprints.noSamplesHelp')}
                     </p>
                   </div>
                 )}
@@ -574,14 +575,14 @@ export function VoiceprintsPage({
           ) : state==='ready' ? (
             <div className="empty voiceprint-guide">
               <Fingerprint />
-              <h2>先创建一个人员</h2>
-              <p>在左侧输入人员名称并点击创建；之后可上传文件、直接录音，或从 ASR 结果加入样本。</p>
+              <h2>{t('voiceprints.createFirst')}</h2>
+              <p>{t('voiceprints.createFirstHelp')}</p>
             </div>
-          ):state==='loading'?<div className="empty voiceprint-guide" role="status"><Fingerprint/><h2>正在准备声纹库</h2><p>加载完成后即可创建人员并管理声纹样本。</p></div>:<div className="empty voiceprint-guide" role="alert"><Fingerprint/><h2>声纹库暂不可用</h2><p>加载失败，请重试后再创建或编辑人员。</p><button className="button" onClick={()=>void refresh()}>重新加载</button></div>}
+          ):state==='loading'?<div className="empty voiceprint-guide" role="status"><Fingerprint/><h2>{t('voiceprints.preparingLibrary')}</h2><p>{t('voiceprints.preparingHelp')}</p></div>:<div className="empty voiceprint-guide" role="alert"><Fingerprint/><h2>{t('voiceprints.unavailable')}</h2><p>{t('voiceprints.unavailableHelp')}</p><button className="button" onClick={()=>void refresh()}>{t('common.actions.reload')}</button></div>}
         </section>
       </div>
-      {editorMode?<Modal title={editorMode==='create'?'新建声纹人员':'编辑声纹人员'} closeLabel="关闭人员编辑" onClose={()=>setEditorMode(undefined)}><p>名字会用于声纹匹配标签；备注最多 20 字。后续修改不会重写历史任务。</p><label>名字（必填）<input value={personName} maxLength={80} autoFocus onChange={event=>setPersonName(event.target.value)}/></label><label>备注（选填）<input value={personNote} maxLength={20} placeholder="例如：外号、手机号、公司名称" onChange={event=>setPersonNote(event.target.value)}/><small>{personNote.trim().length} / 20 字</small></label><label className="toggle-label person-hotword-toggle"><input type="checkbox" checked={includeInHotwordLibrary} onChange={event=>setIncludeInHotwordLibrary(event.target.checked)}/><span>加入热词库</span><small>开启后，完整姓名会同步到“声纹库人名（全名）”；系统能可靠提取时，也会生成“去姓”热词。</small></label><div className="modal-actions"><button className="button" disabled={busy} onClick={()=>setEditorMode(undefined)}>取消</button><button className="primary" disabled={busy||!personName.trim()||personNote.trim().length>20} onClick={savePerson}>{busy?'正在保存…':'保存人员'}</button></div></Modal>:null}
-      {confirmDelete&&selected?<ConfirmDialog title={confirmDelete==='person'?'删除人员':'删除声纹样本'} description={confirmDelete==='person'?`永久删除“${selected.name}”及其全部声纹样本？此操作不可恢复。`:'永久删除这个声纹样本？此操作不可恢复。'} confirmLabel="永久删除" danger busy={busy} onClose={()=>setConfirmDelete(undefined)} onConfirm={confirmDelete==='person'?confirmRemovePerson:()=>confirmRemoveSample(confirmDelete)}/>:null}
+      {editorMode?<Modal title={t(editorMode==='create'?'voiceprints.newPersonDialogTitle':'voiceprints.editPersonTitle')} closeLabel={t('voiceprints.closePersonEditor')} onClose={()=>setEditorMode(undefined)}><p>{t('voiceprints.editorHelp')}</p><label>{t('voiceprints.nameRequiredLabel')}<input value={personName} maxLength={80} autoFocus onChange={event=>setPersonName(event.target.value)}/></label><label>{t('voiceprints.noteOptional')}<input value={personNote} maxLength={20} placeholder={t('voiceprints.notePlaceholder')} onChange={event=>setPersonNote(event.target.value)}/><small>{t('voiceprints.noteCount',{current:personNote.trim().length})}</small></label><label className="toggle-label person-hotword-toggle"><input type="checkbox" checked={includeInHotwordLibrary} onChange={event=>setIncludeInHotwordLibrary(event.target.checked)}/><span>{t('voiceprints.addToHotwords')}</span><small>{t('voiceprints.addToHotwordsHelp')}</small></label><div className="modal-actions"><button className="button" disabled={busy} onClick={()=>setEditorMode(undefined)}>{t('common.actions.cancel')}</button><button className="primary" disabled={busy||!personName.trim()||personNote.trim().length>20} onClick={savePerson}>{busy?t('voiceprints.saving'):t('voiceprints.savePerson')}</button></div></Modal>:null}
+      {confirmDelete&&selected?<ConfirmDialog title={t(confirmDelete==='person'?'voiceprints.deletePersonTitle':'voiceprints.deleteSampleTitle')} description={confirmDelete==='person'?t('voiceprints.deletePersonDescription',{name:selected.name}):t('voiceprints.deleteSampleDescription')} confirmLabel={t('common.actions.deletePermanently')} danger busy={busy} onClose={()=>setConfirmDelete(undefined)} onConfirm={confirmDelete==='person'?confirmRemovePerson:()=>confirmRemoveSample(confirmDelete)}/>:null}
     </div>
   )
 }

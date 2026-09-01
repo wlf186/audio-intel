@@ -1,14 +1,16 @@
 import {useCallback,useEffect,useRef,useState} from 'react'
+import {useTranslation} from 'react-i18next'
+import type {TFunction} from 'i18next'
 
 export type RecorderPhase='idle'|'requesting'|'recording'|'preview'|'error'
 export type RecordedAudio={file:File;url:string;durationSeconds:number;mimeType:string}
 
 const MIME_TYPES=['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4']
 
-function supportReason(){
- if(typeof window==='undefined')return '当前环境不支持浏览器录音。'
- if(!window.isSecureContext)return '麦克风录音需要通过 localhost、127.0.0.1 或 HTTPS 访问；仍可上传音频文件。'
- if(!navigator.mediaDevices?.getUserMedia||typeof MediaRecorder==='undefined')return '当前浏览器不支持麦克风录音；仍可上传音频文件。'
+function supportReason(t:TFunction){
+ if(typeof window==='undefined')return t('recorder.unsupportedEnvironment')
+ if(!window.isSecureContext)return t('recorder.secureContext')
+ if(!navigator.mediaDevices?.getUserMedia||typeof MediaRecorder==='undefined')return t('recorder.unsupportedBrowser')
  return ''
 }
 
@@ -25,16 +27,17 @@ function extensionFor(mimeType:string){
  return 'webm'
 }
 
-function permissionError(cause:unknown){
+function permissionError(cause:unknown,t:TFunction){
  const name=cause instanceof DOMException?cause.name:''
- if(name==='NotAllowedError'||name==='SecurityError')return '麦克风权限被拒绝。请在浏览器站点设置中允许麦克风后重试。'
- if(name==='NotFoundError'||name==='DevicesNotFoundError')return '未检测到可用麦克风，请连接设备后重试。'
- if(name==='NotReadableError'||name==='TrackStartError')return '麦克风暂时无法使用，可能正被其他程序占用。'
- return cause instanceof Error&&cause.message?`无法开始录音：${cause.message}`:'无法开始录音，请检查麦克风后重试。'
+ if(name==='NotAllowedError'||name==='SecurityError')return t('recorder.permissionDenied')
+ if(name==='NotFoundError'||name==='DevicesNotFoundError')return t('recorder.notFound')
+ if(name==='NotReadableError'||name==='TrackStartError')return t('recorder.notReadable')
+ return cause instanceof Error&&cause.message?t('recorder.startFailedDetail',{message:cause.message}):t('recorder.startFailed')
 }
 
 export function useMicrophoneRecorder(maxSeconds=30){
- const unavailableReason=supportReason()
+ const {t}=useTranslation()
+ const unavailableReason=supportReason(t)
  const [phase,setPhase]=useState<RecorderPhase>('idle')
  const [elapsedSeconds,setElapsedSeconds]=useState(0)
  const [recorded,setRecorded]=useState<RecordedAudio>()
@@ -116,7 +119,7 @@ export function useMicrophoneRecorder(maxSeconds=30){
    recorder.ondataavailable=event=>{if(event.data.size)chunksRef.current.push(event.data)}
    recorder.onerror=()=>{
     discardOnStopRef.current=true
-    setError('录音过程中发生错误，请重新录制。')
+    setError(t('recorder.recordingFailed'))
     setPhase('error')
     clearTimers()
     releaseStream()
@@ -129,7 +132,7 @@ export function useMicrophoneRecorder(maxSeconds=30){
     const actualMime=recorder.mimeType||chunksRef.current[0]?.type||mimeType||'audio/webm'
     const blob=new Blob(chunksRef.current,{type:actualMime})
     chunksRef.current=[]
-    if(!blob.size){setError('未捕获到有效音频，请重新录制。');setPhase('error');return}
+    if(!blob.size){setError(t('recorder.empty'));setPhase('error');return}
     releasePreview()
     const url=URL.createObjectURL(blob)
     previewUrlRef.current=url
@@ -153,9 +156,9 @@ export function useMicrophoneRecorder(maxSeconds=30){
    stream?.getTracks().forEach(track=>track.stop())
    recorderRef.current=undefined
    streamRef.current=undefined
-   if(mountedRef.current){setError(permissionError(cause));setPhase('error')}
+   if(mountedRef.current){setError(permissionError(cause,t));setPhase('error')}
   }
- },[clearTimers,discard,maxSeconds,releasePreview,releaseStream,stop,unavailableReason])
+ },[clearTimers,discard,maxSeconds,releasePreview,releaseStream,stop,t,unavailableReason])
 
  useEffect(()=>{
   mountedRef.current=true

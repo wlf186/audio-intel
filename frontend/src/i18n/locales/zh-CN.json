@@ -1,0 +1,242 @@
+{
+  "common": {
+    "language": {
+      "label": "界面语言",
+      "zh-CN": "简体中文",
+      "en-US": "English"
+    },
+    "actions": {
+      "retry": "重试",
+      "reload": "重新加载",
+      "close": "关闭",
+      "cancel": "取消",
+      "save": "保存",
+      "deletePermanently": "永久删除",
+      "view": "查看",
+      "edit": "编辑",
+      "copy": "复制",
+      "copied": "已复制",
+      "download": "下载"
+    },
+    "states": {
+      "loading": "加载中",
+      "ready": "就绪",
+      "error": "异常",
+      "unavailable": "不可用",
+      "unknown": "未知",
+      "checking": "检查中",
+      "processing": "正在处理…"
+    },
+    "languages": {
+      "Auto": "自动检测",
+      "Chinese": "中文",
+      "English": "英语",
+      "Cantonese": "粤语",
+      "Japanese": "日语",
+      "Korean": "韩语",
+      "German": "德语",
+      "French": "法语",
+      "Russian": "俄语",
+      "Portuguese": "葡萄牙语",
+      "Spanish": "西班牙语",
+      "Italian": "意大利语"
+    },
+    "units": {
+      "bytes": "{{value}} B",
+      "kilobytes": "{{value}} KB",
+      "megabytes": "{{value}} MB",
+      "gigabytes": "{{value}} GB",
+      "seconds": "{{count}} 秒",
+      "minutes": "{{count}} 分钟",
+      "hours": "{{count}} 小时"
+    },
+    "fallback": {
+      "noHeartbeat": "暂无心跳",
+      "unknownTime": "时间未知"
+    },
+    "dialog": {"closeNamed": "关闭{{title}}"},
+    "separator": {"semicolon": "；"},
+    "accelerationHelp": "查看单任务加速说明"
+  },
+  "shell": {
+    "skipToMain": "跳到主内容",
+    "mainNavigation": "主导航",
+    "workspace": "工作台",
+    "pages": {
+      "asr": {"full": "转写工作台", "short": "转写"},
+      "tts": {"full": "语音合成", "short": "合成"},
+      "hotwords": {"full": "热词库", "short": "热词"},
+      "voiceprints": {"full": "声纹库", "short": "声纹"},
+      "jobs": {"full": "任务记录", "short": "任务"},
+      "system": {"full": "系统状态", "short": "系统"}
+    },
+    "returnToAsr": "返回转写工作台",
+    "offline": {
+      "checkingCompact": "检查中",
+      "checkingLabel": "正在检查本地离线模式",
+      "errorCompact": "连接中断",
+      "errorLabel": "本地服务连接中断",
+      "activeCompact": "本地可用",
+      "activeLabel": "本地服务已连接，离线推理模式已启用",
+      "inactiveCompact": "离线未启用",
+      "inactiveLabel": "本地服务已连接，离线推理模式未启用",
+      "scopeHint": "{{label}}；离线模式不代表服务仅监听 localhost。"
+    },
+    "logout": "退出本地会话",
+    "certificate": "HTTPS 证书",
+    "openCertificateHelp": "打开 HTTPS 证书帮助",
+    "apiDocs": "API 文档",
+    "docsCompact": "文档",
+    "openApiDocs": "打开 API 文档",
+    "connectionError": "服务连接异常：{{message}}",
+    "reconnect": "重新连接",
+    "dataStoredLocally": "// 数据本地存储",
+    "dataReadyHint": "READY 表示服务已启用离线模式并报告了本地数据目录。",
+    "bindReadyHint": "服务配置的监听地址：{{bind}}。0.0.0.0 表示所有网卡。",
+    "bindUnknownHint": "当前无法确认服务监听地址。"
+  },
+  "auth": {
+    "title": "访问验证",
+    "checking": "正在检查本地服务…",
+    "description": "此服务已启用 API Key。密钥只用于本次登录交换，不会保存在浏览器存储或 URL 中。",
+    "installCertificate": "先安装 HTTPS 根证书",
+    "keyPlaceholder": "输入 AUDIO_INTEL_API_KEY",
+    "validating": "正在验证…",
+    "enter": "进入工作台",
+    "back": "返回登录"
+  },
+  "tls": {
+    "modalTitle": "HTTPS 证书与浏览器录音",
+    "closeHelp": "关闭 HTTPS 证书帮助",
+    "loadFailed": "证书信息加载失败：{{message}}",
+    "loading": "正在读取 HTTPS 证书信息…",
+    "httpNotice": "当前服务使用 HTTP。局域网 IP 上的浏览器录音需要将服务配置为 HTTPS。",
+    "httpSetup": "生成证书后设置 <code>AUDIO_INTEL_PROTOCOL=https</code>，再重新启动服务。完整步骤见项目文档。",
+    "missingCa": "当前已使用 HTTPS，但服务端未配置可下载的根 CA。你仍可在桌面 Chrome/Edge 的证书警告页选择继续访问，但这不验证服务器身份。",
+    "safety": "在输入 API Key 或上传音频前，建议安装根证书并核对指纹。下载的是公开证书，不包含私钥。",
+    "downloadCer": "下载 Windows / iOS 证书",
+    "downloadPem": "下载 PEM",
+    "fingerprintCheck": "请将上方指纹与服务端运行 <code>./service.sh tls fingerprint</code>（Windows 为 <code>service.cmd tls fingerprint</code>）显示的值通过可信渠道比对。",
+    "windowsStep": "打开 .cer，安装到“受信任的根证书颁发机构”；可选“当前用户”。重启 Chrome/Edge。",
+    "iosStep": "打开 .cer 并安装描述文件；再到“设置 → 通用 → 关于本机 → 证书信任设置”启用完全信任，然后重启浏览器。",
+    "temporaryAccess": "桌面 Chrome/Edge 可在证书警告页选择“高级 → 继续”。连接仍加密，但服务器身份未验证，主动中间人仍可能截获 API Key 和音频；不承诺 Safari、iOS 或 Firefox 可用。",
+    "temporaryAccessLabel": "临时快速访问："
+  },
+  "system": {
+    "title": "系统状态",
+    "subtitle": "硬件资源、工作进程、模型与本地存储一览",
+    "loadFailed": "系统状态加载失败",
+    "loading": "正在读取系统状态",
+    "loadingDetail": "正在连接本地服务并读取硬件、模型和工作进程信息…",
+    "retry": "重新检查",
+    "cpuUsage": "CPU 使用率",
+    "memory": "内存",
+    "systemMemory": "系统内存",
+    "gpuNotDetected": "未检测到",
+    "gpuUnavailable": "GPU 不可用",
+    "gpuAvailable": "当前可用 {{value}} MiB",
+    "gpuReserved": "系统保留估算 {{value}} MiB",
+    "gpuReservedHint": "按总显存减去当前已用和空闲显存估算，通常对应驱动或固件保留，不提供进程归属",
+    "projectDisk": "项目磁盘",
+    "modelStatus": "模型状态",
+    "asrComponents": "ASR 与公共组件",
+    "installedCount": "{{installed}} / {{total}} 已安装",
+    "needsAttention": "需要处理",
+    "modelStates": {
+      "installed": "已安装",
+      "missing": "待下载",
+      "empty_marker": "标记为空",
+      "revision_mismatch": "版本不符",
+      "incomplete": "文件不完整"
+    },
+    "noModels": "未配置模型",
+    "workers": "工作进程",
+    "waiting": "等待任务",
+    "workerStates": {
+      "idle": "空闲",
+      "running": "运行中",
+      "stopping": "正在停止",
+      "stopped": "已停止",
+      "starting": "正在启动",
+      "failed": "异常"
+    },
+    "noWorkers": "当前未发现工作进程",
+    "localDirectories": "本地目录"
+  },
+  "errors": {
+    "requestFailed": "请求失败（HTTP {{status}}）",
+    "invalidTaskEvent": "任务事件格式无效",
+    "network": "无法连接本地服务，请确认服务已启动后重试。",
+    "uploadTimeout": "上传请求超时，请检查网络后重试。",
+    "uploadCancelled": "上传已取消",
+    "secureId": "当前浏览器无法生成安全的提交标识，请升级浏览器后重试。",
+    "retryAfter": "{{detail}}；请在 {{seconds}} 秒后重试。",
+    "gpuMemoryDetected": "该模型至少需要 {{required}} MiB 显存，当前检测到 {{detected}} MiB；本次自动使用 CPU。",
+    "gpuMemoryRequired": "该模型至少需要 {{required}} MiB 显存；本次自动使用 CPU。",
+    "gpuFallback": "当前模型无法使用 GPU，本次自动使用 CPU。",
+    "fileTooLarge": "文件大小 {{size}}，超过服务允许的 {{limit}} 上限。请选择更小的文件。"
+  },
+  "jobs": {
+    "estimated": "估算",
+    "safelyStopping": "正在安全停止",
+    "states": {"queued": "等待处理", "running": "正在处理", "succeeded": "已完成", "failed": "处理失败", "cancelled": "已取消"},
+    "stages": {"queued": "等待处理", "starting": "正在启动", "loading_tts_model": "加载 TTS 模型", "waiting_for_gpu": "等待 GPU", "preparing_voice_clone": "准备克隆音色", "synthesis": "语音合成", "writing_output": "写入结果", "decoding_audio": "解析音频", "vad": "语音活动检测", "diarization": "说话人分离", "transcription": "语音转写", "alignment": "字词对齐", "merging": "合并说话人与时间戳", "completed": "已完成", "succeeded": "已完成", "failed": "处理失败", "cancelled": "已取消", "cancelling": "正在释放计算资源"},
+    "units": {"text_chunk": "文本分块", "audio_chunk": "音频分块", "codec_frame": "codec 帧", "output_token": "输出 token", "model_layer": "模型层", "item": "处理单元", "batch": "批次"},
+    "progress": {"count": "{{unit}} {{current}}/{{total}}", "estimatedTotal": "（总量估算）", "currentBatch": "当前批次 {{count}} {{unit}}{{estimateMark}}"},
+    "mini": {"queue": "队列第 {{position}} / {{depth}}", "waitingGpu": "等待 GPU 资源", "remaining": "预计剩余 {{lower}}–{{upper}}", "warming": "ETA 学习中 · {{count}}/5 样本"},
+    "history": {
+      "title": "任务记录", "loading": "正在读取任务记录…", "summary": "共 {{count}} 个匹配任务，输入、结果和导出文件均持久化在项目目录。", "kindFilter": "任务类型筛选",
+      "kind": {"all": "全部", "asr": "ASR", "tts": "TTS"},
+      "search": "搜索任务", "searchPlaceholder": "任务名称或 ID", "status": "任务状态", "allStates": "全部状态", "state": {"queued": "等待处理", "running": "正在处理", "succeeded": "已完成", "failed": "失败", "cancelled": "已取消"},
+      "pageSize": "每页数量", "pageSizeOption": "{{count}} 条", "newJobsRegion": "新任务提示", "newJobs": "有新任务，当前页不会自动位移。", "showNewest": "返回第一页查看", "batchActions": "批量任务操作", "selected": "个任务已选择", "cleaning": "正在安全清理…", "deleteSelected": "永久删除所选任务",
+      "copiedId": "已复制完整任务 ID {{id}}", "selectAll": "全选当前页可操作任务", "columns": {"task": "任务", "kind": "类型", "status": "状态", "created": "创建时间", "elapsed": "耗时", "progress": "进度", "actions": "操作"},
+      "notStarted": "未开始", "queue": "队列 {{position}}/{{depth}}", "estimate": "预计 {{lower}}–{{upper}} · {{confidence}}置信度", "confidence": {"high": "高", "medium": "中", "low": "低"}, "etaWarming": "ETA 学习中 {{count}}/5",
+      "copyFailed": "无法自动复制任务 ID，请手动复制：{{id}}", "cancelledNotice": "任务已安全停止，现在可以重试或永久删除。", "cancellingNotice": "停止请求已提交，系统仍在确认计算进程退出。",
+      "deletedNotice": "已删除 {{count}} 个任务，释放 {{size}}；{{database}}。", "databaseCompacted": "数据库已安全压缩", "databaseNotCompacted": "数据库压缩未完成", "deleteFailed": "{{count}} 个任务未删除：{{message}}", "compactionFailed": "SQLite 安全压缩失败，请检查服务日志。",
+      "selectTask": "选择任务 {{name}}", "selectTaskShort": "选择任务", "cancelBeforeSelect": "运行中的任务需先取消", "fullId": "完整任务 ID：{{id}}", "shortId": "任务 ID：{{id}}…", "copiedFullIdWithValue": "已复制完整任务 ID {{id}}", "copyFullIdWithValue": "复制完整任务 ID {{id}}", "copiedFullId": "已复制完整任务 ID", "copyFullId": "复制完整任务 ID",
+      "createdShort": "创建", "attempts": "{{count}} 次尝试", "actualProcessing": "实际处理", "taskProgress": "{{name}} 任务进度 {{percent}}%", "viewResult": "查看结果", "viewTaskResult": "查看任务结果 {{name}}", "viewFailure": "查看失败详情", "viewTaskFailure": "查看失败详情 {{name}}", "cancelTask": "取消任务", "stoppingNamed": "正在安全停止 {{name}}", "cancelNamed": "取消任务 {{name}}", "retryNamed": "重试任务 {{name}}", "deleteNamed": "永久删除任务 {{name}}",
+      "loadingTasks": "正在加载任务…", "noMatches": "没有匹配的任务", "empty": "还没有任务", "adjustFilters": "请调整类型、状态或搜索条件。", "emptyHelp": "提交音频转写或语音合成后，任务会显示在这里。",
+      "pagination": "任务分页", "pageSummary": "第 {{current}} / {{total}} 页 · 共 {{count}} 条", "firstPage": "第一页", "previousPage": "上一页", "pageNumber": "第 {{value}} 页", "nextPage": "下一页", "lastPage": "最后一页",
+      "deleteTitle": "永久删除任务", "deleteDescription": "永久删除选中的 {{count}} 个任务？{{queued}} 输入、输出、临时文件和数据库记录都将被清除，且不可恢复。", "queuedDelete": "其中 {{count}} 个排队任务会先取消。", "failureDetails": "任务失败详情", "closeFailure": "关闭失败详情", "errorCode": "错误码", "technicalDetails": "技术详情", "noErrorDetails": "服务未提供更多错误信息。"
+    },
+    "failure": {
+      "memoryTitle": "显存或内存不足",
+      "memoryAdvice": "释放计算资源后重试，或重新提交为 CPU / 较小模型。",
+      "workerTitle": "工作进程异常退出",
+      "workerAdvice": "请先检查系统状态与服务日志，再重试任务。",
+      "inputTitle": "输入或任务参数无法处理",
+      "inputAdvice": "请检查输入文件和任务设置后重新提交。",
+      "defaultTitle": "任务处理失败",
+      "defaultAdvice": "可以重试；若持续失败，请查看技术详情和服务日志。"
+    }
+  },
+  "hotwords": {
+    "title": "热词库", "subtitle": "按业务场景维护词表，在创建 ASR 任务时按需选择", "scenarioLists": "场景词表", "loading": "正在加载场景词表…", "loadFailed": "场景词表加载失败。", "system": "系统", "termPreview": "{{count}} 个词 · {{terms}}{{more}}", "termSeparator": "、", "viewNamed": "查看 {{name}}", "editNamed": "编辑 {{name}}", "deleteNamed": "删除 {{name}}", "empty": "还没有词表。可按项目、客户或专业领域创建。",
+    "systemList": "系统词表", "editList": "编辑词表", "newList": "新建词表", "name": "场景名称", "namePlaceholder": "例如：医疗术语、项目代号", "characterCount": "{{current}} / {{max}} 个字符", "terms": "热词", "termsPlaceholder": "每行一个热词，按回车分隔", "systemTermCount": "{{count}} 个；{{help}}", "termCountHelp": "{{current}} / {{max}} 个；每行只保存一个热词，逗号和分号会保留在词内，重复词会自动合并。",
+    "shortSystemHelp": "系统按保守规则自动提取去姓名字，无法可靠提取时跳过。", "fullSystemHelp": "自动同步已开启“加入热词库”的声纹人员完整姓名。", "shortSystemNote": "此词表由系统自动去姓生成，并非昵称，不能修改或删除。", "fullSystemNote": "此词表由系统同步完整姓名，不能修改或删除。", "systemAdjustment": "请在声纹人员资料中使用“加入热词库”开关调整内容。", "systemNames": {"full": "声纹库人名（全名）", "short": "声纹库人名（去姓）"},
+    "saving": "正在保存…", "save": "保存词表", "clear": "取消并清空", "editorUnavailable": "编辑器暂不可用", "editorPreparing": "正在准备编辑器", "editorErrorHelp": "场景词表加载失败，请在左侧重试；未保存草稿不会被清除。", "editorLoadingHelp": "加载完成后即可查看或编辑场景词表。", "missingDraft": "原词表已不存在，已将未保存内容恢复为新词表草稿。", "saved": "词表已保存。", "deleted": "词表已删除；历史任务仍保留提交时的热词快照。", "deleteTitle": "删除热词表", "deleteDescription": "永久删除“{{name}}”？已提交任务仍保留自己的热词快照。",
+    "validation": {"listLimit": "最多只能创建 {{count}} 个自定义词表；请删除现有词表后再新建。", "required": "请输入场景名称和至少一个热词。", "nameLength": "场景名称不能超过 {{count}} 个字符。", "invalidTerm": "热词“{{term}}”无效；单个热词不能超过 {{count}} 个字符，也不能包含控制字符。", "termLimit": "每个词表最多包含 {{count}} 个热词。"}
+  },
+  "submission": {"preparing": "正在准备上传{{label}}", "uploading": "正在上传{{label}}", "creating": "{{label}}上传完成，正在创建任务", "sent": "已发送 {{size}}", "status": "{{label}}提交状态", "progress": "{{label}}上传进度", "serverCreating": "上传完成，服务端正在创建任务", "preparingGeneric": "正在准备上传", "keepOpen": "服务端正在校验文件、持久化并写入任务队列，请保持页面打开。", "connecting": "正在建立上传连接…", "cancel": "取消上传"},
+  "audio": {"pauseSynthesis": "暂停当前合成结果", "playSynthesis": "播放当前合成结果", "playbackError": "当前浏览器无法播放该音频编码。", "position": "音频播放位置", "waveform": "音频波形", "noWaveform": "无波形数据"},
+  "recorder": {"unsupportedEnvironment": "当前环境不支持浏览器录音。", "secureContext": "麦克风录音需要通过 localhost、127.0.0.1 或 HTTPS 访问；仍可上传音频文件。", "unsupportedBrowser": "当前浏览器不支持麦克风录音；仍可上传音频文件。", "permissionDenied": "麦克风权限被拒绝。请在浏览器站点设置中允许麦克风后重试。", "notFound": "未检测到可用麦克风，请连接设备后重试。", "notReadable": "麦克风暂时无法使用，可能正被其他程序占用。", "startFailedDetail": "无法开始录音：{{message}}", "startFailed": "无法开始录音，请检查麦克风后重试。", "recordingFailed": "录音过程中发生错误，请重新录制。", "empty": "未捕获到有效音频，请重新录制。"},
+  "voiceprints": {
+    "hotwordIncludedLabel":"已加入人名热词","hotwordExcludedLabel":"未加入人名热词","shortRecordingWarning":"录音不足 5 秒，建议录制更长的样本。",
+    "newPersonDialogTitle":"新建声纹人员","nameRequiredLabel":"名字（必填）","asrModelAria":"声纹入库 ASR 模型","sampleLanguageAria":"声纹样本语言","computeDeviceAria":"声纹入库计算设备","transcribeAndImportAction":"自动转写并入库","confirmAndImportAction":"确认转写并入库","selectSampleAction":"选择单人语音样本","sampleTaskCreatedNotice":"已创建“声纹样本入库”ASR 任务。",
+    "title":"声纹库","subtitle":"管理人员与干净声音样本，用于识别与克隆","newPerson":"新建人员","loadingPeople":"正在加载人员…","loadFailed":"声纹库加载失败。","sampleCount":"{{count}} 个样本","hotwordIncluded":"已加入热词","hotwordExcluded":"未加入热词","personSummary":"{{count}} 个样本 · {{hotword}}","hotwordSync":"同步热词","hotwordNoSync":"不同步热词","editPersonNamed":"编辑 {{name}}","deletePersonNamed":"删除 {{name}}","addMethod":"选择添加样本方式","uploadFile":"上传文件","microphone":"麦克风录音","selectSample":"选择声音样本","cleanSampleHelp":"使用单人干净语音可获得更好的匹配与克隆效果。","recording":"正在录音","recordingProgress":"录音进度","stopAndPreview":"停止并试听","cancelRecording":"取消录音","requestingMicrophone":"正在请求麦克风权限…","recordingComplete":"录音完成","shortRecording":"录音较短，建议 5–15 秒。","recordingLocalOnly":"提交前录音仅保存在当前浏览器。","recordAgain":"重新录制","recordDirectly":"直接录制样本","recordingAdvice":"请在安静环境中录制单人语音。","startRecording":"开始录音","sampleLabel":"声纹样本","uploadAgain":"重新上传","asrModel":"样本 ASR 模型","notInstalled":"（未安装）","sampleLanguage":"样本语言","computeDevice":"计算设备","modelCpuFallback":"当前模型自动使用 CPU。","sampleNumber":"样本 {{number}}","sampleStates":{"ready":"已就绪","pending":"处理中","failed":"失败"},"waitingAnalysis":"等待分析","deleteSampleNamed":"删除样本 {{id}}","extracting":"正在提取声纹","embedding":{"ready":"声纹已就绪","failed":"声纹失败","pending":"声纹处理中"},"ttsTruncated":"TTS 将截断该样本","noSamples":"还没有样本","noSamplesHelp":"上传或录制干净样本以启用匹配与克隆。","createFirst":"创建第一个人员","createFirstHelp":"先新建人员，再导入声音样本。","preparingLibrary":"正在准备声纹库","preparingHelp":"正在加载人员与样本…","unavailable":"声纹库暂不可用","unavailableHelp":"无法加载声纹库，重试不会丢失本地输入。","creatingTask":"正在创建任务…","uploadPercent":"正在上传 {{percent}}%","preparingUpload":"正在准备上传…","transcribeAndImport":"转写并导入","confirmAndImport":"确认并导入","personUpdated":"人员资料已更新。","personCreated":"人员已创建。","personDeleted":"人员已删除。","sampleTaskCreated":"样本分析任务已创建。","refreshAfterCreateFailed":"任务已创建，但刷新失败：{{message}}","uploadCancelled":"上传已取消，已选样本仍保留。","sampleDeleted":"样本已删除。","newPersonTitle":"新建人员","editPersonTitle":"编辑人员","closePersonEditor":"关闭人员编辑器","editorHelp":"姓名用于声纹匹配，也可选择同步到热词库。","nameRequired":"姓名","noteOptional":"备注（选填）","notePlaceholder":"外号、手机号或公司名称","noteCount":"{{current}} / 20 个字符","addToHotwords":"加入热词库","addToHotwordsHelp":"自动同步完整姓名，可靠提取时也同步去姓形式。","saving":"正在保存…","savePerson":"保存人员","deletePersonTitle":"删除人员","deleteSampleTitle":"删除样本","deletePersonDescription":"永久删除 {{name}} 及其全部样本？","deleteSampleDescription":"永久删除该样本？"
+  },
+  "asr": {
+    "computeDeviceAria":"ASR 计算设备",
+    "title":"音频转写","subtitle":"上传音频，获得说话人、逐字时间戳与字幕文件","restoreDefaults":"恢复默认配置","defaultsRestored":"已恢复 ASR 默认配置。","model":"ASR 模型","notInstalled":"（未安装）","language":"识别语言","speakerCount":"说话人数","auto":"自动","computeDevice":"计算设备","modelUnavailable":"（该模型不可用）","defaultMark":"（默认）","computeHelp":"ASR 与时间对齐同步切换；VAD 和说话人分离始终使用 CPU。","acceleration":"单任务加速","accelerationHelp":"按 CPU 核心与可用内存或 GPU 显存自动提高任务内部批次。长音频收益更明显；不改变模型、精度、分块或说话人算法，内存不足时会自动回退。","exportFormat":"导出格式","uploadLabel":"ASR 音频","taskList":"任务列表","dropzone":{"title":"拖放音频到这里","reselect":"点击可重新选择","formats":"支持常见音视频格式"},"timestamps":{"label":"时间戳","word":"句级 + 字词级","segment":"仅句级"},"voiceprints":{"label":"允许使用声纹库识别人员","help":"只为匹配到的 Speaker 自动命名，不改变分段结果。"},
+    "hotwords":{"label":"热词表（可选）","termCount":"{{count}} 词","emptyHelp":"未配置热词表；可前往“热词库”创建。留空表示不启用热词。","summary":"已选 {{lists}}/{{maxLists}} 表 · {{terms}}/{{maxTerms}} 词 · {{characters}}/{{maxCharacters}} 字符","removeOne":"请取消至少一个词表后再提交。","currentSelection":"当前热词选择已超出单次任务限制","emptySystemList":"该系统词表当前没有可用词条，暂不可选择。","selectionWouldExceed":"选择“{{name}}”后将超出单次任务限制","listLimit":"{{count}} 个词表（上限 {{max}} 个）","termLimit":"{{count}} 个唯一热词（上限 {{max}} 个）","characterLimit":"{{count}} 个提示字符（上限 {{max}} 个）","limitIssue":"{{prefix}}：{{violations}}。"},"submit":{"creating":"正在创建任务…","uploading":"正在上传 {{percent}}%","preparing":"正在准备上传…","start":"开始转写"},"notices":{"submitted":"任务已提交，可在任务记录查看进度。","uploadCancelled":"上传已取消，已选文件仍保留，可直接重新提交。","renamed":"已将 {{from}} 重命名为 {{to}}","addedToVoiceprints":"选中段落已加入声纹库。"},"segment":{"select":"选择片段 {{number}}","renameNamed":"重命名说话人 {{name}}","renameHelp":"重命名当前任务中的说话人","collapseWords":"收起字词时间戳","viewWords":"查看 {{count}} 个字词时间戳","play":"播放片段 {{number}}"},
+    "results":{"loading":"正在加载转写结果","loadingHelp":"任务摘要已就绪，正在按需读取完整结果。","loadFailed":"转写结果加载失败","tryLater":"请稍后重试。","downloadNamed":"下载 {{name}}","playbackError":"当前浏览器无法播放该音频编码，请下载原文件后播放。","pause":"暂停","play":"播放","wordAlignment":"字词级对齐","segmentTimestamps":"句级时间戳","alignmentDowngraded":"自动检测为 {{language}}；该语种暂不支持字词级对齐，本次已返回句段级时间戳。","downloadSource":"下载原文件","search":"搜索转写内容","filterSpeaker":"按说话人过滤","allSpeakers":"全部说话人","segmentSummary":"已展示 {{visible}} / 匹配 {{matches}} / 总计 {{total}}","selectionActions":"段落选择操作","selectedSegments":"{{count}} 个 {{speaker}} 段落已选择","addToVoiceprints":"加入声纹库","clearSelection":"清除段落选择","matchSummary":"已展示 {{visible}} / {{total}} 个匹配片段","loadMore":"加载更多","noMatches":"没有匹配的转写片段","empty":"还没有转写结果","emptyHelp":"从左侧上传音频并启动任务；处理完成后会在这里展示。"},"rename":{"title":"重命名说话人","close":"关闭重命名","help":"{{name}} 的所有段落和导出文件都会同步更新。","newName":"新名称","save":"保存名称"},"library":{"title":"加入声纹库","close":"关闭加入声纹库","help":"将 {{count}} 个 {{speaker}} 段落分别保存为独立样本。","person":"指定人员","newPerson":"新建人员","newPersonName":"新人员名字","namePlaceholder":"当前名称未匹配，请创建人员","matched":"已匹配：","confirm":"确认加入","nameRequired":"当前说话人名称未匹配声纹库，请输入新人员名称。"}
+  },
+  "tts": {
+    "computeDeviceAria":"TTS 计算设备",
+    "defaultText":"欢迎使用 Sandevistan-Audio。这是一套完全本地运行的语音智能服务。",
+    "title":"语音合成","subtitleCpu":"CPU 全精度离线生成，音质优先","subtitleGpu":"GPU 原生精度加速，无量化","restoreDefaults":"恢复默认配置","text":"合成文本","model":"TTS 模型","defaultMark":"（默认）","notInstalled":"（未安装）","unavailableMark":"（不可用）","modelHelp":"1.7B 提供指令控制与音色设计；0.6B 启动更快。","outputLanguage":"输出语种","languageHelp":"已知语种时显式选择；未知或混合语种使用 Auto。","voice":"音色","loadingVoices":"正在加载音色…","voiceprintPerson":"声纹人员","emptyVoiceprints":"声纹库为空","computeDevice":"计算设备","gpuFallback":"所选模型无法使用当前 GPU，本次自动使用 CPU。","computeHelp":"API 显式请求不可用 GPU 时返回 503；页面会按模型能力改用 CPU。","acceleration":"单任务加速","accelerationHelp":"按 CPU 核心与可用内存或 GPU 显存自动提高任务内部批次。长文本收益更明显；不改变模型、精度或解码方式，内存不足时会自动回退。","taskList":"任务列表","mode":{"label":"TTS 音色模式","preset":"预置音色","clone":"声音克隆","design":"音色设计"},"cloneSource":{"label":"声音克隆来源","upload":"一次性参考","voiceprint":"声纹库"},
+    "validation":{"submitting":"正在提交任务…","textRequired":"请输入需要合成的文本。","modelMissing":"所选 TTS 模型尚未完整安装。","instructionRequired":"音色设计需要填写音色与表达指令。","referenceRequired":"请先完成参考音频自动识别，并确认识别文本。","sampleRequired":"请选择一个已完成转写的声纹样本。"},"notices":{"instructionClearedForModel":"所选模型或音色模式不支持自然语言指令，已清空指令。","instructionClearedForMode":"该音色模式不支持自然语言指令，已清空指令。","referenceCreated":"已创建克隆参考 ASR 分析任务，识别完成后可确认文本并生成。","referenceUploadCancelled":"上传已取消，参考音频仍保留，可直接重试。","referenceCleared":"已清除当前克隆参考。","submitted":"任务已提交，可在任务记录查看进度。","defaultsRestored":"已恢复 TTS 默认配置。"},
+    "reference":{"panel":"一次性克隆参考","title":"克隆参考自动识别","help":"选择单人音频后由 ASR 自动识别语种、文本和时间戳。","clear":"清除克隆参考","asrModel":"克隆参考 ASR 模型","computeDevice":"克隆参考 ASR 计算设备","cpuFallback":"当前模型自动使用 CPU。","source":"克隆参考来源","creating":"正在创建克隆参考分析任务…","uploading":"正在上传克隆参考…","analyzing":"正在分析克隆参考…","creatingShort":"正在创建任务…","uploadPercent":"正在上传 {{percent}}%","preparing":"正在准备上传…","jobPrefix":"TTS 克隆参考分析 · ","select":"选择后自动分析参考音频","audioAdvice":"建议 5–15 秒、环境安静且只有一位说话人；较长音频会按字词边界截断。","recordingProgress":"TTS 克隆参考录音进度","recordingComplete":"参考录音完成","useAndAnalyze":"使用并自动分析","recordDirectly":"直接录制克隆参考","recordHelp":"停止后可先试听，再确认提交自动识别。","uploadLabel":"克隆参考音频","states":{"queued":"等待 ASR 分析","running":"正在 ASR 分析","succeeded":"参考识别完成","failed":"参考识别失败","cancelled":"参考分析已取消"},"analysisProgress":"克隆参考分析进度","failedFallback":"参考音频未能完成识别。","retry":"重试分析","loadingResult":"正在加载参考音频识别结果…","loadFailed":"参考识别结果加载失败。","reloadResult":"重新加载结果","language":"参考音频语种","transcript":"自动识别文本（可修正）","transcriptPlaceholder":"请核对文本与参考音频逐字一致。","correctionHelp":"修正后将使用当前文本；超过 15 秒时会按修正内容重新精确对齐。","missing":"参考分析任务已不存在，请重新上传或录音。"},
+    "sample":{"label":"声纹样本","ariaLabel":"TTS 声纹样本","number":"样本 {{number}}","autoTruncate":"自动截断","empty":"没有可用于 TTS 的样本","truncateHelp":"克隆前将按字词边界精确截断至 15 秒以内。"},"instruction":{"separator":"，","panel":"TTS 高级指令","designLabel":"音色与表达指令","styleLabel":"风格与表达指令（可选）","designPlaceholder":"例如：温暖成熟的女性声音，音调略低，语速舒缓，带着克制的喜悦。","stylePlaceholder":"例如：语速稍慢，用温柔而开心的语气说。","help":"语速、音调和情绪均通过自然语言描述，不是数值参数。","examples":"指令示例","example":{"slowSteady":"语速缓慢而沉稳","brisk":"语速明快，节奏紧凑","highPitch":"音调偏高且起伏明显","lowGentle":"低沉温柔地表达","happy":"带着开心和兴奋的情绪","sad":"用悲伤克制的语气说","angry":"用明显愤怒但吐字清晰的语气说"}},"submit":{"submitting":"正在提交…","generate":"生成语音"},"quality":{"title":"本地质量策略","official":"官方 {{model}} 权重 · 无量化","cpu":"CPU FP32；兼容性优先。","gpu":"GPU BF16；官方原生精度加速。","noInstruction":"当前模型与音色模式根据文本语义和标点自动处理韵律，不接受自然语言高级指令。","instruction":"当前使用官方自然语言指令控制；独立语速、音高与底层采样参数仍保持关闭。"},"results":{"title":"当前合成结果","loading":"正在按需加载完整合成结果…","loadFailed":"合成结果加载失败。","designedVoice":"设计音色","clonedVoice":"克隆音色","instruction":"指令：{{value}}","download":"下载 {{format}}","empty":"合成完成后可在这里试听和下载"}
+  }
+}
