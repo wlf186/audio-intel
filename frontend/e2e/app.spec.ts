@@ -1043,6 +1043,18 @@ test('API key login and logout use an ephemeral browser session',async({page})=>
  await page.screenshot({path:'/tmp/audio-intel-authenticated-system.png',fullPage:false})
  expect(submittedAuthorization).toBe('Bearer browser-secret')
  expect(await page.evaluate(()=>({stored:sessionStorage.getItem('audio-intel:key'),url:location.href}))).toEqual({stored:null,url:expect.not.stringContaining('browser-secret')})
+ await page.setViewportSize({width:1024,height:820})
+ await expect(page.getByRole('button',{name:'退出本地会话'})).toBeVisible()
+ const authenticatedNavigation=page.getByRole('navigation',{name:'主导航'})
+ await expect(authenticatedNavigation.locator('.nav-label-medium')).toHaveText(['转写','合成','热词','声纹','任务','系统'])
+ const authenticatedSlots=await authenticatedNavigation.evaluate(element=>{
+  const navigationBox=element.getBoundingClientRect();const buttons=[...element.querySelectorAll('button')]
+  return {tabWidth:buttons[0].getBoundingClientRect().width,reservedWidth:navigationBox.right-buttons.at(-1)!.getBoundingClientRect().right}
+ })
+ expect(Math.abs(authenticatedSlots.reservedWidth-authenticatedSlots.tabWidth)).toBeLessThanOrEqual(1)
+ expect((await page.locator('.language-switcher.header').boundingBox())!.width).toBe(38)
+ expect((await page.getByRole('link',{name:'打开 API 文档'}).boundingBox())!.width).toBe(38)
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(1024)
  await page.setViewportSize({width:390,height:844})
  await expect(page.locator('.local-mode')).toBeVisible()
  await expect(page.getByRole('link',{name:'打开 API 文档'})).toBeVisible()

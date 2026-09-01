@@ -63,12 +63,12 @@
     "mainNavigation": "主导航",
     "workspace": "工作台",
     "pages": {
-      "asr": {"full": "转写工作台", "short": "转写"},
-      "tts": {"full": "语音合成", "short": "合成"},
-      "hotwords": {"full": "热词库", "short": "热词"},
-      "voiceprints": {"full": "声纹库", "short": "声纹"},
-      "jobs": {"full": "任务记录", "short": "任务"},
-      "system": {"full": "系统状态", "short": "系统"}
+      "asr": {"full": "转写工作台", "medium": "转写", "short": "转写"},
+      "tts": {"full": "语音合成", "medium": "合成", "short": "合成"},
+      "hotwords": {"full": "热词库", "medium": "热词", "short": "热词"},
+      "voiceprints": {"full": "声纹库", "medium": "声纹", "short": "声纹"},
+      "jobs": {"full": "任务记录", "medium": "任务", "short": "任务"},
+      "system": {"full": "系统状态", "medium": "系统", "short": "系统"}
     },
     "returnToAsr": "返回转写工作台",
     "offline": {

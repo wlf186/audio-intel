@@ -63,12 +63,12 @@
     "mainNavigation": "Main navigation",
     "workspace": "Workspace",
     "pages": {
-      "asr": {"full": "Transcription", "short": "ASR"},
-      "tts": {"full": "Speech synthesis", "short": "TTS"},
-      "hotwords": {"full": "Hotword library", "short": "Hotwords"},
-      "voiceprints": {"full": "Voiceprint library", "short": "Voices"},
-      "jobs": {"full": "Task history", "short": "Tasks"},
-      "system": {"full": "System status", "short": "System"}
+      "asr": {"full": "Transcription", "medium": "Transcribe", "short": "ASR"},
+      "tts": {"full": "Speech synthesis", "medium": "Synthesize", "short": "TTS"},
+      "hotwords": {"full": "Hotword library", "medium": "Hotwords", "short": "Hotwords"},
+      "voiceprints": {"full": "Voiceprint library", "medium": "Voiceprints", "short": "Voices"},
+      "jobs": {"full": "Task history", "medium": "Tasks", "short": "Tasks"},
+      "system": {"full": "System status", "medium": "System", "short": "System"}
     },
     "returnToAsr": "Return to transcription",
     "offline": {
