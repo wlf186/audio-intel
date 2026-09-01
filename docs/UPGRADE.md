@@ -24,7 +24,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - 历史 ASR/TTS 任务、旧声音档案和既有声纹样本保持可读；人员名字、备注及开关变化不会回写历史任务或已提交热词快照。
 - 浏览器鉴权改用进程内会话 Cookie，升级或重启后需要重新输入 API Key。
 - `/api/v1/health` 现在是公开最小探针；原详细结构迁移到受保护的 `/api/v1/system`。监控脚本如依赖硬件、worker、模型或路径字段必须切换端点并增加 Bearer Header。
-- `/api/v1/health`、`/api/v1/system` 和 OpenAPI `info.version` 现在统一报告 release-aware 版本，不再长期固定为 `0.1.0`。正式 tag 返回纯发布号，tag 后源码构建使用 `0.1.6+3.g8adfe46` 一类 SemVer build metadata，存在已跟踪本地修改时追加 `.dirty`；字段类型和响应结构不变。
+- `/api/v1/health`、`/api/v1/system` 和 OpenAPI `info.version` 现在统一报告 release-aware 版本，不再长期固定为 `0.1.0`。正式 tag 返回纯发布号，tag 后源码构建使用 `0.1.7+3.g8adfe46` 一类 SemVer build metadata，存在已跟踪本地修改时追加 `.dirty`；字段类型和响应结构不变。
 - `.complete` 必须包含固定模型 revision。旧的空 marker 会在 setup 时被判定为无效并修复。
 - TTS 安装现在同时创建独立 aligner 环境；不要复用旧 TTS 环境中的 qwen-asr。
 - ASR/TTS worker 现在由监督器管理可重启执行器，`setup all` 会将进程树管理所需的 `psutil` 同步到两个模型环境。启动时会校验并清理可信的遗留执行器元数据，再恢复中断任务。

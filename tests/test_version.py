@@ -16,15 +16,15 @@ ROOT = Path(__file__).resolve().parent.parent
 @pytest.mark.parametrize(
     ("describe", "expected"),
     (
-        ("v0.1.6-0-g3a478297", "0.1.6"),
-        ("v0.1.6-0-g3a478297-dirty", "0.1.6+0.g3a478297.dirty"),
-        ("v0.1.6-3-g8adfe461", "0.1.6+3.g8adfe461"),
-        ("v0.1.6-3-g8adfe461-dirty", "0.1.6+3.g8adfe461.dirty"),
-        ("v0.1.5-1-g8adfe461", "0.1.6+g8adfe461"),
-        ("8adfe461", "0.1.6+g8adfe461"),
-        ("8adfe461-dirty", "0.1.6+g8adfe461.dirty"),
-        (None, "0.1.6"),
-        ("not-a-version", "0.1.6"),
+        ("v0.1.7-0-g3a478297", "0.1.7"),
+        ("v0.1.7-0-g3a478297-dirty", "0.1.7+0.g3a478297.dirty"),
+        ("v0.1.7-3-g8adfe461", "0.1.7+3.g8adfe461"),
+        ("v0.1.7-3-g8adfe461-dirty", "0.1.7+3.g8adfe461.dirty"),
+        ("v0.1.6-1-g8adfe461", "0.1.7+g8adfe461"),
+        ("8adfe461", "0.1.7+g8adfe461"),
+        ("8adfe461-dirty", "0.1.7+g8adfe461.dirty"),
+        (None, "0.1.7"),
+        ("not-a-version", "0.1.7"),
     ),
 )
 def test_version_from_git_describe(describe: str | None, expected: str) -> None:
