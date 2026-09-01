@@ -149,6 +149,8 @@ def test_api_markdown_examples_use_public_contract_values() -> None:
     assert "voice_mode=clone" not in api_guide
     assert "one comma-separated `hotword_list_ids` form field" in api_guide
     assert "`gpu_runtime_not_installed` problem code" in api_guide
+    assert "/api/v1/tls/bootstrap" in api_guide
+    assert "OpenAPI `info.version`" in api_guide
 
 
 def test_contributing_docs_require_translation_parity() -> None:
@@ -158,3 +160,13 @@ def test_contributing_docs_require_translation_parity() -> None:
     assert "en-US.json" in contributing
     assert "--dir frontend check:i18n" in contributing
     assert "every platform/profile lock together" in contributing
+
+
+def test_release_docs_require_tag_and_api_version_consistency() -> None:
+    contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+
+    assert "git fetch origin --tags --prune" in contributing
+    assert "RELEASE_VERSION" in contributing
+    assert "frontend/package.json" in contributing
+    assert "/api/v1/health" in contributing
+    assert "OpenAPI `info.version`" in contributing

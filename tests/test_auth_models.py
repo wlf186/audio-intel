@@ -124,7 +124,9 @@ def test_browser_session_auth_protects_system_and_media(tmp_path, monkeypatch) -
         cookie = login.headers["set-cookie"].lower()
         assert "httponly" in cookie and "samesite=strict" in cookie
         assert client.get("/api/v1/auth/session").json()["authenticated"] is True
-        assert client.get("/api/v1/system").status_code == 200
+        system = client.get("/api/v1/system")
+        assert system.status_code == 200
+        assert system.json()["version"] == api_module.__version__
 
         assert client.post("/api/v1/voiceprints/people", json={"name": "blocked"}).status_code == 403
         created = client.post(

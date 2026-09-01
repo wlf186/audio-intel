@@ -102,7 +102,9 @@ class AuthSessionResponse(PublicModel):
 
 class HealthResponse(PublicModel):
     status: str
-    version: str
+    version: str = Field(
+        description="正式版本或附带本地 Git 构建信息的 SemVer 版本 / Release version or SemVer version with local Git build metadata",
+    )
     offline: bool = Field(description="模型运行时是否强制离线 / Whether model runtime is offline-only")
 
 
@@ -358,7 +360,9 @@ class ModelInstallation(PublicModel):
 
 class SystemResponse(PublicModel):
     status: str
-    version: str
+    version: str = Field(
+        description="与健康检查和 OpenAPI 一致的服务构建版本 / Service build version shared with health and OpenAPI",
+    )
     offline: bool
     deployment: DeploymentCapability
     bind: str

@@ -21,7 +21,9 @@ Authorization: Bearer <key>
 
 The bundled browser exchanges the key for an opaque HttpOnly same-origin session cookie. Do not put the raw key in URLs or browser storage.
 
-`GET /api/v1/health` is always public and intentionally minimal. Detailed system, model, worker, media, and task surfaces remain protected.
+`GET /api/v1/health` is always public and intentionally minimal. `GET /api/v1/auth/session` may also be called before login to discover whether authentication is required. When project-managed HTTPS is enabled, the public `GET /api/v1/tls/bootstrap`, `GET /api/v1/tls/root-ca.cer`, and `GET /api/v1/tls/root-ca.pem` endpoints expose only the configured public CA and its SHA-256 fingerprint; CA downloads return `404` when unavailable. Detailed system, model, worker, media, and task surfaces remain protected. See the [local HTTPS guide](HTTPS.md) for certificate handling and trust verification.
+
+The `version` returned by health and system responses is also used as OpenAPI `info.version`. A clean tagged checkout reports its `X.Y.Z` release version; later source commits use SemVer build metadata such as `X.Y.Z+3.g8adfe46`, with `.dirty` appended for tracked local modifications. A shallow or stale-tag checkout may omit the commit distance but retains the commit hash. Source archives without Git metadata report their embedded release fallback. Treat the full string as build identity rather than assuming that every source checkout equals the latest release artifact.
 
 ## Native asynchronous lifecycle
 

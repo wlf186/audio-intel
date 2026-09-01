@@ -92,6 +92,15 @@ The four native asynchronous submission endpoints must preserve first-accept `20
 - A prebuilt container, offline installer, runtime bundle, or appliance image requires an artifact-specific SBOM, license-text bundle, and reciprocal-license/source-offer review before release.
 - Brand references must remain consistent with [BRAND_NOTICE.md](BRAND_NOTICE.md); do not imply authorization, sponsorship, approval, endorsement, or affiliation by a third-party rights holder.
 
+## Releases
+
+1. Synchronize remote tags with `git fetch origin --tags --prune`, confirm the intended release commit, and keep the worktree clean.
+2. Update `RELEASE_VERSION` in `audio_intel/version.py` and the private frontend package version in `frontend/package.json` to the intended `X.Y.Z` in the tested release commit. API versions omit the tag's leading `v`.
+3. Create `vX.Y.Z` on that exact commit without moving or reusing an existing tag. Wait for both Linux and Windows tag workflows to pass before publishing the GitHub Release.
+4. Confirm that the GitHub Release targets the same tag and commit, then verify `/api/v1/health`, `/api/v1/system`, and OpenAPI `info.version` all report `X.Y.Z` from a clean tag checkout.
+
+Between releases, source checkouts append local SemVer build metadata derived from `git describe`. This lookup is offline; do not add a runtime GitHub request to resolve the version. README release badges should remain dynamic rather than hard-coding a release number.
+
 ## Pull requests
 
 Use Conventional Commit subjects, for example:

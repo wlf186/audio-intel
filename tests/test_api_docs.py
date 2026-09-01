@@ -72,6 +72,8 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     monkeypatch.setattr(db_module, "settings", local)
     schema = api_module.create_app().openapi()
 
+    assert schema["info"]["version"] == api_module.__version__
+
     operations = [
         operation
         for methods in schema["paths"].values()
