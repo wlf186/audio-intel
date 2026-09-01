@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 
-RELEASE_VERSION = "0.1.5"
+RELEASE_VERSION = "0.1.6"
 
 _DESCRIBE_PATTERN = re.compile(
     r"^v(?P<version>\d+\.\d+\.\d+)-(?P<distance>\d+)-g(?P<commit>[0-9a-f]+)(?P<dirty>-dirty)?$",

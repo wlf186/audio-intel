@@ -8,6 +8,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$ExtraArgs = @($ExtraArgs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
 $RootDir = $PSScriptRoot
 $RuntimeDir = Join-Path $RootDir ".runtime"
