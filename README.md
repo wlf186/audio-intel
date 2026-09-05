@@ -173,7 +173,7 @@ The default-on single-task acceleration increases internal batch sizes according
 
 ## API and integrations
 
-The four native asynchronous submission surfaces—ASR, TTS, clone-reference analysis, and voiceprint sample upload—require an 8–128 character `Idempotency-Key`. First acceptance returns `202`; a same-request replay returns `200`; reusing a key with different input returns `409`.
+The five native asynchronous submission surfaces—ASR, single-item TTS, ordered TTS sequences, clone-reference analysis, and voiceprint sample upload—require an 8–128 character `Idempotency-Key`. First acceptance returns `202`; a same-request replay returns `200`; reusing a key with different input returns `409`. Sequence jobs load one model for up to 100 ordered items and return one WAV artifact per item; discover the exact limits at `tts.sequence_jobs`.
 
 Minimal native ASR submission using the CPU path:
 

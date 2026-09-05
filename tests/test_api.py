@@ -362,6 +362,13 @@ def test_api_queues_asr_and_validates_tts(tmp_path, monkeypatch) -> None:
         assert capabilities["limits"]["max_queued_tts"] == 5
         assert capabilities["asr"]["single_task_acceleration"] == {"supported": True, "default": True}
         assert capabilities["tts"]["single_task_acceleration"] == {"supported": True, "default": True}
+        assert capabilities["tts"]["sequence_jobs"] == {
+            "supported": True, "contract_version": 1,
+            "endpoint": "/api/v1/tts/sequence-jobs",
+            "voice_modes": ["preset", "voiceprint"],
+            "artifact_mode": "per_item", "format": "wav",
+            "max_items": 100, "max_total_chars": local.max_tts_chars,
+        }
         assert capabilities["tts"]["controls"] == {
             "instruction_voice_modes": [],
             "instruction_required_voice_modes": [],
@@ -370,6 +377,85 @@ def test_api_queues_asr_and_validates_tts(tmp_path, monkeypatch) -> None:
             "pitch_parameter": False,
             "sampling_parameters": False,
         }
+
+
+def test_tts_sequence_submission_validation_idempotency_and_voiceprint_snapshot(tmp_path, monkeypatch) -> None:
+    local = replace(
+        settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
+        enabled_services=frozenset({"tts"}), min_free_disk_bytes=0,
+        max_queued_tts=20, mock_mode=True,
+    )
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    gpu = {"name": "Test GPU", "memory_used_mib": 0, "memory_total_mib": 4096, "utilization": 0}
+    monkeypatch.setattr(api_module, "gpu_snapshot", lambda *_: gpu)
+    monkeypatch.setattr(api_module, "cached_gpu_snapshot", lambda *_args, **_kwargs: gpu)
+
+    with TestClient(api_module.create_app()) as client:
+        key = str(uuid.uuid4())
+        request = {
+            "model": "qwen3-tts-0.6b", "language": "Chinese",
+            "voice_mode": "preset", "compute_device": "gpu",
+            "items": [
+                {"id": "turn_0001", "text": "第一句。", "speaker": "Vivian"},
+                {"id": "turn_0002", "text": "第二句。", "speaker": "Dylan"},
+            ],
+        }
+        created = client.post("/api/v1/tts/sequence-jobs", headers={"Idempotency-Key": key}, json=request)
+        replay = client.post("/api/v1/tts/sequence-jobs", headers={"Idempotency-Key": key}, json=request)
+        conflict = client.post(
+            "/api/v1/tts/sequence-jobs", headers={"Idempotency-Key": key},
+            json={**request, "items": [{"id": "turn_0001", "text": "changed", "speaker": "Vivian"}]},
+        )
+        duplicate = client.post(
+            "/api/v1/tts/sequence-jobs", headers=idem(),
+            json={**request, "items": [
+                {"id": "same", "text": "one", "speaker": "Vivian"},
+                {"id": "same", "text": "two", "speaker": "Dylan"},
+            ]},
+        )
+        unsupported_control = client.post(
+            "/api/v1/tts/sequence-jobs", headers=idem(),
+            json={**request, "items": [{
+                "id": "turn_0003", "text": "third", "speaker": "Vivian", "instruct": "开心地说",
+            }]},
+        )
+
+        person = db_module.create_voiceprint_person("Sequence Voice")
+        source = local.voiceprints_dir / person["id"] / "source.wav"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(source), "wb") as handle:
+            handle.setnchannels(1); handle.setsampwidth(2); handle.setframerate(16000)
+            handle.writeframes(b"\0\0" * 1600)
+        sample = db_module.create_voiceprint_sample(
+            person["id"], state="ready", language="Chinese", audio_path=str(source),
+            transcript="声纹参考。", duration=0.1,
+        )
+        cloned = client.post(
+            "/api/v1/tts/sequence-jobs", headers=idem(), json={
+                "model": "qwen3-tts-0.6b", "language": "Chinese",
+                "voice_mode": "voiceprint", "compute_device": "cpu",
+                "items": [
+                    {"id": "turn_0004", "text": "克隆一。", "voiceprint_sample_id": sample["id"]},
+                    {"id": "turn_0005", "text": "克隆二。", "voiceprint_sample_id": sample["id"]},
+                ],
+            },
+        )
+
+    assert created.status_code == 202
+    assert created.json()["request"]["purpose"] == "tts_sequence"
+    assert created.json()["request"]["sequence_contract_version"] == 1
+    assert replay.status_code == 200
+    assert replay.headers["Idempotency-Replayed"] == "true"
+    assert replay.json()["id"] == created.json()["id"]
+    assert conflict.status_code == 409 and conflict.json()["code"] == "idempotency_key_conflict"
+    assert duplicate.status_code == 422 and duplicate.json()["code"] == "duplicate_tts_sequence_item"
+    assert unsupported_control.status_code == 422 and unsupported_control.json()["code"] == "unsupported_tts_control"
+    assert cloned.status_code == 202
+    references = cloned.json()["request"]["voiceprint_references"]
+    assert list(references) == [sample["id"]]
+    snapshot_path = Path(references[sample["id"]]["reference_audio_path"])
+    assert snapshot_path.is_file() and snapshot_path != source
 
 
 def test_tts_rejects_unsupported_style_instructions_before_job_creation(tmp_path, monkeypatch) -> None:

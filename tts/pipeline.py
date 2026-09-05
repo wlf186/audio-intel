@@ -139,10 +139,14 @@ def _generate_tts_batch(
     texts: list[str],
     clone_prompt: Any,
     progress_callback: Any | None = None,
+    item_requests: list[dict[str, Any]] | None = None,
 ) -> tuple[list[Any], int]:
     batched = len(texts) > 1
     text: str | list[str] = texts if batched else texts[0]
     language = request.get("language") or "Auto"
+    item_requests = item_requests or [request] * len(texts)
+    if len(item_requests) != len(texts):
+        raise ValueError("TTS batch metadata does not match the text batch")
     decode_context = _sequential_speech_decode(model) if batched else nullcontext()
     with _observe_tts_decode(model, progress_callback), decode_context:
         if request["voice_mode"] == "voice_design":
@@ -153,13 +157,18 @@ def _generate_tts_batch(
                 non_streaming_mode=True,
             )
         if request["voice_mode"] == "preset":
+            speakers = [item["speaker"] for item in item_requests]
+            instructions = [item.get("instruct") or "" for item in item_requests]
             return model.generate_custom_voice(
                 text=text,
                 language=[language] * len(texts) if batched else language,
-                speaker=[request["speaker"]] * len(texts) if batched else request["speaker"],
-                instruct=[request.get("instruct") or ""] * len(texts) if batched else request.get("instruct") or "",
+                speaker=speakers if batched else speakers[0],
+                instruct=instructions if batched else instructions[0],
                 non_streaming_mode=True,
             )
+        if item_requests is not None and any("_clone_prompt" in item for item in item_requests):
+            prompts = [item["_clone_prompt"] for item in item_requests]
+            clone_prompt = prompts if batched else prompts[0]
         return model.generate_voice_clone(
             text=text,
             language=[language] * len(texts) if batched else language,
@@ -231,6 +240,8 @@ def encode(path: Path, audio: Any, rate: int, output_format: str) -> Path:
 
 def process_job(context: JobContext) -> dict[str, Any]:
     request = context.job["request"]
+    if request.get("purpose") == "tts_sequence":
+        return _process_sequence_job(context)
     model_definition = resolve_tts_model(request.get("model"))
     if model_definition is None:
         raise ValueError("Unknown TTS model in persisted job request")
@@ -461,6 +472,297 @@ def _process_loaded(
     }
 
 
+def _process_sequence_job(context: JobContext) -> dict[str, Any]:
+    request = context.job["request"]
+    if int(request.get("sequence_contract_version") or 0) != 1:
+        raise ValueError("Unsupported persisted TTS sequence contract")
+    items = list(request.get("sequence_items") or [])
+    if not items:
+        raise ValueError("Persisted TTS sequence contains no items")
+    model_definition = resolve_tts_model(request.get("model"))
+    if model_definition is None:
+        raise ValueError("Unknown TTS model in persisted sequence request")
+    voice_mode = str(request.get("voice_mode") or "")
+    if voice_mode not in {"preset", "voiceprint"}:
+        raise ValueError("Persisted TTS sequence uses an unsupported voice mode")
+    checkpoint = resolve_tts_checkpoint(model_definition, voice_mode)
+    if checkpoint is None:
+        raise ValueError("The persisted TTS model does not support this sequence voice mode")
+    installation = model_installation(settings.models_dir, checkpoint)
+    if not installation["installed"] and not settings.mock_mode:
+        raise RuntimeError(
+            f"{checkpoint['name']} is not installed at revision {checkpoint['revision']}"
+        )
+    for item in items:
+        instruction = str(item.get("instruct") or "").strip()
+        if instruction and not (
+            model_definition["public_id"] == "qwen3-tts-1.7b" and voice_mode == "preset"
+        ):
+            raise ValueError("Natural-language instructions are not supported by this TTS sequence")
+        item["instruct"] = instruction
+
+    compute_device = request.get("compute_device", "cpu")
+    acceleration = resolve_acceleration(
+        bool(request.get("accelerate_single_task", False)), compute_device,
+        int(model_definition.get("batch_penalty_steps") or 0),
+    )
+    context.progress(
+        0.05, "loading_tts_model", stage_progress=0.0, basis="estimated",
+        activity={"sequence": 1, "current": 0, "unit": "model_load", "basis": "estimated"},
+    )
+    lease = gpu_lease(lambda: context.progress(0.05, "waiting_for_gpu")) if compute_device == "gpu" and not settings.mock_mode else None
+    if lease is not None:
+        lease.__enter__()
+    model = None
+    initial_gpu_diagnostics = None
+    try:
+        if compute_device == "gpu" and not settings.mock_mode:
+            initial_gpu_diagnostics = gpu_diagnostics(0)
+        references = dict(request.get("voiceprint_references") or {})
+        if voice_mode == "voiceprint":
+            prepared: dict[str, dict[str, Any]] = {}
+            for sample_id, snapshot in references.items():
+                value = dict(snapshot)
+                _prepare_clone_reference(
+                    context, value, compute_device,
+                    output_name=f"clone-reference-{len(prepared):03d}.wav",
+                )
+                prepared[str(sample_id)] = value
+            references = prepared
+        model = None if settings.mock_mode else load_model(model_definition, voice_mode, compute_device)
+        context.progress(
+            0.12, "loading_tts_model", stage_progress=1.0,
+            activity={"sequence": 1, "current": 1, "total": 1, "unit": "model_load", "basis": "observed"},
+        )
+        return _process_sequence_loaded(
+            context, request, items, references, model, compute_device, acceleration,
+            model_definition, checkpoint,
+        )
+    except Exception as exc:
+        if compute_device == "gpu" and not settings.mock_mode:
+            import torch
+            if isinstance(exc, torch.OutOfMemoryError):
+                mark_executor_for_recycle(exc, "cuda_oom")
+                try:
+                    exc.add_note("audio_intel_gpu_diagnostics=" + json.dumps({
+                        "before": initial_gpu_diagnostics,
+                        "at_failure": gpu_diagnostics(0),
+                    }, ensure_ascii=False, sort_keys=True))
+                except Exception:
+                    pass
+        raise
+    finally:
+        if compute_device == "gpu":
+            import torch
+            if model is not None:
+                del model
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        if lease is not None:
+            lease.__exit__(None, None, None)
+
+
+def _process_sequence_loaded(
+    context: JobContext,
+    request: dict[str, Any],
+    items: list[dict[str, Any]],
+    references: dict[str, dict[str, Any]],
+    model: Any,
+    compute_device: str,
+    acceleration: dict[str, Any],
+    model_definition: dict[str, Any],
+    checkpoint: dict[str, Any],
+) -> dict[str, Any]:
+    voice_mode = request["voice_mode"]
+    clone_prompts: dict[str, Any] = {}
+    if model is not None and voice_mode == "voiceprint":
+        for sample_id, reference in references.items():
+            context.progress(0.12, "preparing_voice_clone")
+            prompt_items = model.create_voice_clone_prompt(
+                ref_audio=reference["reference_audio_path"],
+                ref_text=reference["reference_text"],
+                x_vector_only_mode=False,
+            )
+            if len(prompt_items) != 1:
+                raise RuntimeError(
+                    f"Expected one voice-clone prompt for sample {sample_id}, got {len(prompt_items)}"
+                )
+            clone_prompts[sample_id] = prompt_items[0]
+
+    chunks: list[dict[str, Any]] = []
+    for item_index, item in enumerate(items):
+        metadata = dict(item)
+        if voice_mode == "voiceprint":
+            sample_id = str(item.get("voiceprint_sample_id") or "")
+            if sample_id not in references:
+                raise ValueError(f"Missing snapshotted voiceprint reference for item {item.get('id')}")
+            metadata.update(references[sample_id])
+            if model is not None:
+                metadata["_clone_prompt"] = clone_prompts[sample_id]
+        for chunk_index, text in enumerate(split_text(str(item["text"]))):
+            chunks.append({
+                "item_index": item_index,
+                "chunk_index": chunk_index,
+                "text": text,
+                "metadata": metadata,
+            })
+    if not chunks:
+        raise ValueError("Persisted TTS sequence contains no synthesizable text")
+
+    configured_batch_size = int(acceleration["target_batch_size"]) if acceleration["requested"] else 1
+    actual_batch_sizes: list[int] = []
+    fallbacks: list[dict[str, int]] = []
+    texts = [chunk["text"] for chunk in chunks]
+    token_counts = _tts_text_token_counts(model, texts) if model is not None else [max(1, len(text)) for text in texts]
+    waveforms_by_item: list[list[Any]] = [[] for _ in items]
+    rate = 24000
+    observed_codec_frames = 0.0
+    observed_text_tokens = 0
+    activity_sequence = 0
+    torch_module = None
+    if model is not None:
+        import torch
+        torch_module = torch
+    index = 0
+    context.progress(
+        0.15, f"synthesizing_1_of_{len(chunks)}", 0, len(chunks),
+        stage_progress=0.0, unit="text_chunk",
+    )
+    while index < len(chunks):
+        batch_size = min(configured_batch_size, len(chunks) - index)
+        current = chunks[index:index + batch_size]
+        current_texts = [chunk["text"] for chunk in current]
+        current_metadata = [chunk["metadata"] for chunk in current]
+        current_token_counts = token_counts[index:index + batch_size]
+        frames_per_token = (
+            observed_codec_frames / observed_text_tokens
+            if observed_text_tokens else TTS_INITIAL_CODEC_FRAMES_PER_TEXT_TOKEN
+        )
+        expected_frames = max(1, math.ceil(max(current_token_counts) * frames_per_token))
+        activity_sequence += 1
+
+        def emit_activity(payload: dict[str, Any]) -> None:
+            completed = int(payload["current"])
+            batch_fraction = min(MAX_IN_FLIGHT_BATCH_PROGRESS, completed / expected_frames)
+            stage_progress = (index + len(current_texts) * batch_fraction) / len(chunks)
+            context.progress(
+                0.15 + 0.72 * stage_progress,
+                f"synthesizing_{index + 1}_of_{len(chunks)}", index, len(chunks),
+                stage_progress=stage_progress, unit="text_chunk", basis="estimated",
+                activity={
+                    "sequence": activity_sequence, "current": completed,
+                    "total": expected_frames, "unit": "codec_frame", "basis": "estimated",
+                },
+            )
+
+        reporter = ThrottledProgress(emit_activity)
+        if settings.mock_mode:
+            generated = []
+            for text in current_texts:
+                audio, rate = mock_speech(text)
+                generated.append(audio)
+        else:
+            try:
+                generated, rate = _generate_tts_batch(
+                    model, request, current_texts, None,
+                    progress_callback=lambda completed: reporter.report({"current": completed}),
+                    item_requests=current_metadata,
+                )
+            except Exception as exc:
+                if torch_module is None or not isinstance(exc, torch_module.OutOfMemoryError):
+                    raise
+                if batch_size <= 1:
+                    raise
+                reduced = lower_batch_size(batch_size)
+                fallbacks.append({"from": batch_size, "to": reduced})
+                configured_batch_size = reduced
+                gc.collect()
+                if compute_device == "gpu" and torch_module.cuda.is_available():
+                    torch_module.cuda.empty_cache()
+                continue
+        if len(generated) != len(current_texts):
+            raise RuntimeError(
+                f"TTS model returned {len(generated)} waveforms for {len(current_texts)} sequence chunks"
+            )
+        for chunk, audio in zip(current, generated):
+            if settings.mock_mode:
+                waveform = list(audio)
+            else:
+                import numpy as np
+                waveform = np.asarray(audio, dtype=np.float32)
+            waveforms_by_item[int(chunk["item_index"])].append(waveform)
+        actual_batch_sizes.append(len(current_texts))
+        index += len(current_texts)
+        observed_text_tokens += sum(current_token_counts)
+        observed_codec_frames += sum(
+            len(audio) / max(rate, 1) * TTS_CODEC_FRAMES_PER_SECOND for audio in generated
+        )
+        completed_stage_progress = index / len(chunks)
+        context.progress(
+            0.15 + 0.72 * completed_stage_progress,
+            f"synthesizing_{min(index + 1, len(chunks))}_of_{len(chunks)}", index, len(chunks),
+            stage_progress=completed_stage_progress, unit="text_chunk",
+        )
+
+    artifacts: list[dict[str, Any]] = []
+    sequence_items: list[dict[str, Any]] = []
+    total_duration = 0.0
+    context.progress(0.94, "writing_audio")
+    for item_index, (item, waveforms) in enumerate(zip(items, waveforms_by_item)):
+        if not waveforms:
+            raise RuntimeError(f"TTS sequence item {item.get('id')} produced no waveform")
+        if settings.mock_mode:
+            silence = [0.0] * int(rate * 0.18)
+            merged: Any = []
+            for chunk_index, waveform in enumerate(waveforms):
+                if chunk_index:
+                    merged.extend(silence)
+                merged.extend(waveform)
+        else:
+            import numpy as np
+            silence = np.zeros(int(rate * 0.18), dtype=np.float32)
+            merged = np.concatenate([
+                part
+                for chunk_index, waveform in enumerate(waveforms)
+                for part in ((silence,) if chunk_index else ()) + (waveform,)
+            ])
+        path = encode(context.output_dir / f"item-{item_index:04d}.wav", merged, rate, "wav")
+        duration = round(len(merged) / rate, 3)
+        total_duration += duration
+        artifact = {
+            "name": path.name, "path": str(path), "mime_type": "audio/wav",
+            "size_bytes": path.stat().st_size,
+        }
+        artifacts.append(artifact)
+        sequence_items.append({
+            "id": item["id"], "artifact_name": path.name,
+            "duration": duration, "sample_rate": rate,
+        })
+    return {
+        "duration": round(total_duration, 3),
+        "sample_rate": rate,
+        "format": "wav",
+        "language": request.get("language") or "Auto",
+        "model": model_definition["public_id"],
+        "model_name": checkpoint["name"],
+        "model_revision": checkpoint["revision"],
+        "voice_mode": voice_mode,
+        "compute_device": compute_device,
+        "compute_device_name": compute_device_name(compute_device, request.get("compute_device_name")),
+        "precision": "FP32" if compute_device == "cpu" else "BF16",
+        "quantized": False,
+        "acceleration": {
+            **acceleration,
+            "active": bool(acceleration["requested"] and max(actual_batch_sizes, default=1) > 1),
+            "stage_batch_sizes": {"generation": max(actual_batch_sizes, default=1), "decoder": 1},
+            "oom_fallbacks": [{"stage": "generation", **fallback} for fallback in fallbacks],
+        },
+        "sequence": {"contract_version": 1, "items": sequence_items},
+        "artifacts": artifacts,
+    }
+
+
 def _word_text_end(text: str, words: list[dict[str, Any]], last_index: int) -> int | None:
     cursor = 0
     end_offset = None
@@ -515,6 +817,7 @@ def _prepare_clone_reference(
     context: JobContext,
     request: dict[str, Any],
     compute_device: str,
+    output_name: str = "clone-reference.wav",
 ) -> None:
     import soundfile as sf
 
@@ -555,7 +858,7 @@ def _prepare_clone_reference(
             raise ValueError("Aligned clone reference text does not match the stored transcript")
         cutoff = float(words[last_index]["end"])
     from audio_intel.media import extract_audio_clip
-    clipped = context.work_dir / "clone-reference.wav"
+    clipped = context.work_dir / output_name
     extract_audio_clip(Path(path), clipped, 0.0, cutoff)
     request["reference_audio_path"] = str(clipped)
     request["reference_text"] = request["reference_text"][:text_end]

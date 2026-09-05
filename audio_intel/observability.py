@@ -119,7 +119,10 @@ def _cohort(job: dict[str, Any]) -> tuple[Any, ...]:
 def _input_units(job: dict[str, Any]) -> float | None:
     request = job.get("request") or {}
     if job.get("kind") == "tts":
-        return float(max(1, len(str(request.get("text") or ""))))
+        text = str(request.get("text") or "")
+        if request.get("purpose") == "tts_sequence":
+            text = "".join(str(item.get("text") or "") for item in request.get("sequence_items") or [])
+        return float(max(1, len(text)))
     duration = job.get("input_duration_seconds") or (job.get("result") or {}).get("duration")
     return float(duration) if duration else None
 

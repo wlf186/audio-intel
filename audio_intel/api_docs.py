@@ -16,7 +16,7 @@ API_DESCRIPTION = r"""
 
 1. `GET /api/v1/health`：公开健康探针 / public health probe。
 2. **Authorize** → `GET /api/v1/capabilities`：鉴权并读取实时能力和默认值 / authenticate and read live capabilities.
-3. 长任务使用异步 `/api/v1/asr/jobs` 或 `/api/v1/tts/jobs`，复用 `Idempotency-Key` 并通过 SSE 或 `status_url` 跟踪；OpenAI 客户端可使用同步 `/v1/audio/transcriptions`、`/v1/audio/speech`。
+3. 长任务使用异步 `/api/v1/asr/jobs` 或 `/api/v1/tts/jobs`；需要一次生成多个独立音频时使用 `/api/v1/tts/sequence-jobs`。复用 `Idempotency-Key` 并通过 SSE 或 `status_url` 跟踪；OpenAI 客户端可使用同步 `/v1/audio/transcriptions`、`/v1/audio/speech`。
 
 <details>
 <summary><strong>提交契约、默认值与语种 / Submission contract, defaults, and languages</strong></summary>
@@ -42,6 +42,10 @@ Both ASR models support the local hotword library. The read-only full-name list 
 TTS 默认模型组为 `qwen3-tts-0.6b`，也可选择 `qwen3-tts-1.7b`。逐模型能力位于 `tts.model_capabilities[]`；GPU 总显存门槛同样为 3840/7936 MiB。1.7B 的预置音色支持可选自然语言 `instruct`，`voice_design` 用必填指令描述音色、语速、音调、韵律和情绪；Base 克隆模式不支持指令。官方没有独立数值语速或音高参数，底层采样配置也不公开。消费方必须按所选模型的 `controls` 决定显示和发送哪些字段。
 
 The default TTS model group is `qwen3-tts-0.6b`, with `qwen3-tts-1.7b` also available. Read per-model behavior from `tts.model_capabilities[]`; total-memory GPU thresholds are likewise 3840/7936 MiB. A 1.7B preset voice accepts an optional natural-language `instruct`, while `voice_design` requires an instruction describing timbre, rate, pitch, prosody, and emotion. Base voice-clone modes do not accept instructions. There are no dedicated numeric speaking-rate or pitch parameters, and low-level sampling remains fixed. Send controls only when the selected model capability advertises them.
+
+批量消费者可使用 `/api/v1/tts/sequence-jobs`，在一次任务中按顺序合成最多 100 条文本并为每条获得独立 WAV。提交前读取 `tts.sequence_jobs`；能力缺失时回退单条 TTS。
+
+Batch consumers can use `/api/v1/tts/sequence-jobs` to synthesize up to 100 ordered texts in one job with one WAV per item. Read `tts.sequence_jobs` before submission and fall back to single-item TTS when the capability is absent.
 
 受保护的 `/api/v1/system` 在 GPU 快照中区分设备范围当前已用、当前空闲和系统保留估算。系统保留值按 `max(total-used-free, 0)` 计算，通常对应驱动或固件保留，不提供进程归属，也不应当作应用残留；GPU 终态 OOM 仍会失败而不会静默回退 CPU，服务会在记录诊断后重建执行器。
 
@@ -745,6 +749,20 @@ REQUEST_EXAMPLES: dict[tuple[str, str], dict[str, dict[str, Any]]] = {
         "inline_clone": {"summary": "分析任务克隆 / Clone from analyzed reference", "value": {"text": "这是克隆语音。", "model": "qwen3-tts-1.7b", "language": "Chinese", "voice_mode": "inline_clone", "reference_job_id": "0123456789abcdef0123456789abcdef", "reference_text": "与参考音频一致的文本", "reference_language": "Chinese"}},
         "voiceprint": {"summary": "声纹样本克隆 / Voiceprint sample clone", "value": {"text": "这是克隆语音。", "model": "qwen3-tts-1.7b", "language": "Chinese", "voice_mode": "voiceprint", "voiceprint_sample_id": "sample_0123456789abcdef"}},
     },
+    ("/api/v1/tts/sequence-jobs", "post"): {
+        "podcast_turns": {
+            "summary": "有序的预置音色片段 / Ordered preset-voice segments",
+            "value": {
+                "model": "qwen3-tts-0.6b", "language": "Chinese", "voice_mode": "preset",
+                "compute_device": "gpu", "accelerate_single_task": True,
+                "display_name": "Podcast Act 1",
+                "items": [
+                    {"id": "turn_0001", "text": "欢迎收听今天的节目。", "speaker": "Vivian"},
+                    {"id": "turn_0002", "text": "我们先从核心问题开始。", "speaker": "Dylan"},
+                ],
+            },
+        },
+    },
 }
 
 JOB_EXAMPLES = {
@@ -832,7 +850,15 @@ def _capabilities_example() -> dict[str, Any]:
             "preset_speakers": ["Vivian"], "preset_speaker_native_languages": {"Vivian": "Chinese"},
             "languages": ["Auto", "Chinese", "English"], "default_language": "Auto", "formats": ["wav", "flac", "mp3"],
             "compute_devices": default_tts["compute_devices"],
-            "single_task_acceleration": {"supported": True, "default": True}, "controls": default_tts["controls"],
+            "single_task_acceleration": {"supported": True, "default": True},
+            "sequence_jobs": {
+                "supported": True, "contract_version": 1,
+                "endpoint": "/api/v1/tts/sequence-jobs",
+                "voice_modes": ["preset", "voiceprint"],
+                "artifact_mode": "per_item", "format": "wav",
+                "max_items": 100, "max_total_chars": 10000,
+            },
+            "controls": default_tts["controls"],
         },
         "limits": {
             "max_upload_bytes": 1073741824, "max_tts_chars": 10000, "max_clone_reference_seconds": 15,

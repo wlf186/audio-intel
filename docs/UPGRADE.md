@@ -24,7 +24,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - 历史 ASR/TTS 任务、旧声音档案和既有声纹样本保持可读；人员名字、备注及开关变化不会回写历史任务或已提交热词快照。
 - 浏览器鉴权改用进程内会话 Cookie，升级或重启后需要重新输入 API Key。
 - `/api/v1/health` 现在是公开最小探针；原详细结构迁移到受保护的 `/api/v1/system`。监控脚本如依赖硬件、worker、模型或路径字段必须切换端点并增加 Bearer Header。
-- `/api/v1/health`、`/api/v1/system` 和 OpenAPI `info.version` 现在统一报告 release-aware 版本，不再长期固定为 `0.1.0`。正式 tag 返回纯发布号，tag 后源码构建使用 `0.1.7+3.g8adfe46` 一类 SemVer build metadata，存在已跟踪本地修改时追加 `.dirty`；字段类型和响应结构不变。
+- `/api/v1/health`、`/api/v1/system` 和 OpenAPI `info.version` 现在统一报告 release-aware 版本，不再长期固定为 `0.1.0`。正式 tag 返回纯发布号，tag 后源码构建使用 `0.1.8+3.g8adfe46` 一类 SemVer build metadata，存在已跟踪本地修改时追加 `.dirty`；字段类型和响应结构不变。
 - `.complete` 必须包含固定模型 revision。旧的空 marker 会在 setup 时被判定为无效并修复。
 - TTS 安装现在同时创建独立 aligner 环境；不要复用旧 TTS 环境中的 qwen-asr。
 - ASR/TTS worker 现在由监督器管理可重启执行器，`setup all` 会将进程树管理所需的 `psutil` 同步到两个模型环境。启动时会校验并清理可信的遗留执行器元数据，再恢复中断任务。
@@ -40,6 +40,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - TTS 新增 `qwen3-tts-1.7b` 模型组，可按任务选择 CustomVoice、Base 或 VoiceDesign checkpoint；默认仍为 0.6B。`setup tts/all` 会下载新增的三个固定 revision。浏览器 TTS 偏好从 v1 自动迁移到包含 `model` 的 v2，旧客户端省略 `model` 时行为不变。
 - 原生 `instruct` 和 OpenAI 兼容 `instructions` 现在可用于 1.7B 预置音色；原生 1.7B VoiceDesign 必须提供 `instruct`。0.6B 和 Base 克隆仍拒绝非空指令。没有独立数值语速/音高或公共采样参数；客户端应按 `GET /api/v1/capabilities` 返回的 `tts.model_capabilities[]` 动态显示控制项，而不是只读取代表默认模型的 `tts.controls`。
 - TTS GPU 准入与 ASR 一致，0.6B/1.7B 使用 3840/7936 MiB 总显存门槛；Capabilities 与 TTS 结果新增模型组、checkpoint 和指令信息，均为兼容性扩展。此项不涉及数据库迁移。
+- 新增 `POST /api/v1/tts/sequence-jobs` 与 `tts.sequence_jobs` 能力标记。序列任务共享模型、设备、语言和音色模式，按输入顺序为每条文本返回独立 WAV；旧客户端与单条 `/api/v1/tts/jobs` 保持兼容，不涉及数据库迁移。
 - 受保护的 `/api/v1/system` GPU 快照新增可选的 `memory_free_mib` 和 `memory_system_reserved_mib`；后者是按 `max(total-used-free, 0)` 计算的系统保留估算。终态 CUDA OOM 现在记录前后显存与可见 GPU 进程，并在完整进程树退出后重建执行器。严格响应模型需允许这两个兼容性字段；此项不涉及数据库迁移。
 - **不兼容变更：** 原生异步 ASR、TTS、TTS 克隆参考分析和声纹样本上传现在强制要求 `Idempotency-Key`。现有客户端必须为每次逻辑提交生成 8–128 字符的键，并在超时、断线或 `429` 后复用；相同键改变请求会返回 `409`。`429` 的分类和恢复步骤见 [故障排查](TROUBLESHOOTING.md#api-提交返回-429)。
 - **不兼容变更：** `GET /api/v1/jobs` 与全局 `/api/v1/events` 现在只返回任务摘要，不再包含 `request`/`result`。全局 SSE 首帧仍为 `snapshot`，后续改为 `update`（仅变更任务、`removed_job_ids`、当前 worker）和空闲 `heartbeat`；Capabilities 以 `events.global_mode=summary_delta` 标识。依赖列表内完整结果、或把每个全局事件都按完整快照覆盖的客户端，必须改为按增量合并，并在确需详情时读取 `GET /api/v1/jobs/{job_id}`。单任务状态接口和单任务 SSE 仍返回完整契约。此变更不迁移数据库，也不改写历史任务。

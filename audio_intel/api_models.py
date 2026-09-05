@@ -266,8 +266,64 @@ class TtsCapability(PublicModel):
         description="默认 0.6B 模型的设备能力兼容视图；新客户端使用 model_capabilities[].compute_devices / Compatibility view for the default 0.6B model; new clients should use model_capabilities[].compute_devices",
     )
     single_task_acceleration: AccelerationCapability
+    sequence_jobs: "TtsSequenceCapability" = Field(
+        description="结构化多段 TTS 任务契约 / Structured multi-item TTS job contract",
+    )
     controls: TtsControlCapability = Field(
         description="默认 0.6B 模型的控制能力兼容视图；新客户端使用 model_capabilities[].controls / Compatibility control view for the default 0.6B model; new clients should use model_capabilities[].controls",
+    )
+
+
+class TtsSequenceCapability(PublicModel):
+    supported: bool
+    contract_version: Literal[1]
+    endpoint: str
+    voice_modes: list[Literal["preset", "voiceprint"]]
+    artifact_mode: Literal["per_item"]
+    format: Literal["wav"]
+    max_items: int
+    max_total_chars: int
+
+
+class TtsSequenceItem(PublicModel):
+    id: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9._-]+$",
+        description="调用方提供的稳定项目 ID / Caller-provided stable item ID",
+    )
+    text: str = Field(min_length=1, description="本项目需要合成的文本 / Text to synthesize for this item")
+    speaker: str | None = Field(None, description="preset 模式的官方音色 / Official preset speaker")
+    instruct: str = Field(
+        "",
+        max_length=1000,
+        description="模型支持时使用的逐项自然语言表达控制 / Per-item natural-language control when supported",
+    )
+    voiceprint_sample_id: str | None = Field(
+        None,
+        description="voiceprint 模式使用的已有可用样本 / Existing eligible sample for voiceprint mode",
+    )
+
+
+class TtsSequenceRequest(PublicModel):
+    model: str = Field("qwen3-tts-0.6b", description="规范 TTS 模型 ID / Canonical TTS model ID")
+    language: str = Field("Auto", description="整批输出语言 / Target language for the batch")
+    voice_mode: Literal["preset", "voiceprint"] = Field(
+        description="整批统一的音色模式 / Voice mode shared by the batch",
+    )
+    compute_device: ComputeDevice | None = Field(
+        None,
+        description="cpu 或 gpu；省略时采用部署默认 / cpu or gpu; omission uses the deployment default",
+    )
+    accelerate_single_task: bool = Field(
+        True,
+        description="启用质量中性的批处理 / Enable quality-neutral batching",
+    )
+    display_name: str = Field("多段语音合成", description="任务显示名称 / Job display name")
+    items: list[TtsSequenceItem] = Field(
+        min_length=1,
+        max_length=100,
+        description="按顺序提交的合成项目 / Ordered synthesis items",
     )
 
 

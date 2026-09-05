@@ -80,7 +80,7 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         for method, operation in methods.items()
         if method in HTTP_METHODS
     ]
-    assert len(operations) == 43
+    assert len(operations) == 44
     assert len({operation["operationId"] for operation in operations}) == len(operations)
     assert all(operation.get("tags") for operation in operations)
     assert all("**English:**" in operation.get("description", "") for operation in operations)
@@ -191,7 +191,7 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     asr_capability = schema["components"]["schemas"]["AsrCapability"]["properties"]
     assert {"default_model", "models", "hotword_library"} <= set(asr_capability)
     tts_capability = schema["components"]["schemas"]["TtsCapability"]["properties"]
-    assert {"default_model", "model_capabilities", "controls"} <= set(tts_capability)
+    assert {"default_model", "model_capabilities", "controls", "sequence_jobs"} <= set(tts_capability)
     assert "Physical checkpoint names retained for compatibility" in tts_capability["models"]["description"]
     assert "Compatibility union" in tts_capability["voice_modes"]["description"]
     assert "default 0.6B model" in tts_capability["compute_devices"]["description"]
@@ -234,10 +234,18 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     large_tts = capabilities_example["tts"]["model_capabilities"][1]
     assert large_tts["controls"]["instruction_voice_modes"] == ["preset", "voice_design"]
     assert next(device for device in large_tts["compute_devices"] if device["id"] == "gpu")["minimum_memory_mib"] == 7936
+    assert capabilities_example["tts"]["sequence_jobs"] == {
+        "supported": True, "contract_version": 1,
+        "endpoint": "/api/v1/tts/sequence-jobs",
+        "voice_modes": ["preset", "voiceprint"],
+        "artifact_mode": "per_item", "format": "wav",
+        "max_items": 100, "max_total_chars": 10000,
+    }
     for path in (
         "/api/v1/asr/jobs",
         "/api/v1/tts/clone-references",
         "/api/v1/tts/jobs",
+        "/api/v1/tts/sequence-jobs",
         "/api/v1/voiceprints/people/{person_id}/samples/upload",
     ):
         parameters = schema["paths"][path]["post"]["parameters"]
@@ -384,6 +392,11 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     assert set(schema["paths"]["/api/v1/tts/jobs"]["post"]["requestBody"]["content"]["multipart/form-data"]["examples"]) >= {
         "preset", "preset_1_7b", "voice_design", "inline_clone", "voiceprint",
     }
+    sequence_media = schema["paths"]["/api/v1/tts/sequence-jobs"]["post"]["requestBody"]["content"]["application/json"]
+    assert "podcast_turns" in sequence_media["examples"]
+    sequence_schema = schema["components"]["schemas"]["TtsSequenceRequest"]["properties"]
+    assert sequence_schema["items"]["minItems"] == 1
+    assert sequence_schema["items"]["maxItems"] == 100
 
 
 def test_documentation_code_blocks_are_self_contained_and_syntactically_valid() -> None:

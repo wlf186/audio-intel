@@ -96,6 +96,19 @@ curl --fail-with-body -sS \
 
 Read `GET /api/v1/capabilities` before displaying TTS controls. The 0.6B models and Base clone checkpoints reject natural-language instructions. The 1.7B CustomVoice preset path accepts an optional `instruct`; 1.7B VoiceDesign requires one. Unsupported combinations return `422` and are never silently ignored.
 
+### Submit an ordered TTS sequence
+
+`POST /api/v1/tts/sequence-jobs` accepts 1–100 ordered items that share one model, device, language, and voice mode. Preset items may select different speakers and instructions; voiceprint items may select different existing sample IDs. The result keeps input order in `result.sequence.items[]` and returns one WAV `artifact_name` per item. Read `tts.sequence_jobs` for the contract version and current character limit before using this optimization; clients must fall back to single-item jobs when it is absent or unsupported.
+
+```bash
+curl --fail-with-body -sS \
+  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3-tts-0.6b","language":"English","voice_mode":"preset","compute_device":"gpu","items":[{"id":"intro","text":"Welcome.","speaker":"Ryan"},{"id":"reply","text":"Let us begin.","speaker":"Aiden"}]}' \
+  "$BASE_URL/api/v1/tts/sequence-jobs"
+```
+
 ### Voice-clone reference flow
 
 1. Submit a reference audio file to `POST /api/v1/tts/clone-references` with its own idempotency key.

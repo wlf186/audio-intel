@@ -97,6 +97,7 @@ from .api_models import (
     EventJobResponse, EventSnapshot, EventUpdate,
     HealthResponse, JobListResponse, JobResponse, JobResultResponse, OpenAIModelList, QueueResponse,
     OpenAISpeechRequest, OpenAITranscription, OpenAIVerboseTranscription, ProblemDetail, SystemResponse,
+    TtsSequenceRequest,
     VoiceListResponse, VoiceProfileResponse, VoiceprintPeopleResponse,
     VoiceprintPersonResponse, VoiceprintSamplesResponse, VoiceprintUploadResponse,
     HotwordListResponse, HotwordListsResponse, TlsBootstrapResponse,
@@ -155,6 +156,7 @@ ASYNC_SUBMISSION_ROUTES = {
     "/api/v1/asr/jobs": ("asr", "submit_asr", True, True),
     "/api/v1/tts/clone-references": ("asr", "analyze_tts_clone_reference", True, True),
     "/api/v1/tts/jobs": ("tts", "submit_tts", False, True),
+    "/api/v1/tts/sequence-jobs": ("tts", "submit_tts_sequence", False, True),
     "/v1/audio/transcriptions": ("asr", "openai_transcription", True, False),
     "/v1/audio/speech": ("tts", "openai_speech", False, False),
 }
@@ -352,6 +354,8 @@ def idempotent_job(
         ignored_fields.add("hotword_list_ids")
     if operation == "upload_voiceprint_sample":
         ignored_fields.add("voiceprint_sample_id")
+    if operation == "submit_tts_sequence":
+        ignored_fields.add("voiceprint_references")
     try:
         return create_job_idempotent(
             kind, display_name, request_data, job_id, operation,
@@ -1158,6 +1162,16 @@ def create_app() -> FastAPI:
                 "formats": ["wav", "flac", "mp3"],
                 "compute_devices": default_tts_capability["compute_devices"],
                 "single_task_acceleration": {"supported": True, "default": SINGLE_TASK_ACCELERATION_DEFAULT},
+                "sequence_jobs": {
+                    "supported": True,
+                    "contract_version": 1,
+                    "endpoint": "/api/v1/tts/sequence-jobs",
+                    "voice_modes": ["preset", "voiceprint"],
+                    "artifact_mode": "per_item",
+                    "format": "wav",
+                    "max_items": 100,
+                    "max_total_chars": settings.max_tts_chars,
+                },
                 "controls": default_tts_capability["controls"],
             },
             "limits": {
@@ -1585,6 +1599,138 @@ def create_app() -> FastAPI:
         )
         if replayed:
             shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
+            response.status_code = 200
+            response.headers["Idempotency-Replayed"] = "true"
+        return public_job(job)
+
+    @app.post(
+        "/api/v1/tts/sequence-jobs", status_code=202, response_model=JobResponse,
+        response_model_exclude_unset=True, tags=[TTS_TAG],
+        summary="提交结构化多段 TTS 任务 / Submit a structured multi-item TTS job",
+        description=bilingual(
+            "按输入顺序为每一项生成独立 WAV。整批必须使用同一模型、设备、语言和 preset 或 voiceprint 模式；preset 项可使用不同官方音色和指令，voiceprint 项只能引用声纹库中的可用样本。",
+            "Generate one ordered WAV artifact per item. A batch shares one model, device, language, and preset or voiceprint mode; preset items may use different official speakers and instructions, while voiceprint items reference eligible library samples.",
+        ),
+        operation_id="submitTtsSequenceJob",
+        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TTS_CONTROL_VALIDATION_RESPONSE, **TTS_SERVICE_RESPONSE},
+    )
+    async def submit_tts_sequence(
+        response: Response,
+        payload: TtsSequenceRequest,
+        idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
+        _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        ensure_service("tts")
+        idempotency_key = validate_idempotency_key(idempotency_key)
+        language = validate_tts_language(payload.language)
+        compute_device = payload.compute_device.value if payload.compute_device else default_device
+        selected_model, _, compute_device, compute_device_name = await run_in_threadpool(
+            validate_tts_model_device, payload.model, payload.voice_mode, compute_device,
+        )
+        ids = [item.id for item in payload.items]
+        if len(ids) != len(set(ids)):
+            raise ApiProblem(422, "duplicate_tts_sequence_item", "Sequence item IDs must be unique")
+        cleaned: list[dict[str, Any]] = []
+        total_chars = 0
+        for item in payload.items:
+            text = item.text.strip()
+            if not text:
+                raise ApiProblem(422, "invalid_tts_sequence_text", "Every sequence item must contain text")
+            total_chars += len(text)
+            if payload.voice_mode == "preset":
+                if item.speaker not in PRESET_SPEAKERS:
+                    raise ApiProblem(422, "unknown_tts_speaker", f"Unknown preset speaker for item {item.id}")
+                if item.voiceprint_sample_id:
+                    raise ApiProblem(422, "invalid_tts_sequence_item", "preset items must not contain voiceprint_sample_id")
+                cleaned.append({
+                    "id": item.id, "text": text, "speaker": item.speaker,
+                    "instruct": validate_tts_instruction(selected_model, "preset", item.instruct),
+                })
+            else:
+                if item.speaker or item.instruct:
+                    raise ApiProblem(422, "invalid_tts_sequence_item", "voiceprint items must not contain speaker or instruct")
+                if not item.voiceprint_sample_id:
+                    raise ApiProblem(422, "invalid_tts_sequence_item", "voiceprint items require voiceprint_sample_id")
+                cleaned.append({
+                    "id": item.id, "text": text,
+                    "voiceprint_sample_id": item.voiceprint_sample_id,
+                })
+        if total_chars > settings.max_tts_chars:
+            raise ApiProblem(
+                422, "tts_sequence_too_large",
+                f"Sequence text must not exceed {settings.max_tts_chars} characters in total",
+            )
+
+        job_id = uuid.uuid4().hex
+        job_root = settings.jobs_dir / job_id
+        reference_snapshots: dict[str, dict[str, Any]] = {}
+        digest_parts: list[str] = []
+        try:
+            if payload.voice_mode == "voiceprint":
+                for item in cleaned:
+                    sample_id = str(item["voiceprint_sample_id"])
+                    if sample_id in reference_snapshots:
+                        continue
+                    sample = get_voiceprint_sample(sample_id)
+                    person = get_voiceprint_person(sample["person_id"]) if sample else None
+                    if (
+                        sample is None or person is None or sample.get("state") != "ready"
+                        or not sample.get("audio_path") or not sample.get("transcript")
+                    ):
+                        raise ApiProblem(422, "voiceprint_sample_unavailable", f"Voiceprint sample {sample_id} is not ready for TTS cloning")
+                    source = Path(str(sample["audio_path"])).resolve()
+                    if (
+                        not source.is_file()
+                        or (
+                            settings.voiceprints_dir.resolve() not in source.parents
+                            and settings.voices_dir.resolve() not in source.parents
+                        )
+                    ):
+                        raise ApiProblem(422, "voiceprint_sample_unavailable", f"Voiceprint sample {sample_id} audio is unavailable")
+                    target = job_root / "input" / f"voiceprint-{len(reference_snapshots):03d}.wav"
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target)
+                    audio_digest = hashlib.sha256(target.read_bytes()).hexdigest()
+                    snapshot = {
+                        "voiceprint_person_id": person["id"],
+                        "voiceprint_person_name": person["name"],
+                        "voiceprint_sample_id": sample_id,
+                        "reference_audio_path": str(target),
+                        "reference_text": sample["transcript"],
+                        "reference_words": sample.get("words") or [],
+                        "reference_language": sample.get("language") or language,
+                        "reference_duration": sample.get("duration"),
+                    }
+                    reference_snapshots[sample_id] = snapshot
+                    digest_parts.append(json.dumps({
+                        "sample_id": sample_id,
+                        "audio_sha256": audio_digest,
+                        "transcript": sample["transcript"],
+                        "updated_at": sample.get("updated_at"),
+                    }, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+            reference_digest = hashlib.sha256("\n".join(sorted(digest_parts)).encode()).hexdigest() if digest_parts else None
+            request_data = {
+                "purpose": "tts_sequence",
+                "sequence_contract_version": 1,
+                "model": selected_model["public_id"],
+                "language": language,
+                "voice_mode": payload.voice_mode,
+                "sequence_items": cleaned,
+                "voiceprint_references": reference_snapshots,
+                "response_format": "wav",
+                "compute_device": compute_device,
+                "compute_device_name": compute_device_name,
+                "accelerate_single_task": payload.accelerate_single_task,
+            }
+            job, replayed = idempotent_job(
+                "tts", safe_filename(payload.display_name, "tts-sequence"), request_data, job_id,
+                "submit_tts_sequence", idempotency_key, reference_digest,
+            )
+        except Exception:
+            shutil.rmtree(job_root, ignore_errors=True)
+            raise
+        if replayed:
+            shutil.rmtree(job_root, ignore_errors=True)
             response.status_code = 200
             response.headers["Idempotency-Replayed"] = "true"
         return public_job(job)

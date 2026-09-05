@@ -82,6 +82,10 @@ The output language defaults to `Auto` and supports Chinese, English, Japanese, 
 
 A CPU TTS executor can retain one checkpoint during its warm window. Switching checkpoints or moving to GPU clears the old CPU checkpoint first. GPU checkpoints are released after each task.
 
+Ordered sequence jobs reuse one loaded checkpoint across all items, preserve item and chunk order, and emit one WAV artifact per input item. They deliberately require a single model, device, language, and voice mode so execution and retry semantics stay deterministic; per-item preset speakers/instructions or voiceprint samples remain supported. The capability contract is additive under `tts.sequence_jobs`, allowing older clients to continue submitting single-item jobs.
+
+Run `scripts/benchmark_tts_sequence.py` against a real service to compare the same ordered script as sequential single-item jobs and one sequence job. It performs a warm-up, alternates execution order across two repetitions, validates every WAV, reports median timings and the provider's actual generation batch size, and exits nonzero unless the sequence path is at least 15% faster. Pass `--items-json` with a JSON list of `{id,text,speaker}` objects for a representative script; benchmark jobs are purged by default.
+
 ## Devices and GPU coordination
 
 ASR and TTS default to GPU at submission time in the recommended full deployment and default to CPU in the CPU-only deployment. Every full-deployment path can explicitly select CPU:

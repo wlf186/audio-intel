@@ -763,6 +763,125 @@ def test_tts_batch_uses_sequential_decoder_and_restores_it() -> None:
     assert model.arguments["language"] == ["Chinese", "Chinese"]
 
 
+def test_tts_batch_accepts_per_item_speakers_in_order() -> None:
+    class Tokenizer:
+        def decode(self, encoded):
+            return [item["audio_codes"] for item in encoded], 24000
+
+    class Model:
+        def __init__(self) -> None:
+            self.model = SimpleNamespace(speech_tokenizer=Tokenizer())
+            self.arguments = None
+
+        def generate_custom_voice(self, **kwargs):
+            self.arguments = kwargs
+            return self.model.speech_tokenizer.decode([
+                {"audio_codes": speaker} for speaker in kwargs["speaker"]
+            ])
+
+    model = Model()
+    request = {"voice_mode": "preset", "language": "Chinese"}
+    metadata = [
+        {"speaker": "Vivian", "instruct": "沉稳"},
+        {"speaker": "Dylan", "instruct": "亲切"},
+    ]
+
+    generated, rate = tts_pipeline._generate_tts_batch(
+        model, request, ["第一句。", "第二句。"], None, item_requests=metadata,
+    )
+
+    assert generated == ["Vivian", "Dylan"] and rate == 24000
+    assert model.arguments["speaker"] == ["Vivian", "Dylan"]
+    assert model.arguments["instruct"] == ["沉稳", "亲切"]
+
+
+def test_tts_sequence_flattens_voice_clone_prompt_items(tmp_path, monkeypatch) -> None:
+    class Prompt:
+        pass
+
+    prompt = Prompt()
+
+    class Model:
+        model = SimpleNamespace(speech_tokenizer=SimpleNamespace())
+
+        def create_voice_clone_prompt(self, **_kwargs):
+            return [prompt]
+
+    captured: list[list[dict]] = []
+
+    def generate(_model, _request, texts, _prompt, progress_callback=None, item_requests=None):
+        captured.append(item_requests)
+        return [np.zeros(240, dtype=np.float32) for _ in texts], 24000
+
+    def encode(path, _audio, _rate, _format):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"audio")
+        return path
+
+    fake_torch = SimpleNamespace(
+        OutOfMemoryError=RuntimeError,
+        cuda=SimpleNamespace(is_available=lambda: False, empty_cache=lambda: None),
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setattr(tts_pipeline, "settings", replace(settings, mock_mode=False))
+    monkeypatch.setattr(tts_pipeline, "_tts_text_token_counts", lambda _model, texts: [len(text) for text in texts])
+    monkeypatch.setattr(tts_pipeline, "_generate_tts_batch", generate)
+    monkeypatch.setattr(tts_pipeline, "encode", encode)
+    context = SimpleNamespace(output_dir=tmp_path / "output", progress=lambda *_, **__: None)
+    sample_id = "sample-one"
+
+    result = tts_pipeline._process_sequence_loaded(
+        context,
+        {"voice_mode": "voiceprint", "language": "Chinese", "compute_device_name": "CPU"},
+        [
+            {"id": "turn_0001", "text": "第一句。", "voiceprint_sample_id": sample_id},
+            {"id": "turn_0002", "text": "第二句。", "voiceprint_sample_id": sample_id},
+        ],
+        {sample_id: {"reference_audio_path": "reference.wav", "reference_text": "参考。"}},
+        Model(),
+        "cpu",
+        {"requested": True, "device": "cpu", "target_batch_size": 2},
+        tts_pipeline.resolve_tts_model("qwen3-tts-0.6b"),
+        tts_pipeline.resolve_tts_model("qwen3-tts-0.6b")["checkpoints"]["base"],
+    )
+
+    assert result["sequence"]["items"][0]["id"] == "turn_0001"
+    assert captured and [item["_clone_prompt"] for item in captured[0]] == [prompt, prompt]
+    assert all(not isinstance(item["_clone_prompt"], list) for item in captured[0])
+
+
+def test_tts_sequence_writes_one_ordered_artifact_per_item(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(tts_pipeline, "settings", replace(settings, mock_mode=True))
+    output = tmp_path / "output"
+    output.mkdir()
+    context = SimpleNamespace(output_dir=output, progress=lambda *_, **__: None)
+    request = {
+        "voice_mode": "preset", "language": "Chinese", "compute_device_name": "Test GPU",
+    }
+    items = [
+        {"id": "turn_0001", "text": "第一句。", "speaker": "Vivian", "instruct": ""},
+        {"id": "turn_0002", "text": "第二句。", "speaker": "Dylan", "instruct": ""},
+    ]
+    model = tts_pipeline.resolve_tts_model("qwen3-tts-0.6b")
+
+    result = tts_pipeline._process_sequence_loaded(
+        context, request, items, {}, None, "gpu",
+        {"requested": True, "device": "gpu", "target_batch_size": 2},
+        model, model["checkpoints"]["custom_voice"],
+    )
+
+    assert result["sequence"] == {
+        "contract_version": 1,
+        "items": [
+            {"id": "turn_0001", "artifact_name": "item-0000.wav", "duration": 1.5, "sample_rate": 24000},
+            {"id": "turn_0002", "artifact_name": "item-0001.wav", "duration": 1.5, "sample_rate": 24000},
+        ],
+    }
+    assert [item["name"] for item in result["artifacts"]] == ["item-0000.wav", "item-0001.wav"]
+    assert all((output / item["name"]).is_file() for item in result["artifacts"])
+    assert result["acceleration"]["stage_batch_sizes"] == {"generation": 2, "decoder": 1}
+
+
 def test_tts_voice_design_batches_natural_language_instruction() -> None:
     class Tokenizer:
         def decode(self, encoded):
