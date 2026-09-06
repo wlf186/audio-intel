@@ -63,6 +63,7 @@ Native Windows CI runs `tests/test_service_windows.py` and browser smoke coverag
 
 - Run real ASR and TTS GPU cancellation smoke tests for process supervision or device cleanup changes.
 - Run `scripts/benchmark_single_task_acceleration.py` for batch sizing or inference-call changes.
+- For sequence TTS inference or batching changes, also run `scripts/benchmark_tts_sequence.py` against real models; see [the sequence benchmark contract](docs/ARCHITECTURE.md#tts-pipeline). Verify ordered per-item artifacts and snapshotted voiceprint references.
 - Validate affected 0.6B/1.7B, CPU/GPU, clone, diarization, alignment, and OOM paths in proportion to the change.
 - Preserve model identity, precision, ASR chunking, diarization semantics, and TTS sequential decoding when changing single-task acceleration.
 
@@ -72,7 +73,7 @@ Public API changes must update the bilingual `/docs`, `/openapi.json`, executabl
 
 SQLite jobs, queue ordering, history, idempotency records, hotwords, voices, voiceprints, and completed-task snapshots are compatibility surfaces. Back up `data/` before migration development and cover migration from the previous schema in tests.
 
-The four native asynchronous submission endpoints must preserve first-accept `202`, same-request replay `200`, conflict `409`, and admission `429` semantics.
+The five native asynchronous submission endpoints (ASR, single-item TTS, ordered TTS sequences, clone-reference analysis, and voiceprint sample upload) require `Idempotency-Key` and must preserve first-accept `202`, same-request replay `200`, conflict `409`, and admission `429` semantics.
 
 ## Frontend changes
 

@@ -418,3 +418,45 @@ def test_documentation_code_blocks_are_self_contained_and_syntactically_valid() 
             ["node", "--input-type=module", "--check"],
             input=block, text=True, encoding="utf-8", check=True,
         )
+
+
+def test_sequence_result_schema_and_examples_preserve_legacy_results(tmp_path, monkeypatch) -> None:
+    from audio_intel.api_models import JobResponse, JobResultResponse
+    from audio_intel.api_docs import JOB_EXAMPLES, RESULT_EXAMPLES
+
+    local = docs_settings(tmp_path)
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    schema = api_module.create_app().openapi()
+    schemas = schema["components"]["schemas"]
+    result_schema = schemas["JobResultResponse"]
+    assert "sequence" not in result_schema.get("required", [])
+    assert result_schema["properties"]["sequence"]["anyOf"] == [
+        {"$ref": "#/components/schemas/TtsSequenceResult"}, {"type": "null"},
+    ]
+    sequence = schemas["TtsSequenceResult"]["properties"]
+    assert sequence["contract_version"]["const"] == 1
+    assert sequence["items"]["items"]["$ref"].endswith("/TtsSequenceResultItem")
+    item_schema = schemas["TtsSequenceResultItem"]
+    assert set(item_schema["required"]) == {"id", "artifact_name", "duration", "sample_rate"}
+
+    for name, example in RESULT_EXAMPLES.items():
+        value = example["value"]
+        assert JobResultResponse.model_validate(value).model_dump(exclude_unset=True) == value
+        if name != "tts_sequence":
+            assert "sequence" not in value
+    job = JOB_EXAMPLES["tts_sequence_succeeded"]["value"]
+    assert JobResponse.model_validate(job).model_dump(exclude_unset=True) == job
+    items = job["result"]["sequence"]["items"]
+    assert [item["id"] for item in items] == [item["id"] for item in job["request"]["sequence_items"]]
+    assert [item["artifact_name"] for item in items] == [item["name"] for item in job["result"]["artifacts"]]
+    examples = schema["paths"]["/api/v1/jobs/{job_id}/result"]["get"]["responses"]["200"]["content"]["application/json"]["examples"]
+    assert examples["tts_sequence"] == RESULT_EXAMPLES["tts_sequence"]
+    operation = schema["paths"]["/api/v1/tts/sequence-jobs"]["post"]
+    assert "voiceprint" in operation["requestBody"]["content"]["application/json"]["examples"]
+    errors = operation["responses"]["422"]["content"]["application/problem+json"]["examples"]
+    assert {
+        "duplicate_tts_sequence_item", "invalid_tts_sequence_text", "tts_sequence_too_large",
+        "unknown_tts_speaker", "invalid_tts_sequence_item", "voiceprint_sample_unavailable",
+    } <= set(errors)
+    assert "instruction_required" not in errors

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
 from .model_registry import asr_models, tts_models
@@ -19,13 +20,57 @@ API_DESCRIPTION = r"""
 3. 长任务使用异步 `/api/v1/asr/jobs` 或 `/api/v1/tts/jobs`；需要一次生成多个独立音频时使用 `/api/v1/tts/sequence-jobs`。复用 `Idempotency-Key` 并通过 SSE 或 `status_url` 跟踪；OpenAI 客户端可使用同步 `/v1/audio/transcriptions`、`/v1/audio/speech`。
 
 <details>
+<summary><strong>有序 TTS：提交、等待与下载 / Ordered TTS: submit, wait, and download</strong></summary>
+
+仅支持 `preset` 和 `voiceprint`，各项 ID 必须唯一；整批去除首尾空白后的文本长度之和受 `tts.sequence_jobs.max_total_chars` 限制。preset 项必须提供官方 `speaker`，只有 1.7B 支持可选 `instruct`；voiceprint 项必须提供已有可用 `voiceprint_sample_id`，省略 `speaker` 和 `instruct`。声纹请求示例见下方接口。
+
+Only `preset` and `voiceprint` are supported, with unique item IDs and a total trimmed-text limit from `tts.sequence_jobs.max_total_chars`. Preset items require an official `speaker`; only 1.7B accepts optional `instruct`. Voiceprint items require an existing eligible `voiceprint_sample_id` and omit `speaker` and `instruct`; see the operation's voiceprint example below.
+
+序列占一个 TTS 队列位置，进度按文本分块统计；整批成功后才返回结果。失败或取消后重试会从已保存请求重新生成全部项目，不支持逐项恢复。任务详情中读取 `result.sequence.items`；结果端点直接返回 `sequence.items`，其 `artifact_name` 对应 `artifacts[].name`，不能由调用方项目 ID 推导文件名。
+
+A sequence occupies one TTS queue position and reports text-chunk progress. Results are available after the entire job succeeds; retrying a failed or cancelled job regenerates all items from its saved request, without per-item resume. Read `result.sequence.items` in job detail or `sequence.items` at the result endpoint. Each returned `artifact_name` matches `artifacts[].name`; do not derive filenames from caller item IDs.
+
+以下 CPU 示例需要 `jq`；先检查能力是否支持契约 v1。重试提交时保留同一个 `SEQUENCE_KEY` 和请求体；能力缺失、未支持或版本无法识别时回退单条 TTS。
+
+This CPU example requires `jq` and checks for contract v1. Keep the same `SEQUENCE_KEY` and body when retrying submission. Fall back to single-item TTS when the capability is absent, unsupported, or has an unrecognized contract version.
+
+```bash
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
+SEQUENCE_KEY=${SEQUENCE_KEY:-$(python3 -c 'import uuid; print(uuid.uuid4())')}
+curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  "$BASE_URL/api/v1/capabilities" | \
+  jq -e '.tts.sequence_jobs | .supported == true and .contract_version == 1' >/dev/null || exit 1
+JOB_ID=$(curl --fail-with-body -sS \
+  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" -H "Idempotency-Key: $SEQUENCE_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"voice_mode":"preset","language":"English","compute_device":"cpu","items":[{"id":"intro","text":"Welcome.","speaker":"Ryan"},{"id":"reply","text":"Let us begin.","speaker":"Aiden"}]}' \
+  "$BASE_URL/api/v1/tts/sequence-jobs" | jq -er '.id') || exit 1
+while true; do
+  JOB=$(curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+    "$BASE_URL/api/v1/jobs/$JOB_ID") || exit 1
+  STATE=$(printf '%s' "$JOB" | jq -er '.state') || exit 1
+  case "$STATE" in
+    succeeded) break ;;
+    failed|cancelled) printf '%s\n' "$JOB"; exit 1 ;;
+  esac
+  sleep "$(printf '%s' "$JOB" | jq -r '.poll_after_seconds // 2')"
+done
+ARTIFACT_NAME=$(curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  "$BASE_URL/api/v1/jobs/$JOB_ID/result" | jq -er '.sequence.items[0].artifact_name') || exit 1
+curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  "$BASE_URL/api/v1/jobs/$JOB_ID/artifacts/$ARTIFACT_NAME" -o first-item.wav
+```
+
+</details>
+
+<details>
 <summary><strong>提交契约、默认值与语种 / Submission contract, defaults, and languages</strong></summary>
 
 HTTP 是默认协议；启用 HTTPS 时，把示例中的 `AUDIO_INTEL_BASE_URL` 设为实际 `https://IP:20810`，公开的 `/api/v1/tls/bootstrap` 会返回已配置根 CA 的下载地址和 SHA-256 指纹。 / HTTP is the default; for HTTPS, set `AUDIO_INTEL_BASE_URL` to the actual `https://IP:20810`, and use public `/api/v1/tls/bootstrap` for the configured root CA download URLs and SHA-256 fingerprint.
 
-原生异步 ASR、TTS、克隆参考分析和声纹样本上传都强制要求 8–128 字符的 `Idempotency-Key`。首次接受返回 `202`；相同键和相同请求重放返回原任务、`200` 和 `Idempotency-Replayed: true`；相同键用于不同请求返回 `409 idempotency_key_conflict`。队列、提交并发或磁盘保护拒绝时返回 `429`、稳定 `code` 和 `Retry-After`，消费方应保留同一个键稍后重试。
+原生异步 ASR、单条 TTS、有序 TTS 序列、克隆参考分析和声纹样本上传都强制要求 8–128 字符的 `Idempotency-Key`。首次接受返回 `202`；相同键和相同请求重放返回原任务、`200` 和 `Idempotency-Replayed: true`；相同键用于不同请求返回 `409 idempotency_key_conflict`。队列、提交并发或磁盘保护拒绝时返回 `429`、稳定 `code` 和 `Retry-After`，消费方应保留同一个键稍后重试。
 
-Native asynchronous ASR, TTS, clone-reference analysis, and voiceprint upload require an 8–128 character `Idempotency-Key`. The first accepted request returns `202`; replaying the same request returns the original job with `200` and `Idempotency-Replayed: true`; changing the request under the same key returns `409 idempotency_key_conflict`. Admission rejection returns `429`, a stable `code`, and `Retry-After`; keep the same key for that retry.
+Native asynchronous ASR, single-item TTS, ordered TTS sequences, clone-reference analysis, and voiceprint upload require an 8–128 character `Idempotency-Key`. The first accepted request returns `202`; replaying the same request returns the original job with `200` and `Idempotency-Replayed: true`; changing the request under the same key returns `409 idempotency_key_conflict`. Admission rejection returns `429`, a stable `code`, and `Retry-After`; keep the same key for that retry.
 
 ASR 与 TTS 在默认 full 部署中使用 `compute_device=gpu`，CPU-only 部署则默认 `cpu`；两者均默认启用 `accelerate_single_task`。调用方应读取 `/api/v1/capabilities` 的 `deployment` 与模型级设备能力。TTS 输出语种默认 `Auto`；已知文本语种时建议显式选择，预置音色优先使用能力响应返回的母语映射。一次性克隆参考音频应先调用 `/api/v1/tts/clone-references` 自动转写，再核对参考文本和语种后提交 TTS。
 
@@ -43,6 +88,10 @@ TTS 默认模型组为 `qwen3-tts-0.6b`，也可选择 `qwen3-tts-1.7b`。逐模
 
 The default TTS model group is `qwen3-tts-0.6b`, with `qwen3-tts-1.7b` also available. Read per-model behavior from `tts.model_capabilities[]`; total-memory GPU thresholds are likewise 3840/7936 MiB. A 1.7B preset voice accepts an optional natural-language `instruct`, while `voice_design` requires an instruction describing timbre, rate, pitch, prosody, and emotion. Base voice-clone modes do not accept instructions. There are no dedicated numeric speaking-rate or pitch parameters, and low-level sampling remains fixed. Send controls only when the selected model capability advertises them.
 
+TTS 文本去除首尾空白后须为 1 至 `limits.max_tts_chars` 个字符；原生单条、整批序列文本总和及 OpenAI 语音接口均执行此限制。序列请求及其 items 拒绝所有未声明字段（422），输出固定为 WAV。
+
+Trimmed TTS text must contain 1 through `limits.max_tts_chars` characters. Native single-item jobs, sequence total text, and OpenAI speech enforce this limit. Sequence requests and items reject undeclared fields with 422 and always output WAV.
+
 批量消费者可使用 `/api/v1/tts/sequence-jobs`，在一次任务中按顺序合成最多 100 条文本并为每条获得独立 WAV。提交前读取 `tts.sequence_jobs`；能力缺失时回退单条 TTS。
 
 Batch consumers can use `/api/v1/tts/sequence-jobs` to synthesize up to 100 ordered texts in one job with one WAV per item. Read `tts.sequence_jobs` before submission and fall back to single-item TTS when the capability is absent.
@@ -55,6 +104,21 @@ ASR 显式语种限 `Chinese、English、Cantonese、French、German、Italian�
 
 Explicit ASR languages are limited to the 11 word-aligned languages listed by `/api/v1/capabilities`. Auto detection may recognize another model language, in which case transcription still succeeds with `timestamp_precision=segment`. An unsupported explicit value returns `422` before a job is created.
 
+</details>
+
+<details>
+<summary><strong>curl：重试失败或取消任务 / Retry a failed or cancelled job</strong></summary>
+
+重试保留任务 ID 和请求快照，并移至同类队列末尾。并发状态冲突返回 `409`；队列、提交并发或磁盘限制返回 `429`，按 `Retry-After` 等待后重试。此接口不要求幂等键。
+
+Retry preserves the job ID and request snapshot and moves it to the queue tail. A concurrent state conflict returns `409`; queue, submission concurrency, or disk limits return `429`. Honor `Retry-After` before retrying. This endpoint does not require an idempotency key.
+
+```bash
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
+JOB_ID=${JOB_ID:?Set JOB_ID to an existing failed or cancelled job}
+AUTH=(); if [[ -n "${AUDIO_INTEL_API_KEY:-}" ]]; then AUTH=(-H "Authorization: Bearer $AUDIO_INTEL_API_KEY"); fi
+curl --fail-with-body -i -X POST "${AUTH[@]}" "$BASE_URL/api/v1/jobs/$JOB_ID/retry"
+```
 </details>
 
 <details>
@@ -548,6 +612,7 @@ TTS_CONTROL_VALIDATION_RESPONSE = {
                         "value": {"type": "about:blank", "title": detail, "status": 422, "code": code, "detail": detail},
                     }
                     for name, summary, code, detail in (
+                        ("invalid_text", "文本为空或超限 / Empty or overlong text", "http_422", "Text must contain 1-50000 characters"),
                         ("unknown_tts_model", "未知 TTS 模型 / Unknown TTS model", "unknown_tts_model", "Unknown TTS model"),
                         ("unsupported_voice_mode", "模型不支持该音色模式 / Voice mode unsupported by model", "unsupported_tts_voice_mode", "The selected TTS model does not support this voice mode"),
                         ("unsupported_instruction", "模型或模式不支持指令 / Instructions unsupported by model or mode", "unsupported_tts_control", "Natural-language instructions are not supported by this model and voice mode"),
@@ -560,6 +625,38 @@ TTS_CONTROL_VALIDATION_RESPONSE = {
         },
     }
 }
+# Preserve the shared validation schema while documenting sequence-only failures.
+TTS_SEQUENCE_VALIDATION_RESPONSE = deepcopy(TTS_CONTROL_VALIDATION_RESPONSE)
+_sequence_error_examples = TTS_SEQUENCE_VALIDATION_RESPONSE[422]["content"]["application/problem+json"]["examples"]
+# VoiceDesign and form-only instruction validation do not apply to sequence JSON.
+for _name in ("instruction_required", "invalid_instruction", "invalid_text"):
+    _sequence_error_examples.pop(_name)
+_sequence_error_examples.update({
+    code: {
+        "summary": summary,
+        "value": {"type": "about:blank", "title": detail, "status": 422, "code": code, "detail": detail},
+    }
+    for code, summary, detail in (
+        ("duplicate_tts_sequence_item", "项目 ID 重复 / Duplicate item IDs", "Sequence item IDs must be unique"),
+        ("invalid_tts_sequence_text", "空白文本 / Blank item text", "Every sequence item must contain text"),
+        ("tts_sequence_too_large", "整批文本超限 / Total text exceeds the configured limit", "Sequence text must not exceed 50000 characters in total"),
+        ("unknown_tts_speaker", "未知预置音色 / Unknown preset speaker", "Unknown preset speaker for item turn_0001"),
+        ("invalid_tts_sequence_item", "音色模式字段冲突或缺失 / Conflicting or missing voice-mode fields", "voiceprint items require voiceprint_sample_id"),
+        ("voiceprint_sample_unavailable", "声纹参考不可用 / Voiceprint reference unavailable", "Voiceprint sample sample_0123456789abcdef is not ready for TTS cloning"),
+    )
+})
+
+TTS_SEQUENCE_VALIDATION_RESPONSE[422]["content"]["application/json"]["examples"] = {
+    "unknown_request_field": {
+        "summary": "不支持的请求字段 / Unsupported request field",
+        "value": {"detail": [{"type": "extra_forbidden", "loc": ["body", "speed"], "msg": "Extra inputs are not permitted", "input": 0.5}]},
+    },
+    "unknown_item_field": {
+        "summary": "不支持的项目字段 / Unsupported item field",
+        "value": {"detail": [{"type": "extra_forbidden", "loc": ["body", "items", 0, "response_format"], "msg": "Extra inputs are not permitted", "input": "mp3"}]},
+    },
+}
+
 TTS_SERVICE_RESPONSE = {
     503: problem_examples_response(
         "TTS 模型或请求的 GPU 不可用 / TTS model or requested GPU unavailable",
@@ -762,6 +859,17 @@ REQUEST_EXAMPLES: dict[tuple[str, str], dict[str, dict[str, Any]]] = {
                 ],
             },
         },
+        "voiceprint": {
+            "summary": "已有声纹样本的有序片段 / Ordered segments from existing voiceprint samples",
+            "value": {
+                "model": "qwen3-tts-0.6b", "language": "Chinese", "voice_mode": "voiceprint",
+                "compute_device": "cpu",
+                "items": [
+                    {"id": "turn_0001", "text": "欢迎收听今天的节目。", "voiceprint_sample_id": "sample_0123456789abcdef"},
+                    {"id": "turn_0002", "text": "我们先从核心问题开始。", "voiceprint_sample_id": "sample_fedcba9876543210"},
+                ],
+            },
+        },
     },
 }
 
@@ -774,6 +882,42 @@ JOB_EXAMPLES = {
 RESULT_EXAMPLES = {
     "asr": {"summary": "ASR 结果 / ASR result", "value": {"text": "欢迎使用本地转写。", "language": "Chinese", "duration": 3.2, "timestamp_precision": "word_or_character", "model": "qwen3-asr-1.7b", "model_name": "Qwen3-ASR-1.7B", "model_revision": "7278e1e70fe206f11671096ffdd38061171dd6e5", "hotword_context": {"enabled": True, "list_ids": ["hotwords_voiceprint_people", "hotwords_voiceprint_people_short"], "list_names": ["声纹库人名（全名）", "声纹库人名（去姓）"], "term_count": 2}, "segments": [{"id": 0, "start": 0, "end": 3.2, "speaker": "Speaker_0", "speaker_label": "张三（研发一部）", "text": "欢迎使用本地转写。", "words": []}], "speakers": [{"id": "Speaker_0", "label": "张三（研发一部）", "label_source": "voiceprint", "voiceprint_match": {"person_id": "voice_0123456789abcdef", "name": "张三", "note": "研发一部", "score": 0.82}}], "artifacts": []}},
     "tts": {"summary": "TTS 结果 / TTS result", "value": {"duration": 1.8, "format": "wav", "sample_rate": 24000, "voice_mode": "preset", "speaker": "Vivian", "model": "qwen3-tts-1.7b", "model_name": "Qwen3-TTS-12Hz-1.7B-CustomVoice", "model_revision": "0c0e3051f131929182e2c023b9537f8b1c68adfe", "instruct": "温柔、安心地说，语速稍慢。", "compute_device": "gpu", "precision": "BF16", "quantized": False, "artifacts": []}},
+}
+
+
+RESULT_EXAMPLES["tts_sequence"] = {
+    "summary": "有序 TTS 结果与产物映射 / Ordered TTS result and artifact mapping",
+    "value": {
+        "duration": 3.0, "format": "wav", "sample_rate": 24000,
+        "language": "Chinese", "voice_mode": "preset", "model": "qwen3-tts-0.6b",
+        "compute_device": "cpu", "precision": "FP32", "quantized": False,
+        "sequence": {
+            "contract_version": 1,
+            "items": [
+                {"id": "turn_0001", "artifact_name": "item-0000.wav", "duration": 1.5, "sample_rate": 24000},
+                {"id": "turn_0002", "artifact_name": "item-0001.wav", "duration": 1.5, "sample_rate": 24000},
+            ],
+        },
+        "artifacts": [
+            {"name": f"item-{index:04d}.wav", "path": f"data/jobs/0123456789abcdef0123456789abcdef/output/item-{index:04d}.wav", "mime_type": "audio/wav", "size_bytes": 72044}
+            for index in range(2)
+        ],
+    },
+}
+JOB_EXAMPLES["tts_sequence_succeeded"] = {
+    "summary": "有序 TTS 任务成功 / Ordered TTS job succeeded",
+    "value": {
+        **JOB_EXAMPLES["succeeded"]["value"],
+        "display_name": "Podcast Act 1",
+        "request": {
+            "purpose": "tts_sequence", "sequence_contract_version": 1,
+            "model": "qwen3-tts-0.6b", "language": "Chinese", "voice_mode": "preset",
+            "compute_device": "cpu", "accelerate_single_task": True,
+            "sequence_items": REQUEST_EXAMPLES[("/api/v1/tts/sequence-jobs", "post")]["podcast_turns"]["value"]["items"],
+        },
+        "compute_device": "cpu", "compute_device_name": "CPU",
+        "result": RESULT_EXAMPLES["tts_sequence"]["value"],
+    },
 }
 
 

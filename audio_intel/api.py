@@ -69,7 +69,7 @@ from .db import (
     utcnow,
     IdempotencyConflict,
 )
-from .admission import AdmissionController
+from .admission import AdmissionController, AdmissionDecision
 from .events import SnapshotHub
 from .observability import estimate_for_job, queue_context, queue_for_job, stage_details
 from .hotwords import (
@@ -89,7 +89,7 @@ from .api_docs import (
     AUTH_RESPONSES, BINARY_SCHEMA, CONFLICT_RESPONSE,
     IDEMPOTENCY_RESPONSES, conditional_job_responses, idempotency_replay_response,
     NOT_FOUND_RESPONSE, OPENAPI_TAGS, OPTIONAL_IDEMPOTENCY_RESPONSES, SERVICE_RESPONSE, TOO_LARGE_RESPONSE,
-    TTS_CONTROL_VALIDATION_RESPONSE, TTS_SERVICE_RESPONSE, VALIDATION_RESPONSE, bilingual, problem_response, sse_response,
+    TTS_CONTROL_VALIDATION_RESPONSE, TTS_SEQUENCE_VALIDATION_RESPONSE, TTS_SERVICE_RESPONSE, VALIDATION_RESPONSE, bilingual, problem_response, sse_response,
     enrich_openapi_schema,
 )
 from .api_models import (
@@ -170,6 +170,19 @@ class ApiProblem(HTTPException):
         super().__init__(status_code=status_code, detail=detail, headers=headers)
         self.code = code
         self.extras = extras or {}
+
+
+def admission_problem(decision: AdmissionDecision, kind: str) -> ApiProblem:
+    return ApiProblem(
+        429, decision.code or "queue_capacity_reached",
+        decision.detail or "Submission capacity is unavailable",
+        headers={"Retry-After": str(decision.retry_after_seconds)},
+        extras={
+            "retry_after_seconds": decision.retry_after_seconds,
+            "queue": {"kind": kind, "depth": decision.queue_depth, "capacity": decision.queue_capacity},
+            "storage": {"free_bytes": decision.free_bytes, "minimum_free_bytes": decision.minimum_free_bytes},
+        },
+    )
 
 
 class BatchDeleteRequest(BaseModel):
@@ -884,22 +897,7 @@ def create_app() -> FastAPI:
                 expected_bytes = settings.max_upload_bytes if has_large_upload else 0
             decision = await app.state.admission.reserve(kind, expected_bytes)
             if not decision.accepted:
-                return _problem_response(ApiProblem(
-                    429, decision.code or "queue_capacity_reached",
-                    decision.detail or "Submission capacity is unavailable",
-                    headers={"Retry-After": str(decision.retry_after_seconds)},
-                    extras={
-                        "retry_after_seconds": decision.retry_after_seconds,
-                        "queue": {
-                            "kind": kind, "depth": decision.queue_depth,
-                            "capacity": decision.queue_capacity,
-                        },
-                        "storage": {
-                            "free_bytes": decision.free_bytes,
-                            "minimum_free_bytes": decision.minimum_free_bytes,
-                        },
-                    },
-                ))
+                return _problem_response(admission_problem(decision, kind))
             reserved = True
         try:
             response = await call_next(request)
@@ -1608,11 +1606,11 @@ def create_app() -> FastAPI:
         response_model_exclude_unset=True, tags=[TTS_TAG],
         summary="提交结构化多段 TTS 任务 / Submit a structured multi-item TTS job",
         description=bilingual(
-            "按输入顺序为每一项生成独立 WAV。整批必须使用同一模型、设备、语言和 preset 或 voiceprint 模式；preset 项可使用不同官方音色和指令，voiceprint 项只能引用声纹库中的可用样本。",
-            "Generate one ordered WAV artifact per item. A batch shares one model, device, language, and preset or voiceprint mode; preset items may use different official speakers and instructions, while voiceprint items reference eligible library samples.",
+            "按输入顺序为每一项生成独立 WAV。请求及每项均拒绝未声明字段（422），包括 speed、pitch、采样参数和 response_format。整批必须使用同一模型、设备、语言和 preset 或 voiceprint 模式；preset 项可使用不同官方音色和指令，voiceprint 项只能引用声纹库中的可用样本。项目 ID 必须唯一；每项文本去除首尾空白后非空，整批字符数之和受 tts.sequence_jobs.max_total_chars 限制。preset 项必须提供 speaker，只有 1.7B 支持可选 instruct；voiceprint 项必须提供 voiceprint_sample_id，并省略 speaker/instruct。整批成功后返回 result.sequence.items，取消或失败后重试会重新生成整批。",
+            "Generate one ordered WAV artifact per item. Undeclared request and item fields return 422, including speed, pitch, sampling controls, and response_format. A batch shares one model, device, language, and preset or voiceprint mode; preset items may use different official speakers and instructions, while voiceprint items reference eligible library samples. Item IDs must be unique; each trimmed text must be nonempty, with the sum of trimmed text lengths bounded by tts.sequence_jobs.max_total_chars. Preset items require speaker, with optional instruct only on 1.7B; voiceprint items require voiceprint_sample_id and omit speaker/instruct. Results appear in result.sequence.items after the entire job succeeds; retrying a failed or cancelled job regenerates the entire sequence.",
         ),
         operation_id="submitTtsSequenceJob",
-        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TTS_CONTROL_VALIDATION_RESPONSE, **TTS_SERVICE_RESPONSE},
+        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TTS_SEQUENCE_VALIDATION_RESPONSE, **TTS_SERVICE_RESPONSE},
     )
     async def submit_tts_sequence(
         response: Response,
@@ -2181,24 +2179,37 @@ def create_app() -> FastAPI:
         "/api/v1/jobs/{job_id}/retry", response_model=JobResponse,
         response_model_exclude_unset=True, tags=[JOB_TAG],
         summary="重试终态任务 / Retry terminal job",
-        description=bilingual("仅失败或取消任务可重新排队；累计处理耗时会保留。", "Only failed or cancelled jobs can be queued again; accumulated processing time is retained."),
+        description=bilingual("仅失败或取消任务可原子地重新排队；累计处理耗时会保留。同类队列容量、提交并发和磁盘准入限制同样适用，拒绝返回 429 和 Retry-After；不要求 Idempotency-Key。", "Atomically requeue only failed or cancelled jobs, retaining accumulated processing time. Same-kind queue capacity, submission concurrency, and disk admission limits apply; rejection returns 429 with Retry-After. No Idempotency-Key is required."),
         operation_id="retryJob",
-        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE},
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **ADMISSION_RESPONSE},
     )
-    def retry(job_id: str, _: None = Depends(require_api_key)) -> JobResponse:
-        try:
-            job = retry_job(job_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    async def retry(job_id: str, _: None = Depends(require_api_key)) -> JobResponse:
+        job = await run_in_threadpool(get_job, job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
-        request_data = job.get("request") or {}
-        if request_data.get("purpose") == "voiceprint_import":
-            update_voiceprint_sample(
-                request_data.get("voiceprint_sample_id", ""), state="pending",
-                error_message=None, embedding_error=None,
-            )
-        return public_job(job)
+        if job["state"] not in {"failed", "cancelled"}:
+            raise HTTPException(status_code=409, detail="Only failed or cancelled jobs can be retried")
+        kind = job["kind"]
+        decision = await app.state.admission.reserve(kind, 0)
+        if not decision.accepted:
+            raise admission_problem(decision, kind)
+        try:
+            try:
+                job = await run_in_threadpool(retry_job, job_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            if job is None:
+                raise HTTPException(status_code=404, detail="Job not found")
+            request_data = job.get("request") or {}
+            if request_data.get("purpose") == "voiceprint_import":
+                await run_in_threadpool(
+                    update_voiceprint_sample,
+                    request_data.get("voiceprint_sample_id", ""), state="pending",
+                    error_message=None, embedding_error=None,
+                )
+            return public_job(job)
+        finally:
+            await app.state.admission.release(kind)
 
     @app.delete(
         "/api/v1/jobs/{job_id}", status_code=204, tags=[JOB_TAG],
@@ -2656,8 +2667,8 @@ def add_openai_routes(app: FastAPI) -> None:
         "/v1/audio/speech", response_class=FileResponse, tags=[OPENAI_TAG],
         summary="同步兼容语音合成 / Create synchronous compatible speech",
         description=bilingual(
-            "等待内部 TTS 任务完成并直接返回音频。`model` 省略时使用 0.6B；1.7B 官方预置音色可选填 `instructions`，其它组合必须留空。`voice` 支持官方预置音色或 `voice_` 声音档案，不支持 VoiceDesign 或直接传声纹样本 ID。需要进度、取消、VoiceDesign 或精确声纹样本时使用 `/api/v1/tts/jobs`。",
-            "Wait for an internal TTS job and return audio. Omitting `model` uses 0.6B; an official 1.7B preset may include `instructions`, which must be empty for every other combination. `voice` accepts an official preset or a `voice_` profile, not VoiceDesign or a voiceprint sample ID. Use `/api/v1/tts/jobs` for progress, cancellation, VoiceDesign, or an exact voiceprint sample.",
+            "等待内部 TTS 任务完成并直接返回音频。input 去除首尾空白后须为 1 至 capabilities.limits.max_tts_chars 个字符，否则在入队前返回 422。`model` 省略时使用 0.6B；1.7B 官方预置音色可选填 `instructions`，其它组合必须留空。`voice` 支持官方预置音色或 `voice_` 声音档案，不支持 VoiceDesign 或直接传声纹样本 ID。需要进度、取消、VoiceDesign 或精确声纹样本时使用 `/api/v1/tts/jobs`。",
+            "Wait for an internal TTS job and return audio. Trimmed input must contain 1 through capabilities.limits.max_tts_chars characters; invalid text returns 422 before queuing. Omitting `model` uses 0.6B; an official 1.7B preset may include `instructions`, which must be empty for every other combination. `voice` accepts an official preset or a `voice_` profile, not VoiceDesign or a voiceprint sample ID. Use `/api/v1/tts/jobs` for progress, cancellation, VoiceDesign, or an exact voiceprint sample.",
         ),
         operation_id="createOpenAISpeech",
         responses={
@@ -2690,8 +2701,8 @@ def add_openai_routes(app: FastAPI) -> None:
         ensure_service("tts")
         accelerate_single_task = payload.accelerate_single_task
         text = payload.input.strip()
-        if not text:
-            raise HTTPException(status_code=422, detail="input is required")
+        if not text or len(text) > settings.max_tts_chars:
+            raise HTTPException(status_code=422, detail=f"Text must contain 1-{settings.max_tts_chars} characters")
         if payload.response_format not in {"wav", "flac", "mp3"}:
             raise HTTPException(status_code=422, detail="response_format must be wav, flac or mp3")
         unsupported_controls = {

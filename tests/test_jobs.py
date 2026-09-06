@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from threading import Event, current_thread
+
+import pytest
 
 from fastapi.testclient import TestClient
 
@@ -94,6 +98,48 @@ def test_concurrent_idempotent_creates_return_one_job(tmp_path, monkeypatch) -> 
     assert len({job["id"] for job, _ in results}) == 1
     assert sum(not replayed for _, replayed in results) == 1
     assert len(db_module.list_jobs()) == 1
+
+
+def test_retry_rechecks_state_after_waiting_for_transaction(tmp_path, monkeypatch) -> None:
+    local = local_settings(tmp_path)
+    install_settings(local, monkeypatch)
+    db_module.init_db()
+    job = db_module.create_job("tts", "retry race", {"text": "test"})
+    db_module.finish_job(job["id"], "failed", stage="failed", progress=0)
+    waiting, resume = Event(), Event()
+    original_connect = db_module.connect
+
+    class DelayedTransaction:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def execute(self, sql, *args):
+            if sql == "BEGIN IMMEDIATE" and current_thread().name.startswith("delayed-retry"):
+                waiting.set()
+                assert resume.wait(5)
+            return self.connection.execute(sql, *args)
+
+    @contextmanager
+    def delayed_connect():
+        with original_connect() as connection:
+            yield DelayedTransaction(connection)
+
+    monkeypatch.setattr(db_module, "connect", delayed_connect)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="delayed-retry") as pool:
+        delayed = pool.submit(db_module.retry_job, job["id"])
+        try:
+            assert waiting.wait(5)
+            db_module.retry_job(job["id"])
+            claimed = db_module.claim_job("tts", "active-worker")
+            assert claimed and claimed["id"] == job["id"]
+        finally:
+            resume.set()
+        with pytest.raises(ValueError, match="Only failed or cancelled"):
+            delayed.result(timeout=5)
+    current = db_module.get_job(job["id"])
+    assert current["state"] == "running" and current["worker_id"] == "active-worker"
+    assert current["queue_seq"] == claimed["queue_seq"]
+    assert db_module.claim_job("tts", "second-worker") is None
 
 
 def test_job_history_page_is_stable_counted_and_searches_literals(tmp_path, monkeypatch) -> None:

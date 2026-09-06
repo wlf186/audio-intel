@@ -904,19 +904,20 @@ def request_cancel(job_id: str) -> dict[str, Any] | None:
 
 
 def retry_job(job_id: str) -> dict[str, Any] | None:
-    job = get_job(job_id)
-    if job is None:
-        return None
-    if job["state"] not in {"failed", "cancelled"}:
-        raise ValueError("Only failed or cancelled jobs can be retried")
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
+        job = db.execute("SELECT state FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if job is None:
+            db.execute("COMMIT")
+            return None
+        if job["state"] not in {"failed", "cancelled"}:
+            raise ValueError("Only failed or cancelled jobs can be retried")
         db.execute(
             """UPDATE jobs SET state='queued',stage='queued',stage_code='queued',progress=0,
                stage_current=NULL,stage_total=NULL,result_json=NULL,error_code=NULL,error_message=NULL,
                stage_progress=NULL,stage_unit=NULL,progress_basis='observed',progress_activity_json=NULL,
                cancel_requested=0,worker_id=NULL,heartbeat_at=NULL,started_at=NULL,finished_at=NULL,
-               queue_seq=?,updated_at=? WHERE id=?""",
+               queue_seq=?,updated_at=? WHERE id=? AND state IN ('failed','cancelled')""",
             (_next_queue_seq(db), utcnow(), job_id),
         )
         db.execute("COMMIT")

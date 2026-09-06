@@ -235,7 +235,11 @@ select:focus{border-color:var(--cyan)}
 .audio-card>div:first-child b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tts-result-instruction{margin-top:5px;color:#8fa09c;line-height:1.45}
 .audio-card span{color:var(--muted);font-size:11px;margin-top:5px}
-.audio-card .button{width:100%;height:42px;margin-top:12px}
+.audio-card .button{width:100%;min-height:44px;margin-top:12px}
+.tts-sequence-results{list-style:none;margin:16px 0 0;padding:0;display:grid;gap:20px;min-width:0}
+.tts-sequence-results li{min-width:0;border-top:1px solid var(--line);padding-top:12px}
+.tts-sequence-results h3{font-size:13px;overflow-wrap:anywhere;margin:0 0 8px}
+.tts-sequence-results .round{min-width:44px;min-height:44px}
 .audio-transport{margin-top:12px}
 .audio-transport .waveform{height:90px;background:repeating-linear-gradient(90deg,transparent 0,transparent 39px,#19313433 40px)}
 .transport-row{display:flex;align-items:center;gap:9px}

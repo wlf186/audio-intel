@@ -19,7 +19,7 @@ Authentication is disabled by default. When `AUDIO_INTEL_API_KEY` is configured,
 Authorization: Bearer <key>
 ```
 
-The bundled browser exchanges the key for an opaque HttpOnly same-origin session cookie. Do not put the raw key in URLs or browser storage.
+The bundled browser exchanges the key for an opaque HttpOnly same-origin session cookie. Pending voiceprint polling stops when the session expires and resumes after successful login if samples are still pending. Do not put the raw key in URLs or browser storage.
 
 `GET /api/v1/health` is always public and intentionally minimal. `GET /api/v1/auth/session` may also be called before login to discover whether authentication is required. When project-managed HTTPS is enabled, the public `GET /api/v1/tls/bootstrap`, `GET /api/v1/tls/root-ca.cer`, and `GET /api/v1/tls/root-ca.pem` endpoints expose only the configured public CA and its SHA-256 fingerprint; CA downloads return `404` when unavailable. Detailed system, model, worker, media, and task surfaces remain protected. See the [local HTTPS guide](HTTPS.md) for certificate handling and trust verification.
 
@@ -32,6 +32,7 @@ The following submission endpoints require an `Idempotency-Key` header containin
 - `POST /api/v1/asr/jobs`
 - `POST /api/v1/tts/clone-references`
 - `POST /api/v1/tts/jobs`
+- `POST /api/v1/tts/sequence-jobs`
 - `POST /api/v1/voiceprints/people/{person_id}/samples/upload`
 
 Generate one key per logical submission and reuse it after timeouts, disconnects, or `429` responses:
@@ -98,16 +99,84 @@ Read `GET /api/v1/capabilities` before displaying TTS controls. The 0.6B models 
 
 ### Submit an ordered TTS sequence
 
-`POST /api/v1/tts/sequence-jobs` accepts 1–100 ordered items that share one model, device, language, and voice mode. Preset items may select different speakers and instructions; voiceprint items may select different existing sample IDs. The result keeps input order in `result.sequence.items[]` and returns one WAV `artifact_name` per item. Read `tts.sequence_jobs` for the contract version and current character limit before using this optimization; clients must fall back to single-item jobs when it is absent or unsupported.
+`POST /api/v1/tts/sequence-jobs` accepts JSON with 1–100 ordered items sharing one model, device, language, and voice mode. Read `tts.sequence_jobs` before submitting: require `supported=true` and a supported `contract_version` (currently `1`), and respect `max_items` and `max_total_chars`. Fall back to single-item jobs when the capability is absent, unsupported, or uses a contract version the client does not understand.
+
+- Only `preset` and `voiceprint` modes are supported. Each `preset` item requires an official `speaker`; optional per-item `instruct` is supported only by the 1.7B model. Omit `voiceprint_sample_id` in this mode.
+- Each `voiceprint` item requires an existing ready, TTS-eligible `voiceprint_sample_id`; omit `speaker` and `instruct`. Different items may use different samples. Accepted jobs retain their own reference audio and metadata snapshots.
+- Item `id` values must be unique within the request, contain 1–64 characters, and match `[A-Za-z0-9._-]+`. Each text must be nonempty after trimming leading/trailing whitespace. The sum of these trimmed text lengths must not exceed `max_total_chars` (configured by `AUDIO_INTEL_MAX_TTS_CHARS`).
+- Output is always one WAV per item. Device omission follows the deployment default; `accelerate_single_task` defaults to `true` and can be disabled explicitly.
+
+Generate a key once for this logical submission; reuse `SEQUENCE_KEY` and the same body when retrying the curl command after a timeout or `429`:
+
+```bash
+SEQUENCE_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
+```
 
 ```bash
 curl --fail-with-body -sS \
   -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
-  -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
+  -H "Idempotency-Key: $SEQUENCE_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen3-tts-0.6b","language":"English","voice_mode":"preset","compute_device":"gpu","items":[{"id":"intro","text":"Welcome.","speaker":"Ryan"},{"id":"reply","text":"Let us begin.","speaker":"Aiden"}]}' \
+  -d '{"model":"qwen3-tts-0.6b","language":"English","voice_mode":"preset","compute_device":"cpu","items":[{"id":"intro","text":"Welcome.","speaker":"Ryan"},{"id":"reply","text":"Let us begin.","speaker":"Aiden"}]}' \
   "$BASE_URL/api/v1/tts/sequence-jobs"
 ```
+
+For a voiceprint sequence, use a new logical submission key and replace the body with the following JSON, substituting real eligible sample IDs from the voiceprint library:
+
+```json
+{
+  "model": "qwen3-tts-0.6b",
+  "language": "English",
+  "voice_mode": "voiceprint",
+  "compute_device": "cpu",
+  "items": [
+    {"id": "intro", "text": "Welcome.", "voiceprint_sample_id": "sample_0123456789abcdef"},
+    {"id": "reply", "text": "Let us begin.", "voiceprint_sample_id": "sample_fedcba9876543210"}
+  ]
+}
+```
+
+Sequence request objects and each item reject undeclared fields with `422` (`application/json`, `detail[].type=extra_forbidden`). Do not send `speed`, `pitch`, sampling controls, or `response_format`; WAV is fixed by contract v1.
+
+A sequence occupies one TTS queue position. Progress counts synthesis chunks across all items. Failure or cancellation applies to the entire job; retrying it regenerates all items from the persisted request, with no per-item resume or partial result delivery.
+
+After success, job detail contains `result.sequence`; `GET /api/v1/jobs/{job_id}/result` returns the result directly, with `sequence` at its root. This excerpt shows the ordered item-to-artifact mapping:
+
+```json
+{
+  "sequence": {
+    "contract_version": 1,
+    "items": [
+      {"id": "intro", "artifact_name": "item-0000.wav", "duration": 1.5, "sample_rate": 24000},
+      {"id": "reply", "artifact_name": "item-0001.wav", "duration": 1.5, "sample_rate": 24000}
+    ]
+  }
+}
+```
+
+Each `artifact_name` matches an entry in `artifacts[].name`. Use the returned names rather than deriving them from item IDs. With `JOB_ID` set to the accepted job ID, download the first item after success (requires `jq`):
+
+```bash
+ARTIFACT_NAME=$(curl --fail-with-body -sS \
+  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  "$BASE_URL/api/v1/jobs/$JOB_ID/result" | jq -er '.sequence.items[0].artifact_name')
+curl --fail-with-body -sS \
+  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  "$BASE_URL/api/v1/jobs/$JOB_ID/artifacts/$ARTIFACT_NAME" -o first-item.wav
+```
+
+Sequence-specific `422` problem codes include:
+
+| Code | Correction |
+| --- | --- |
+| `duplicate_tts_sequence_item` | Use distinct item IDs |
+| `invalid_tts_sequence_text` | Supply nonempty text after trimming |
+| `tts_sequence_too_large` | Split the request to respect the total character limit |
+| `unknown_tts_speaker` | Select an official preset speaker |
+| `invalid_tts_sequence_item` | Supply the fields required by the selected mode and omit conflicting fields |
+| `voiceprint_sample_unavailable` | Select an existing ready sample with available audio and transcript |
+
+Model/control validation and the shared `200`/`202`/`409`/`429`/`503` contracts also apply.
 
 ### Voice-clone reference flow
 
@@ -161,6 +230,14 @@ Important job endpoints include:
 - `DELETE /api/v1/jobs/{job_id}?purge=true` — permanently remove one eligible task and its files.
 - `POST /api/v1/jobs/batch-delete` — delete up to 100 IDs with per-item results.
 
+Retry requeues only a still-failed or cancelled job, atomically, at the tail of its same-kind queue. It preserves the job ID, request snapshots, and accumulated processing time. Success returns `200`; a state conflict returns `409`, and queue capacity, submission concurrency, or disk admission rejection returns `429` with `Retry-After`. Retry requires no `Idempotency-Key`.
+
+```bash
+curl --fail-with-body -i -X POST \
+  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  "$BASE_URL/api/v1/jobs/$JOB_ID/retry"
+```
+
 Cancellation is terminal only after the task executor and all descendants have exited and temporary files have been cleaned. A running task cannot be permanently purged while its process tree may still write files.
 
 ## Libraries and capability discovery
@@ -184,7 +261,7 @@ Completed jobs keep speaker-name, hotword, device, and model snapshots. Later li
 
 ## OpenAI-compatible audio
 
-The compatibility endpoints wait synchronously and are best suited to short requests:
+The compatibility endpoints wait synchronously and are best suited to short requests. `/v1/audio/speech` enforces the same trimmed-text limit as native TTS: 1 through `GET /api/v1/capabilities` → `limits.max_tts_chars` characters. Blank or overlong input returns `422` before a job is created:
 
 ```bash
 curl --fail-with-body -sS \
@@ -210,9 +287,9 @@ curl --fail-with-body -sS \
 | Status | Meaning |
 | --- | --- |
 | `401` | Missing or invalid Bearer/session authentication |
-| `409` | Idempotency key reused with different request content |
+| `409` | Idempotency key reused with different content, or an ineligible job state for retry |
 | `422` | Unsupported language, model, voice mode, control, or validation input |
 | `429` | Submission concurrency, queue capacity, or disk admission limit |
 | `503` | Requested GPU or model revision is unavailable; CPU-only deployments use the stable `gpu_runtime_not_installed` problem code for explicit GPU requests |
 
-GPU requests never silently fall back to CPU. Retry `429` using its `Retry-After` value and the original idempotency key. Treat `503` as a capability/configuration issue and explicitly select `compute_device=cpu` if that matches user intent.
+GPU requests never silently fall back to CPU. Retry `429` using its `Retry-After` value and, for keyed submissions, the original idempotency key. Treat `503` as a capability/configuration issue and explicitly select `compute_device=cpu` if that matches user intent.

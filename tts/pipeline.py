@@ -168,7 +168,8 @@ def _generate_tts_batch(
             )
         if item_requests is not None and any("_clone_prompt" in item for item in item_requests):
             prompts = [item["_clone_prompt"] for item in item_requests]
-            clone_prompt = prompts if batched else prompts[0]
+            # The pinned Qwen wrapper accepts a prompt list even for scalar text.
+            clone_prompt = prompts
         return model.generate_voice_clone(
             text=text,
             language=[language] * len(texts) if batched else language,

@@ -20,6 +20,9 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 
 ## 自动迁移与兼容性
 
+- TTS 序列请求及每个 item 现在拒绝未声明字段，返回 `422`；旧客户端必须移除此前被静默忽略的 `speed`、`pitch`、采样参数和 `response_format`，序列仍固定输出 WAV。`/v1/audio/speech` 同样执行 `limits.max_tts_chars` 的去首尾空白文本上限。这些校验只作用于新提交，不改写已保存的请求和结果。
+- 任务重试现在执行与新提交相同的队列容量、提交并发和磁盘准入限制；客户端需处理 `429` 和 `Retry-After`。重试仍不要求 `Idempotency-Key`，不再允许并发请求将已运行的任务重置为排队状态，无数据库迁移。
+- 修复声纹序列的单条批次和尾批推理；Web UI 现在按顺序提供全部序列音频的播放与下载。待处理声纹轮询在会话失效后停止，重新登录后恢复；浏览器存储与草稿生命周期不变。
 - API 启动时自动将 SQLite 迁移到当前 schema v9。v8 新增的声纹人名系统词表在 v9 更名为“声纹库人名（全名）”，稳定 ID 不变；同时新增“声纹库人名（去姓）”，为已开启热词同步的既有人员回填可靠提取的两字中文名或英文首名。若升级前已有词表占用新系统名称，会保留内容并追加“原自定义”后缀；历史任务仍保留提交时的词表名称和内容。迁移是就地操作，因此备份必须在启动新版本前完成。
 - 历史 ASR/TTS 任务、旧声音档案和既有声纹样本保持可读；人员名字、备注及开关变化不会回写历史任务或已提交热词快照。
 - 浏览器鉴权改用进程内会话 Cookie，升级或重启后需要重新输入 API Key。
@@ -30,6 +33,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 - ASR/TTS worker 现在由监督器管理可重启执行器，`setup all` 会将进程树管理所需的 `psutil` 同步到两个模型环境。启动时会校验并清理可信的遗留执行器元数据，再恢复中断任务。
 - ASR/TTS 执行器现在只在同类队列有连续任务时保持热状态；队列排空并默认空闲 60 秒后会安全重建，以归还 VAD、CAM++、TTS CPU checkpoint 和 CUDA context 的进程高水位。可用 `AUDIO_INTEL_EXECUTOR_IDLE_SECONDS` 调整，`0` 表示立即回收。监督器、FIFO、任务状态、API、数据库和浏览器会话均不变。
 - Linux `service.sh` 的 `start` 现在将各组件放入独立会话和进程组，记录真实服务 PID，可在普通终端、调用脚本或其进程组退出后继续后台运行；容器或平台按 cgroup 管理生命周期时仍应使用 `run` 前台动作。`restart` 会先预检，再清理旧的完整进程树，停止失败时返回非零且不启动新实例。启动就绪检查、PID 身份校验和目录覆盖行为保持兼容；不涉及 HTTP API、数据库或原生 Windows 行为变更。
+- Windows 安装入口修复了未提供额外选项时转发空参数、导致 `Unknown setup option` 的问题。升级源码后可直接重试 `.\service.cmd setup all`、`setup asr` 或 `setup tts`；不需要添加占位参数，已有 `--profile` 用法保持不变。
 - 原生 Windows `service.cmd` 的动作保持不变；`start`/`restart` 现在等待 API 与 worker 真正就绪，`stop` 校验 PID 身份并清理完整进程树。已有 `AUDIO_INTEL_*_DIR` 覆盖也会用于日志和 PID 等生命周期状态，不涉及 HTTP API 或数据库迁移。
 - 服务脚本新增可选的单端口 HTTPS 模式和项目本地 CA 助手。配置 `AUDIO_INTEL_PROTOCOL=https`、证书与私钥后，`start`/`run`/`restart` 会启用 TLS 并在停止旧服务前验证证书；`status` 显示实际协议。新增公开的 `/api/v1/tls/bootstrap` 与根证书下载端点仅用于登录前建立信任，不返回私钥或详细系统数据。HTTP 仍是默认值，不涉及数据库迁移。
 - 项目管理的 HTTPS 现在可通过 `tls enable` 持久化到 `<AUDIO_INTEL_DATA_DIR>/tls/service-profile.json`（默认 `data/tls/service-profile.json`）；新终端中的普通 `start`/`restart` 会自动沿用，`tls disable` 无损切回 HTTP。`tls enable|disable --restart` 都会执行完整的 `restart all`。旧的环境变量配置仍优先且保持兼容。

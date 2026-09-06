@@ -14,4 +14,14 @@ html,body{max-width:100%;overflow-x:hidden}
  .swagger-ui .opblock-description-wrapper,.swagger-ui .opblock-external-docs-wrapper,.swagger-ui .opblock-title_normal{padding:12px}
  .swagger-ui table{display:block;max-width:100%;overflow-x:auto}
  .swagger-ui .parameters-col_description{width:auto}
+ .swagger-ui button,.swagger-ui select,.swagger-ui input:not([type=checkbox]),.swagger-ui summary{min-height:44px}
+ .swagger-ui button{min-width:44px}
+ .swagger-ui .responses-inner{padding:12px}
+ .swagger-ui .responses-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+ .swagger-ui .responses-table tbody,.swagger-ui .responses-table tr,.swagger-ui .responses-table td{display:block;width:100%;max-width:100%;min-width:0}
+ .swagger-ui .responses-table .response-col_status{padding-bottom:8px;font-weight:700}
+ .swagger-ui .responses-table .response-col_links{padding-top:0}
+ .swagger-ui .responses-table .response-controls{flex-direction:column;gap:12px}
+ .swagger-ui .responses-table .response-control-media-type{max-width:100%;padding-right:0}
+ .swagger-ui .responses-table pre{white-space:pre;word-break:normal;overflow-wrap:normal;overflow-x:auto}
 }

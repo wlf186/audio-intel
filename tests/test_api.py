@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from copy import deepcopy
+import io
 from pathlib import Path
 import uuid
 import wave
+
+import pytest
 
 from fastapi.testclient import TestClient
 
@@ -456,6 +460,99 @@ def test_tts_sequence_submission_validation_idempotency_and_voiceprint_snapshot(
     assert list(references) == [sample["id"]]
     snapshot_path = Path(references[sample["id"]]["reference_audio_path"])
     assert snapshot_path.is_file() and snapshot_path != source
+
+
+@pytest.mark.parametrize("example_name", ["podcast_turns", "voiceprint"])
+def test_documented_sequence_examples_round_trip_results_and_downloads(tmp_path, monkeypatch, example_name) -> None:
+    import tts.pipeline as tts_pipeline
+    import audio_intel.worker as worker_module
+    from audio_intel.api_docs import REQUEST_EXAMPLES
+    from audio_intel.api_models import TtsSequenceResult
+
+    local = replace(
+        settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
+        enabled_services=frozenset({"tts"}), min_free_disk_bytes=0,
+        deployment_profile="cpu", mock_mode=True, api_key="docs-example-secret",
+    )
+    for module in (api_module, db_module, worker_module, tts_pipeline):
+        monkeypatch.setattr(module, "settings", local)
+    payload = deepcopy(REQUEST_EXAMPLES[("/api/v1/tts/sequence-jobs", "post")][example_name]["value"])
+    payload["compute_device"] = "cpu"
+    headers = {"Authorization": "Bearer docs-example-secret", **idem()}
+    with TestClient(api_module.create_app()) as client:
+        if example_name == "voiceprint":
+            person = db_module.create_voiceprint_person("Documented voice")
+            source = local.voiceprints_dir / person["id"] / "source.wav"
+            source.parent.mkdir(parents=True, exist_ok=True)
+            with wave.open(str(source), "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(24000)
+                handle.writeframes(b"\0\0" * 2400)
+            sample = db_module.create_voiceprint_sample(
+                person["id"], state="ready", language="Chinese", audio_path=str(source),
+                transcript="参考文本。", duration=0.1,
+            )
+            for item in payload["items"]:
+                item["voiceprint_sample_id"] = sample["id"]
+        submitted = client.post("/api/v1/tts/sequence-jobs", headers=headers, json=payload)
+        assert submitted.status_code == 202, submitted.text
+        job_id = submitted.json()["id"]
+        replay = client.post("/api/v1/tts/sequence-jobs", headers=headers, json=payload)
+        assert replay.status_code == 200 and replay.json()["id"] == job_id
+        assert replay.headers["Idempotency-Replayed"] == "true"
+        assert client.get(f"/api/v1/jobs/{job_id}/result", headers=headers).status_code == 409
+        job = db_module.claim_job("tts", "docs-worker")
+        assert job["id"] == job_id
+        context = worker_module.JobContext(job, "docs-worker")
+        generated = tts_pipeline.process_job(context)
+        db_module.finish_job(job_id, "succeeded", result_json=generated, progress=1, stage="completed")
+        response = client.get(f"/api/v1/jobs/{job_id}/result", headers=headers)
+        assert response.status_code == 200
+        result = response.json()
+        assert "result" not in result
+        assert result["sequence"] == generated["sequence"]
+        sequence = TtsSequenceResult.model_validate(result["sequence"])
+        assert [item.id for item in sequence.items] == [item["id"] for item in payload["items"]]
+        detail = client.get(f"/api/v1/jobs/{job_id}", headers=headers).json()
+        assert detail["result"]["sequence"] == result["sequence"]
+        assert [item.artifact_name for item in sequence.items] == [item["name"] for item in result["artifacts"]]
+        for item in sequence.items:
+            url = f"/api/v1/jobs/{job_id}/artifacts/{item.artifact_name}"
+            assert client.get(url).status_code == 401
+            audio = client.get(url, headers=headers)
+            assert audio.status_code == 200 and audio.headers["content-type"].startswith("audio/wav")
+            with wave.open(io.BytesIO(audio.content), "rb") as handle:
+                assert handle.getframerate() == item.sample_rate
+                assert handle.getnframes() > 0
+                assert round(handle.getnframes() / handle.getframerate(), 3) == item.duration
+
+
+@pytest.mark.parametrize(("change", "expected_code"), [
+    ({"items": [{"id": "same", "text": "a", "speaker": "Ryan"}] * 2}, "duplicate_tts_sequence_item"),
+    ({"items": [{"id": "blank", "text": "   ", "speaker": "Ryan"}]}, "invalid_tts_sequence_text"),
+    ({"items": [{"id": "long", "text": "x" * 101, "speaker": "Ryan"}]}, "tts_sequence_too_large"),
+    ({"items": [{"id": "speaker", "text": "a", "speaker": "missing"}]}, "unknown_tts_speaker"),
+    ({"voice_mode": "voiceprint", "items": [{"id": "sample", "text": "a"}]}, "invalid_tts_sequence_item"),
+    ({"voice_mode": "voiceprint", "items": [{"id": "sample", "text": "a", "voiceprint_sample_id": "missing"}]}, "voiceprint_sample_unavailable"),
+])
+def test_documented_sequence_errors_match_runtime(tmp_path, monkeypatch, change, expected_code) -> None:
+    local = replace(
+        settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
+        enabled_services=frozenset({"tts"}), min_free_disk_bytes=0,
+        deployment_profile="cpu", mock_mode=True, max_tts_chars=100,
+    )
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    with TestClient(api_module.create_app()) as client:
+        response = client.post("/api/v1/tts/sequence-jobs", headers=idem(), json={
+            "voice_mode": "preset", "compute_device": "cpu", **change,
+        })
+        assert response.status_code == 422
+        assert response.json()["code"] == expected_code
+        examples = client.get("/openapi.json").json()["paths"]["/api/v1/tts/sequence-jobs"]["post"]["responses"]["422"]["content"]["application/problem+json"]["examples"]
+        assert response.json()["code"] == examples[expected_code]["value"]["code"]
+        assert client.get("/api/v1/jobs").json()["total"] == 0
 
 
 def test_tts_rejects_unsupported_style_instructions_before_job_creation(tmp_path, monkeypatch) -> None:
@@ -1112,3 +1209,154 @@ def test_voiceprint_api_adds_asr_segments_and_tts_uses_selected_sample(tmp_path,
         assert tts.json()["request"]["voiceprint_person_name"] == "尼克杨"
         assert tts.json()["request"]["voiceprint_sample_id"] == sample["id"]
         assert local.jobs_dir in __import__("pathlib").Path(tts.json()["request"]["reference_audio_path"]).parents
+
+
+@pytest.mark.parametrize('kind', ['asr', 'tts'])
+def test_retry_obeys_admission_and_releases_reservations(tmp_path, monkeypatch, kind) -> None:
+    local = replace(settings, data_dir=tmp_path/'data', temp_dir=tmp_path/'tmp',
+                    api_key='', mock_mode=True, deployment_profile='cpu',
+                    max_queued_asr=1, max_queued_tts=1, max_concurrent_submissions=1,
+                    min_free_disk_bytes=1)
+    monkeypatch.setattr(api_module, 'settings', local)
+    monkeypatch.setattr(db_module, 'settings', local)
+    app = api_module.create_app()
+    with TestClient(app) as client:
+        target = db_module.create_job(kind, 'retry target', {})
+        db_module.finish_job(target['id'], 'failed', stage='failed', progress=0)
+        queued = db_module.create_job(kind, 'already queued', {})
+        url = f"/api/v1/jobs/{target['id']}/retry"
+        full = client.post(url)
+        assert full.status_code == 429 and full.json()['code'] == 'queue_capacity_reached'
+        assert full.headers['retry-after'] == '30'
+        assert db_module.queued_count(kind) == 1
+        assert db_module.get_job(target['id'])['state'] == 'failed'
+        db_module.request_cancel(queued['id'])
+
+        monkeypatch.setattr(app.state.admission, 'disk_free', lambda: 0)
+        disk = client.post(url)
+        assert disk.status_code == 429 and disk.json()['code'] == 'insufficient_queue_storage'
+        assert disk.headers['retry-after'] == '300'
+        monkeypatch.setattr(app.state.admission, 'disk_free', lambda: 1024**3)
+        reserved = client.portal.call(app.state.admission.reserve, kind, 0)
+        assert reserved.accepted
+        try:
+            busy = client.post(url)
+            assert busy.status_code == 429 and busy.json()['code'] == 'submission_concurrency_limited'
+        finally:
+            client.portal.call(app.state.admission.release, kind)
+
+        original_retry = api_module.retry_job
+        def conflicting_retry(_job_id):
+            raise ValueError('Only failed or cancelled jobs can be retried')
+        monkeypatch.setattr(api_module, 'retry_job', conflicting_retry)
+        assert client.post(url).status_code == 409
+        assert app.state.admission.active == 0
+        assert app.state.admission.reservations() == {'asr': 0, 'tts': 0}
+        monkeypatch.setattr(api_module, 'retry_job', original_retry)
+        accepted = client.post(url)
+        assert accepted.status_code == 200 and accepted.json()['state'] == 'queued'
+        assert accepted.json()['queue']['position'] == 1
+        assert client.post(url).status_code == 409
+        assert client.post('/api/v1/jobs/missing/retry').status_code == 404
+        assert app.state.admission.active == 0
+        assert app.state.admission.reservations() == {'asr': 0, 'tts': 0}
+        schema = client.get('/openapi.json').json()
+        assert '429' in schema['paths']['/api/v1/jobs/{job_id}/retry']['post']['responses']
+
+
+@pytest.mark.parametrize('field,value', [
+    ('speed', 0.5), ('pitch', 2), ('temperature', 0.1), ('top_k', 5),
+    ('top_p', 0.9), ('repetition_penalty', 1.1), ('response_format', 'mp3'),
+    ('unknown_option', True),
+])
+@pytest.mark.parametrize('level', ['request', 'item'])
+def test_sequence_rejects_unknown_fields_before_creation(tmp_path, monkeypatch, field, value, level) -> None:
+    local = replace(settings, data_dir=tmp_path/'data', temp_dir=tmp_path/'tmp',
+                    api_key='', mock_mode=True, deployment_profile='cpu', min_free_disk_bytes=0)
+    monkeypatch.setattr(api_module, 'settings', local)
+    monkeypatch.setattr(db_module, 'settings', local)
+    with TestClient(api_module.create_app()) as client:
+        payload = {'voice_mode': 'preset', 'items': [{'id': 'one', 'text': 'Hello', 'speaker': 'Ryan'}]}
+        target = payload if level == 'request' else payload['items'][0]
+        target[field] = value
+        response = client.post('/api/v1/tts/sequence-jobs', headers=idem(), json=payload)
+        assert response.status_code == 422
+        error = response.json()['detail'][0]
+        assert error['type'] == 'extra_forbidden'
+        assert error['loc'] == (['body', field] if level == 'request' else ['body', 'items', 0, field])
+        assert db_module.list_jobs() == []
+        assert not list(local.jobs_dir.glob('*/input/*'))
+        schema = client.get('/openapi.json').json()
+        examples = schema['paths']['/api/v1/tts/sequence-jobs']['post']['responses']['422']['content']['application/json']['examples']
+        if level == 'request' and field == 'speed':
+            assert response.json() == examples['unknown_request_field']['value']
+        if level == 'item' and field == 'response_format':
+            assert response.json() == examples['unknown_item_field']['value']
+        schemas = schema['components']['schemas']
+        for name in ['TtsSequenceRequest', 'TtsSequenceItem']:
+            assert schemas[name]['additionalProperties'] is False
+        assert schemas['JobResponse']['additionalProperties'] is True
+
+
+def test_all_tts_entrypoints_enforce_trimmed_text_limit(tmp_path, monkeypatch) -> None:
+    local = replace(settings, data_dir=tmp_path/'data', temp_dir=tmp_path/'tmp',
+                    api_key='', mock_mode=True, deployment_profile='cpu', max_tts_chars=5,
+                    max_queued_tts=10, min_free_disk_bytes=0)
+    monkeypatch.setattr(api_module, 'settings', local)
+    monkeypatch.setattr(db_module, 'settings', local)
+    artifact = tmp_path/'speech.wav'
+    artifact.write_bytes(b'RIFF-test')
+    async def complete(job_id):
+        return db_module.finish_job(job_id, 'succeeded', stage='completed', progress=1,
+                                   result_json={'artifacts': [{'path': str(artifact), 'mime_type': 'audio/wav'}]})
+    monkeypatch.setattr(api_module, 'wait_for_job', complete)
+    with TestClient(api_module.create_app()) as client:
+        for text in ['      ', '123456']:
+            responses = [
+                client.post('/api/v1/tts/jobs', headers=idem(), data={'text': text, 'voice_mode': 'preset', 'speaker': 'Ryan'}),
+                client.post('/api/v1/tts/sequence-jobs', headers=idem(), json={'voice_mode': 'preset', 'items': [{'id': 'one', 'text': text, 'speaker': 'Ryan'}]}),
+                client.post('/v1/audio/speech', json={'input': text, 'voice': 'Ryan'}),
+            ]
+            assert [response.status_code for response in responses] == [422, 422, 422]
+            assert db_module.list_jobs() == []
+        valid = client.post('/v1/audio/speech', json={'input': ' 12345 ', 'voice': 'Ryan'})
+        assert valid.status_code == 200
+        assert db_module.get_job(valid.headers['x-job-id'])['request']['text'] == '12345'
+        assert client.post('/api/v1/tts/jobs', headers=idem(), data={'text': ' 12345 ', 'voice_mode': 'preset', 'speaker': 'Ryan'}).status_code == 202
+        assert client.post('/api/v1/tts/sequence-jobs', headers=idem(), json={'voice_mode': 'preset', 'items': [{'id': 'one', 'text': ' 12345 ', 'speaker': 'Ryan'}]}).status_code == 202
+
+
+def test_retry_reservation_blocks_a_concurrent_new_submission(tmp_path, monkeypatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    local = replace(settings, data_dir=tmp_path/'data', temp_dir=tmp_path/'tmp',
+                    api_key='', mock_mode=True, deployment_profile='cpu', max_queued_tts=1,
+                    max_concurrent_submissions=2, min_free_disk_bytes=0)
+    monkeypatch.setattr(api_module, 'settings', local)
+    monkeypatch.setattr(db_module, 'settings', local)
+    entered, resume = Event(), Event()
+    original_retry = api_module.retry_job
+    def delayed_retry(job_id):
+        entered.set()
+        assert resume.wait(5)
+        return original_retry(job_id)
+    monkeypatch.setattr(api_module, 'retry_job', delayed_retry)
+    app = api_module.create_app()
+    with TestClient(app) as client, ThreadPoolExecutor(max_workers=1) as pool:
+        target = db_module.create_job('tts', 'failed job', {})
+        db_module.finish_job(target['id'], 'failed', stage='failed', progress=0)
+        future = pool.submit(client.post, f"/api/v1/jobs/{target['id']}/retry")
+        try:
+            assert entered.wait(5)
+            assert db_module.queued_count('tts') == 0
+            submitted = client.post('/api/v1/tts/sequence-jobs', headers=idem(), json={
+                'voice_mode': 'preset', 'items': [{'id': 'one', 'text': 'Hello', 'speaker': 'Ryan'}],
+            })
+            assert submitted.status_code == 429
+            assert submitted.json()['code'] == 'queue_capacity_reached'
+        finally:
+            resume.set()
+        assert future.result(timeout=5).status_code == 200
+        assert db_module.queued_count('tts') == 1
+        assert app.state.admission.reservations() == {'asr': 0, 'tts': 0}

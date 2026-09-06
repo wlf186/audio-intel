@@ -77,7 +77,7 @@ export default function App(){
  },[authenticated,refreshHotwordLists,refreshVoiceprints])
  useEffect(()=>{void refreshResources()},[refreshResources])
  const hasPendingVoiceprint=voiceprints.some(person=>person.samples.some(sample=>sample.state==='pending'))
- useEffect(()=>{if(!hasPendingVoiceprint)return;const timer=setInterval(()=>void refreshVoiceprints(),2000);return()=>clearInterval(timer)},[hasPendingVoiceprint,refreshVoiceprints])
+ useEffect(()=>{if(!authenticated||!hasPendingVoiceprint)return;const timer=setInterval(()=>void refreshVoiceprints().catch(()=>undefined),2000);return()=>clearInterval(timer)},[authenticated,hasPendingVoiceprint,refreshVoiceprints])
  useEffect(()=>{const onHash=()=>{if(preserveNextHashScroll.current)preserveNextHashScroll.current=false;else resetPageScroll();setPage(pageFromHash())};addEventListener('hashchange',onHash);return()=>removeEventListener('hashchange',onHash)},[])
  const navigate=(next:Page,preserveScroll=false)=>{if(preserveScroll)preserveNextHashScroll.current=true;else resetPageScroll();setPage(next);if(location.hash!==`#${next}`)location.hash=next;else if(preserveScroll)preserveNextHashScroll.current=false}
  const openJob=(job:JobSummary)=>{if(job.state==='succeeded'){setPinnedJobs(current=>({...current,[job.kind]:job}));setSelected(current=>({...current,[job.kind]:job.id}));loadJobDetail(job);setReveal({kind:job.kind,jobId:job.id,token:++revealSequence.current});navigate(job.kind,true)}else navigate('jobs')}

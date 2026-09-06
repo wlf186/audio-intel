@@ -1225,7 +1225,7 @@ export function TtsPage({
             <div>
               <b>{selected.display_name}</b>
               <span>
-                {selected.result.speaker || (selected.request.voice_mode === 'voice_design' ? t('tts.results.designedVoice') : t('tts.results.clonedVoice'))} ·{' '}
+                {selected.result.sequence ? t('tts.results.sequence',{count:selected.result.sequence.items.length}) : selected.result.speaker || (selected.request.voice_mode === 'voice_design' ? t('tts.results.designedVoice') : t('tts.results.clonedVoice'))} ·{' '}
                 {selected.result.model_name || selected.result.model || (selected.request.model as string | undefined) || 'Qwen3-TTS 0.6B'} ·{' '}
                 {selected.result.duration}s ·{' '}
                 {(
@@ -1241,7 +1241,23 @@ export function TtsPage({
                 <small className="tts-result-instruction">{t('tts.results.instruction',{value:selected.result.instruct})}</small>
               ) : null}
             </div>
-            {selected.result.artifacts?.[0] ? (
+            {selected.result.sequence ? (
+              <ol className="tts-sequence-results">
+                {selected.result.sequence.items.map(item => (
+                  <li key={item.id}>
+                    <h3>{item.id}</h3>
+                    <AudioTransport
+                      src={artifactUrl(selected.id,item.artifact_name)}
+                      duration={item.duration}
+                    />
+                    <a className="button primary" href={artifactUrl(selected.id,item.artifact_name)} aria-label={t('tts.results.downloadItem',{id:item.id})}>
+                      <Download size={16} />
+                      {t('tts.results.download',{format:'WAV'})}
+                    </a>
+                  </li>
+                ))}
+              </ol>
+            ) : selected.result.artifacts?.[0] ? (
               <AudioTransport
                 src={artifactUrl(
                   selected.id,
@@ -1251,7 +1267,7 @@ export function TtsPage({
                 duration={selected.result.duration}
               />
             ) : null}
-            {selected.result.artifacts?.[0] ? (
+            {!selected.result.sequence && selected.result.artifacts?.[0] ? (
               <a
                 className="button primary"
                 href={artifactUrl(

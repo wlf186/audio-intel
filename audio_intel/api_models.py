@@ -286,26 +286,30 @@ class TtsSequenceCapability(PublicModel):
 
 
 class TtsSequenceItem(PublicModel):
+    model_config = ConfigDict(extra="forbid")
+
     id: str = Field(
         min_length=1,
         max_length=64,
         pattern=r"^[A-Za-z0-9._-]+$",
-        description="调用方提供的稳定项目 ID / Caller-provided stable item ID",
+        description="调用方提供的稳定项目 ID；整批内必须唯一 / Caller-provided stable item ID; must be unique within the batch",
     )
-    text: str = Field(min_length=1, description="本项目需要合成的文本 / Text to synthesize for this item")
-    speaker: str | None = Field(None, description="preset 模式的官方音色 / Official preset speaker")
+    text: str = Field(min_length=1, description="去除首尾空白后必须非空；整批字符数之和受 tts.sequence_jobs.max_total_chars 限制 / Must be nonempty after trimming; the sum of trimmed text lengths is limited by tts.sequence_jobs.max_total_chars")
+    speaker: str | None = Field(None, description="preset 模式必填的官方音色；voiceprint 模式省略 / Required official speaker in preset mode; omit in voiceprint mode")
     instruct: str = Field(
         "",
         max_length=1000,
-        description="模型支持时使用的逐项自然语言表达控制 / Per-item natural-language control when supported",
+        description="仅 1.7B preset 可选；其他组合省略 / Optional only for 1.7B preset; omit for other combinations",
     )
     voiceprint_sample_id: str | None = Field(
         None,
-        description="voiceprint 模式使用的已有可用样本 / Existing eligible sample for voiceprint mode",
+        description="voiceprint 模式必填的已有可用样本 ID；preset 模式省略 / Required existing eligible sample ID in voiceprint mode; omit in preset mode",
     )
 
 
 class TtsSequenceRequest(PublicModel):
+    model_config = ConfigDict(extra="forbid")
+
     model: str = Field("qwen3-tts-0.6b", description="规范 TTS 模型 ID / Canonical TTS model ID")
     language: str = Field("Auto", description="整批输出语言 / Target language for the batch")
     voice_mode: Literal["preset", "voiceprint"] = Field(
@@ -511,6 +515,18 @@ class HotwordContextResponse(PublicModel):
     term_count: int = Field(description="合并去重后的热词数 / Number of unique merged hotword terms")
 
 
+class TtsSequenceResultItem(PublicModel):
+    id: str = Field(description="原样返回调用方项目 ID / Original caller-provided item ID")
+    artifact_name: str = Field(description="对应 artifacts[].name；用于鉴权产物下载接口 / Matching artifacts[].name for the authenticated artifact download endpoint")
+    duration: float = Field(description="本项音频时长，单位秒 / Item audio duration in seconds")
+    sample_rate: int = Field(description="本项音频采样率，单位 Hz / Item audio sample rate in Hz")
+
+
+class TtsSequenceResult(PublicModel):
+    contract_version: Literal[1] = Field(description="有序 TTS 结果契约版本 / Ordered TTS result contract version")
+    items: list[TtsSequenceResultItem] = Field(description="与输入顺序一致的逐项 WAV 结果；整批成功后返回 / Per-item WAV results in input order; returned after the entire job succeeds")
+
+
 class JobResultResponse(PublicModel):
     text: str | None = None
     language: str | None = None
@@ -520,6 +536,7 @@ class JobResultResponse(PublicModel):
     speakers: list[SpeakerResponse] | None = None
     waveform: list[float] | None = None
     artifacts: list[ArtifactResponse] | None = None
+    sequence: TtsSequenceResult | None = Field(None, description="仅有序 TTS 序列任务返回 / Returned only for ordered TTS sequence jobs")
     speaker: str | None = None
     format: str | None = None
     sample_rate: int | None = None
@@ -805,7 +822,7 @@ class OpenAISpeechRequest(PublicModel):
         description="本地兼容模型别名 / Local compatible model alias",
         json_schema_extra={"enum": ["qwen3-tts-0.6b", "qwen3-tts-1.7b"]},
     )
-    input: str = Field(description="需要合成的文本 / Text to synthesize")
+    input: str = Field(description="去除首尾空白后须为 1 至 capabilities.limits.max_tts_chars 个字符 / Trimmed text must contain 1 through capabilities.limits.max_tts_chars characters")
     voice: str = Field(
         "Vivian",
         description="官方预置音色或 voice_ 声音档案 ID / Official preset or voice_ profile ID",

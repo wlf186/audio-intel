@@ -1019,3 +1019,66 @@ def test_tts_overlong_reference_is_clipped_with_matching_text(tmp_path) -> None:
     assert request["reference_duration_original"] == 20.0
     assert request["reference_duration_used"] == 14.0
     assert request["reference_truncated"] is True
+
+
+@pytest.mark.parametrize('count,accelerated,oom,expected_batches', [
+    (1, True, False, [1]),
+    (3, True, False, [2, 1]),
+    (3, False, False, [1, 1, 1]),
+    (3, True, True, [2, 1, 1, 1]),
+])
+def test_voiceprint_sequence_prompt_contract_through_generation(
+    tmp_path, monkeypatch, count, accelerated, oom, expected_batches,
+) -> None:
+    class OutOfMemoryError(RuntimeError):
+        pass
+
+    prompt = SimpleNamespace(ref_text='参考。')
+    batches, encoded_values = [], []
+    class Model:
+        model = SimpleNamespace(speech_tokenizer=SimpleNamespace(
+            decode=lambda encoded: ([item['audio_codes'] for item in encoded], 24000),
+        ))
+
+        def create_voice_clone_prompt(self, **kwargs):
+            return [prompt]
+
+        def generate_voice_clone(self, *, text, voice_clone_prompt, **kwargs):
+            texts = text if isinstance(text, list) else [text]
+            batches.append(len(texts))
+            # Match the pinned wrapper's supported list-of-items boundary.
+            assert isinstance(voice_clone_prompt, list)
+            assert voice_clone_prompt == [prompt] * len(texts)
+            if oom and len(texts) > 1:
+                raise OutOfMemoryError('injected batch OOM')
+            return self.model.speech_tokenizer.decode([
+                {'audio_codes': np.full(240, int(value)/10, dtype=np.float32)} for value in texts
+            ])
+
+    def encode(path, audio, rate, format):
+        encoded_values.append(float(audio[0]))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'audio')
+        return path
+
+    monkeypatch.setitem(sys.modules, 'torch', SimpleNamespace(
+        OutOfMemoryError=OutOfMemoryError,
+        cuda=SimpleNamespace(is_available=lambda: False, empty_cache=lambda: None),
+    ))
+    monkeypatch.setattr(tts_pipeline, 'settings', replace(settings, mock_mode=False))
+    monkeypatch.setattr(tts_pipeline, '_tts_text_token_counts', lambda _model, texts: [len(text) for text in texts])
+    monkeypatch.setattr(tts_pipeline, 'encode', encode)
+    items = [{'id': f'item-{index}', 'text': str(index+1), 'voiceprint_sample_id': 'sample'} for index in range(count)]
+    model = tts_pipeline.resolve_tts_model('qwen3-tts-0.6b')
+    result = tts_pipeline._process_sequence_loaded(
+        SimpleNamespace(output_dir=tmp_path/'output', progress=lambda *_, **__: None),
+        {'voice_mode': 'voiceprint', 'language': 'Chinese', 'compute_device_name': 'CPU'},
+        items, {'sample': {'reference_audio_path': 'reference.wav', 'reference_text': '参考。'}},
+        Model(), 'cpu', {'requested': accelerated, 'device': 'cpu', 'target_batch_size': 2},
+        model, model['checkpoints']['base'],
+    )
+    assert batches == expected_batches
+    assert encoded_values == pytest.approx([(index+1)/10 for index in range(count)])
+    assert [item['id'] for item in result['sequence']['items']] == [item['id'] for item in items]
+    assert [item['artifact_name'] for item in result['sequence']['items']] == [f'item-{index:04d}.wav' for index in range(count)]
+    assert bool(result['acceleration']['oom_fallbacks']) is oom

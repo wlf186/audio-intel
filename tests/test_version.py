@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
     ),
 )
 def test_version_from_git_describe(describe: str | None, expected: str) -> None:
-    assert version_from_describe(describe) == expected
+    assert version_from_describe(describe, fallback="0.1.8") == expected
 
 
 def test_release_tag_matches_fallback_in_tag_ci() -> None:
