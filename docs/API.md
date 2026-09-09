@@ -293,3 +293,31 @@ curl --fail-with-body -sS \
 | `503` | Requested GPU or model revision is unavailable; CPU-only deployments use the stable `gpu_runtime_not_installed` problem code for explicit GPU requests |
 
 GPU requests never silently fall back to CPU. Retry `429` using its `Retry-After` value and, for keyed submissions, the original idempotency key. Treat `503` as a capability/configuration issue and explicitly select `compute_device=cpu` if that matches user intent.
+
+## Voiceprint identities and sample names
+
+People retain stable IDs and are unique by normalized **name + note** (NFKC, whitespace folding, case folding). Notes remain optional and limited to 20 characters; `null`, empty, and whitespace-only notes are equivalent. Creating or updating a duplicate pair returns `409`. System full-name and surname-free hotword lists deduplicate terms, exclude notes, and retain a shared name while any matching person opts in. Custom list names remain unique.
+
+Every sample response includes persistent `name`. Upload accepts an optional `name` base; otherwise it uses the filename without extension. The recording UI supplies a timestamp name, and ASR imports use task name plus segment number. Creation adds ` (2)`, ` (3)`, etc. for collisions, truncating the base to keep the total at most 80 characters. Existing samples retain their pre-upgrade library number as a fixed name.
+
+`PATCH /api/v1/voiceprints/people/{person_id}/samples/{sample_id}` accepts only `{"name":"Meeting room recording"}` and returns the updated sample (`200`). Normalized names must contain 1–80 characters, without control characters, and be unique within that person. Duplicate names return `409`; invalid names or extra fields return `422`; missing samples or mismatched person IDs return `404`. Samples in every state can be renamed without changing audio, transcripts, or analysis jobs.
+
+This example requires `jq` and a local `reference.wav`. Keep `VOICEPRINT_KEY` for retries of the same upload:
+
+```bash
+PERSON_ID=$(curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  -H 'Content-Type: application/json' -d '{"name":"Alex Li","note":"Research"}' \
+  "$BASE_URL/api/v1/voiceprints/people" | jq -er '.id')
+VOICEPRINT_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
+SAMPLE_ID=$(curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  -H "Idempotency-Key: $VOICEPRINT_KEY" -F file=@reference.wav \
+  -F compute_device=cpu -F name='Meeting room' \
+  "$BASE_URL/api/v1/voiceprints/people/$PERSON_ID/samples/upload" | jq -er '.sample.id')
+curl --fail-with-body -sS -X PATCH -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  -H 'Content-Type: application/json' -d '{"name":"Quiet meeting room"}' \
+  "$BASE_URL/api/v1/voiceprints/people/$PERSON_ID/samples/$SAMPLE_ID"
+```
+
+TTS cloning selects a stable sample ID. New single and sequence requests snapshot `voiceprint_person_name`, `voiceprint_person_note`, and `voiceprint_sample_name` (inside `voiceprint_references` for sequences). Renaming the library does not rewrite accepted jobs or invalidate same-request idempotent replay. Failed/cancelled retries use the complete persisted request. Legacy `POST /api/v1/tts/voices` returns `409` when a name matches multiple people; use the native voiceprint endpoints with an explicit person ID instead.
+
+The clone-reference limit comes from `limits.max_clone_reference_seconds` (currently 15). Long references use the beginning through the last complete word within that limit, leaving the original sample intact. Before submission, the UI displays the limit; after a single clone completes, `reference_duration_original` and `reference_duration_used` provide measured seconds, and `reference_truncated` indicates truncation. Missing historical durations remain unknown. Ordered sequence results retain contract v1.

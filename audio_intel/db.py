@@ -28,6 +28,7 @@ from .hotwords import (
 JOB_STATES = {"queued", "running", "succeeded", "failed", "cancelled"}
 VOICEPRINT_SAMPLE_STATES = {"pending", "ready", "failed"}
 MAX_VOICEPRINT_NOTE_CHARS = 20
+MAX_VOICEPRINT_SAMPLE_NAME_CHARS = 80
 _UNSET = object()
 _RESERVED_HOTWORD_NAME_KEYS = frozenset(
     hotword_name_key(name) for name in RESERVED_SYSTEM_HOTWORD_LIST_NAMES
@@ -39,6 +40,10 @@ class IdempotencyConflict(ValueError):
 
 
 class ReadOnlyHotwordListError(ValueError):
+    pass
+
+
+class AmbiguousVoiceprintPersonError(ValueError):
     pass
 
 
@@ -105,7 +110,10 @@ def _sync_voiceprint_hotword_lists(db: sqlite3.Connection, now: str | None = Non
         """SELECT name FROM voiceprint_people
            WHERE include_in_hotword_library=1 ORDER BY name_key,id"""
     ).fetchall()
-    full_names = [str(row["name"]) for row in people]
+    names_by_key: dict[str, str] = {}
+    for row in people:
+        names_by_key.setdefault(person_name_key(row["name"]), str(row["name"]))
+    full_names = list(names_by_key.values())
     short_names: list[str] = []
     seen_short_names: set[str] = set()
     for name in full_names:
@@ -424,6 +432,7 @@ def init_db() -> None:
             db.execute("UPDATE schema_meta SET version=9 WHERE version<9")
         else:
             _sync_voiceprint_hotword_lists(db)
+        _migrate_voiceprint_names(db)
         db.execute(
             """CREATE TABLE IF NOT EXISTS queue_sequence (
                singleton INTEGER PRIMARY KEY CHECK(singleton=1),value INTEGER NOT NULL)"""
@@ -449,6 +458,82 @@ def _decode(row: sqlite3.Row | None) -> dict[str, Any] | None:
 
 def person_name_key(name: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", name).strip().split()).casefold()
+
+
+def _migrate_voiceprint_names(db: sqlite3.Connection) -> None:
+    if db.execute("SELECT MIN(version) FROM schema_meta").fetchone()[0] >= 10:
+        return
+    # SQLite's inline UNIQUE constraint requires rebuilding the parent table.
+    # Disable FK actions outside the transaction so DROP cannot cascade to children.
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        if db.execute("SELECT MIN(version) FROM schema_meta").fetchone()[0] >= 10:
+            db.execute("COMMIT")
+            return
+        db.execute("""CREATE TABLE voiceprint_people_v10 (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, note TEXT,
+            include_in_hotword_library INTEGER NOT NULL DEFAULT 1,
+            note_key TEXT NOT NULL DEFAULT '', UNIQUE(name_key,note_key))""")
+        for person in db.execute("SELECT * FROM voiceprint_people").fetchall():
+            db.execute("""INSERT INTO voiceprint_people_v10 VALUES(?,?,?,?,?,?,?,?)""", (
+                person["id"], person["name"], person["name_key"], person["created_at"],
+                person["updated_at"], person["note"], person["include_in_hotword_library"],
+                person_name_key(person["note"] or ""),
+            ))
+        db.execute("DROP TABLE voiceprint_people")
+        db.execute("ALTER TABLE voiceprint_people_v10 RENAME TO voiceprint_people")
+        sample_columns = {row["name"] for row in db.execute("PRAGMA table_info(voiceprint_samples)")}
+        if "name" not in sample_columns:
+            db.execute("ALTER TABLE voiceprint_samples ADD COLUMN name TEXT NOT NULL DEFAULT ''")
+            db.execute("ALTER TABLE voiceprint_samples ADD COLUMN name_key TEXT NOT NULL DEFAULT ''")
+        counts: dict[str, int] = {}
+        # Reverse the existing library order; its displayed number is length-index.
+        for sample in db.execute("SELECT id,person_id,name FROM voiceprint_samples ORDER BY created_at ASC,id DESC").fetchall():
+            person_id = sample["person_id"]
+            counts[person_id] = counts.get(person_id, 0) + 1
+            name = sample["name"] or f"样本 {counts[person_id]}"
+            db.execute("UPDATE voiceprint_samples SET name=?,name_key=? WHERE id=?", (name, person_name_key(name), sample["id"]))
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_voiceprint_sample_name ON voiceprint_samples(person_id,name_key)")
+        if db.execute("PRAGMA foreign_key_check").fetchall():
+            raise sqlite3.IntegrityError("Voiceprint migration failed foreign key validation")
+        db.execute("UPDATE schema_meta SET version=10")
+        db.execute("COMMIT")
+    except Exception:
+        db.execute("ROLLBACK")
+        raise
+    finally:
+        db.execute("PRAGMA foreign_keys=ON")
+
+
+def normalize_sample_name(name: str) -> str:
+    if any(unicodedata.category(char) == "Cc" for char in name):
+        raise ValueError("Sample names must not contain control characters")
+    clean = " ".join(unicodedata.normalize("NFKC", name).strip().split())
+    if not clean or len(clean) > MAX_VOICEPRINT_SAMPLE_NAME_CHARS:
+        raise ValueError(f"Sample name must contain 1-{MAX_VOICEPRINT_SAMPLE_NAME_CHARS} characters")
+    return clean
+
+
+def sample_name_base(value: str) -> str:
+    clean = " ".join("".join(char for char in value if unicodedata.category(char) != "Cc").split())
+    return unicodedata.normalize("NFKC", clean)[:MAX_VOICEPRINT_SAMPLE_NAME_CHARS].strip() or "样本"
+
+
+def sample_source_name(filename: str) -> str:
+    return sample_name_base(Path(filename.replace("\\", "/")).stem)
+
+
+def _available_sample_name(db: sqlite3.Connection, person_id: str, base: str) -> str:
+    base = normalize_sample_name(base)
+    name = base
+    number = 1
+    while db.execute("SELECT 1 FROM voiceprint_samples WHERE person_id=? AND name_key=?", (person_id, person_name_key(name))).fetchone():
+        number += 1
+        suffix = f" ({number})"
+        name = base[:MAX_VOICEPRINT_SAMPLE_NAME_CHARS-len(suffix)].rstrip() + suffix
+    return name
 
 
 def _decode_hotword_list(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -1063,11 +1148,11 @@ def create_voiceprint_person(
         try:
             db.execute(
                 """INSERT INTO voiceprint_people(
-                   id,name,name_key,note,include_in_hotword_library,created_at,updated_at
-                   ) VALUES(?,?,?,?,?,?,?)""",
+                   id,name,name_key,note,include_in_hotword_library,created_at,updated_at,note_key
+                   ) VALUES(?,?,?,?,?,?,?,?)""",
                 (
                     person_id, clean_name, person_name_key(clean_name), clean_note,
-                    int(include_in_hotword_library), now, now,
+                    int(include_in_hotword_library), now, now, person_name_key(clean_note or ""),
                 ),
             )
             db.execute(
@@ -1094,10 +1179,12 @@ def get_voiceprint_person(person_id: str) -> dict[str, Any] | None:
 
 def find_voiceprint_person(name: str) -> dict[str, Any] | None:
     with connect() as db:
-        row = db.execute(
+        rows = db.execute(
             "SELECT * FROM voiceprint_people WHERE name_key=?", (person_name_key(name),)
-        ).fetchone()
-    return dict(row) if row else None
+        ).fetchall()
+    if len(rows) > 1:
+        raise AmbiguousVoiceprintPersonError("Multiple people have this name; select a person ID through the voiceprint API")
+    return dict(rows[0]) if rows else None
 
 
 def update_voiceprint_person(
@@ -1119,6 +1206,7 @@ def update_voiceprint_person(
         if note is not None and not isinstance(note, str):
             raise ValueError("Voiceprint person note must be a string or null")
         changes["note"] = normalize_person_note(note)
+        changes["note_key"] = person_name_key(changes["note"] or "")
     if include_in_hotword_library is not _UNSET:
         if not isinstance(include_in_hotword_library, bool):
             raise ValueError("include_in_hotword_library must be a boolean")
@@ -1166,6 +1254,7 @@ def delete_voiceprint_person_record(person_id: str) -> bool:
 def create_voiceprint_sample(
     person_id: str,
     *,
+    name: str | None = None,
     state: str = "pending",
     language: str = "Auto",
     audio_path: str | None = None,
@@ -1182,17 +1271,20 @@ def create_voiceprint_sample(
     sample_id = sample_id or "sample_" + uuid.uuid4().hex[:16]
     now = utcnow()
     with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        clean_name = _available_sample_name(db, person_id, name if name is not None else sample_source_name(audio_path or "样本"))
         db.execute(
             """INSERT INTO voiceprint_samples(
                id,person_id,state,language,audio_path,transcript,words_json,duration,
-               source_job_id,source_segment_id,source_speaker_id,created_at,updated_at
-               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               source_job_id,source_segment_id,source_speaker_id,created_at,updated_at,name,name_key
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 sample_id, person_id, state, language, audio_path, transcript,
                 json.dumps(words, ensure_ascii=False) if words is not None else None,
-                duration, source_job_id, source_segment_id, source_speaker_id, now, now,
+                duration, source_job_id, source_segment_id, source_speaker_id, now, now, clean_name, person_name_key(clean_name),
             ),
         )
+        db.execute("COMMIT")
     return get_voiceprint_sample(sample_id)  # type: ignore[return-value]
 
 
@@ -1227,7 +1319,7 @@ def list_voiceprint_people() -> list[dict[str, Any]]:
     for sample in samples:
         by_person.setdefault(sample["person_id"], []).append(sample)
     with connect() as db:
-        rows = db.execute("SELECT * FROM voiceprint_people ORDER BY name_key,id").fetchall()
+        rows = db.execute("SELECT * FROM voiceprint_people ORDER BY name_key,note_key,id").fetchall()
     return [{**dict(row), "samples": by_person.get(row["id"], [])} for row in rows]
 
 
@@ -1255,6 +1347,16 @@ def delete_voiceprint_sample_record(sample_id: str) -> bool:
     with connect() as db:
         cursor = db.execute("DELETE FROM voiceprint_samples WHERE id=?", (sample_id,))
     return cursor.rowcount == 1
+
+
+def rename_voiceprint_sample(person_id: str, sample_id: str, name: str) -> dict[str, Any] | None:
+    clean = normalize_sample_name(name)
+    with connect() as db:
+        cursor = db.execute(
+            "UPDATE voiceprint_samples SET name=?,name_key=?,updated_at=? WHERE id=? AND person_id=?",
+            (clean, person_name_key(clean), utcnow(), sample_id, person_id),
+        )
+    return get_voiceprint_sample(sample_id) if cursor.rowcount else None
 
 
 def create_voice(name: str, language: str, ref_audio_path: str, ref_text: str) -> dict[str, Any]:

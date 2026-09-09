@@ -702,6 +702,7 @@ class VoiceListResponse(PublicModel):
 
 
 class VoiceprintSampleResponse(PublicModel):
+    name: str = Field(description="持久化样本名称，同一人员内规范化后唯一 / Persistent sample name; normalized names are unique within each person")
     id: str
     person_id: str
     state: VoiceprintSampleState

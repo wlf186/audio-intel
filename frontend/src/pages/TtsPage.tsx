@@ -13,6 +13,7 @@ import {
 import { api, artifactUrl, formatTime, isUploadCancelled, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
 import type {
   ComputeDevice,
+  ResourceState,
   AsrModelCapability,
   Job,
   JobDetailResource,
@@ -23,6 +24,7 @@ import type {
 } from '../lib/types'
 import { JobMini } from '../components/JobMini'
 import { AudioTransport } from '../components/AudioTransport'
+import { ResourceStatePanel } from '../components/ResourceStatePanel'
 import { InfoTooltip } from '../components/InfoTooltip'
 import { useMicrophoneRecorder } from '../hooks/useMicrophoneRecorder'
 import {
@@ -37,7 +39,7 @@ import {
 } from '../lib/preferences'
 import { progressPresentation, visibleWorkspaceJobs } from '../lib/jobs'
 import { handleTabKeys } from '../lib/tabs'
-import { computeUnavailableReason } from '../lib/presentation'
+import { computeUnavailableReason, voiceprintPersonLabel, voiceprintSampleName, cloneReferenceUsage } from '../lib/presentation'
 import { SubmissionProgress } from '../components/SubmissionProgress'
 import { useTranslation } from 'react-i18next'
 
@@ -50,6 +52,9 @@ type Props = {
   onSelect: (job: JobSummary) => void
   gpuAvailable?: boolean
   defaultComputeDevice: ComputeDevice
+  maxCloneReferenceSeconds: number
+  voiceprintsState: ResourceState
+  refreshVoiceprints: () => Promise<void>
   maxUploadBytes?: number
   voiceprints: VoiceprintPerson[]
   asrModels: AsrModelCapability[]
@@ -121,6 +126,9 @@ export function TtsPage({
   gpuAvailable,
   defaultComputeDevice,
   maxUploadBytes,
+  maxCloneReferenceSeconds,
+  voiceprintsState,
+  refreshVoiceprints,
   voiceprints,
   asrModels,
   ttsModels,
@@ -213,7 +221,7 @@ export function TtsPage({
   const referenceGpu=selectedReferenceModel?.compute_devices.find(item=>item.id==='gpu')
   const effectiveReferenceDevice:ComputeDevice=referenceAsrDevice==='gpu'&&(referenceGpu?.available===false||gpuAvailable===false)?'cpu':referenceAsrDevice
   const referenceBusyReason=referenceUploadProgress?.phase==='creating'?t('tts.reference.creating'):referenceUploadProgress?t('tts.reference.uploading'):t('tts.reference.analyzing')
-  const submitBlockReason=busy?t('tts.validation.submitting'):referenceBusy?referenceBusyReason:!draft.text.trim()?t('tts.validation.textRequired'):!selectedTtsModel?.installed?t('tts.validation.modelMissing'):instructionRequired&&!draft.instruct.trim()?t('tts.validation.instructionRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='upload'&&(!referenceReady||!draft.refText.trim())?t('tts.validation.referenceRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='voiceprint'&&!sample?t('tts.validation.sampleRequired'):''
+  const submitBlockReason=busy?t('tts.validation.submitting'):referenceBusy?referenceBusyReason:!draft.text.trim()?t('tts.validation.textRequired'):!selectedTtsModel?.installed?t('tts.validation.modelMissing'):instructionRequired&&!draft.instruct.trim()?t('tts.validation.instructionRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='upload'&&(!referenceReady||!draft.refText.trim())?t('tts.validation.referenceRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='voiceprint'&&(voiceprintsState!=='ready'||!sample)?t('tts.validation.sampleRequired'):''
 
   useEffect(() => {
     saveTtsContent(content)
@@ -455,7 +463,7 @@ export function TtsPage({
     if (
       draft.mode === 'inline_clone' &&
       draft.cloneSource === 'voiceprint' &&
-      !sample
+      (voiceprintsState!=='ready'||!sample)
     ) {
       setError(t('tts.validation.sampleRequired'))
       return
@@ -686,12 +694,13 @@ export function TtsPage({
               </label>
             </div>
           ) : draft.mode === 'inline_clone' && draft.cloneSource === 'voiceprint' ? (
-            <div className="two-cols">
+            <div className="clone-person-picker">
+              <ResourceStatePanel state={voiceprintsState} loadingLabel={t('voiceprints.loadingPeople')} errorLabel={t('voiceprints.loadFailed')} retry={()=>void refreshVoiceprints().catch(()=>{})}/>
               <label>
                 {t('tts.voiceprintPerson')}
-                <select
+                <select aria-label={t('tts.voiceprintPerson')}
                   value={person?.id || ''}
-                  disabled={!voiceprints.length}
+                  disabled={voiceprintsState!=='ready'||!voiceprints.length}
                   onChange={(event) =>
                     setPreferences((current) => {
                       const next = {
@@ -707,11 +716,11 @@ export function TtsPage({
                   {voiceprints.length ? (
                     voiceprints.map((item) => (
                       <option key={item.id} value={item.id}>
-                        {item.name}
+                        {voiceprintPersonLabel(item)}
                       </option>
                     ))
                   ) : (
-                    <option value="">{t('tts.emptyVoiceprints')}</option>
+                    <option value="">{voiceprintsState==='ready'?t('tts.emptyVoiceprints'):t(voiceprintsState==='loading'?'voiceprints.loadingPeople':'voiceprints.loadFailed')}</option>
                   )}
                 </select>
               </label>
@@ -1053,29 +1062,28 @@ export function TtsPage({
               {t('tts.sample.label')}
               <select
                 aria-label={t('tts.sample.ariaLabel')}
+                className="voiceprint-sample-select"
                 value={sample?.id || ''}
-                disabled={!eligibleSamples.length}
+                disabled={voiceprintsState!=='ready'||!eligibleSamples.length}
                 onChange={(event) =>
                   updatePreference('sampleId', event.target.value)
                 }
               >
                 {eligibleSamples.length ? (
-                  eligibleSamples.map((item, index) => (
+                  eligibleSamples.map((item) => (
                     <option key={item.id} value={item.id}>
-                      {t('tts.sample.number',{number:eligibleSamples.length-index})} ·{' '}
-                      {formatTime(item.duration || 0)}
-                      {item.duration && item.duration > 15 ? ` · ${t('tts.sample.autoTruncate')}` : ''}
+                      {voiceprintSampleName(item,person?.samples||[],t)} · {cloneReferenceUsage(item.duration,maxCloneReferenceSeconds,t)}
                     </option>
                   ))
                 ) : (
-                  <option value="">{t('tts.sample.empty')}</option>
+                  <option value="">{voiceprintsState==='ready'?t('tts.sample.empty'):t(voiceprintsState==='loading'?'voiceprints.loadingPeople':'voiceprints.loadFailed')}</option>
                 )}
               </select>
               {sample ? (
                 <small className="sample-summary">
-                  {sample.language} · {sample.transcript}
-                  {sample.duration && sample.duration > 15
-                    ? ` · ${t('tts.sample.truncateHelp')}`
+                  {person?voiceprintPersonLabel(person):''} · {voiceprintSampleName(sample,person?.samples||[],t)}<br/>{cloneReferenceUsage(sample.duration,maxCloneReferenceSeconds,t)}<br/>{sample.language} · {sample.transcript}
+                  {sample.duration && sample.duration > maxCloneReferenceSeconds
+                    ? ` · ${t('voiceprintNames.referenceHelp',{limit:maxCloneReferenceSeconds})}`
                     : ''}
                 </small>
               ) : null}
@@ -1225,7 +1233,7 @@ export function TtsPage({
             <div>
               <b>{selected.display_name}</b>
               <span>
-                {selected.result.sequence ? t('tts.results.sequence',{count:selected.result.sequence.items.length}) : selected.result.speaker || (selected.request.voice_mode === 'voice_design' ? t('tts.results.designedVoice') : t('tts.results.clonedVoice'))} ·{' '}
+                {selected.result.sequence ? t('tts.results.sequence',{count:selected.result.sequence.items.length}) : (typeof selected.request.voiceprint_person_name==='string'?voiceprintPersonLabel({name:selected.request.voiceprint_person_name,note:typeof selected.request.voiceprint_person_note==='string'?selected.request.voiceprint_person_note:undefined}):selected.result.speaker) || (selected.request.voice_mode === 'voice_design' ? t('tts.results.designedVoice') : t('tts.results.clonedVoice'))} ·{' '}
                 {selected.result.model_name || selected.result.model || (selected.request.model as string | undefined) || 'Qwen3-TTS 0.6B'} ·{' '}
                 {selected.result.duration}s ·{' '}
                 {(
@@ -1237,6 +1245,8 @@ export function TtsPage({
                   .toUpperCase()}{' '}
                 {selected.result.precision || ''}
               </span>
+              {typeof selected.request.voiceprint_sample_name==='string'?<small>{t('voiceprintNames.sampleSnapshot',{name:selected.request.voiceprint_sample_name})}</small>:null}
+              {typeof selected.result.reference_duration_original==='number'&&typeof selected.result.reference_duration_used==='number'?<small>{t('voiceprintNames.actualReference',{original:selected.result.reference_duration_original,used:selected.result.reference_duration_used})}</small>:null}
               {selected.result.instruct ? (
                 <small className="tts-result-instruction">{t('tts.results.instruction',{value:selected.result.instruct})}</small>
               ) : null}

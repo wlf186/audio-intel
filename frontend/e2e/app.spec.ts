@@ -1599,7 +1599,7 @@ test('voiceprint library sample can be explicitly selected for TTS clone',async(
  await page.getByRole('tab',{name:'声音克隆'}).click()
  await page.getByRole('tab',{name:'声纹库',exact:true}).click()
  await expect(page.getByLabel('TTS 声纹样本')).toHaveValue('sample_long')
- await expect(page.getByText(/精确截断至 15 秒以内/)).toBeVisible()
+ await expect(page.getByText(/15 秒以内的最后一个完整字词边界/)).toBeVisible()
  await page.getByLabel('TTS 计算设备').selectOption('cpu')
  await page.getByRole('button',{name:'生成语音'}).click()
  expect(submitted.body).toContain('voiceprint')

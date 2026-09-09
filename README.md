@@ -56,7 +56,7 @@
 | Area | Capabilities |
 | --- | --- |
 | **Local speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, and JSON/SRT/VTT/TXT export |
-| **Speaker intelligence** | Reusable voiceprint profiles name known speakers; custom and voiceprint-derived hotword lists improve domain vocabulary while completed tasks retain immutable snapshots |
+| **Speaker intelligence** | Voiceprints distinguish namesakes by notes and support named, renameable samples; custom and voiceprint-derived hotword lists improve domain vocabulary while completed tasks retain immutable snapshots |
 | **Local voice studio** | Qwen3-TTS 0.6B/1.7B, preset voices, one-off or library-based voice cloning, 1.7B VoiceDesign, and WAV/FLAC/MP3 output |
 | **Durable task engine** | Persistent SQLite queues, upload and inference progress, local ETA history, SSE updates, cancellation, retry, task history, and safe purge |
 | **Web UI and APIs** | Bilingual local Web UI and Swagger guide, native asynchronous APIs, and OpenAI-compatible transcription and speech endpoints |

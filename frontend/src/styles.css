@@ -450,3 +450,14 @@ select:focus{border-color:var(--cyan)}
 @media(max-width:520px){.submission-progress{grid-template-columns:1fr}.submission-progress progress,.submission-progress small,.submission-progress .cancel-upload{grid-column:1;grid-row:auto;width:100%}.submission-progress small{font-size:12px}.submission-feedback{align-items:stretch;flex-direction:column}.submission-feedback .button{width:100%}}
 @media(max-width:520px){.hotword-picker .hotword-option-issue,.hotword-limit-error{font-size:12px}}
 @media(max-width:520px){.head-actions .language-switcher select{height:44px;min-height:44px}}
+
+/* Voiceprint names stay readable alongside reachable edit controls. */
+.sample-head{flex-wrap:wrap}
+.sample-head>b{min-width:0;overflow-wrap:anywhere;flex:1 1 150px}
+.sample-head .icon-button{flex:0 0 44px;min-width:44px;min-height:44px}
+.sample-summary,.audio-card small,.people-panel b,.people-panel small{overflow-wrap:anywhere}
+.modal-card p.error{color:#ffaaa5}
+.modal-card label{min-width:0}
+@media(max-width:600px){.modal-card input,.modal-card select,.modal-card button{min-height:44px}.modal-card .modal-close{min-width:44px}.sample-head>b{flex-basis:100%}}
+
+.clone-person-picker select,.voiceprint-sample-select{min-height:44px}

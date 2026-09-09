@@ -404,6 +404,25 @@ The stream immediately emits `event: job`, continues on changes, and closes at a
 - 安装阶段可以下载固定版本依赖和模型；服务启动后的模型加载强制使用本地 revision，不存在云端回退。
 
 </details>
+
+
+## 声纹人员与样本名称 / Voiceprint identities and sample names
+
+人员按规范化的“姓名＋备注”组合判重，ID 保持稳定。规范化采用 NFKC、空白折叠和大小写折叠；备注选填、最多 20 字，null、空字符串和纯空白等价。同名且备注不同可以共存，组合重复返回 409。系统全名与去姓热词表按词去重，备注不进入热词；只要仍有同名人员开启同步，对应姓名就保留。自定义词表名称仍唯一。
+
+People are unique by normalized name plus note, while IDs remain stable. Normalization uses NFKC, whitespace folding, and case folding. Notes are optional, limited to 20 characters, and null equals blank. Duplicate combinations return 409. System name hotwords are deduplicated; notes never become hotwords, and a name remains while any matching person opts in. Custom hotword-list names remain unique.
+
+所有样本响应包含持久化 `name`。上传可传可选 `name` 基名，省略时使用文件名（不含扩展名）；录音界面传录制时间名称，ASR 导入使用任务名与段落号。新建时遇到重名自动追加 ` (2)` 等序号。手动修改使用 `PATCH /api/v1/voiceprints/people/{person_id}/samples/{sample_id}`，JSON 为 `{"name":"会议室录音"}`；规范化后 1–80 字，同一人员内唯一，冲突返回 409、非法名称或额外字段返回 422、人员/样本不匹配返回 404。待分析、可用和失败样本均可重命名，不会重新分析或修改音频。
+
+All sample responses include persistent `name`. Upload accepts an optional name base, defaulting to the filename without extension; the recording UI supplies its recording time, and ASR imports use task name plus segment number. Creation adds ` (2)` etc. on collisions. PATCH the sample with `{"name":"Meeting room recording"}` to rename it in any state. Names contain 1–80 normalized characters, unique within each person: duplicate 409, invalid name or extra fields 422, missing/mismatched person or sample 404. Renaming never reruns analysis or changes audio.
+
+TTS 使用稳定样本 ID，提交时保存人员姓名、备注和样本名称快照。库改名不会改写历史或导致同请求幂等重放冲突，失败/取消后重试仍使用保存的请求。有序序列结果继续使用契约 v1。旧 `POST /api/v1/tts/voices` 按姓名找到多人时返回 409；改用上述声纹 API 明确指定人员 ID。
+
+TTS uses stable sample IDs and snapshots person names, notes, and sample names at submission. Later renames preserve history and same-request idempotent replay; retries use the persisted request. Ordered results remain contract v1. Legacy `POST /api/v1/tts/voices` returns 409 when a name matches multiple people; use the voiceprint API with an explicit person ID instead.
+
+克隆参考上限读取 `limits.max_clone_reference_seconds`（当前 15 秒）。超长参考保留开头至上限以内的最后一个完整字词边界，原样本保持完整；提交前显示上限，不承诺精确使用时长。单条克隆完成后 `reference_duration_original` 和 `reference_duration_used` 为实际测得时长，`reference_truncated` 表示是否截取；历史结果缺少字段时不推测时长。
+
+Read `limits.max_clone_reference_seconds` (currently 15). Long references use the beginning through the last complete word within that limit; original samples remain intact. Before submission the UI states the limit, not an exact cutoff. Completed single-clone results report measured `reference_duration_original`, `reference_duration_used`, and `reference_truncated`; missing historical values are never inferred.
 """
 
 
@@ -832,6 +851,12 @@ REQUEST_EXAMPLES: dict[tuple[str, str], dict[str, dict[str, Any]]] = {
     },
     ("/api/v1/voiceprints/people", "post"): {
         "person_with_note": {"summary": "创建带备注的人员 / Create a person with a note", "value": {"name": "张三", "note": "研发一部", "include_in_hotword_library": True}},
+    },
+    ("/api/v1/voiceprints/people/{person_id}/samples/{sample_id}", "patch"): {
+        "rename_sample": {"summary": "按用途命名 / Name by purpose", "value": {"name": "会议室录音"}},
+    },
+    ("/api/v1/voiceprints/people/{person_id}/samples/upload", "post"): {
+        "named_recording": {"summary": "上传带名称的参考样本 / Upload a named reference", "value": {"name": "录音 2026-09-09 12:00:00 UTC", "model": "qwen3-asr-0.6b", "compute_device": "cpu", "language": "Chinese"}},
     },
     ("/api/v1/voiceprints/people/{person_id}", "patch"): {
         "disable_name_hotword": {"summary": "更新备注并停止人名同步 / Update note and disable name sync", "value": {"note": "13800000000", "include_in_hotword_library": False}},

@@ -130,6 +130,7 @@ export const api={
   removeVoiceprintPerson:(id:string)=>request<void>(`/api/v1/voiceprints/people/${id}?purge=true`,{method:'DELETE'}),
   addAsrSamples:(personId:string,jobId:string,segmentIds:number[])=>request<{items:VoiceprintSample[]}>(`/api/v1/voiceprints/people/${personId}/samples/from-asr`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:jobId,segment_ids:segmentIds})}),
   uploadVoiceprintSample:(personId:string,data:FormData,options?:SubmissionOptions)=>submitForm<{sample:VoiceprintSample;job:Job}>(`/api/v1/voiceprints/people/${personId}/samples/upload`,data,options),
+  renameVoiceprintSample:(personId:string,sampleId:string,name:string)=>request<VoiceprintSample>(`/api/v1/voiceprints/people/${personId}/samples/${sampleId}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}),
   removeVoiceprintSample:(personId:string,sampleId:string)=>request<void>(`/api/v1/voiceprints/people/${personId}/samples/${sampleId}?purge=true`,{method:'DELETE'}),
 }
 export function artifactUrl(jobId:string,name:string){return `/api/v1/jobs/${jobId}/artifacts/${encodeURIComponent(name)}`}

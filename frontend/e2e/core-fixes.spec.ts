@@ -1,5 +1,8 @@
 import {expect,test,type Page} from '@playwright/test'
 
+// Drain async route callbacks before Playwright closes the page.
+test.afterEach(async({page})=>{await page.unrouteAll({behavior:'wait'})})
+
 function wave(seconds:number){
  const bytes=16000*2*seconds
  const buffer=Buffer.alloc(44+bytes)

@@ -1,4 +1,4 @@
-import type {ComputeCapability,HotwordList,JobSummary} from './types'
+import type {ComputeCapability,HotwordList,JobSummary,VoiceprintPerson,VoiceprintSample} from './types'
 import type {TFunction} from 'i18next'
 
 export function formatLocalDateTime(value:string|undefined,locale:string,t:TFunction){
@@ -37,4 +37,17 @@ export function jobFailurePresentation(job:Pick<JobSummary,'error_code'|'error_m
  if(code==='workerprocessexit'||message.includes('worker process'))return{title:t('jobs.failure.workerTitle'),advice:t('jobs.failure.workerAdvice')}
  if(code.includes('valueerror')||code.includes('validation')||code.includes('invalid'))return{title:t('jobs.failure.inputTitle'),advice:t('jobs.failure.inputAdvice')}
  return{title:t('jobs.failure.defaultTitle'),advice:t('jobs.failure.defaultAdvice')}
+}
+
+export function voiceprintPersonLabel(person:Pick<VoiceprintPerson,'name'|'note'>){
+ return person.note?`${person.name}（${person.note}）`:person.name
+}
+
+export function voiceprintSampleName(sample:VoiceprintSample,samples:VoiceprintSample[],t:TFunction){
+ return sample.name||t('voiceprints.sampleNumber',{number:samples.length-samples.findIndex(item=>item.id===sample.id)})
+}
+
+export function cloneReferenceUsage(duration:number|undefined,limit:number,t:TFunction){
+ if(duration===undefined||!Number.isFinite(duration)||duration<=0)return t('voiceprintNames.unknownDuration')
+ return t(duration>limit?'voiceprintNames.longReference':'voiceprintNames.shortReference',{duration:Math.round(duration*1000)/1000,limit})
 }

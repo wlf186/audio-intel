@@ -10,15 +10,15 @@ import {
   Upload,
 } from 'lucide-react'
 import { useMicrophoneRecorder } from '../hooks/useMicrophoneRecorder'
-import { api, formatTime, isUploadCancelled, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
+import { api, HttpError, formatTime, isUploadCancelled, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
 import {ConfirmDialog} from '../components/ConfirmDialog'
 import {Modal} from '../components/Modal'
 import {ResourceStatePanel} from '../components/ResourceStatePanel'
 import {SubmissionProgress} from '../components/SubmissionProgress'
 import { publicAsrLanguages } from '../lib/preferences'
-import type { AsrModelCapability, ComputeDevice, Job, ResourceState, VoiceprintPerson } from '../lib/types'
+import type { AsrModelCapability, ComputeDevice, Job, ResourceState, VoiceprintPerson, VoiceprintSample } from '../lib/types'
 import { handleTabKeys } from '../lib/tabs'
-import { computeUnavailableReason } from '../lib/presentation'
+import { computeUnavailableReason, voiceprintSampleName, cloneReferenceUsage } from '../lib/presentation'
 import {useTranslation} from 'react-i18next'
 import {resolvedLocale} from '../i18n'
 
@@ -30,6 +30,7 @@ type Props = {
   onJobSubmitted: (job: Job) => void
   gpuAvailable?: boolean
   defaultComputeDevice: ComputeDevice
+  maxCloneReferenceSeconds: number
   maxUploadBytes?: number
   asrModels: AsrModelCapability[]
   asrLanguages?: string[]
@@ -45,6 +46,7 @@ export function VoiceprintsPage({
   gpuAvailable,
   defaultComputeDevice,
   maxUploadBytes,
+  maxCloneReferenceSeconds,
   asrModels,
   asrLanguages = publicAsrLanguages,
 }: Props) {
@@ -62,6 +64,12 @@ export function VoiceprintsPage({
   const [sampleNotice,setSampleNotice]=useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [editorError,setEditorError]=useState('')
+  const [renamingSample,setRenamingSample]=useState<VoiceprintSample>()
+  const [sampleName,setSampleName]=useState('')
+  const [renameError,setRenameError]=useState('')
+  const personNameRef=useRef<HTMLInputElement>(null)
+  const sampleNameRef=useRef<HTMLInputElement>(null)
   const [editorMode,setEditorMode]=useState<'create'|'edit'>()
   const [personName,setPersonName]=useState('')
   const [personNote,setPersonNote]=useState('')
@@ -109,29 +117,57 @@ export function VoiceprintsPage({
     }
   }
   const openCreate = () => {
+    setEditorError('')
     setPersonName('')
     setPersonNote('')
     setIncludeInHotwordLibrary(true)
     setEditorMode('create')
   }
   const openEdit = () => {
+    setEditorError('')
     if (!selected) return
     setPersonName(selected.name)
     setPersonNote(selected.note||'')
     setIncludeInHotwordLibrary(selected.include_in_hotword_library)
     setEditorMode('edit')
   }
-  const savePerson = () => {
+  const savePerson = async () => {
     if (!personName.trim()||personNote.trim().length>20) return
     const editing=editorMode==='edit'&&selected
-    void run(async () => {
+    setBusy(true)
+    setEditorError('')
+    try {
       const person=editing
         ?await api.updateVoiceprintPerson(editing.id,personName.trim(),personNote.trim()||null,includeInHotwordLibrary)
         :await api.addVoiceprintPerson(personName.trim(),personNote.trim()||null,includeInHotwordLibrary)
       setSelectedId(person.id)
       setEditorMode(undefined)
       setNotice(t(editing?'voiceprints.personUpdated':'voiceprints.personCreated'))
-    },refreshPeopleAndHotwords)
+      await refreshPeopleAndHotwords().catch(cause=>setError((cause as Error).message))
+    } catch(cause) {
+      setEditorError(cause instanceof HttpError&&cause.status===409?t('voiceprintNames.personConflict'):(cause as Error).message)
+      personNameRef.current?.focus()
+    } finally { setBusy(false) }
+  }
+  const saveSampleName = async () => {
+    if(!renamingSample)return
+    const clean=sampleName.normalize('NFKC').trim().replace(/\s+/g,' ')
+    if(!clean||Array.from(clean).length>80||/[\u0000-\u001f\u007f-\u009f]/.test(sampleName)){
+      setRenameError(t('voiceprintNames.invalidName'))
+      sampleNameRef.current?.focus()
+      return
+    }
+    setBusy(true)
+    setRenameError('')
+    try {
+      await api.renameVoiceprintSample(renamingSample.person_id,renamingSample.id,clean)
+      setRenamingSample(undefined)
+      setNotice(t('voiceprintNames.sampleRenamed'))
+      await refresh().catch(cause=>setError((cause as Error).message))
+    } catch(cause) {
+      setRenameError(cause instanceof HttpError&&cause.status===409?t('voiceprintNames.sampleConflict'):(cause as Error).message)
+      sampleNameRef.current?.focus()
+    } finally {setBusy(false)}
   }
   const removePerson = () => {
     if (!selected) return
@@ -161,6 +197,7 @@ export function VoiceprintsPage({
     try {
       const data = new FormData()
       data.set('file', sampleFile)
+      if(kind==='record')data.set('name',t('voiceprintNames.recordingName',{time:new Date(sampleFile.lastModified).toISOString().replace('T',' ').slice(0,19)+' UTC'}))
       data.set('model', model)
       data.set('language', language)
       data.set('compute_device', effectiveComputeDevice)
@@ -237,7 +274,7 @@ export function VoiceprintsPage({
           <button className="create-person-button" disabled={state!=='ready'||busy||microphoneActive} onClick={openCreate}>
             <Plus size={17}/>{t('voiceprints.newPerson')}
           </button>
-          <ResourceStatePanel state={state} loadingLabel={t('voiceprints.loadingPeople')} errorLabel={t('voiceprints.loadFailed')} retry={()=>void refresh()}/>
+          <ResourceStatePanel state={state} loadingLabel={t('voiceprints.loadingPeople')} errorLabel={t('voiceprints.loadFailed')} retry={()=>void refresh().catch(()=>{})}/>
           {state==='ready'&&people.length ? (
             people.map((person) => (
               <button
@@ -516,10 +553,10 @@ export function VoiceprintsPage({
               </div>
               <div className="sample-list">
                 {selected.samples.length ? (
-                  selected.samples.map((sample, index) => (
+                  selected.samples.map((sample) => (
                     <article key={sample.id}>
                       <div className="sample-head">
-                        <b>{t('voiceprints.sampleNumber',{number:selected.samples.length-index})}</b>
+                        <b>{voiceprintSampleName(sample,selected.samples,t)}</b>
                         <span className={`sample-state ${sample.state}`}>
                           {sample.state === 'ready'
                             ? t('voiceprints.sampleStates.ready')
@@ -532,6 +569,7 @@ export function VoiceprintsPage({
                             ? formatTime(sample.duration)
                             : t('voiceprints.waitingAnalysis')}
                         </span>
+                        <button className="icon-button" disabled={busy} aria-label={t('voiceprintNames.renameNamed',{name:voiceprintSampleName(sample,selected.samples,t)})} onClick={()=>{setRenamingSample(sample);setSampleName(voiceprintSampleName(sample,selected.samples,t));setRenameError('')}}><Pencil/></button>
                         <button
                           className="icon-button danger"
                           aria-label={t('voiceprints.deleteSampleNamed',{id:sample.id})}
@@ -556,8 +594,8 @@ export function VoiceprintsPage({
                           : sample.embedding_status === 'failed'
                             ? t('voiceprints.embedding.failed')
                             : t('voiceprints.embedding.pending')}
-                        {sample.duration && sample.duration > 15
-                          ? t('voiceprints.ttsTruncated')
+                        {sample.duration && sample.duration > maxCloneReferenceSeconds
+                          ? ` · ${cloneReferenceUsage(sample.duration,maxCloneReferenceSeconds,t)}`
                           : ''}
                       </small>
                     </article>
@@ -580,10 +618,11 @@ export function VoiceprintsPage({
               <h2>{t('voiceprints.createFirst')}</h2>
               <p>{t('voiceprints.createFirstHelp')}</p>
             </div>
-          ):state==='loading'?<div className="empty voiceprint-guide" role="status"><Fingerprint/><h2>{t('voiceprints.preparingLibrary')}</h2><p>{t('voiceprints.preparingHelp')}</p></div>:<div className="empty voiceprint-guide" role="alert"><Fingerprint/><h2>{t('voiceprints.unavailable')}</h2><p>{t('voiceprints.unavailableHelp')}</p><button className="button" onClick={()=>void refresh()}>{t('common.actions.reload')}</button></div>}
+          ):state==='loading'?<div className="empty voiceprint-guide" role="status"><Fingerprint/><h2>{t('voiceprints.preparingLibrary')}</h2><p>{t('voiceprints.preparingHelp')}</p></div>:<div className="empty voiceprint-guide" role="alert"><Fingerprint/><h2>{t('voiceprints.unavailable')}</h2><p>{t('voiceprints.unavailableHelp')}</p><button className="button" onClick={()=>void refresh().catch(()=>{})}>{t('common.actions.reload')}</button></div>}
         </section>
       </div>
-      {editorMode?<Modal title={t(editorMode==='create'?'voiceprints.newPersonDialogTitle':'voiceprints.editPersonTitle')} closeLabel={t('voiceprints.closePersonEditor')} onClose={()=>setEditorMode(undefined)}><p>{t('voiceprints.editorHelp')}</p><label>{t('voiceprints.nameRequiredLabel')}<input value={personName} maxLength={80} autoFocus onChange={event=>setPersonName(event.target.value)}/></label><label>{t('voiceprints.noteOptional')}<input value={personNote} maxLength={20} placeholder={t('voiceprints.notePlaceholder')} onChange={event=>setPersonNote(event.target.value)}/><small>{t('voiceprints.noteCount',{current:personNote.trim().length})}</small></label><label className="toggle-label person-hotword-toggle"><input type="checkbox" checked={includeInHotwordLibrary} onChange={event=>setIncludeInHotwordLibrary(event.target.checked)}/><span>{t('voiceprints.addToHotwords')}</span><small>{t('voiceprints.addToHotwordsHelp')}</small></label><div className="modal-actions"><button className="button" disabled={busy} onClick={()=>setEditorMode(undefined)}>{t('common.actions.cancel')}</button><button className="primary" disabled={busy||!personName.trim()||personNote.trim().length>20} onClick={savePerson}>{busy?t('voiceprints.saving'):t('voiceprints.savePerson')}</button></div></Modal>:null}
+      {editorMode?<Modal title={t(editorMode==='create'?'voiceprints.newPersonDialogTitle':'voiceprints.editPersonTitle')} closeLabel={t('voiceprints.closePersonEditor')} onClose={()=>{if(!busy)setEditorMode(undefined)}}><p>{t('voiceprints.editorHelp')} {t('voiceprintNames.personIdentityHelp')}</p>{editorError?<p className="error" role="alert">{editorError}</p>:null}<label>{t('voiceprints.nameRequiredLabel')}<input ref={personNameRef} aria-invalid={Boolean(editorError)} value={personName} maxLength={80} autoFocus onChange={event=>setPersonName(event.target.value)}/></label><label>{t('voiceprints.noteOptional')}<input value={personNote} maxLength={20} placeholder={t('voiceprints.notePlaceholder')} onChange={event=>setPersonNote(event.target.value)}/><small>{t('voiceprints.noteCount',{current:personNote.trim().length})}</small></label><label className="toggle-label person-hotword-toggle"><input type="checkbox" checked={includeInHotwordLibrary} onChange={event=>setIncludeInHotwordLibrary(event.target.checked)}/><span>{t('voiceprints.addToHotwords')}</span><small>{t('voiceprints.addToHotwordsHelp')}</small></label><div className="modal-actions"><button className="button" disabled={busy} onClick={()=>setEditorMode(undefined)}>{t('common.actions.cancel')}</button><button className="primary" disabled={busy||!personName.trim()||personNote.trim().length>20} onClick={savePerson}>{busy?t('voiceprints.saving'):t('voiceprints.savePerson')}</button></div></Modal>:null}
+      {renamingSample?<Modal title={t('voiceprintNames.renameSample')} closeLabel={t('common.actions.cancel')} onClose={()=>{if(!busy)setRenamingSample(undefined)}}>{renameError?<p className="error" role="alert">{renameError}</p>:null}<label>{t('voiceprintNames.sampleName')}<input ref={sampleNameRef} aria-invalid={Boolean(renameError)} autoFocus value={sampleName} maxLength={80} onChange={event=>setSampleName(event.target.value)}/><small>{t('voiceprintNames.nameHelp')}</small></label><div className="modal-actions"><button className="button" disabled={busy} onClick={()=>setRenamingSample(undefined)}>{t('common.actions.cancel')}</button><button className="primary" disabled={busy||!sampleName.trim()} onClick={()=>void saveSampleName()}>{busy?t('voiceprints.saving'):t('voiceprintNames.renameSample')}</button></div></Modal>:null}
       {confirmDelete&&selected?<ConfirmDialog title={t(confirmDelete==='person'?'voiceprints.deletePersonTitle':'voiceprints.deleteSampleTitle')} description={confirmDelete==='person'?t('voiceprints.deletePersonDescription',{name:selected.name}):t('voiceprints.deleteSampleDescription')} confirmLabel={t('common.actions.deletePermanently')} danger busy={busy} onClose={()=>setConfirmDelete(undefined)} onConfirm={confirmDelete==='person'?confirmRemovePerson:()=>confirmRemoveSample(confirmDelete)}/>:null}
     </div>
   )

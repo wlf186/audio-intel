@@ -1185,6 +1185,7 @@ def test_voiceprint_api_adds_asr_segments_and_tts_uses_selected_sample(tmp_path,
         )
         assert added.status_code == 201
         sample = added.json()["items"][0]
+        assert sample["name"] == "meeting.wav · 段落 1"
         assert sample["transcript"] == "你好。"
         assert sample["duration"] == 2.6
         assert sample["words"] == [{"text": "你好", "start": .2, "end": 2.0}]

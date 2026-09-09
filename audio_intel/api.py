@@ -23,7 +23,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from . import __version__
 from .config import settings
@@ -31,6 +31,8 @@ from .deployment import deployment_metadata
 from .gpu import COMPUTE_DEVICES, cached_gpu_snapshot, gpu_snapshot
 from .db import (
     MAX_VOICEPRINT_NOTE_CHARS,
+    MAX_VOICEPRINT_SAMPLE_NAME_CHARS,
+    AmbiguousVoiceprintPersonError,
     ReadOnlyHotwordListError,
     create_hotword_list,
     create_job,
@@ -60,6 +62,10 @@ from .db import (
     list_voiceprint_samples,
     list_workers,
     person_name_key,
+    normalize_sample_name,
+    sample_source_name,
+    sample_name_base,
+    rename_voiceprint_sample,
     request_cancel,
     retry_job,
     update_job,
@@ -99,7 +105,7 @@ from .api_models import (
     OpenAISpeechRequest, OpenAITranscription, OpenAIVerboseTranscription, ProblemDetail, SystemResponse,
     TtsSequenceRequest,
     VoiceListResponse, VoiceProfileResponse, VoiceprintPeopleResponse,
-    VoiceprintPersonResponse, VoiceprintSamplesResponse, VoiceprintUploadResponse,
+    VoiceprintPersonResponse, VoiceprintSampleResponse, VoiceprintSamplesResponse, VoiceprintUploadResponse,
     HotwordListResponse, HotwordListsResponse, TlsBootstrapResponse,
 )
 
@@ -191,7 +197,7 @@ class BatchDeleteRequest(BaseModel):
 
 
 class VoiceprintPersonCreateRequest(BaseModel):
-    name: str = Field(description="人员显示名称，规范化后必须唯一 / Display name, unique after normalization")
+    name: str = Field(description="人员显示名称，与备注组合规范化后唯一 / Display name; normalized name and note together must be unique")
     note: str | None = Field(None, description=f"可选单行备注，规范化后最多 {MAX_VOICEPRINT_NOTE_CHARS} 字 / Optional single-line note")
     include_in_hotword_library: bool = Field(True, description="是否同步到系统人名热词表 / Whether to sync the name to the system hotword list")
 
@@ -205,6 +211,11 @@ class VoiceprintPersonUpdateRequest(BaseModel):
 class AddAsrSamplesRequest(BaseModel):
     job_id: str = Field(description="已成功完成的 ASR 任务 ID / Successfully completed ASR job ID")
     segment_ids: list[int] = Field(description="同一说话人的一个或多个段落 ID / One or more segment IDs from one speaker")
+
+
+class VoiceprintSampleRenameRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(description="样本新名称，规范化后 1–80 字，同一人员内唯一 / New name, 1–80 normalized characters; unique within this person")
 
 
 class HotwordListCreateRequest(BaseModel):
@@ -351,6 +362,29 @@ def request_fingerprint(
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def tts_library_identity(operation: str, request: dict[str, Any]) -> dict[str, Any] | None:
+    """Compare caller input, not the current mutable library or display metadata."""
+    if operation == "submit_tts_sequence":
+        fields = ("purpose", "sequence_contract_version", "model", "language", "voice_mode",
+                  "sequence_items", "response_format", "compute_device", "accelerate_single_task")
+    elif operation == "submit_tts" and request.get("voice_mode") == "voiceprint":
+        fields = ("text", "model", "language", "voice_mode", "speaker", "voice_profile_id",
+                  "instruct", "response_format", "compute_device", "accelerate_single_task", "voiceprint_sample_id")
+    else:
+        return None
+    return {field: request.get(field) for field in fields}
+
+
+def replay_tts_library_job(operation: str, key: str, request: dict[str, Any]) -> dict[str, Any] | None:
+    identity = tts_library_identity(operation, request)
+    if identity is None:
+        return None
+    existing = find_idempotent_job(operation, idempotency_key_hash(key))
+    if existing is not None and tts_library_identity(operation, existing["request"]) != identity:
+        raise ApiProblem(409, "idempotency_key_conflict", "Idempotency-Key was already used with a different request")
+    return existing
+
+
 def idempotent_job(
     kind: str,
     display_name: str,
@@ -369,16 +403,24 @@ def idempotent_job(
         ignored_fields.add("voiceprint_sample_id")
     if operation == "submit_tts_sequence":
         ignored_fields.add("voiceprint_references")
+    identity = tts_library_identity(operation, request_data)
     try:
         return create_job_idempotent(
             kind, display_name, request_data, job_id, operation,
             idempotency_key_hash(idempotency_key), request_fingerprint(
-                request_data, file_digest,
-                ignored_fields,
+                identity if identity is not None else request_data,
+                None if identity is not None else file_digest,
+                set() if identity is not None else ignored_fields,
             ),
         )
     except IdempotencyConflict as exc:
         shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
+        # Old records contain library-derived fingerprints. Keep them unchanged
+        # and validate their persisted caller parameters, including racing replays.
+        if identity is not None:
+            existing = replay_tts_library_job(operation, idempotency_key, request_data)
+            if existing is not None:
+                return existing, True
         raise ApiProblem(409, "idempotency_key_conflict", str(exc)) from exc
 
 
@@ -470,7 +512,7 @@ def event_delta(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, 
 def public_voiceprint_sample(sample: dict[str, Any]) -> dict[str, Any]:
     item = {
         key: value for key, value in sample.items()
-        if key not in {"audio_path", "embedding", "embedding_model", "embedding_error"}
+        if key not in {"audio_path", "embedding", "embedding_model", "embedding_error", "name_key"}
     }
     item["tts_eligible"] = bool(
         sample.get("state") == "ready" and sample.get("audio_path") and sample.get("transcript")
@@ -1493,6 +1535,13 @@ def create_app() -> FastAPI:
             "compute_device_name": compute_device_name,
             "accelerate_single_task": accelerate_single_task,
         }
+        if voice_mode == "voiceprint":
+            request_data["voiceprint_sample_id"] = voiceprint_sample_id
+            replay = replay_tts_library_job("submit_tts", idempotency_key, request_data)
+            if replay is not None:
+                response.status_code = 200
+                response.headers["Idempotency-Replayed"] = "true"
+                return public_job(replay)
         job_id = uuid.uuid4().hex
         reference_digest: str | None = None
         if voice_mode == "preset":
@@ -1529,6 +1578,7 @@ def create_app() -> FastAPI:
             shutil.copy2(source, target)
             request_data.update({
                 "voiceprint_person_id": person["id"], "voiceprint_person_name": person["name"],
+                "voiceprint_person_note": person.get("note"), "voiceprint_sample_name": sample["name"],
                 "voiceprint_sample_id": sample["id"], "reference_audio_path": str(target),
                 "reference_text": sample["transcript"], "reference_words": sample.get("words") or [],
                 "reference_language": sample.get("language") or language,
@@ -1659,10 +1709,26 @@ def create_app() -> FastAPI:
                 f"Sequence text must not exceed {settings.max_tts_chars} characters in total",
             )
 
+        request_data = {
+            "purpose": "tts_sequence",
+            "sequence_contract_version": 1,
+            "model": selected_model["public_id"],
+            "language": language,
+            "voice_mode": payload.voice_mode,
+            "sequence_items": cleaned,
+            "response_format": "wav",
+            "compute_device": compute_device,
+            "compute_device_name": compute_device_name,
+            "accelerate_single_task": payload.accelerate_single_task,
+        }
+        replay = replay_tts_library_job("submit_tts_sequence", idempotency_key, request_data)
+        if replay is not None:
+            response.status_code = 200
+            response.headers["Idempotency-Replayed"] = "true"
+            return public_job(replay)
         job_id = uuid.uuid4().hex
         job_root = settings.jobs_dir / job_id
         reference_snapshots: dict[str, dict[str, Any]] = {}
-        digest_parts: list[str] = []
         try:
             if payload.voice_mode == "voiceprint":
                 for item in cleaned:
@@ -1688,10 +1754,11 @@ def create_app() -> FastAPI:
                     target = job_root / "input" / f"voiceprint-{len(reference_snapshots):03d}.wav"
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, target)
-                    audio_digest = hashlib.sha256(target.read_bytes()).hexdigest()
                     snapshot = {
                         "voiceprint_person_id": person["id"],
                         "voiceprint_person_name": person["name"],
+                        "voiceprint_person_note": person.get("note"),
+                        "voiceprint_sample_name": sample["name"],
                         "voiceprint_sample_id": sample_id,
                         "reference_audio_path": str(target),
                         "reference_text": sample["transcript"],
@@ -1700,29 +1767,10 @@ def create_app() -> FastAPI:
                         "reference_duration": sample.get("duration"),
                     }
                     reference_snapshots[sample_id] = snapshot
-                    digest_parts.append(json.dumps({
-                        "sample_id": sample_id,
-                        "audio_sha256": audio_digest,
-                        "transcript": sample["transcript"],
-                        "updated_at": sample.get("updated_at"),
-                    }, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
-            reference_digest = hashlib.sha256("\n".join(sorted(digest_parts)).encode()).hexdigest() if digest_parts else None
-            request_data = {
-                "purpose": "tts_sequence",
-                "sequence_contract_version": 1,
-                "model": selected_model["public_id"],
-                "language": language,
-                "voice_mode": payload.voice_mode,
-                "sequence_items": cleaned,
-                "voiceprint_references": reference_snapshots,
-                "response_format": "wav",
-                "compute_device": compute_device,
-                "compute_device_name": compute_device_name,
-                "accelerate_single_task": payload.accelerate_single_task,
-            }
+            request_data["voiceprint_references"] = reference_snapshots
             job, replayed = idempotent_job(
                 "tts", safe_filename(payload.display_name, "tts-sequence"), request_data, job_id,
-                "submit_tts_sequence", idempotency_key, reference_digest,
+                "submit_tts_sequence", idempotency_key,
             )
         except Exception:
             shutil.rmtree(job_root, ignore_errors=True)
@@ -1746,9 +1794,9 @@ def create_app() -> FastAPI:
         "/api/v1/tts/voices", status_code=201, response_model=VoiceProfileResponse,
         response_model_exclude_unset=True, tags=[TTS_TAG],
         summary="创建声音档案 / Create voice profile",
-        description=bilingual("保存本地参考音频和逐字准确文本，同时建立可复用声音档案。", "Store local reference audio and its exact transcript as a reusable voice profile."),
+        description=bilingual("保存本地参考音频和逐字准确文本；姓名匹配多个人员时返回 409，请改用声纹 API 指定人员 ID。", "Store local reference audio and its exact transcript. An ambiguous person name returns 409; use the voiceprint API with an explicit person ID."),
         operation_id="createTtsVoice",
-        responses={**AUTH_RESPONSES, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
+        responses={**AUTH_RESPONSES, **CONFLICT_RESPONSE, **TOO_LARGE_RESPONSE, **VALIDATION_RESPONSE, **SERVICE_RESPONSE},
     )
     async def save_voice(
         name: str = Form(..., description="声音档案名称 / Voice profile name"),
@@ -1763,7 +1811,11 @@ def create_app() -> FastAPI:
         voice_dir = settings.voices_dir / uuid.uuid4().hex
         target = voice_dir / safe_filename(ref_audio.filename or "reference.wav")
         await save_upload(ref_audio, target, 100 * 1024 * 1024)
-        return create_voice(name.strip(), language, str(target), ref_text.strip())
+        try:
+            return create_voice(name.strip(), language, str(target), ref_text.strip())
+        except AmbiguousVoiceprintPersonError as exc:
+            shutil.rmtree(voice_dir, ignore_errors=True)
+            raise ApiProblem(409, "ambiguous_voiceprint_person", str(exc)) from exc
 
     @app.delete(
         "/api/v1/tts/voices/{voice_id}", status_code=204, tags=[TTS_TAG],
@@ -1803,7 +1855,7 @@ def create_app() -> FastAPI:
         "/api/v1/voiceprints/people", status_code=201, response_model=VoiceprintPersonResponse,
         response_model_exclude_unset=True, tags=[VOICEPRINT_TAG],
         summary="创建声纹人员 / Create voiceprint person",
-        description=bilingual("名字必填且规范化后唯一；备注选填、最多 20 字；人名热词同步默认开启。", "The normalized name is required and unique; the optional note is limited to 20 characters; name-hotword synchronization defaults on."),
+        description=bilingual("姓名与备注组合规范化后唯一；备注选填、最多 20 字，null 与空白等价；同名姓名热词去重同步。", "The normalized name and note together are unique; notes are optional, limited to 20 characters, and null equals blank. Opted-in names are deduplicated in system hotword lists."),
         operation_id="createVoiceprintPerson",
         responses={**AUTH_RESPONSES, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
     )
@@ -1817,7 +1869,7 @@ def create_app() -> FastAPI:
                 include_in_hotword_library=payload.include_in_hotword_library,
             ))
         except sqlite3.IntegrityError as exc:
-            raise HTTPException(status_code=409, detail="A voiceprint person with this name already exists") from exc
+            raise ApiProblem(409, "voiceprint_person_conflict", "A voiceprint person with this name and note already exists") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -1846,7 +1898,7 @@ def create_app() -> FastAPI:
         try:
             person = update_voiceprint_person(person_id, **values)
         except sqlite3.IntegrityError as exc:
-            raise HTTPException(status_code=409, detail="A voiceprint person with this name already exists") from exc
+            raise ApiProblem(409, "voiceprint_person_conflict", "A voiceprint person with this name and note already exists") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if person is None:
@@ -1897,8 +1949,8 @@ def create_app() -> FastAPI:
         response_model=VoiceprintSamplesResponse, response_model_exclude_unset=True,
         tags=[VOICEPRINT_TAG], summary="从 ASR 段落创建声纹样本 / Create samples from ASR segments",
         description=bilingual(
-            "来源任务必须成功，所选段落必须属于同一说话人且未曾入库。每个段落独立保存为本地 WAV 样本。",
-            "The source job must have succeeded; selected segments must belong to one speaker and not already be imported. Each segment becomes a separate local WAV sample.",
+            "来源任务必须成功，所选段落必须属于同一说话人且未曾入库。每段独立保存为 WAV，以任务名＋段落号命名，重名追加序号。",
+            "The source job must have succeeded; selected segments must belong to one speaker and not already be imported. Each segment becomes a separate local WAV sample named from the task and segment number, with a suffix on name collisions.",
         ),
         operation_id="createVoiceprintSamplesFromAsr",
         responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
@@ -1955,6 +2007,7 @@ def create_app() -> FastAPI:
                 ]
                 sample = create_voiceprint_sample(
                     person["id"], sample_id=sample_id, state="ready",
+                    name=(sample_name_base(str(job["display_name"]))[:60] + f" · 段落 {int(segment["id"])+1}")[:MAX_VOICEPRINT_SAMPLE_NAME_CHARS],
                     language=(job.get("result") or {}).get("language") or "Auto",
                     audio_path=str(path), transcript=str(segment.get("text", "")), words=words,
                     duration=duration, source_job_id=job["id"], source_segment_id=int(segment["id"]),
@@ -1974,8 +2027,8 @@ def create_app() -> FastAPI:
         response_model=VoiceprintUploadResponse, response_model_exclude_unset=True,
         tags=[VOICEPRINT_TAG], summary="上传并转写声纹样本 / Upload and transcribe voiceprint sample",
         description=bilingual(
-            "立即返回 `pending` 样本和可见 ASR 入库任务。可选择 0.6B 或 1.7B，但声纹入库不使用热词库。任务成功后重新查询人员列表，样本才可能用于 TTS。",
-            "Immediately return a pending sample and a visible ASR import job. Either 0.6B or 1.7B may be selected, but voiceprint imports do not use the hotword library. Refresh the people list after success before using the sample for TTS.",
+            "立即返回带持久化 name 的 `pending` 样本和可见 ASR 入库任务；name 基名省略时取文件名，创建重名时追加序号。可选择 0.6B 或 1.7B，但声纹入库不使用热词库。任务成功后重新查询人员列表，样本才可能用于 TTS。",
+            "Immediately return a pending sample with persistent name and a visible ASR import job. The optional name base defaults to the filename; creation adds a suffix on collisions. Either 0.6B or 1.7B may be selected, but voiceprint imports do not use the hotword library. Refresh the people list after success before using the sample for TTS.",
         ),
         operation_id="uploadVoiceprintSample",
         responses={**idempotency_replay_response("VoiceprintUploadResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **NOT_FOUND_RESPONSE, **TOO_LARGE_RESPONSE, **ASR_VALIDATION_RESPONSE, **ASR_SERVICE_RESPONSE},
@@ -1984,6 +2037,7 @@ def create_app() -> FastAPI:
         response: Response,
         person_id: str,
         file: UploadFile = File(..., description="单人干净音频或浏览器录音容器 / Clean single-speaker audio or browser recording container"),
+        name: str | None = Form(None, description="可选名称基名，1–80 字；省略时取文件名，新建重名自动追加序号 / Optional 1–80 character base name; defaults to filename; creation adds a suffix on collision"),
         model: str = Form(DEFAULT_ASR_MODEL_ID, description="样本转写使用的 ASR 模型 / ASR model for sample transcription", json_schema_extra={"enum": [item["public_id"] for item in asr_models()]}),
         language: str = Form("Auto", description="转写语言；显式值限公开对齐语种 / Transcription language; explicit values are limited to public alignment languages", json_schema_extra={"enum": ASR_LANGUAGES}),
         compute_device: str = Form(default_device, description="cpu 或 gpu；省略时使用部署默认值且无静默回退 / cpu or gpu; omission uses the deployment default and there is no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
@@ -2000,6 +2054,10 @@ def create_app() -> FastAPI:
         selected_model, compute_device, compute_device_name = await run_in_threadpool(
             validate_asr_model_device, model, compute_device,
         )
+        try:
+            requested_name = normalize_sample_name(name) if name is not None else None
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         job_id = uuid.uuid4().hex
         sample_id = "sample_" + uuid.uuid4().hex[:16]
         original_name = safe_filename(file.filename or "voiceprint-audio.bin")
@@ -2015,6 +2073,8 @@ def create_app() -> FastAPI:
             "compute_device_name": compute_device_name, "use_voiceprint_library": False,
             "accelerate_single_task": accelerate_single_task,
         }
+        if requested_name is not None:
+            request_data["voiceprint_sample_name_requested"] = requested_name
         job, replayed = idempotent_job(
             "asr", f"声纹样本入库 · {person['name']}", request_data, job_id,
             "upload_voiceprint_sample", idempotency_key, file_digest,
@@ -2032,6 +2092,7 @@ def create_app() -> FastAPI:
         try:
             sample = create_voiceprint_sample(
                 person["id"], sample_id=sample_id, state="pending", language=language,
+                name=requested_name if requested_name is not None else sample_source_name(file.filename or "样本"),
                 source_job_id=job_id,
             )
         except Exception:
@@ -2039,6 +2100,31 @@ def create_app() -> FastAPI:
             shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
             raise
         return {"sample": public_voiceprint_sample(sample), "job": public_job(job)}
+
+    @app.patch(
+        "/api/v1/voiceprints/people/{person_id}/samples/{sample_id}",
+        response_model=VoiceprintSampleResponse, response_model_exclude_unset=True,
+        tags=[VOICEPRINT_TAG], summary="重命名声纹样本 / Rename a voiceprint sample",
+        description=bilingual(
+            "仅修改样本名称，所有样本状态均可重命名。规范化后 1–80 字，同一人员内唯一；不更改音频、转写或已提交任务快照。",
+            "Rename a sample in any state. Names contain 1–80 normalized characters and are unique within a person. Audio, transcript, and accepted job snapshots are unchanged.",
+        ),
+        operation_id="renameVoiceprintSample",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
+    )
+    def edit_voiceprint_sample(
+        person_id: str, sample_id: str, payload: VoiceprintSampleRenameRequest,
+        _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        try:
+            sample = rename_voiceprint_sample(person_id, sample_id, payload.name)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except sqlite3.IntegrityError as exc:
+            raise ApiProblem(409, "voiceprint_sample_name_conflict", "A sample with this name already exists for this person") from exc
+        if sample is None:
+            raise HTTPException(status_code=404, detail="Voiceprint sample not found")
+        return public_voiceprint_sample(sample)
 
     @app.delete(
         "/api/v1/voiceprints/people/{person_id}/samples/{sample_id}", status_code=204,

@@ -151,3 +151,12 @@ run/          supervisor PIDs, executor identities, and GPU lock
 Inputs and results persist by default. Permanent deletion applies path-containment checks, rejects unsafe active imports, removes files and database rows, then performs database cleanup. Back up `data/` before migrations or manual recovery.
 
 Model installation, doctor, readiness, and health checks require each `.complete` file to contain the exact revision declared in `audio_intel/model_manifest.json`; file existence alone is insufficient. Runtime model loading is offline and never accepts user-supplied repositories, configs, or checkpoints.
+
+
+## Voiceprint metadata compatibility
+
+Schema v10 identifies people by stable IDs with a unique normalized `(name_key, note_key)` pair; absent notes map to the empty key. Sample IDs and media paths remain stable, with unique `(person_id, name_key)` sample names. Source-derived names are allocated under a write transaction; manual renames fail on collisions. Existing samples retain the library numbering seen at migration, persisted as names. The parent-table migration disables foreign-key actions outside its transaction, preserves children and aliases, validates foreign keys, and commits the schema version only on success.
+
+System full-name and surname-free lists deduplicate names independently of people. One person's removal or opt-out cannot remove another opted-in person's shared term. Neither notes nor sample names become ASR hotwords.
+
+TTS requests snapshot person names, notes, and sample names with reference audio. Same-request replays compare normalized caller parameters and sample IDs against the accepted request, including older idempotency records, instead of mutable library names or `updated_at`. Renaming changes metadata only; it neither modifies the audio pipeline nor rewrites historical jobs or sequence contract v1 results.

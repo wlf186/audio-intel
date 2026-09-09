@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { Download, FileAudio, Pause, Pencil, Play, RotateCcw, Search, UploadCloud, UserPlus, X } from 'lucide-react'
-import { api, artifactUrl, formatTime, isUploadCancelled, sourceUrl, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
+import { api, HttpError, artifactUrl, formatTime, isUploadCancelled, sourceUrl, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
 import type { AsrModelCapability, ComputeDevice, HotwordLibraryCapability, HotwordList, Job, JobDetailResource, JobResult, JobSummary, ResourceState, ResultRevealRequest, Segment, Speaker, VoiceprintPerson } from '../lib/types'
 import { Waveform } from '../components/Waveform'
 import { JobMini } from '../components/JobMini'
@@ -8,7 +8,7 @@ import { Modal } from '../components/Modal'
 import { InfoTooltip } from '../components/InfoTooltip'
 import { clearAsrPreferences, defaultAsrPreferences, loadAsrPreferences, publicAlignerLanguages, publicAsrLanguages, saveAsrPreferences, type AsrPreferences } from '../lib/preferences'
 import { visibleWorkspaceJobs } from '../lib/jobs'
-import { computeUnavailableReason, hotwordListDisplayName } from '../lib/presentation'
+import { computeUnavailableReason, voiceprintPersonLabel, hotwordListDisplayName } from '../lib/presentation'
 import { SubmissionProgress } from '../components/SubmissionProgress'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -138,6 +138,9 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   }>()
   const [renameValue, setRenameValue] = useState('')
   const [libraryOpen, setLibraryOpen] = useState(false)
+  const libraryNameRef=useRef<HTMLInputElement>(null)
+  const [libraryError,setLibraryError]=useState('')
+  const [libraryAmbiguous,setLibraryAmbiguous]=useState(false)
   const [targetPersonId, setTargetPersonId] = useState('')
   const [newPersonName, setNewPersonName] = useState('')
   const [newPersonNote, setNewPersonNote] = useState('')
@@ -404,34 +407,43 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   const openLibrary = () => {
     const speaker = selectionSpeaker ? speakerById.get(selectionSpeaker) : undefined
     const matchedId = speaker?.label_source === 'voiceprint' ? speaker.voiceprint_match?.person_id : undefined
-    const match = voiceprints.find((person) => person.id === matchedId) || voiceprints.find((person) => nameKey(person.name) === nameKey(selectionLabel))
-    setTargetPersonId(match?.id || '')
+    const candidates=voiceprints.filter(person=>nameKey(person.name)===nameKey(speaker?.voiceprint_match?.name||selectionLabel))
+    const match = voiceprints.find((person) => person.id === matchedId) || (candidates.length===1?candidates[0]:undefined)
+    const ambiguous=!match&&candidates.length>1
+    setLibraryError('')
+    setLibraryAmbiguous(ambiguous)
+    setTargetPersonId(match?.id || (ambiguous?'__choose__':''))
     setNewPersonName(match ? '' : /^Speaker[ _]\d+$/i.test(selectionLabel) ? '' : selectionLabel)
     setNewPersonNote('')
     setNewPersonHotword(true)
     setLibraryOpen(true)
   }
   const addToLibrary = async () => {
-    if (!selected || !selectedSegments.size) return
+    if (!selected || !selectedSegments.size || targetPersonId==='__choose__') return
     setBusy(true)
-    setError('')
+    setLibraryError('')
+    let creatingPerson=!targetPersonId
+    let created=false
     try {
       let personId = targetPersonId
-      let created = false
       if (!personId) {
         if (!newPersonName.trim()) throw new Error(t('asr.library.nameRequired'))
         const person = await api.addVoiceprintPerson(newPersonName.trim(), newPersonNote.trim() || null, newPersonHotword)
         personId = person.id
+        setTargetPersonId(personId)
         created = true
+        creatingPerson = false
       }
       await api.addAsrSamples(personId, selected.id, [...selectedSegments])
-      await (created ? refreshPeopleAndHotwords() : refreshVoiceprints())
       setSelectedSegments(new Set())
       setLibraryOpen(false)
       setNotice(t('asr.notices.addedToVoiceprints'))
+      if(!created)await refreshVoiceprints().catch(cause=>setError((cause as Error).message))
     } catch (cause) {
-      setError((cause as Error).message)
+      setLibraryError(cause instanceof HttpError&&cause.status===409&&creatingPerson?t('voiceprintNames.personConflict'):(cause as Error).message)
+      if(creatingPerson)libraryNameRef.current?.focus()
     } finally {
+      if(created)await refreshPeopleAndHotwords().catch(cause=>setError((cause as Error).message))
       setBusy(false)
     }
   }
@@ -740,19 +752,21 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
         </Modal>
       ) : null}
       {libraryOpen ? (
-        <Modal title={t('asr.library.title')} closeLabel={t('asr.library.close')} onClose={() => setLibraryOpen(false)}>
+        <Modal title={t('asr.library.title')} closeLabel={t('asr.library.close')} onClose={() => {if(!busy)setLibraryOpen(false)}}>
           <p>
             {t('asr.library.help',{count:selectedSegments.size,speaker:selectionLabel})}
           </p>
+          {libraryError?<p className="error" role="alert">{libraryError}</p>:null}
+          {libraryAmbiguous?<p>{t('voiceprintNames.ambiguousPerson')}</p>:null}
           {voiceprints.length ? (
             <label>
               {t('asr.library.person')}
               <select value={targetPersonId} onChange={(event) => setTargetPersonId(event.target.value)}>
+                {libraryAmbiguous?<option value="__choose__" disabled>{t('voiceprintNames.choosePerson')}</option>:null}
                 <option value="">{t('asr.library.newPerson')}</option>
                 {voiceprints.map((person) => (
                   <option key={person.id} value={person.id}>
-                    {person.name}
-                    {person.note ? `(${person.note})` : ''} · {t('voiceprints.sampleCount',{count:person.sample_count})}
+                    {voiceprintPersonLabel(person)} · {t('voiceprints.sampleCount',{count:person.sample_count})}
                   </option>
                 ))}
               </select>
@@ -762,7 +776,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
             <>
               <label>
                 {t('asr.library.newPersonName')}
-                <input value={newPersonName} maxLength={80} placeholder={t('asr.library.namePlaceholder')} onChange={(event) => setNewPersonName(event.target.value)} />
+                <input ref={libraryNameRef} value={newPersonName} maxLength={80} placeholder={t('asr.library.namePlaceholder')} onChange={(event) => setNewPersonName(event.target.value)} />
               </label>
               <label>
                 {t('voiceprints.noteOptional')}
@@ -775,12 +789,12 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
               </label>
             </>
           ) : (
-            <p className="notice">
+            <p className="notice" hidden={targetPersonId==='__choose__'}>
               {t('asr.library.matched')}
-              {voiceprints.find((person) => person.id === targetPersonId)?.name}
+              {voiceprints.filter(person=>person.id===targetPersonId).map(voiceprintPersonLabel).join('')}
             </p>
           )}
-          <button className="primary" disabled={busy || (!targetPersonId && !newPersonName.trim())} onClick={addToLibrary}>
+          <button className="primary" disabled={busy || targetPersonId==='__choose__' || (!targetPersonId && !newPersonName.trim())} onClick={addToLibrary}>
             {busy ? t('voiceprints.saving') : t('asr.library.confirm')}
           </button>
         </Modal>
