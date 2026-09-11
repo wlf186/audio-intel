@@ -433,7 +433,7 @@ def segment(document: dict[str, Any], mode: str = "auto", target: int = 10000, m
     merged = len(nonempty) != len(pieces)
     pieces = nonempty
     if len(pieces) > max_sections:
-        raise ValueError("Too many sections; increase the target length / 分段过多，请增大目标字数")
+        raise ValueError("Too many sections; use length mode or increase the target length / 分段过多，请改用按字数切分或增大目标字数")
     revision = digest([document.get("version", 1), document["text_hash"], mode, target])
     if merged:
         revision = digest([revision, "nonempty-v1", [(p["start"], p["end"]) for p in pieces]])

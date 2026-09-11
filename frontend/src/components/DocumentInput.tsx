@@ -54,7 +54,7 @@ export function DocumentInput({capability,onChange}:{capability:DocumentCapabili
    setPreview(value);setMode(value.segmentation_mode);setTarget(value.target_section_chars)
    const valid=new Set(value.sections.map(s=>s.id))
    setSelected(saved.current.importId===id&&saved.current.preview_revision===value.preview_revision?(saved.current.section_ids||[]).filter(s=>valid.has(s)):value.sections.map(s=>s.id))
-  }catch(cause){if(!stopped)setError((cause as Error).message)}}
+  }catch(cause){if(!stopped&&epoch.current===current)setError((cause as Error).message)}}
   void poll()
   return()=>{stopped=true;clearTimeout(timer);epoch.current++}
  },[id,retry,capability.default_target_section_chars])
@@ -78,7 +78,7 @@ export function DocumentInput({capability,onChange}:{capability:DocumentCapabili
   const controller=new AbortController();uploadController.current=controller
   try{const data=new FormData();data.set('file',file);const value=await api.submitDocumentImport(data,{signal:controller.signal,onProgress:setProgress});pendingFile.current=undefined;saved.current={importId:value.id};setPreview(undefined);setRecord(undefined);setSelected([]);setId(value.id);setRetry(v=>v+1);setPage(0);setLibraryRevision(v=>v+1)}catch(cause){setError((cause as Error).message)}finally{setBusy(false)}
  }
- const split=async()=>{setErrorPhase('preview');setBusy(true);setError('');setReading(undefined);const current=++epoch.current;try{const value=await api.documentPreview(id,mode,target);if(current!==epoch.current)return;setPreview(value);setSelected(value.sections.map(s=>s.id));setPage(0)}catch(cause){setError((cause as Error).message)}finally{setBusy(false)}}
+ const split=async()=>{setErrorPhase('preview');setBusy(true);setError('');setReading(undefined);const current=++epoch.current;try{const value=await api.documentPreview(id,mode,target);if(current!==epoch.current)return;setPreview(value);setSelected(value.sections.map(s=>s.id));setPage(0)}catch(cause){if(epoch.current===current)setError((cause as Error).message)}finally{if(epoch.current===current)setBusy(false)}}
  const clear=async()=>{setBusy(true);setRemoveError('');try{await api.removeDocumentImport(id);epoch.current++;setId('');setRecord(undefined);setPreview(undefined);setSelected([]);setReading(undefined);sessionStorage.removeItem(storageKey);setRemove(false);setError('');saved.current={};setLibraryRevision(v=>v+1)}catch(cause){setRemoveError((cause as Error).message)}finally{setBusy(false)}}
  const forget=()=>{epoch.current++;setId('');setRecord(undefined);setPreview(undefined);setSelected([]);setReading(undefined);setError('');saved.current={};sessionStorage.removeItem(storageKey)}
  const retryFailed=async()=>{if(errorPhase==='upload'&&pendingFile.current){await upload(pendingFile.current);return}if(errorPhase==='preview'){await split();return}if(errorPhase==='parse'){setBusy(true);try{await api.retryDocumentImport(id);setRetry(v=>v+1);setLibraryRevision(v=>v+1)}catch(cause){setError((cause as Error).message)}finally{setBusy(false)}return}setRetry(v=>v+1)}
@@ -93,9 +93,11 @@ export function DocumentInput({capability,onChange}:{capability:DocumentCapabili
   {error?<div role="alert"><p>{error}</p><button type="button" disabled={busy} onClick={()=>void retryFailed()}>{t('document.retry')}</button><button type="button" disabled={busy} onClick={()=>{forget();setLibrary(true)}}>{t('document.clearSelection')}</button></div>:null}
   {id&&!record&&!error?<p role="status">{t('document.loading')}</p>:null}
   {record?<><h3>{record.name}</h3>{record.state==='queued'||record.state==='running'?<p role="status">{t('document.parsing')}</p>:<button type="button" disabled={busy} onClick={()=>{setRemoveError('');setRemove(true)}}>{t('document.remove')}</button>}</>:null}
-  {preview?<>
+  {record?.state==='ready'?<>
    <div className="document-controls"><label>{t('document.section')}<select value={mode} disabled={busy} onChange={e=>setMode(e.target.value as 'auto'|'length')}><option value="auto">{t('document.auto')}</option><option value="length">{t('document.length')}</option></select></label><label>{t('document.target')}<input type="number" min={capability.min_target_section_chars} max={capability.max_target_section_chars} value={target} onChange={e=>setTarget(Number(e.target.value))}/></label><button type="button" disabled={busy||target<capability.min_target_section_chars||target>capability.max_target_section_chars} onClick={()=>void split()}>{t('document.apply')}</button></div>
    <small>{t('document.resetNotice')}</small>
+  </>:null}
+  {preview?<>
    {preview.warnings.length?<details><summary>{preview.warnings.length} ⚠</summary><ul>{preview.warnings.map((warning,i)=><li key={i}>{warning}</li>)}</ul></details>:null}
    <p role="status">{t('document.selected',{count:selected.length,chars:preview.sections.reduce((n,s)=>n+(chosen.has(s.id)?s.char_count:0),0)})}</p>
    <label className="document-select-all"><input type="checkbox" checked={selected.length===preview.sections.length} onChange={e=>setSelected(e.target.checked?preview.sections.map(s=>s.id):[])}/>{t('document.all')}</label>

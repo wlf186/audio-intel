@@ -203,3 +203,18 @@ test('document mode shows CPU when GPU is unavailable and submits the displayed 
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
  expect(errors).toEqual([])
 })
+
+test('an over-limit initial structural preview can recover with length segmentation',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ await page.goto('/#tts')
+ await page.getByRole('button',{name:'上传文档',exact:true}).click()
+ const text=Array.from({length:2001},(_,i)=>`# Chapter ${i}\n\n正文。\n\n`).join('')
+ await page.locator('.document-input input[type=file]').setInputFiles({name:'many-headings.md',mimeType:'text/markdown',buffer:Buffer.from(text)})
+ await expect(page.locator('.document-input [role=alert]')).toContainText('Too many sections')
+ await page.locator('.document-controls select').selectOption('length')
+ await page.getByRole('button',{name:'重新分段',exact:true}).click()
+ await expect(page.locator('.document-sections li').first()).toBeVisible()
+ await expect(page.locator('.document-input [role=alert]')).toHaveCount(0)
+ expect(errors).toEqual([])
+})
