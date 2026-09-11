@@ -75,7 +75,9 @@ test('pending voiceprint polling stops after session expiry and resumes after lo
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  await mockWorkspace(page)
- await page.clock.install()
+ // Keep polling deterministic while page rendering and route callbacks settle.
+ await page.clock.install({time:new Date('2026-01-01T00:00:00Z')})
+ await page.clock.pauseAt(new Date('2026-01-01T00:01:00Z'))
  let calls=0
  let renewed=false
  const now=new Date().toISOString()
