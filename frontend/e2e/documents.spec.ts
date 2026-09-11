@@ -176,3 +176,30 @@ test('upload retry reuses the request and failed parsing calls retry API; import
  await expect(page.locator('.document-sections li')).toHaveCount(0)
  expect(errors).toEqual([])
 })
+
+test('document mode shows CPU when GPU is unavailable and submits the displayed device',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.route('**/api/v1/capabilities',async route=>{
+  const response=await route.fetch();const body=await response.json()
+  body.deployment.default_compute_device='gpu'
+  for(const model of body.tts.model_capabilities)for(const device of model.compute_devices)if(device.id==='gpu')Object.assign(device,{available:false,unavailable_reason:'No GPU available'})
+  await route.fulfill({response,json:body})
+ })
+ await page.goto('/#tts')
+ await page.getByRole('button',{name:'上传文档',exact:true}).click()
+ const device=page.getByLabel('TTS 计算设备')
+ await expect(device).toHaveValue('cpu')
+ await expect(device.locator('option[value="gpu"]')).toHaveAttribute('disabled','')
+ await page.locator('.document-input input[type=file]').setInputFiles({name:'cpu-document.md',mimeType:'text/markdown',buffer:Buffer.from('# Title\n\n这是 CPU 设备验证。')})
+ await expect(page.locator('.document-sections li')).toHaveCount(1)
+ const response=page.waitForResponse(r=>r.url().endsWith('/api/v1/tts/document-jobs')&&r.request().method()==='POST')
+ await page.getByRole('button',{name:/生成语音|开始合成/}).click()
+ const accepted=await response
+ expect(accepted.status()).toBe(202)
+ expect((await accepted.json()).request.compute_device).toBe('cpu')
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ expect(errors).toEqual([])
+})

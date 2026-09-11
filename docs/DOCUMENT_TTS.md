@@ -61,3 +61,5 @@ English: Office files share the native document import, preview, job and streami
 草稿版本 2 继续使用 sessionStorage，保存导入、预览修订、切分参数及包括“全不选”在内的选择。刷新、语言切换和状态查询重试不会恢复为全选；主动重新切分会全选新预览。正文与音频不进入浏览器存储。受空白合并影响的旧修订提交返回 409；历史任务快照不会重写。
 
 任务章节 API 使用稳定的类型化结构：`index` 为原文分段编号，`position` 为所选任务内顺序；`start/end` 及其 `start_offset/end_offset` 别名、`char_count/basis` 来自快照，状态和音频来自检查点。浏览器下载错误在页内显示并可再次点击下载；429 展示等待时间，401 返回登录流程。开始传输后的状态和中断由浏览器下载管理器显示。
+
+文档页面与短文本页面共享设备能力处理：没有可用 GPU 时显示 CPU 及原因，提交使用界面显示的设备；API 客户端显式指定不可用 GPU 仍返回 503，不在后端静默降级。

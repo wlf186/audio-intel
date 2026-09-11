@@ -260,7 +260,7 @@
     "downloadError": "下载未能开始，请检查连接后重新点击下载。",
     "downloadRequested": "下载请求已发送，进度和传输中断请查看浏览器下载管理器。",
     "importStates": {"queued": "等待解析", "running": "正在解析", "ready": "解析完成", "failed": "解析失败"},
-    "computeHelp": "使用所选计算设备；GPU 不可用时，请选择 CPU 后重新提交。",
+    "computeHelp": "按模型能力选择计算设备；GPU 不可用时页面显示 CPU 和原因，API 显式请求不可用 GPU 仍返回 503。",
     "shortText": "输入文本",
     "document": "上传文档",
     "upload": "选择文档",

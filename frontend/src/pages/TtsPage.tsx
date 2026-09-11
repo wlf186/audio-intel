@@ -212,7 +212,7 @@ export function TtsPage({
     availableTtsModels[0]
   const ttsGpu = selectedTtsModel?.compute_devices.find((item) => item.id === 'gpu')
   const effectiveTtsDevice: ComputeDevice =
-    inputMode !== 'document' && draft.computeDevice === 'gpu' &&
+    draft.computeDevice === 'gpu' &&
     (ttsGpu?.available === false || gpuAvailable === false)
       ? 'cpu'
       : draft.computeDevice

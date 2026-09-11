@@ -32,7 +32,7 @@ def test_lossless_fallback_and_boundary_priority():
 
 def test_markdown_heading_level_prefix_and_long_chapter(tmp_path):
     source = tmp_path/'test.md'
-    source.write_text('# Title\n\n## First\n\n'+ '内容。'*20000 +'\n\n### Subheading\n\n正文\n\n## Second\n\n尾声\n```py\nsecret code\n```\n![image](a.png)')
+    source.write_text('# Title\n\n## First\n\n'+ '内容。'*20000 +'\n\n### Subheading\n\n正文\n\n## Second\n\n尾声\n```py\nsecret code\n```\n![image](a.png)', encoding="utf-8")
     doc=extract(source,5000000,1000000)
     auto=segment(doc)
     assert len(auto['sections']) == 2
@@ -111,6 +111,13 @@ def submit_document(client,identifier,preview,**kwargs):
 
 
 def test_document_contract_checkpoint_resume_streams_and_purge(document_client,monkeypatch):
+    import os
+    real_sync = os.fsync
+    def writable_sync(fd):
+        # Emulate Windows' writable-descriptor requirement on every platform.
+        os.write(fd, b'')
+        real_sync(fd)
+    monkeypatch.setattr(os, 'fsync', writable_sync)
     client,local=document_client
     from audio_intel import db,document_store
     from audio_intel.worker import JobContext
@@ -208,7 +215,7 @@ def test_million_characters_bounded_audio_and_resume(document_client,monkeypatch
     request={'purpose':'tts_document','model':'qwen3-tts-0.6b','voice_mode':'preset','speaker':'Vivian','compute_device':'cpu','language':'Chinese','document':{'text_hash':parsed['text_hash'],'total_chars':len(text),'title':'million'},'accelerate_single_task':False}
     job=db.create_job('tts','million',request)
     root=local.jobs_dir/job['id']/'input';root.mkdir(parents=True)
-    (root/'document.txt').write_text(text)
+    (root/'document.txt').write_text(text, encoding="utf-8")
     atomic_json(root/'document.json',{'contract_version':1,'sections':preview['sections']})
     context=JobContext(job,'test')
     monkeypatch.setattr(context,'progress',lambda *a,**k:None)
@@ -344,7 +351,7 @@ def test_mp3_remux_preserves_order_and_duration(tmp_path):
 
 def test_single_markdown_wrapper_uses_length_fallback(tmp_path):
     source=tmp_path/'single.md'
-    source.write_text('# Document title\n\n'+('Plain paragraph.\n\n'*5000))
+    source.write_text('# Document title\n\n'+('Plain paragraph.\n\n'*5000), encoding="utf-8")
     doc=extract(source,5000000,1000000)
     preview=segment(doc)
     assert len(preview['sections'])>5

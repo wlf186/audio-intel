@@ -270,7 +270,7 @@
     "downloadError": "Download could not start. Check your connection and click download again.",
     "downloadRequested": "Download requested. Check your browser downloads for progress or interrupted transfers.",
     "importStates": {"queued": "Queued", "running": "Parsing", "ready": "Ready", "failed": "Failed"},
-    "computeHelp": "Uses your selected device. If GPU is unavailable, select CPU and submit again.",
+    "computeHelp": "The page shows CPU and an explanation when the model cannot use GPU. Explicit API requests for unavailable GPU still return 503.",
     "shortText": "Enter text",
     "document": "Upload document",
     "upload": "Choose document",

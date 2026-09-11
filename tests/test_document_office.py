@@ -211,7 +211,7 @@ def test_office_rejections_and_limits(office_files, tmp_path):
 
 def test_markdown_controls_pdf_heading_and_legacy_revision(tmp_path):
     path = tmp_path/'markers.md'
-    path.write_text('# 标题\n正文\ue200cite\ue202turn1search2\ue201。普通引用[来源](https://example.com)\n')
+    path.write_text('# 标题\n正文\ue200cite\ue202turn1search2\ue201。普通引用[来源](https://example.com)\n', encoding="utf-8")
     parsed = extract(path, 5000000, 1000000)
     assert '\ue200' not in parsed['text'] and '来源' in parsed['text']
     headings = _plain_headings('1｜概览\n正文\n1｜概览\n续页\n1. 数字列表\n1|x| = 1\n2|y| = 2\n2｜结论\n', pdf=True)

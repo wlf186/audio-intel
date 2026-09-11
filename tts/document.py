@@ -147,7 +147,8 @@ def process_loaded(context: Any, request: dict[str, Any], model: Any, device: st
                         raise ValueError("Document section contains no speakable text")
                     for packet in stream.encode():
                         output.mux(packet)
-                with partial.open("rb") as handle:
+                # Windows _commit requires a writable descriptor, even after PyAV closed the writer.
+                with partial.open("r+b") as handle:
                     os.fsync(handle.fileno())
                 os.replace(partial, path)
                 artifact = {"name": path.name, "path": str(path), "mime_type": "audio/mpeg", "size_bytes": path.stat().st_size,
