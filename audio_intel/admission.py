@@ -19,6 +19,7 @@ class AdmissionDecision:
     queue_capacity: int = 0
     free_bytes: int = 0
     minimum_free_bytes: int = 0
+    reserved_bytes: int = 0
 
 
 class AdmissionController:
@@ -36,6 +37,8 @@ class AdmissionController:
         self.max_concurrent = max(1, max_concurrent)
         self.minimum_free_bytes = max(0, minimum_free_bytes)
         self._active = 0
+        self._bytes = 0
+        self._document_reserved = 0
         self._reserved = {"asr": 0, "tts": 0}
         self._lock = asyncio.Lock()
 
@@ -67,23 +70,48 @@ class AdmissionController:
                     f"The {kind.upper()} queue has reached its configured capacity",
                     30, depth, capacity, free, self.minimum_free_bytes,
                 )
-            if free - max(0, expected_bytes) < self.minimum_free_bytes:
+            if free - self._bytes - max(0, expected_bytes) < self.minimum_free_bytes:
                 return AdmissionDecision(
                     False, "insufficient_queue_storage",
                     "The local data volume does not have enough reserved free space",
                     300, depth, capacity, free, self.minimum_free_bytes,
                 )
             self._active += 1
+            self._bytes += max(0, expected_bytes)
             self._reserved[kind] += 1
             return AdmissionDecision(
                 True, queue_depth=depth, queue_capacity=capacity,
-                free_bytes=free, minimum_free_bytes=self.minimum_free_bytes,
+                free_bytes=free, minimum_free_bytes=self.minimum_free_bytes, reserved_bytes=max(0, expected_bytes),
             )
 
-    async def release(self, kind: str) -> None:
+    async def release(self, kind: str, expected_bytes: int = 0) -> None:
         async with self._lock:
             self._active = max(0, self._active - 1)
+            self._bytes = max(0, self._bytes - expected_bytes)
             self._reserved[kind] = max(0, self._reserved[kind] - 1)
+
+    async def reserve_upload(self, expected_bytes: int) -> AdmissionDecision:
+        """Share upload/disk admission without occupying an inference queue slot."""
+        async with self._lock:
+            from .document_store import active_count
+            depth = await asyncio.to_thread(active_count)
+            if depth + self._document_reserved >= 5:
+                return AdmissionDecision(False, "document_queue_capacity_reached", "Document import queue is full", 30)
+            free = await asyncio.to_thread(self.disk_free)
+            if self._active >= self.max_concurrent:
+                return AdmissionDecision(False, "submission_concurrency_limited", "Too many uploads", 1)
+            if free - self._bytes - expected_bytes < self.minimum_free_bytes:
+                return AdmissionDecision(False, "insufficient_queue_storage", "Insufficient disk space", 300)
+            self._active += 1
+            self._bytes += expected_bytes
+            self._document_reserved += 1
+            return AdmissionDecision(True, reserved_bytes=expected_bytes)
+
+    async def release_upload(self, expected_bytes: int = 0) -> None:
+        async with self._lock:
+            self._active = max(0, self._active - 1)
+            self._bytes = max(0, self._bytes - expected_bytes)
+            self._document_reserved = max(0, self._document_reserved - 1)
 
     async def snapshot(self) -> dict[str, Any]:
         async with self._lock:

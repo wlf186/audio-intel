@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from . import __version__
+from .document_api import capabilities as document_capabilities
 from .config import settings
 from .deployment import deployment_metadata
 from .gpu import COMPUTE_DEVICES, cached_gpu_snapshot, gpu_snapshot
@@ -274,6 +275,8 @@ def _admission_authenticated(request: Request) -> bool:
 
 
 def _submission_route(path: str) -> tuple[str, str, bool, bool] | None:
+    if path == "/api/v1/tts/document-jobs":
+        return "tts", "submit_tts_document", True, True
     route = ASYNC_SUBMISSION_ROUTES.get(path)
     if route is not None:
         return route
@@ -364,7 +367,15 @@ def request_fingerprint(
 
 def tts_library_identity(operation: str, request: dict[str, Any]) -> dict[str, Any] | None:
     """Compare caller input, not the current mutable library or display metadata."""
-    if operation == "submit_tts_sequence":
+    if operation == "submit_tts_document":
+        if request.get("document_caller") is not None:
+            return request["document_caller"]
+        fields = ("purpose", "document", "model", "language", "voice_mode", "speaker", "voice_profile_id",
+                  "instruct", "response_format", "compute_device", "accelerate_single_task", "voiceprint_sample_id",
+                  "reference_job_id", "reference_text", "reference_language", "reference_digest")
+        if request.get("voice_mode") in {"voiceprint", "profile"}:
+            fields = tuple(f for f in fields if not f.startswith("reference_"))
+    elif operation == "submit_tts_sequence":
         fields = ("purpose", "sequence_contract_version", "model", "language", "voice_mode",
                   "sequence_items", "response_format", "compute_device", "accelerate_single_task")
     elif operation == "submit_tts" and request.get("voice_mode") == "voiceprint":
@@ -444,6 +455,8 @@ def public_job(job: dict[str, Any], context: dict[str, Any] | None = None) -> di
     result["processing_as_of"] = as_of
     result["request"] = job.get("request")
     request_data = job.get("request") or {}
+    if request_data.get("purpose") == "tts_document":
+        result["purpose"] = "tts_document"
     result_data = job.get("result") or {}
     compute_device = result_data.get("compute_device") or request_data.get("compute_device") or (
         "gpu" if job.get("kind") == "asr" else "cpu"
@@ -900,6 +913,8 @@ def create_app() -> FastAPI:
         redoc_url=None,
         openapi_tags=OPENAPI_TAGS,
     )
+    from .document_routes import document_route_class
+    app.router.route_class = document_route_class(settings)
     app.state.auth_sessions = set()
     app.state.admission = AdmissionController(
         settings.data_dir,
@@ -945,7 +960,7 @@ def create_app() -> FastAPI:
             response = await call_next(request)
         finally:
             if reserved:
-                await app.state.admission.release(kind)
+                await app.state.admission.release(kind, decision.reserved_bytes)
         response.headers["Server-Timing"] = f"total;dur={(time.monotonic() - started) * 1000:.1f}"
         return response
     docs_assets = settings.frontend_dir / "docs-assets"
@@ -997,6 +1012,7 @@ def create_app() -> FastAPI:
                 "title": detail,
                 "status": exc.status_code,
                 "code": f"http_{exc.status_code}",
+                **({"retry_after_seconds": int(exc.headers["Retry-After"])} if exc.headers and exc.headers.get("Retry-After", "").isdigit() else {}),
                 "detail": detail,
             },
             headers=exc.headers,
@@ -1188,6 +1204,7 @@ def create_app() -> FastAPI:
                 },
             },
             "tts": {
+                "document_jobs": document_capabilities(settings),
                 "models": [
                     checkpoint["name"]
                     for model in tts_capabilities for checkpoint in model["checkpoints"]
@@ -1477,6 +1494,11 @@ def create_app() -> FastAPI:
             response.headers["Idempotency-Replayed"] = "true"
         return public_job(job)
 
+    @app.post("/api/v1/tts/document-jobs", status_code=202, response_model=JobResponse,
+        response_model_exclude_unset=True, tags=[TTS_TAG], operation_id="submitTtsDocumentJob",
+        summary="提交文档 TTS / Submit document TTS",
+        description="Use document_import_id, preview_revision, section_ids and segmentation settings instead of text. MP3 only. Completed sections survive cancellation and retries. / 使用导入 ID、预览版本及分段选择，统一 MP3，支持已完成分段恢复。",
+        responses={**idempotency_replay_response("JobResponse"), **AUTH_RESPONSES, **IDEMPOTENCY_RESPONSES, **ADMISSION_RESPONSE, **TOO_LARGE_RESPONSE, **TTS_CONTROL_VALIDATION_RESPONSE, **TTS_SERVICE_RESPONSE})
     @app.post(
         "/api/v1/tts/jobs", status_code=202, response_model=JobResponse,
         response_model_exclude_unset=True, tags=[TTS_TAG],
@@ -1490,7 +1512,13 @@ def create_app() -> FastAPI:
     )
     async def submit_tts(
         response: Response,
-        text: str = Form(..., description="需要合成的文本 / Text to synthesize", json_schema_extra={"minLength": 1, "maxLength": settings.max_tts_chars}),
+        http_request: Request,
+        text: str | None = Form(None, description="需要合成的文本 / Text to synthesize", json_schema_extra={"minLength": 1, "maxLength": settings.max_tts_chars}),
+        document_import_id: str | None = Form(None),
+        preview_revision: str | None = Form(None),
+        section_ids: list[str] | None = Form(None, max_length=settings.max_document_sections),
+        segmentation_mode: str = Form("auto"),
+        target_section_chars: int = Form(10000, ge=1000, le=50000),
         model: str = Form(DEFAULT_TTS_MODEL_ID, description="TTS 模型 ID / TTS model ID", json_schema_extra={"enum": [item["public_id"] for item in tts_models()]}),
         language: str = Form("Auto", description="输出文本语种；已知时应显式指定 / Target text language; specify it when known", json_schema_extra={"enum": TTS_LANGUAGES}),
         voice_mode: str = Form("preset", description="preset、profile、inline_clone、voiceprint 或 voice_design", json_schema_extra={"enum": ["preset", "profile", "inline_clone", "voiceprint", "voice_design"]}),
@@ -1516,8 +1544,29 @@ def create_app() -> FastAPI:
         ensure_service("tts")
         idempotency_key = validate_idempotency_key(idempotency_key)
         language = validate_tts_language(language)
-        clean_text = text.strip()
-        if not clean_text or len(clean_text) > settings.max_tts_chars:
+        is_document = http_request.url.path.endswith("/document-jobs")
+        operation = "submit_tts_document" if is_document else "submit_tts"
+        prepared_document = None
+        if is_document:
+            form = await http_request.form()
+            allowed = {"document_import_id", "preview_revision", "section_ids", "segmentation_mode", "target_section_chars",
+                "model", "language", "voice_mode", "speaker", "voice_profile_id", "voiceprint_sample_id", "reference_audio",
+                "reference_text", "reference_job_id", "reference_language", "instruct", "response_format", "display_name",
+                "compute_device", "accelerate_single_task"}
+            if set(form) - allowed or any(len(form.getlist(k)) > 1 for k in form if k != "section_ids"):
+                raise HTTPException(422, "Undeclared or duplicate document request fields")
+            if "response_format" in form and response_format != "mp3":
+                raise HTTPException(422, "Document output is MP3 only")
+            if not document_import_id or not preview_revision or not section_ids:
+                raise HTTPException(422, "document_import_id, preview_revision and section_ids are required")
+            if len(section_ids) > settings.max_document_sections:
+                raise HTTPException(422, "Too many selected document sections")
+            response_format = "mp3"
+
+        elif document_import_id is not None or section_ids is not None or preview_revision is not None:
+            raise HTTPException(422, "Use /api/v1/tts/document-jobs for documents")
+        clean_text = (text or "").strip()
+        if not is_document and (not clean_text or len(clean_text) > settings.max_tts_chars):
             raise HTTPException(status_code=422, detail=f"Text must contain 1-{settings.max_tts_chars} characters")
         if voice_mode not in {"preset", "profile", "inline_clone", "voiceprint", "voice_design"}:
             raise HTTPException(status_code=422, detail="voice_mode must be preset, profile, inline_clone, voiceprint or voice_design")
@@ -1535,9 +1584,39 @@ def create_app() -> FastAPI:
             "compute_device_name": compute_device_name,
             "accelerate_single_task": accelerate_single_task,
         }
+        if is_document:
+            if not section_ids or len(section_ids) != len(set(section_ids)):
+                raise HTTPException(422, "Choose unique document section IDs")
+            caller = {key: value for key, value in request_data.items() if key not in {"text", "compute_device_name"}}
+            caller.update(document_import_id=document_import_id, preview_revision=preview_revision,
+                          section_ids=sorted(section_ids), segmentation_mode=segmentation_mode,
+                          target_section_chars=target_section_chars, voiceprint_sample_id=voiceprint_sample_id,
+                          reference_job_id=reference_job_id, reference_language=reference_language)
+            if reference_audio is not None:
+                reference_sha = hashlib.sha256()
+                reference_size = 0
+                while chunk := await reference_audio.read(256 * 1024):
+                    reference_size += len(chunk)
+                    if reference_size > 100 * 1024**2:
+                        raise HTTPException(413, "Clone reference exceeds the upload limit")
+                    reference_sha.update(chunk)
+                await reference_audio.seek(0)
+                caller["reference_digest"] = reference_sha.hexdigest()
+            request_data["document_caller"] = caller
+            replay = replay_tts_library_job(operation, idempotency_key, request_data)
+            if replay is not None:
+                if reference_audio is not None:
+                    await reference_audio.close()
+                response.status_code = 200
+                response.headers["Idempotency-Replayed"] = "true"
+                return public_job(replay)
+            from .document_api import prepare
+            prepared_document = await run_in_threadpool(prepare, settings, document_import_id or "", preview_revision or "", section_ids, segmentation_mode, target_section_chars)
+            request_data.pop("text")
+            request_data.update(purpose="tts_document", document=prepared_document["request"])
         if voice_mode == "voiceprint":
             request_data["voiceprint_sample_id"] = voiceprint_sample_id
-            replay = replay_tts_library_job("submit_tts", idempotency_key, request_data)
+            replay = replay_tts_library_job(operation, idempotency_key, request_data)
             if replay is not None:
                 response.status_code = 200
                 response.headers["Idempotency-Replayed"] = "true"
@@ -1634,6 +1713,8 @@ def create_app() -> FastAPI:
                 if reference_audio is None or not (reference_text or "").strip():
                     raise HTTPException(status_code=422, detail="Inline cloning requires reference_job_id or reference_audio with reference_text")
                 filename = safe_filename(reference_audio.filename or "reference.wav")
+                if is_document:
+                    filename = "inline-reference" + Path(filename).suffix
                 target = settings.jobs_dir / job_id / "input" / filename
                 _, reference_digest = await save_upload(reference_audio, target, 100 * 1024 * 1024)
                 request_data.update({
@@ -1641,9 +1722,20 @@ def create_app() -> FastAPI:
                     "reference_language": validate_reference_language(reference_language)
                     if reference_language is not None else language,
                 })
+        if prepared_document:
+            from .document_api import snapshot
+            try:
+                await run_in_threadpool(snapshot, settings, job_id, prepared_document)
+            except OSError as exc:
+                shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
+                raise HTTPException(409, "Document snapshot could not be saved; check the import and available disk space") from exc
+            except BaseException:
+                shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
+                raise
+            request_data["reference_digest"] = reference_digest
         job, replayed = idempotent_job(
             "tts", safe_filename(display_name, "tts"), request_data, job_id,
-            "submit_tts", idempotency_key, reference_digest,
+            operation, idempotency_key, reference_digest,
         )
         if replayed:
             shutil.rmtree(settings.jobs_dir / job_id, ignore_errors=True)
@@ -2267,7 +2359,7 @@ def create_app() -> FastAPI:
         summary="重试终态任务 / Retry terminal job",
         description=bilingual("仅失败或取消任务可原子地重新排队；累计处理耗时会保留。同类队列容量、提交并发和磁盘准入限制同样适用，拒绝返回 429 和 Retry-After；不要求 Idempotency-Key。", "Atomically requeue only failed or cancelled jobs, retaining accumulated processing time. Same-kind queue capacity, submission concurrency, and disk admission limits apply; rejection returns 429 with Retry-After. No Idempotency-Key is required."),
         operation_id="retryJob",
-        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **ADMISSION_RESPONSE},
+        responses={**VALIDATION_RESPONSE, **AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **ADMISSION_RESPONSE},
     )
     async def retry(job_id: str, _: None = Depends(require_api_key)) -> JobResponse:
         job = await run_in_threadpool(get_job, job_id)
@@ -2275,6 +2367,9 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Job not found")
         if job["state"] not in {"failed", "cancelled"}:
             raise HTTPException(status_code=409, detail="Only failed or cancelled jobs can be retried")
+        if (job.get("request") or {}).get("purpose") == "tts_document":
+            from .document_api import validate_snapshot
+            await run_in_threadpool(validate_snapshot, settings, job_id)
         kind = job["kind"]
         decision = await app.state.admission.reserve(kind, 0)
         if not decision.accepted:
@@ -2295,7 +2390,7 @@ def create_app() -> FastAPI:
                 )
             return public_job(job)
         finally:
-            await app.state.admission.release(kind)
+            await app.state.admission.release(kind, decision.reserved_bytes)
 
     @app.delete(
         "/api/v1/jobs/{job_id}", status_code=204, tags=[JOB_TAG],
@@ -2313,7 +2408,7 @@ def create_app() -> FastAPI:
         result = purge_jobs([job_id])
         if result["failed"]:
             failure = result["failed"][0]
-            status = 404 if failure["code"] == "not_found" else 409 if failure["code"] == "running" else 500
+            status = 404 if failure["code"] == "not_found" else 409 if failure["code"] in {"running", "downloading"} else 500
             raise HTTPException(status_code=status, detail=failure["message"])
         if not result["database_compacted"]:
             raise HTTPException(status_code=500, detail=result["maintenance_error"] or "Database compaction failed")
@@ -2534,6 +2629,10 @@ def create_app() -> FastAPI:
             return FileResponse(logo, media_type="image/svg+xml")
         raise HTTPException(status_code=404, detail="Brand mark not found")
 
+    from .document_api import register as register_document_routes
+    import sys
+    register_document_routes(app, sys.modules[__name__])
+
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa(full_path: str) -> Response:
         if full_path.startswith(("api/", "v1/")):
@@ -2554,6 +2653,23 @@ def create_app() -> FastAPI:
             | OpenAITranscription | OpenAIVerboseTranscription
         ).json_schema(ref_template="#/components/schemas/{model}")
         schema.setdefault("components", {}).setdefault("schemas", {}).update(extra.get("$defs", {}))
+        from .document_api import enrich_document_docs
+        enrich_document_docs(schema)
+        schemas = schema["components"]["schemas"]
+        document_fields = {"document_import_id", "preview_revision", "section_ids", "segmentation_mode", "target_section_chars"}
+        for path, document in (("/api/v1/tts/jobs", False), ("/api/v1/tts/document-jobs", True)):
+            body_ref = schema["paths"][path]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"]
+            body = schemas[body_ref.rsplit("/", 1)[-1]]
+            if document:
+                body["properties"].pop("text", None)
+                body["required"] = sorted(set(body.get("required", [])) | {"document_import_id", "preview_revision", "section_ids"})
+                body["properties"]["response_format"] = {"type": "string", "enum": ["mp3"], "default": "mp3"}
+                body["additionalProperties"] = False
+            else:
+                for field in document_fields:
+                    body["properties"].pop(field, None)
+                body["required"] = sorted(set(body.get("required", [])) | {"text"})
+                body["properties"]["text"] = {"type": "string", "minLength": 1, "maxLength": settings.max_tts_chars, "description": "需要合成的文本 / Text to synthesize"}
         schema["servers"] = [{"url": "/", "description": "当前本地服务 / Current local service"}]
         app.openapi_schema = enrich_openapi_schema(schema)
         return schema

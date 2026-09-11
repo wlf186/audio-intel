@@ -321,3 +321,44 @@ def test_worker_reuses_executor_for_queue_then_recycles_once_when_idle(
             while time.monotonic() < deadline and psutil.pid_exists(pid):
                 time.sleep(0.03)
             assert not psutil.pid_exists(pid)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fork-only integration injection")
+def test_document_resource_retry_retains_slot_and_reaps_tree(tmp_path, monkeypatch):
+    from audio_intel import document_store
+    import tts.document as document
+    local=replace(settings,data_dir=tmp_path/'data',temp_dir=tmp_path/'tmp',run_dir=tmp_path/'run',log_dir=tmp_path/'logs',worker_poll_seconds=.03)
+    monkeypatch.setattr(db_module,'settings',local)
+    monkeypatch.setattr(worker_module,'settings',local)
+    local.ensure_directories();db_module.init_db()
+    first=db_module.create_job('tts','document',{'purpose':'tts_document'})
+    document_store.ensure_sections(first['id'],[{'id':'first','title':'first','start':0,'end':10}])
+    second=db_module.create_job('tts','next',{})
+    child_path=local.run_dir/'child.pid'
+    old_executor=local.run_dir/'old.pid'
+    def processor(context):
+        if context.job['id']==first['id']:
+            if not child_path.exists():
+                old_executor.write_text(str(os.getpid()))
+                child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])
+                child_path.write_text(str(child.pid))
+                raise MemoryError('temporary memory shortage')
+            assert not psutil.pid_exists(int(child_path.read_text()))
+            assert not psutil.pid_exists(int(old_executor.read_text()))
+            assert db_module.get_job(second['id'])['state']=='queued'
+        return {'duration':1}
+    original_delay=document.retry_delay
+    monkeypatch.setattr(document,'retry_delay',lambda job,error:.1 if original_delay(job,error) else None)
+    fork=worker_module.multiprocessing.get_context('fork')
+    monkeypatch.setattr(worker_module,'_processor',lambda kind:processor)
+    monkeypatch.setattr(worker_module.multiprocessing,'get_context',lambda method:fork)
+    supervisor=fork.Process(target=worker_module.run,args=('tts',));supervisor.start()
+    try:
+        job=_wait_for_job(first['id'],lambda job:job['state'] in {'succeeded','failed'},timeout=15)
+        assert job['state']=='succeeded',job
+        assert job['attempts']==1
+        assert document_store.sections(first['id'])[0]['retries']==1
+        assert _wait_for_job(second['id'],lambda job:job['state']=='succeeded')['result']['duration']==1
+    finally:
+        supervisor.terminate();supervisor.join(timeout=10)
+        if supervisor.is_alive():supervisor.kill();supervisor.join()

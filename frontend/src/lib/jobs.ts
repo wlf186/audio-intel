@@ -18,8 +18,8 @@ export function visibleWorkspaceJobs<T extends JobSummary>(jobs:readonly T[],sel
  return selected?[...recent,selected]:recent
 }
 
-const stageCodes=new Set(['queued','starting','loading_tts_model','waiting_for_gpu','preparing_voice_clone','synthesis','writing_output','decoding_audio','vad','diarization','transcription','alignment','merging','completed','succeeded','failed','cancelled','cancelling'])
-const unitCodes=new Set(['text_chunk','audio_chunk','codec_frame','output_token','model_layer','item','batch'])
+const stageCodes=new Set(['document_synthesis','document_retry_wait','queued','starting','loading_tts_model','waiting_for_gpu','preparing_voice_clone','synthesis','writing_output','decoding_audio','vad','diarization','transcription','alignment','merging','completed','succeeded','failed','cancelled','cancelling'])
+const unitCodes=new Set(['document_section','text_chunk','audio_chunk','codec_frame','output_token','model_layer','item','batch'])
 
 export function progressPresentation(job:JobSummary,t:TFunction){
  const detail=job.progress_detail

@@ -7,7 +7,7 @@ export default defineConfig({
  reporter:'line',
  outputDir:'/tmp/audio-intel-playwright',
  use:{
-  baseURL:'http://127.0.0.1:20810',
+  baseURL:process.env.AUDIO_INTEL_TEST_BASE_URL||'http://127.0.0.1:20810',
   browserName:'chromium',
   headless:true,
   viewport:{width:1440,height:900},

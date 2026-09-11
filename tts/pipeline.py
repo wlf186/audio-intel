@@ -241,6 +241,9 @@ def encode(path: Path, audio: Any, rate: int, output_format: str) -> Path:
 
 def process_job(context: JobContext) -> dict[str, Any]:
     request = context.job["request"]
+    if request.get("purpose") == "tts_document":
+        from .document import initialize
+        initialize(context)
     if request.get("purpose") == "tts_sequence":
         return _process_sequence_job(context)
     model_definition = resolve_tts_model(request.get("model"))
@@ -265,7 +268,7 @@ def process_job(context: JobContext) -> dict[str, Any]:
         raise ValueError("A voice-design instruction is required")
     request["instruct"] = instruction
     compute_device = request.get("compute_device", "cpu")
-    chunks = split_text(request["text"])
+    chunks = split_text(request["text"]) if request.get("purpose") != "tts_document" else []
     acceleration = resolve_acceleration(
         bool(request.get("accelerate_single_task", False)), compute_device,
         int(model_definition.get("batch_penalty_steps") or 0),
@@ -307,7 +310,7 @@ def process_job(context: JobContext) -> dict[str, Any]:
                     pass
         raise
     finally:
-        if compute_device == "gpu":
+        if compute_device == "gpu" and not settings.mock_mode:
             import torch
             if model is not None:
                 del model
@@ -329,6 +332,9 @@ def _process_loaded(
     checkpoint: dict[str, Any],
 ) -> dict[str, Any]:
     waveforms, rate = [], 24000
+    if request.get("purpose") == "tts_document":
+        from .document import process_loaded
+        return process_loaded(context, request, model, compute_device, acceleration, model_definition, checkpoint)
     clone_prompt = None
     if model is not None and request["voice_mode"] not in {"preset", "voice_design"}:
         context.progress(0.12, "preparing_voice_clone")
@@ -553,7 +559,7 @@ def _process_sequence_job(context: JobContext) -> dict[str, Any]:
                     pass
         raise
     finally:
-        if compute_device == "gpu":
+        if compute_device == "gpu" and not settings.mock_mode:
             import torch
             if model is not None:
                 del model

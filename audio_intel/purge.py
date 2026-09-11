@@ -73,31 +73,36 @@ def purge_jobs(job_ids: list[str], compact: bool = True) -> dict[str, Any]:
 
     for job_id in unique_ids:
         try:
-            job = prepare_job_for_purge(job_id)
-            if job is None:
-                failed.append({"id": job_id, "code": "not_found", "message": "任务不存在"})
-                continue
-            if job["state"] == "running":
-                failed.append({"id": job_id, "code": "running", "message": "运行中的任务不能删除，请先取消并等待任务结束"})
-                continue
-            paths = [
-                _owned_job_path(settings.jobs_dir, job_id),
-                _owned_job_path(settings.temp_dir, job_id),
-            ]
-            reclaimed = sum(allocated_bytes(path) for path in paths)
-            for path in paths:
-                _remove_and_verify(path)
-            request = job.get("request") or {}
-            if request.get("purpose") == "voiceprint_import":
-                sample = get_voiceprint_sample(request.get("voiceprint_sample_id", ""))
-                if sample is not None and sample.get("state") != "ready":
-                    sample_path = Path(sample["audio_path"]).resolve() if sample.get("audio_path") else None
-                    if sample_path and settings.voiceprints_dir.resolve() in sample_path.parents:
-                        _remove_and_verify(sample_path)
-                    delete_voiceprint_sample_record(sample["id"])
-            if not delete_job_record(job_id):
-                raise RuntimeError("任务文件已删除，但数据库记录未能清理；请重试删除")
-            deleted.append({"id": job_id, "reclaimed_bytes": reclaimed})
+            from .document_download import deletion_guard
+            with deletion_guard(job_id) as allowed:
+                if not allowed:
+                    failed.append({"id": job_id, "code": "downloading", "message": "Document audio is being downloaded / 文档音频正在下载"})
+                    continue
+                job = prepare_job_for_purge(job_id)
+                if job is None:
+                    failed.append({"id": job_id, "code": "not_found", "message": "任务不存在"})
+                    continue
+                if job["state"] == "running":
+                    failed.append({"id": job_id, "code": "running", "message": "运行中的任务不能删除，请先取消并等待任务结束"})
+                    continue
+                paths = [
+                    _owned_job_path(settings.jobs_dir, job_id),
+                    _owned_job_path(settings.temp_dir, job_id),
+                ]
+                reclaimed = sum(allocated_bytes(path) for path in paths)
+                for path in paths:
+                    _remove_and_verify(path)
+                request = job.get("request") or {}
+                if request.get("purpose") == "voiceprint_import":
+                    sample = get_voiceprint_sample(request.get("voiceprint_sample_id", ""))
+                    if sample is not None and sample.get("state") != "ready":
+                        sample_path = Path(sample["audio_path"]).resolve() if sample.get("audio_path") else None
+                        if sample_path and settings.voiceprints_dir.resolve() in sample_path.parents:
+                            _remove_and_verify(sample_path)
+                        delete_voiceprint_sample_record(sample["id"])
+                if not delete_job_record(job_id):
+                    raise RuntimeError("任务文件已删除，但数据库记录未能清理；请重试删除")
+                deleted.append({"id": job_id, "reclaimed_bytes": reclaimed})
         except Exception as exc:
             failed.append({"id": job_id, "code": "purge_failed", "message": str(exc)[:500]})
 

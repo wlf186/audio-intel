@@ -22,6 +22,9 @@ import type {
   TtsModelCapability,
   VoiceprintPerson,
 } from '../lib/types'
+import { DocumentInput } from '../components/DocumentInput'
+import { DocumentResults } from '../components/DocumentResults'
+import type { DocumentCapability, DocumentSelection } from '../lib/types'
 import { JobMini } from '../components/JobMini'
 import { AudioTransport } from '../components/AudioTransport'
 import { ResourceStatePanel } from '../components/ResourceStatePanel'
@@ -44,6 +47,7 @@ import { SubmissionProgress } from '../components/SubmissionProgress'
 import { useTranslation } from 'react-i18next'
 
 type Props = {
+  documentCapability?: DocumentCapability
   jobs: JobSummary[]
   jobDetails: Record<string, JobDetailResource>
   loadJobDetail: (job: JobSummary, force?: boolean) => void
@@ -117,6 +121,7 @@ const fallbackTtsModels: TtsModelCapability[] = [{
 const instructionExampleKeys = ['slowSteady','brisk','highPitch','lowGentle','happy','sad','angry'] as const
 
 export function TtsPage({
+  documentCapability,
   jobs,
   jobDetails,
   loadJobDetail,
@@ -138,6 +143,8 @@ export function TtsPage({
   onRevealHandled,
 }: Props) {
   const { t, i18n } = useTranslation()
+  const [inputMode, setInputMode] = useState<'text'|'document'>('text')
+  const [documentSelection, setDocumentSelection] = useState<DocumentSelection>()
   const [preferences, setPreferences] =
     useState<TtsPreferences>(()=>loadTtsPreferences(defaultComputeDevice))
   const [content, setContent] = useState<TtsContent>(()=>loadTtsContent(t('tts.defaultText')))
@@ -205,7 +212,7 @@ export function TtsPage({
     availableTtsModels[0]
   const ttsGpu = selectedTtsModel?.compute_devices.find((item) => item.id === 'gpu')
   const effectiveTtsDevice: ComputeDevice =
-    draft.computeDevice === 'gpu' &&
+    inputMode !== 'document' && draft.computeDevice === 'gpu' &&
     (ttsGpu?.available === false || gpuAvailable === false)
       ? 'cpu'
       : draft.computeDevice
@@ -221,7 +228,7 @@ export function TtsPage({
   const referenceGpu=selectedReferenceModel?.compute_devices.find(item=>item.id==='gpu')
   const effectiveReferenceDevice:ComputeDevice=referenceAsrDevice==='gpu'&&(referenceGpu?.available===false||gpuAvailable===false)?'cpu':referenceAsrDevice
   const referenceBusyReason=referenceUploadProgress?.phase==='creating'?t('tts.reference.creating'):referenceUploadProgress?t('tts.reference.uploading'):t('tts.reference.analyzing')
-  const submitBlockReason=busy?t('tts.validation.submitting'):referenceBusy?referenceBusyReason:!draft.text.trim()?t('tts.validation.textRequired'):!selectedTtsModel?.installed?t('tts.validation.modelMissing'):instructionRequired&&!draft.instruct.trim()?t('tts.validation.instructionRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='upload'&&(!referenceReady||!draft.refText.trim())?t('tts.validation.referenceRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='voiceprint'&&(voiceprintsState!=='ready'||!sample)?t('tts.validation.sampleRequired'):''
+  const submitBlockReason=busy?t('tts.validation.submitting'):referenceBusy?referenceBusyReason:(inputMode==='document'?!documentSelection?.section_ids.length:!draft.text.trim())?t(inputMode==='document'?'document.chooseSections':'tts.validation.textRequired'):!selectedTtsModel?.installed?t('tts.validation.modelMissing'):instructionRequired&&!draft.instruct.trim()?t('tts.validation.instructionRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='upload'&&(!referenceReady||!draft.refText.trim())?t('tts.validation.referenceRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='voiceprint'&&(voiceprintsState!=='ready'||!sample)?t('tts.validation.sampleRequired'):''
 
   useEffect(() => {
     saveTtsContent(content)
@@ -440,8 +447,8 @@ export function TtsPage({
     setNotice(t('tts.notices.referenceCleared'))
   }
   const submit = async () => {
-    if (!draft.text.trim()) {
-      setError(t('tts.validation.textRequired'))
+    if (inputMode==='document'?!documentSelection?.section_ids.length:!draft.text.trim()) {
+      setError(t(inputMode==='document'?'document.chooseSections':'tts.validation.textRequired'))
       return
     }
     if (!selectedTtsModel?.installed) {
@@ -472,11 +479,17 @@ export function TtsPage({
     setError('')
     try {
       const data = new FormData()
-      data.set('text', draft.text)
+      if (inputMode === 'document' && documentSelection) {
+        data.set('document_import_id', documentSelection.importId)
+        data.set('preview_revision', documentSelection.preview_revision)
+        data.set('segmentation_mode', documentSelection.segmentation_mode)
+        data.set('target_section_chars', String(documentSelection.target_section_chars))
+        documentSelection.section_ids.forEach(id=>data.append('section_ids',id))
+      } else data.set('text', draft.text)
       data.set('model', selectedTtsModel.id)
       data.set('language', draft.language)
-      data.set('response_format', 'wav')
-      data.set('display_name', draft.text.slice(0, 18) || t('tts.title'))
+      data.set('response_format', inputMode==='document'?'mp3':'wav')
+      data.set('display_name', inputMode==='document'?documentSelection!.name:draft.text.slice(0, 18) || t('tts.title'))
       data.set('compute_device', effectiveTtsDevice)
       data.set('accelerate_single_task', String(draft.accelerateSingleTask))
       if (draft.mode === 'preset') {
@@ -496,7 +509,7 @@ export function TtsPage({
         data.set('reference_text', draft.refText)
         data.set('reference_language', draft.refLanguage)
       }
-      const job = await api.submitTts(data)
+      const job = await (inputMode==='document'?api.submitTtsDocument(data):api.submitTts(data))
       onJobSubmitted(job)
       setNotice(t('tts.notices.submitted'))
     } catch (cause) {
@@ -506,6 +519,9 @@ export function TtsPage({
     }
   }
   const resetPreferences = () => {
+    sessionStorage.removeItem('audio-intel:document-draft')
+    setDocumentSelection(undefined)
+    setInputMode('text')
     const next = { ...defaultTtsPreferences, computeDevice: defaultComputeDevice }
     clearTtsPreferences()
     saveTtsPreferences(next)
@@ -600,7 +616,11 @@ export function TtsPage({
                 : 'tts-mode-clone'
           }
         >
-          <label className="text-editor">
+          {documentCapability?.supported?<div className="document-input-tabs">
+            <button type="button" aria-pressed={inputMode==='text'} onClick={()=>setInputMode('text')}>{t('document.shortText')}</button>
+            <button type="button" aria-pressed={inputMode==='document'} onClick={()=>setInputMode('document')}>{t('document.document')}</button>
+          </div>:null}
+          {inputMode==='document'&&documentCapability?<DocumentInput capability={documentCapability} onChange={setDocumentSelection}/>:<label className="text-editor">
             {t('tts.text')}
             <textarea
               value={draft.text}
@@ -608,7 +628,7 @@ export function TtsPage({
               onChange={(event) => updateContent('text', event.target.value)}
             />
             <small>{draft.text.length} / 50,000</small>
-          </label>
+          </label>}
           {draft.mode === 'inline_clone' ? (
             <div
               className="clone-source"
@@ -1149,7 +1169,7 @@ export function TtsPage({
               </small>
             ) : (
               <small className="device-hint">
-                {t('tts.computeHelp')}
+                {t(inputMode==='document'?'document.computeHelp':'tts.computeHelp')}
               </small>
             )}
           </label>
@@ -1251,7 +1271,7 @@ export function TtsPage({
                 <small className="tts-result-instruction">{t('tts.results.instruction',{value:selected.result.instruct})}</small>
               ) : null}
             </div>
-            {selected.result.sequence ? (
+            {selected.result.document ? <DocumentResults key={selected.id} jobId={selected.id} result={selected.result.document}/> : selected.result.sequence ? (
               <ol className="tts-sequence-results">
                 {selected.result.sequence.items.map(item => (
                   <li key={item.id}>
@@ -1277,7 +1297,7 @@ export function TtsPage({
                 duration={selected.result.duration}
               />
             ) : null}
-            {!selected.result.sequence && selected.result.artifacts?.[0] ? (
+            {!selected.result.sequence && !selected.result.document && selected.result.artifacts?.[0] ? (
               <a
                 className="button primary"
                 href={artifactUrl(

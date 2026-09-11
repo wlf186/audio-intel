@@ -13,6 +13,7 @@ PUBLIC_DOCS = (
     ROOT / "AGENTS.md",
     ROOT / "CONTRIBUTING.md",
     ROOT / "docs" / "API.md",
+    ROOT / "docs" / "DOCUMENT_TTS.md",
     ROOT / "docs" / "ARCHITECTURE.md",
     ROOT / "docs" / "HTTPS.md",
     ROOT / "docs" / "INSTALL.md",
@@ -139,7 +140,7 @@ def test_deployment_docs_keep_full_and_cpu_profile_contracts() -> None:
     assert "complete executor process tree to exit" in architecture
     assert "2.11.0+cu130（full）" in dependencies
     assert "2.11.0+cpu（CPU-only）" in dependencies
-    assert "SQLite schema v10 data" in agents
+    assert "SQLite schema v11 data" in agents
 
 
 def test_api_markdown_examples_use_public_contract_values() -> None:
@@ -170,3 +171,14 @@ def test_release_docs_require_tag_and_api_version_consistency() -> None:
     assert "frontend/package.json" in contributing
     assert "/api/v1/health" in contributing
     assert "OpenAPI `info.version`" in contributing
+
+
+def test_document_tts_docs_cover_imports_retries_and_streaming():
+    api = (ROOT / "docs/API.md").read_text(encoding="utf-8")
+    architecture = (ROOT / "docs/ARCHITECTURE.md").read_text(encoding="utf-8")
+    upgrade = (ROOT / "docs/UPGRADE.md").read_text(encoding="utf-8")
+    for path in ("/api/v1/tts/document-imports", "/api/v1/tts/document-jobs", "/retry"):
+        assert path in api
+    assert "storage_bytes" in api and "start_offset/end_offset" in api
+    assert "Schema v11" in architecture and "Document imports" in architecture
+    assert "v0.1.11" in upgrade and "sessionStorage" in upgrade

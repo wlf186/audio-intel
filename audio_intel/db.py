@@ -433,6 +433,8 @@ def init_db() -> None:
         else:
             _sync_voiceprint_hotword_lists(db)
         _migrate_voiceprint_names(db)
+        from .document_store import migrate
+        migrate(db)
         db.execute(
             """CREATE TABLE IF NOT EXISTS queue_sequence (
                singleton INTEGER PRIMARY KEY CHECK(singleton=1),value INTEGER NOT NULL)"""
@@ -1005,6 +1007,7 @@ def retry_job(job_id: str) -> dict[str, Any] | None:
                queue_seq=?,updated_at=? WHERE id=? AND state IN ('failed','cancelled')""",
             (_next_queue_seq(db), utcnow(), job_id),
         )
+        db.execute("UPDATE document_sections SET retries=0 WHERE job_id=? AND state!='complete'", (job_id,))
         db.execute("COMMIT")
     return get_job(job_id)
 
@@ -1071,6 +1074,20 @@ def compact_database() -> None:
 def recover_stale(kind: str) -> int:
     now = utcnow()
     with connect() as db:
+        documents = db.execute("SELECT id,cancel_requested FROM jobs WHERE kind=? AND state='running' AND json_extract(request_json,'$.purpose')='tts_document'", (kind,)).fetchall()
+        for document in documents:
+            from .document_store import clean_partials
+            clean_partials(document["id"], settings.jobs_dir)
+            state = "cancelled" if document["cancel_requested"] else "failed"
+            db.execute("""UPDATE jobs SET processing_seconds=processing_seconds+
+                CASE WHEN started_at IS NULL THEN 0 ELSE MAX(0,
+                (julianday(COALESCE(heartbeat_at,updated_at))-julianday(started_at))*86400) END,
+                state=?,stage=?,stage_code=?,finished_at=?,updated_at=?,
+                error_code='DocumentInterrupted',error_message='Service interrupted; continue to reuse completed sections',
+                worker_id=NULL,heartbeat_at=NULL WHERE id=?""", (state, state, state, now, now, document["id"]))
+            db.execute("""UPDATE job_stage_timings SET finished_at=?,
+                duration_seconds=MAX(0,(julianday(?)-julianday(started_at))*86400)
+                WHERE job_id=? AND finished_at IS NULL""", (now, now, document["id"]))
         cursor = db.execute(
             """UPDATE jobs SET processing_seconds=processing_seconds+
                CASE WHEN started_at IS NULL THEN 0 ELSE MAX(0,
@@ -1080,7 +1097,7 @@ def recover_stale(kind: str) -> int:
             "WHERE kind=? AND state='running'",
             (now, kind),
         )
-        return cursor.rowcount
+        return cursor.rowcount + len(documents)
 
 
 def upsert_worker(worker_id: str, kind: str, pid: int, state: str, current_job_id: str | None = None, details: dict[str, Any] | None = None) -> None:

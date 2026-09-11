@@ -160,3 +160,14 @@ Schema v10 identifies people by stable IDs with a unique normalized `(name_key, 
 System full-name and surname-free lists deduplicate names independently of people. One person's removal or opt-out cannot remove another opted-in person's shared term. Neither notes nor sample names become ASR hotwords.
 
 TTS requests snapshot person names, notes, and sample names with reference audio. Same-request replays compare normalized caller parameters and sample IDs against the accepted request, including older idempotency records, instead of mutable library names or `updated_at`. Renaming changes metadata only; it neither modifies the audio pipeline nor rewrites historical jobs or sequence contract v1 results.
+
+
+## Document imports and long TTS
+
+Schema v11 adds `document_imports` and `document_sections` without replacing historical task, library or idempotency data. The API runtime owns a serial, offline parser child with a time/RSS limit; its five queued/running slots include uploads still being received. Authentication, idempotency validation, shared submission concurrency and cumulative disk reservations run before receiving new uploads. Files stream to a caller-owned partial source on the data volume and are atomically renamed. Identical replays hash without another file or parser slot. Source archives have independent expanded-size and member limits; Office dependencies stay in the API environment.
+
+A ready import holds canonical text and structural metadata. Versioned previews partition it without dropping characters; blank-only intervals merge into adjacent spoken text. Snapshot copies serialize with import deletion. Document jobs enter the normal TTS queue with independent source/text/section snapshots and one common voice configuration. Incremental MP3 encoding bounds waveform memory; per-section hashes and checkpoints preserve completed work across cancellation and retry. The existing executor process-tree retirement contract remains authoritative.
+
+Global job lists/SSE remain summary-only. Typed per-document APIs expose paginated stable section metadata and lazy text. Imports are retained until manual deletion; browser sessionStorage stores a versioned selection draft, including explicit empty selections, not the document text. Language changes do not reload or reset the draft. The import manager UI supports reuse, parser retry and deletion.
+
+ZIP_STORED ZIP64 export and packet-remuxed complete MP3 run on demand with bounded chunks and backpressure. Export files are not persisted. Download leases limit concurrency and exclude task purge; disconnects close iterators and release leases. Native browser downloads use same-origin hidden frames so structured pre-stream failures stay in the app; a begun transfer is owned by the browser download manager. No complete-file Blob is created.

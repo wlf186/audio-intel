@@ -130,6 +130,13 @@ def _run_one_job(
         # every stage child have exited.
         state = "cancelled"
     except Exception as exc:
+        if job["request"].get("purpose") == "tts_document":
+            from tts.document import retry_delay
+            delay = retry_delay(job, exc)
+            if delay is not None:
+                update_job(job_id, stage="document_retry_wait", stage_code="document_retry_wait",
+                           error_code=type(exc).__name__, error_message=f"Automatic retry in {delay}s: {str(exc)[:1000]}")
+                return {"state": "retrying", "recycle_reason": "document_resource_retry", "retry_delay": str(delay)}
         marked_reason = getattr(exc, EXECUTOR_RECYCLE_ATTRIBUTE, None)
         if isinstance(marked_reason, str) and marked_reason:
             recycle_reason = marked_reason
@@ -293,6 +300,8 @@ def _forced_cancel(job: dict[str, Any]) -> None:
     message = "Job cancelled after the execution process tree stopped"
     _fail_voiceprint_import(current, message)
     shutil.rmtree(settings.temp_dir / job["id"], ignore_errors=True)
+    from .document_store import clean_partials
+    clean_partials(job["id"], settings.jobs_dir)
     finish_job(
         job["id"], "cancelled", stage="cancelled", error_code="cancelled",
         error_message=message, heartbeat_at=utcnow(),
@@ -345,6 +354,8 @@ def run(kind: str) -> None:
         while not stop:
             if not process.is_alive():
                 if current_job is not None:
+                    from .document_store import clean_partials
+                    clean_partials(current_job["id"], settings.jobs_dir)
                     current = get_job(current_job["id"])
                     if current and current["state"] == "running":
                         if current.get("cancel_requested"):
@@ -403,6 +414,30 @@ def run(kind: str) -> None:
                 except EOFError:
                     continue
                 if completed.get("job_id") == current_job["id"]:
+                    if completed.get("state") == "retrying":
+                        _retire_executor(kind, process, connection)
+                        from .document_store import clean_partials
+                        clean_partials(current_job["id"], settings.jobs_dir)
+                        deadline = time.monotonic() + float(completed["retry_delay"])
+                        while not stop and time.monotonic() < deadline:
+                            current = get_job(current_job["id"])
+                            if current is None or current.get("cancel_requested"):
+                                if current:
+                                    _forced_cancel(current)
+                                current_job = None
+                                break
+                            touch_job_heartbeat(current_job["id"])
+                            time.sleep(min(.25, max(0, deadline - time.monotonic())))
+                        if stop:
+                            break
+                        process, connection = _spawn_executor(kind, worker_id, worker_pid)
+                        executor_dirty = False
+                        idle_since = None
+                        upsert_worker(worker_id, kind, worker_pid, "running" if current_job else "idle", current_job["id"] if current_job else None, details={"executor_pid": process.pid})
+                        if current_job is not None:
+                            update_job(current_job["id"], error_code=None, error_message=None)
+                            connection.send(current_job["id"])
+                        continue
                     if completed.get("state") == "cancelled":
                         _complete_cancelled_executor(kind, process, connection, current_job)
                         process, connection = _spawn_executor(kind, worker_id, worker_pid)

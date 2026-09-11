@@ -113,12 +113,16 @@ def _cohort(job: dict[str, Any]) -> tuple[Any, ...]:
             model["public_id"], bool(request.get("diarize")), bool(request.get("align")),
         )
     model = resolve_tts_model(request.get("model")) or default_tts_model()
+    if request.get("purpose") == "tts_document":
+        return common + (model["public_id"], request.get("voice_mode", "preset"), "document")
     return common + (model["public_id"], request.get("voice_mode", "preset"))
 
 
 def _input_units(job: dict[str, Any]) -> float | None:
     request = job.get("request") or {}
     if job.get("kind") == "tts":
+        if request.get("purpose") == "tts_document":
+            return float(request["document"]["total_chars"])
         text = str(request.get("text") or "")
         if request.get("purpose") == "tts_sequence":
             text = "".join(str(item.get("text") or "") for item in request.get("sequence_items") or [])

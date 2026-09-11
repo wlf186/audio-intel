@@ -230,7 +230,7 @@ def test_v9_migration_preserves_library_numbering_and_history(local):
     assert db.get_voiceprint_sample(samples[2]['id'])['name'] == '样本 1'
     with db.connect() as connection:
         assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 10
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 11
         assert connection.execute('SELECT person_id FROM voiceprint_aliases WHERE alias_id=?',(person['id'],)).fetchone()[0] == person['id']
 
 

@@ -33,6 +33,8 @@ The following submission endpoints require an `Idempotency-Key` header containin
 - `POST /api/v1/tts/clone-references`
 - `POST /api/v1/tts/jobs`
 - `POST /api/v1/tts/sequence-jobs`
+- `POST /api/v1/tts/document-imports` (returns a parser import, not an inference job)
+- `POST /api/v1/tts/document-jobs`
 - `POST /api/v1/voiceprints/people/{person_id}/samples/upload`
 
 Generate one key per logical submission and reuse it after timeouts, disconnects, or `429` responses:
@@ -321,3 +323,16 @@ curl --fail-with-body -sS -X PATCH -H "Authorization: Bearer $AUDIO_INTEL_API_KE
 TTS cloning selects a stable sample ID. New single and sequence requests snapshot `voiceprint_person_name`, `voiceprint_person_note`, and `voiceprint_sample_name` (inside `voiceprint_references` for sequences). Renaming the library does not rewrite accepted jobs or invalidate same-request idempotent replay. Failed/cancelled retries use the complete persisted request. Legacy `POST /api/v1/tts/voices` returns `409` when a name matches multiple people; use the native voiceprint endpoints with an explicit person ID instead.
 
 The clone-reference limit comes from `limits.max_clone_reference_seconds` (currently 15). Long references use the beginning through the last complete word within that limit, leaving the original sample intact. Before submission, the UI displays the limit; after a single clone completes, `reference_duration_original` and `reference_duration_used` provide measured seconds, and `reference_truncated` indicates truncation. Missing historical durations remain unknown. Ordered sequence results retain contract v1.
+
+
+## Document TTS
+
+Use [Document TTS](DOCUMENT_TTS.md) for EPUB, TXT, Markdown, text PDF, DOCX, XLSX and PPTX. Upload a document, poll its import to `ready`, request a segmentation preview, then submit its revision and selected IDs to `/api/v1/tts/document-jobs`. This accepts up to the capability-advertised section count (2,000 by default) with either multipart or URL-encoded forms. Ordinary TTS retains its 50,000-character limit.
+
+Imports are retained until explicitly deleted. `GET /api/v1/tts/document-imports?offset=0&limit=20` preserves the array response and includes `size_bytes` (source) and `storage_bytes` (source, parsed text and log). Omit pagination to list all imports. Reuse an existing ready import without uploading again. `DELETE .../{identifier}` rejects active parsing or snapshot copying with 409 and does not remove already submitted jobs.
+
+`POST /api/v1/tts/document-imports/{identifier}/retry` requeues only a failed parser import using the saved file (202; 409 if no longer failed or source missing). It shares upload/parse admission (429 with Retry-After), needs no Idempotency-Key, and never silently retries a malformed document. Uploads authenticate and reserve capacity before reading the body, stream directly to a temporary source, and remove partial files on failure. Same-key upload retries validate the complete file hash and reuse the original import.
+
+The typed section response is stable before and after executor initialization: `index` is the original document section number, `position` is the selected job order, `start/end` and their `start_offset/end_offset` aliases address the canonical text. `char_count`, `basis`, optional page bounds, `state`, `retries`, `artifact` and `updated_at` are always represented. Whitespace-only sections are merged losslessly; affected old previews return 409 on submission and must be reviewed again. Persisted job snapshots remain unchanged.
+
+ZIP and complete MP3 downloads are streamed without stored exports. Handle 401/404/409/429 before consuming the body and honor `Retry-After` (also `retry_after_seconds` in problem JSON). After the response has begun, transport failures terminate the download; retry from the beginning. The browser UI retains the page on an error and delegates large downloads to the browser download manager without a whole-file Blob.

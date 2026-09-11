@@ -1,0 +1,178 @@
+import {test,expect} from '@playwright/test'
+
+if(process.env.DOCUMENT_TEST_URL)test.use({baseURL:process.env.DOCUMENT_TEST_URL})
+
+test('document upload, lossless preview, reselection and streaming result links',async({page})=>{
+ test.setTimeout(90000)
+ const errors:string[]=[]
+ page.on('pageerror',e=>errors.push(e.message))
+ page.on('console',m=>{if(m.type()==='error')errors.push(m.text())})
+ await page.addInitScript(()=>{if(window.top===window){localStorage.clear();sessionStorage.clear()}})
+ await page.goto('/#tts')
+ await page.getByRole('button',{name:'上传文档',exact:true}).click()
+ await page.locator('.document-input input[type=file]').setInputFiles({name:'document-e2e.md',mimeType:'text/markdown',buffer:Buffer.from('# 第一章\n\n'+('这是正文。\n\n'.repeat(400))+'# 第二章\n\n这是结尾。')})
+ await expect(page.locator('.document-sections li')).toHaveCount(2)
+ await page.locator('.document-sections li').first().getByRole('button',{name:'预览正文'}).click()
+ await expect(page.locator('.document-text-preview pre')).toContainText('这是正文')
+ await page.locator('.document-controls select').selectOption('length')
+ await page.getByLabel('目标分段字数').fill('1000')
+ await page.getByRole('button',{name:'重新分段',exact:true}).click()
+ await expect(page.locator('.document-sections li')).toHaveCount(3)
+ await page.locator('.document-select-all input').uncheck()
+ await page.locator('.document-sections li input').first().check()
+ await expect(page.getByText(/已选 1 段/)).toBeVisible()
+ await page.screenshot({path:'/tmp/document-desktop.png',fullPage:true})
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ for(const control of await page.locator('.document-input button:visible').all()){
+  const box=await control.boundingBox();expect(box!.height).toBeGreaterThanOrEqual(44)
+ }
+ await page.screenshot({path:'/tmp/document-mobile.png',fullPage:true})
+ const response=page.waitForResponse(r=>r.url().endsWith('/api/v1/tts/document-jobs')&&r.request().method()==='POST')
+ await page.getByRole('button',{name:/生成语音|开始合成/}).click()
+ const accepted=await response
+ expect(accepted.status()).toBe(202)
+ const job=await accepted.json()
+ await expect.poll(async()=>{const r=await page.request.get('/api/v1/jobs/'+job.id);return (await r.json()).state},{timeout:60000}).toBe('succeeded')
+ await expect(page.getByRole('link',{name:'下载分段 ZIP'})).toBeVisible({timeout:15000})
+ await expect(page.getByRole('link',{name:'下载完整 MP3'})).toHaveAttribute('href',`/api/v1/jobs/${job.id}/document/download?mode=complete`)
+ expect(await page.locator('.document-results audio').count()).toBe(1)
+ await page.locator('.document-results .round').click()
+ await expect.poll(()=>page.locator('.document-results audio').evaluate((audio:HTMLAudioElement)=>audio.paused)).toBe(false)
+ await page.locator('.document-results .round').click()
+ const download=page.waitForEvent('download')
+ await page.getByRole('link',{name:'下载分段 ZIP'}).click()
+ const zip=await download
+ expect(await zip.failure()).toBeNull()
+ expect(zip.suggestedFilename()).toMatch(/\.zip$/)
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ const draft=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('audio-intel:document-draft')||'{}'))
+ expect(draft.section_ids).toHaveLength(1)
+ expect(draft.text).toBeUndefined()
+ expect(errors).toEqual([])
+ await page.route('**/document/download?mode=complete',route=>route.fulfill({status:429,contentType:'application/problem+json',json:{status:429,detail:'Download capacity reached',retry_after_seconds:5}}))
+ await page.getByRole('link',{name:'下载完整 MP3'}).click()
+ await expect(page.locator('.document-results [role=alert]')).toContainText('Download capacity reached')
+ await expect(page).toHaveURL(/\/#tts$/)
+ expect(await page.locator('.document-results audio').count()).toBe(1)
+})
+
+// Supplied documents stay local; synthetic format/API fixtures run in pytest.
+for(const extension of ['md','pdf','docx','xlsx','pptx']){
+ test(`office sample ${extension}: upload, preview and mobile warnings`,async({page})=>{
+  test.skip(!process.env.OFFICE_SAMPLE_DIR,'Set OFFICE_SAMPLE_DIR to validate local office samples')
+  const {readdirSync}=await import('node:fs')
+  const {join}=await import('node:path')
+  const folder=process.env.OFFICE_SAMPLE_DIR!
+  const file=readdirSync(folder).find(name=>name.endsWith('.'+extension))!
+  const errors:string[]=[]
+  page.on('pageerror',error=>errors.push(error.message))
+  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+  await page.addInitScript(()=>{if(window.top===window){localStorage.clear();sessionStorage.clear()}})
+  await page.goto('/#tts')
+  await expect(page).toHaveTitle('语音合成 · Sandevistan-Audio')
+  await expect(page).toHaveURL(/\/#tts$/)
+  await expect(page.locator('vite-error-overlay')).toHaveCount(0)
+  await page.getByRole('button',{name:'上传文档',exact:true}).click()
+  const input=page.locator('.document-input input[type=file]')
+  for(const format of ['.docx','.xlsx','.pptx'])expect(await input.getAttribute('accept')).toContain(format)
+  await input.setInputFiles(join(folder,file))
+  await expect(page.locator('.document-sections li').first()).toBeVisible({timeout:20000})
+  if(extension==='xlsx'){
+   await expect(page.locator('.document-sections li')).toHaveCount(10)
+   await page.locator('.document-sections li').nth(1).getByRole('button',{name:'预览正文'}).click()
+   await expect(page.locator('.document-text-preview pre')).toContainText('本周涨跌：-0.23%')
+   await expect(page.locator('.document-sections li').first()).toContainText('工作表')
+  }else{
+   await page.locator('.document-sections li').first().getByRole('button',{name:'预览正文'}).click()
+   await expect(page.locator('.document-text-preview pre')).not.toBeEmpty()
+   await page.locator('.document-input details summary').click()
+   await expect(page.locator('.document-input details')).toHaveAttribute('open','')
+  }
+  if(extension==='pptx'){
+   await expect(page.locator('.document-sections li')).toHaveCount(12)
+   await expect(page.locator('.document-input details')).toContainText('Slide 2')
+   await expect(page.locator('.document-sections li').first()).toContainText('幻灯片')
+  }
+  await page.screenshot({path:`/tmp/office-${extension}-desktop.png`,fullPage:true})
+  await page.setViewportSize({width:390,height:844})
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  for(const button of await page.locator('.document-input button:visible').all())expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+  await page.screenshot({path:`/tmp/office-${extension}-mobile.png`,fullPage:true})
+  expect(errors).toEqual([])
+ })
+}
+
+test('document draft keeps empty selection on reload and settings on locale changes',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.goto('/#tts')
+ await page.getByRole('button',{name:'上传文档',exact:true}).click()
+ await page.locator('.document-input input[type=file]').setInputFiles({name:'draft.md',mimeType:'text/markdown',buffer:Buffer.from('# One\n\n'+('正文。\n\n'.repeat(600))+'# Two\n\n尾声。')})
+ await expect(page.locator('.document-sections li')).toHaveCount(2)
+ await page.locator('.document-controls select').selectOption('length')
+ await page.getByLabel('目标分段字数').fill('1000')
+ await page.getByRole('button',{name:'重新分段',exact:true}).click()
+ await expect(page.locator('.document-sections li')).toHaveCount(3)
+ await page.locator('.document-select-all input').uncheck()
+ await expect(page.getByText(/已选 0 段/)).toBeVisible()
+ await page.reload()
+ await page.getByRole('button',{name:'上传文档',exact:true}).click()
+ await expect(page.getByText(/已选 0 段/)).toBeVisible()
+ await expect(page.locator('.document-controls select')).toHaveValue('length')
+ await expect(page.getByLabel('目标分段字数')).toHaveValue('1000')
+ await page.locator('.document-sections li input').first().check()
+ await page.locator('.language-switcher select:visible').first().selectOption('en-US')
+ await expect(page.locator('.document-sections li input:checked')).toHaveCount(1)
+ await expect(page.locator('.document-controls select')).toHaveValue('length')
+ await expect(page.locator('.document-controls input')).toHaveValue('1000')
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/document-draft-fixed-mobile.png',fullPage:true})
+ expect(errors).toEqual([])
+})
+
+test('upload retry reuses the request and failed parsing calls retry API; imports can be reused and removed',async({page})=>{
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ const keys:string[]=[]
+ await page.route('**/api/v1/tts/document-imports',async route=>{
+  if(route.request().method()!=='POST'){await route.continue();return}
+  keys.push(route.request().headers()['idempotency-key'])
+  if(keys.length===1){await route.abort('failed');return}
+  await route.continue()
+ })
+ await page.goto('/#tts')
+ await page.getByRole('button',{name:'上传文档',exact:true}).click()
+ await page.locator('.document-input input[type=file]').setInputFiles({name:'retry.md',mimeType:'text/markdown',buffer:Buffer.from('# First\n\n正文。\n\n# Last\n\n尾声。')})
+ await expect(page.locator('.document-input [role=alert]')).toBeVisible()
+ await page.locator('.document-input [role=alert]').getByRole('button',{name:'重试',exact:true}).click()
+ await expect(page.locator('.document-sections li')).toHaveCount(2)
+ expect(keys).toHaveLength(2);expect(keys[1]).toBe(keys[0])
+ const draft=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('audio-intel:document-draft')!))
+ let parseRetries=0
+ await page.route(`**/api/v1/tts/document-imports/${draft.importId}`,async route=>{
+  if(route.request().method()!=='GET'){await route.continue();return}
+  const response=await route.fetch();const item=await response.json()
+  await route.fulfill({response,json:parseRetries?item:{...item,state:'failed',error:'temporary parser failure'}})
+ })
+ await page.route(`**/api/v1/tts/document-imports/${draft.importId}/retry`,async route=>{parseRetries++;await route.fulfill({status:202,json:{id:draft.importId,state:'queued'}})})
+ await page.reload();await page.getByRole('button',{name:'上传文档',exact:true}).click()
+ await expect(page.locator('.document-input [role=alert]')).toContainText('temporary parser failure')
+ await page.locator('.document-input [role=alert]').getByRole('button',{name:'重试',exact:true}).click()
+ await expect(page.locator('.document-sections li')).toHaveCount(2);expect(parseRetries).toBe(1)
+ await page.getByRole('button',{name:'管理导入文档',exact:true}).click()
+ const row=page.locator('.document-library li').filter({hasText:'retry.md'}).first()
+ await row.getByRole('button',{name:'使用此文档'}).click()
+ await expect(page.locator('.document-sections li')).toHaveCount(2)
+ await page.getByRole('button',{name:'管理导入文档',exact:true}).click()
+ await page.setViewportSize({width:390,height:844})
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/document-library-mobile.png',fullPage:true})
+ await row.getByRole('button',{name:'移除文档'}).click()
+ await page.getByRole('dialog').getByRole('button',{name:'移除文档',exact:true}).click()
+ await expect(page.getByRole('dialog')).toHaveCount(0)
+ await expect(page.locator('.document-sections li')).toHaveCount(0)
+ expect(errors).toEqual([])
+})

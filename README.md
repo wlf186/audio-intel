@@ -173,7 +173,7 @@ The default-on single-task acceleration increases internal batch sizes according
 
 ## API and integrations
 
-The five native asynchronous submission surfaces—ASR, single-item TTS, ordered TTS sequences, clone-reference analysis, and voiceprint sample upload—require an 8–128 character `Idempotency-Key`. First acceptance returns `202`; a same-request replay returns `200`; reusing a key with different input returns `409`. Sequence jobs load one model for up to 100 ordered items and return one WAV artifact per item; discover the exact limits at `tts.sequence_jobs`.
+The seven native asynchronous submission surfaces—ASR, single-item TTS, ordered TTS sequences, clone-reference analysis, voiceprint sample upload, document import, and document TTS—require an 8–128 character `Idempotency-Key`. First acceptance returns `202`; a same-request replay returns `200`; reusing a key with different input returns `409`. Sequence jobs load one model for up to 100 ordered items and return one WAV artifact per item; discover the exact limits at `tts.sequence_jobs`.
 
 Minimal native ASR submission using the CPU path:
 
@@ -242,3 +242,5 @@ Models, task inputs, generated outputs, the SQLite database, voices, voiceprints
 ## License
 
 Project-owned code is licensed under the [Apache License 2.0](LICENSE). Downloaded model weights are not included in the repository and remain subject to their upstream licenses; see [third-party and model notices](THIRD_PARTY_NOTICES.md). The code license does not grant rights to third-party names or intellectual property; see the [brand and project status notice](BRAND_NOTICE.md).
+
+文档整篇 TTS（EPUB / TXT / Markdown / PDF / DOCX / XLSX / PPTX）、分段恢复和流式下载见 [文档 TTS](docs/DOCUMENT_TTS.md)。

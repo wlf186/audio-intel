@@ -245,6 +245,7 @@ class AsrCapability(PublicModel):
 
 
 class TtsCapability(PublicModel):
+    document_jobs: dict[str, Any] = Field(default_factory=dict)
     models: list[str] = Field(
         description="旧客户端兼容的实际 checkpoint 名称列表；新客户端使用 model_capabilities[] / Physical checkpoint names retained for compatibility; new clients should use model_capabilities[]",
     )
@@ -528,6 +529,7 @@ class TtsSequenceResult(PublicModel):
 
 
 class JobResultResponse(PublicModel):
+    document: dict[str, Any] | None = None
     text: str | None = None
     language: str | None = None
     duration: float | None = None
@@ -611,6 +613,7 @@ class JobEstimate(PublicModel):
 
 
 class JobSummaryResponse(PublicModel):
+    purpose: str | None = None
     id: str
     kind: JobKind
     state: JobState
