@@ -93,3 +93,9 @@ Tests used isolated data/service instances on ports 20811 and 20812. The normal 
 Candidate CI exposed two additional platform differences before tagging: Windows requires a writable descriptor for MP3 checkpoint `fsync`, and a document page on a GPU-less host must share the ordinary TTS page's visible CPU selection and explanation. These are corrected; explicit unavailable-GPU API requests still return 503. Chinese text fixtures now always specify UTF-8. The session-expiry browser check waits for the ready sample to render before advancing its virtual polling clock.
 
 The follow-up document/Office backend run passed 48 tests, including an emulation of Windows' writable-descriptor requirement. The focused device/session browser checks passed, and real GPU synthesis after the checkpoint fix succeeded. Additional checks completed full mock synthesis and decoded both download modes for all five Office samples, real inline-clone document synthesis, and real ASR GPU cancellation with complete process-tree exit followed by another successful task under the same supervisor.
+
+## v0.1.12 release follow-up — 2026-09-11
+
+The final full local browser run passed **61/61**, including the Office samples and recovery from an initial structural preview exceeding the section limit. The document/Office backend run passed **48/48**.
+
+The v0.1.11 tag passed Linux CI but failed one native Windows browser assertion: the session-expiry test's virtual clock continued advancing during initial page rendering. That tag is retained without a GitHub Release. The test now pauses the clock before navigation and advances polling explicitly. It passed ten repeated local runs, and both main workflows passed for fix commit `518d216cc080584a0412825e0efcc39e80b86cd7`. The user selected v0.1.12 for the new release candidate; its exact main and tag commits must pass both workflows before publication.

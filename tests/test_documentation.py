@@ -181,4 +181,4 @@ def test_document_tts_docs_cover_imports_retries_and_streaming():
         assert path in api
     assert "storage_bytes" in api and "start_offset/end_offset" in api
     assert "Schema v11" in architecture and "Document imports" in architecture
-    assert "v0.1.11" in upgrade and "sessionStorage" in upgrade
+    assert "v0.1.12" in upgrade and "sessionStorage" in upgrade
