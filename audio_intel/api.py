@@ -100,6 +100,7 @@ from .api_docs import (
     enrich_openapi_schema,
 )
 from .api_models import (
+    ArtifactWaveformResponse,
     AdmissionProblemDetail, AuthSessionResponse, BatchDeleteResponse, CapabilitiesResponse,
     EventJobResponse, EventSnapshot, EventUpdate,
     HealthResponse, JobListResponse, JobResponse, JobResultResponse, OpenAIModelList, QueueResponse,
@@ -2484,6 +2485,46 @@ def create_app() -> FastAPI:
         if settings.jobs_dir not in path.parents or not path.is_file():
             raise HTTPException(status_code=404, detail="Artifact file is missing")
         return FileResponse(path, media_type=item.get("mime_type") or mimetypes.guess_type(path.name)[0], filename=path.name)
+
+    @app.get(
+        "/api/v1/jobs/{job_id}/artifacts/{name}/waveform",
+        response_model=ArtifactWaveformResponse, tags=[JOB_TAG],
+        summary="读取音频波形 / Get audio waveform",
+        description=bilingual(
+            "读取成功任务音频的最多 240 个均匀时间峰值。新音频预先计算，历史音频按需流式补算并缓存；繁忙时返回 429 和 Retry-After。",
+            "Read up to 240 uniformly timed peaks for a successful audio artifact. New audio is precomputed; historical audio is decoded incrementally and cached on demand. Busy responses return 429 with Retry-After."),
+        operation_id="getArtifactWaveform",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE,
+                   **VALIDATION_RESPONSE,
+                   415: problem_response("产物不是支持的音频 / Unsupported audio artifact", 415),
+                   429: {**problem_response("波形计算繁忙 / Waveform calculation busy", 429),
+                         "headers": {"Retry-After": {"schema": {"type": "integer"}}}}},
+    )
+    def artifact_waveform(job_id: str, name: str, _: None = Depends(require_api_key)) -> dict[str, Any]:
+        from .document_download import reader_lease
+        from .waveforms import WaveformBusy, retrieve
+        try:
+            with reader_lease(job_id):
+                job = job_or_404(job_id)
+                if job["state"] != "succeeded":
+                    raise HTTPException(409, "Job has not completed successfully")
+                item = next((a for a in (job.get("result") or {}).get("artifacts", []) if a.get("name") == name), None)
+                if item is None:
+                    raise HTTPException(404, "Artifact not found")
+                path = Path(item["path"]).resolve()
+                root = (settings.jobs_dir / job_id / "output").resolve()
+                if root != settings.jobs_dir.resolve() / job_id / "output" or path.parent != root or not path.is_file():
+                    raise HTTPException(404, "Artifact file is missing")
+                if path.suffix.lower() not in {".wav", ".mp3", ".flac"}:
+                    raise HTTPException(415, "Unsupported audio artifact")
+                try:
+                    return retrieve(path)
+                except WaveformBusy:
+                    raise HTTPException(429, "Waveform calculation busy", headers={"Retry-After": "2"}) from None
+                except (ValueError, OSError):
+                    raise HTTPException(422, "Audio waveform could not be decoded") from None
+        except FileNotFoundError:
+            raise HTTPException(404, "Artifact file is missing") from None
 
     @app.patch(
         "/api/v1/jobs/{job_id}/speakers/{speaker_id}", response_model=JobResultResponse,

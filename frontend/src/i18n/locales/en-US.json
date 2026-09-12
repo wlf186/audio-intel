@@ -226,7 +226,10 @@
     "validation": {"listLimit": "You can create at most {{count}} custom vocabularies. Delete an existing vocabulary before creating another.", "required": "Enter a scenario name and at least one hotword.", "nameLength": "The scenario name cannot exceed {{count}} characters.", "invalidTerm": "The hotword “{{term}}” is invalid. A hotword cannot exceed {{count}} characters or contain control characters.", "termLimit": "A vocabulary can contain at most {{count}} hotwords."}
   },
   "submission": {"preparing": "Preparing to upload {{label}}", "uploading": "Uploading {{label}}", "creating": "{{label}} uploaded; creating the task", "sent": "{{size}} sent", "status": "{{label}} submission status", "progress": "{{label}} upload progress", "serverCreating": "Upload complete; the server is creating the task", "preparingGeneric": "Preparing upload", "keepOpen": "The server is validating and persisting the file before adding the task to the queue. Keep this page open.", "connecting": "Establishing the upload connection…", "cancel": "Cancel upload"},
-  "audio": {"pauseSynthesis": "Pause the current synthesis result", "playSynthesis": "Play the current synthesis result", "playbackError": "This browser cannot play the audio encoding.", "position": "Audio playback position", "waveform": "Audio waveform", "noWaveform": "No waveform data"},
+  "audio": {"pauseSynthesis": "Pause the current synthesis result", "playSynthesis": "Play the current synthesis result", "playbackError": "This browser cannot play the audio encoding.", "position": "Audio playback position", "waveform": "Audio waveform", "noWaveform": "No waveform data",
+    "waveformLoading": "Loading waveform…",
+    "waveformError": "Waveform unavailable. Audio can still play.",
+    "retryWaveform": "Retry waveform"},
   "recorder": {"unsupportedEnvironment": "Browser recording is not supported in this environment.", "secureContext": "Microphone recording requires localhost, 127.0.0.1, or HTTPS. You can still upload an audio file.", "unsupportedBrowser": "This browser does not support microphone recording. You can still upload an audio file.", "permissionDenied": "Microphone permission was denied. Allow microphone access in the browser site settings and try again.", "notFound": "No microphone was detected. Connect a device and try again.", "notReadable": "The microphone is temporarily unavailable and may be in use by another application.", "startFailedDetail": "Could not start recording: {{message}}", "startFailed": "Could not start recording. Check the microphone and try again.", "recordingFailed": "An error occurred while recording. Record the audio again.", "empty": "No valid audio was captured. Record the audio again."},
   "voiceprints": {
     "hotwordIncludedLabel":"Included in name hotwords","hotwordExcludedLabel":"Not included in name hotwords","shortRecordingWarning":"Recording is under 5 seconds; a longer sample is recommended.",
@@ -242,7 +245,28 @@
     "submit":{"creating":"Creating task…","uploading":"Uploading {{percent}}%","preparing":"Preparing upload…","start":"Start transcription"},"notices":{"submitted":"Task submitted. Track progress in Task history.","uploadCancelled":"Upload cancelled; the selected file is preserved for resubmission.","renamed":"Renamed {{from}} to {{to}}","addedToVoiceprints":"Selected segments were added to the voiceprint library."},
     "segment":{"select":"Select segment {{number}}","renameNamed":"Rename speaker {{name}}","renameHelp":"Rename this speaker within the current task","collapseWords":"Hide word timestamps","viewWords":"View {{count}} word timestamps","play":"Play segment {{number}}"},
     "results":{"loading":"Loading transcript","loadingHelp":"The task summary is ready; loading the full result on demand.","loadFailed":"Could not load transcript","tryLater":"Try again later.","downloadNamed":"Download {{name}}","playbackError":"This browser cannot play this audio encoding. Download the source file to play it.","pause":"Pause","play":"Play","wordAlignment":"Word-level alignment","segmentTimestamps":"Segment timestamps","alignmentDowngraded":"Detected {{language}}; word-level alignment is unavailable for this language, so segment timestamps were returned.","downloadSource":"Download source file","search":"Search transcript","filterSpeaker":"Filter by speaker","allSpeakers":"All speakers","segmentSummary":"Showing {{visible}} / {{matches}} matching / {{total}} total","selectionActions":"Segment selection actions","selectedSegments":"{{count}} {{speaker}} segments selected","addToVoiceprints":"Add to voiceprint library","clearSelection":"Clear segment selection","matchSummary":"Showing {{visible}} / {{total}} matching segments","loadMore":"Load more","noMatches":"No matching transcript segments","empty":"No transcript yet","emptyHelp":"Upload audio and start a task on the left; the result will appear here when processing completes."},
-    "rename":{"title":"Rename speaker","close":"Close rename dialog","help":"All segments and export files for {{name}} will be updated.","newName":"New name","save":"Save name"},"library":{"title":"Add to voiceprint library","close":"Close add-to-library dialog","help":"Save {{count}} {{speaker}} segments as individual samples.","person":"Person","newPerson":"New person","newPersonName":"New person name","namePlaceholder":"No match found; create a person","matched":"Matched: ","confirm":"Confirm import","nameRequired":"This speaker name does not match the voiceprint library. Enter a new person name."}
+    "rename":{"title":"Rename speaker","close":"Close rename dialog","help":"All segments and export files for {{name}} will be updated.","newName":"New name","save":"Save name"},"library":{"title":"Add to voiceprint library","close":"Close add-to-library dialog","help":"Save {{count}} {{speaker}} segments as individual samples.","person":"Person","newPerson":"New person","newPersonName":"New person name","namePlaceholder":"No match found; create a person","matched":"Matched: ","confirm":"Confirm import","nameRequired":"This speaker name does not match the voiceprint library. Enter a new person name."},
+    "workspace": {
+      "create": "New transcription",
+      "results": "Tasks & results",
+      "settings": "Transcription settings",
+      "advanced": "Advanced settings",
+      "hotwordSummary": "{{lists}} lists selected · {{terms}} terms",
+      "hotwordsUnavailable": "Hotword lists unavailable. Retry or clear your selection.",
+      "chooseHotwords": "Choose hotword lists",
+      "clearHotwords": "Clear hotword selection",
+      "loadingJobs": "Loading tasks",
+      "selectTask": "Select task",
+      "manage": "Manage all tasks",
+      "pending": "No transcript is available yet. Open task management to review or manage this task.",
+      "unavailable": "This task was removed or is unavailable. Select another task.",
+      "removeFile": "Remove file",
+      "viewSubmitted": "View submitted task",
+      "close": "Done",
+      "loadingHotwords": "Loading hotword lists",
+      "searchHotwords": "Search hotword lists",
+      "noHotwordMatches": "No matching hotword lists"
+    }
   },
   "tts": {
     "computeDeviceAria":"TTS compute device",
@@ -255,7 +279,22 @@
     "sample":{"label":"Voiceprint sample","ariaLabel":"TTS voiceprint sample","number":"Sample {{number}}","autoTruncate":"auto truncate","empty":"No samples are available for TTS","truncateHelp":"Before cloning, this sample will be precisely truncated to 15 seconds or less at word boundaries."},
     "instruction":{"separator":", ","panel":"Advanced TTS instruction","designLabel":"Voice and expression instruction","styleLabel":"Style and expression instruction (optional)","designPlaceholder":"For example: a warm, mature female voice with a slightly low pitch, relaxed pace, and restrained joy.","stylePlaceholder":"For example: speak slightly slowly in a gentle, happy tone.","help":"Describe pace, pitch, and emotion in natural language, not numeric parameters.","examples":"Instruction examples","example":{"slowSteady":"slow and steady pace","brisk":"brisk pace and tight rhythm","highPitch":"higher pitch with clear variation","lowGentle":"speak in a low, gentle voice","happy":"happy and excited","sad":"sad but restrained","angry":"clearly angry with crisp articulation"}},
     "submit":{"submitting":"Submitting…","generate":"Generate speech"},"quality":{"title":"Local quality policy","official":"Official {{model}} weights · no quantization","cpu":"CPU FP32; compatibility first.","gpu":"GPU BF16; official native-precision acceleration.","noInstruction":"The current model and voice mode derive prosody from text and punctuation and do not accept advanced natural-language instructions.","instruction":"Official natural-language instruction control is enabled; separate rate, pitch, and low-level sampling controls remain disabled."},
-    "results":{"title":"Current synthesis result","loading":"Loading the full synthesis result on demand…","loadFailed":"Could not load synthesis result.","designedVoice":"Designed voice","sequence":"Speech sequence ({{count}} items)","downloadItem":"Download {{id}} WAV","clonedVoice":"Cloned voice","instruction":"Instruction: {{value}}","download":"Download {{format}}","empty":"Completed synthesis can be previewed and downloaded here."}
+    "results":{"title":"Current synthesis result","loading":"Loading the full synthesis result on demand…","loadFailed":"Could not load synthesis result.","designedVoice":"Designed voice","sequence":"Speech sequence ({{count}} items)","downloadItem":"Download {{id}} WAV","clonedVoice":"Cloned voice","instruction":"Instruction: {{value}}","download":"Download {{format}}","empty":"Completed synthesis can be previewed and downloaded here."},
+    "workspace": {
+      "label": "Synthesis workspace",
+      "text": "Text",
+      "document": "Document",
+      "results": "Tasks & results",
+      "viewSubmitted": "View submitted task",
+      "recentTasks": "Recent synthesis tasks",
+      "selectTask": "Select task",
+      "manageTasks": "All synthesis tasks & management",
+      "taskDetail": "Task details",
+      "loadingTasks": "Loading tasks…",
+      "pendingResult": "Listen and download here when complete. Open task management to cancel or retry.",
+      "taskUnavailable": "This task is no longer available. Select another task.",
+      "terminalResult": "This task has no playable result. Open task management for details or retry."
+    }
   },
   "voiceprintNames": {"personConflict":"A person with this name and note already exists. Change the name or note.","personIdentityHelp":"Name and note distinguish people together. Use different notes for people with the same name.","renameSample":"Rename sample","renameNamed":"Rename {{name}}","sampleName":"Sample name","nameHelp":"1–80 characters; unique within this person.","sampleConflict":"This person already has a sample with this name. Choose another name.","invalidName":"Enter a single-line name of 1–80 characters.","sampleRenamed":"Sample name updated.","recordingName":"Recording {{time}}","choosePerson":"Select a person or create one","ambiguousPerson":"Several people have this name. Select by note, or explicitly choose to create a person.","unknownDuration":"Duration unknown","shortReference":"{{duration}} s · Use full sample","longReference":"Original {{duration}} s · Use first ≤{{limit}} s","referenceHelp":"Use the beginning through the last complete word within {{limit}} seconds. Actual duration may be shorter; the original sample stays intact.","actualReference":"Reference audio: original {{original}} s, actually used {{used}} s","sampleSnapshot":"Reference sample: {{name}}","hotwordHelp":"People with the same name contribute one term; notes are not hotwords. The name remains while any matching person has synchronization enabled."},
   "document": {
@@ -313,6 +352,18 @@
     "chars": "{{count}} characters",
     "previewError": "Text preview failed",
     "uploading": "Uploading…",
-    "selectAudio": "Choose a section to play"
+    "selectAudio": "Choose a section to play",
+    "workspace": "Document workspace",
+    "prepare": "Prepare synthesis",
+    "results": "Tasks & results",
+    "settings": "Synthesis settings",
+    "viewTasks": "View tasks",
+    "replace": "Replace document",
+    "adjust": "Adjust sections",
+    "warnings": "Extraction notes ({{count}})",
+    "closeReader": "Close text preview",
+    "previousSection": "Previous section",
+    "nextSection": "Next section",
+    "downloadHelp": "About downloads"
   }
 }

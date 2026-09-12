@@ -114,6 +114,10 @@ def clean_partials(job_id: str, root: Path) -> None:
     if output.is_dir():
         for path in output.glob("document-*.partial"):
             path.unlink(missing_ok=True)
+    waveforms = root / job_id / "waveforms"
+    if waveforms.is_dir() and waveforms.resolve() == root.resolve() / job_id / "waveforms":
+        for path in waveforms.glob("waveform-*.partial"):
+            path.unlink(missing_ok=True)
 
 
 def main() -> None:

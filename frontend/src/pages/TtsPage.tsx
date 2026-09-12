@@ -49,6 +49,10 @@ import { useTranslation } from 'react-i18next'
 type Props = {
   documentCapability?: DocumentCapability
   jobs: JobSummary[]
+  jobsReady: boolean
+  jobsError: string
+  refreshJobs: () => Promise<void>
+  onManageJobs: () => void
   jobDetails: Record<string, JobDetailResource>
   loadJobDetail: (job: JobSummary, force?: boolean) => void
   onJobSubmitted: (job: Job) => void
@@ -68,6 +72,7 @@ type Props = {
   revealRequest?: ResultRevealRequest
   onRevealHandled: (token: number) => void
 }
+type WorkspaceView = 'text' | 'document' | 'results'
 type ReferenceSource = 'upload' | 'record'
 
 const fallbackTtsLanguages = [
@@ -123,6 +128,10 @@ const instructionExampleKeys = ['slowSteady','brisk','highPitch','lowGentle','ha
 export function TtsPage({
   documentCapability,
   jobs,
+  jobsReady,
+  jobsError,
+  refreshJobs,
+  onManageJobs,
   jobDetails,
   loadJobDetail,
   onJobSubmitted,
@@ -144,6 +153,17 @@ export function TtsPage({
 }: Props) {
   const { t, i18n } = useTranslation()
   const [inputMode, setInputMode] = useState<'text'|'document'>('text')
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('text')
+  const [documentVisited, setDocumentVisited] = useState(false)
+  const [lastSubmitted, setLastSubmitted] = useState<Partial<Record<'text'|'document',JobSummary>>>({})
+  const selectWorkspace = (view: WorkspaceView) => {
+    setWorkspaceView(view)
+    if(view !== 'results') setInputMode(view)
+    if(view === 'document') setDocumentVisited(true)
+  }
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [compactWorkspace, setCompactWorkspace] = useState(()=>matchMedia('(max-width:1199px)').matches)
+  useEffect(()=>{const media=matchMedia('(max-width:1199px)');const update=()=>setCompactWorkspace(media.matches);media.addEventListener('change',update);return()=>media.removeEventListener('change',update)},[])
   const [documentSelection, setDocumentSelection] = useState<DocumentSelection>()
   const [preferences, setPreferences] =
     useState<TtsPreferences>(()=>loadTtsPreferences(defaultComputeDevice))
@@ -171,10 +191,9 @@ export function TtsPage({
     () => jobs.filter((job) => job.kind === 'tts'),
     [jobs],
   )
-  const selectedSummary =
-    ttsJobs.find(
-      (job) => job.id === selectedJobId && job.state === 'succeeded',
-    ) || ttsJobs.find((job) => job.state === 'succeeded')
+  const selectedSummary = selectedJobId
+    ? ttsJobs.find(job => job.id === selectedJobId)
+    : ttsJobs[0]
   const selected = selectedSummary ? jobDetails[selectedSummary.id]?.job : undefined
   const visibleJobs = useMemo(
     () => visibleWorkspaceJobs(ttsJobs, selectedSummary?.id),
@@ -276,8 +295,11 @@ export function TtsPage({
       })
   }, [sample, draft.sampleId])
   useEffect(() => {
-    if (selectedSummary) loadJobDetail(selectedSummary)
-  }, [loadJobDetail, selectedSummary])
+    if (workspaceView === 'results' && jobsReady && !selectedJobId && ttsJobs[0]) onSelect(ttsJobs[0])
+  }, [jobsReady, onSelect, selectedJobId, ttsJobs, workspaceView])
+  useEffect(() => {
+    if (workspaceView === 'results' && selectedSummary?.state === 'succeeded') loadJobDetail(selectedSummary)
+  }, [loadJobDetail, selectedSummary, workspaceView])
   useEffect(() => {
     if (referenceJob?.state === 'succeeded') loadJobDetail(referenceJob)
   }, [loadJobDetail, referenceJob])
@@ -300,19 +322,16 @@ export function TtsPage({
     referenceJob?.state,
   ])
   useEffect(() => {
-    if (!revealRequest || revealRequest.jobId !== selected?.id) return
+    if (!revealRequest) return
+    setWorkspaceView('results')
     const frame = requestAnimationFrame(() => {
-      if (matchMedia('(max-width: 900px)').matches)
-        preview.current?.scrollIntoView({
-          block: 'start',
-          behavior: matchMedia('(prefers-reduced-motion: reduce)').matches
-            ? 'auto'
-            : 'smooth',
-        })
+      preview.current?.focus({preventScroll:true})
       onRevealHandled(revealRequest.token)
     })
     return () => cancelAnimationFrame(frame)
-  }, [onRevealHandled, revealRequest, selected?.id])
+  }, [onRevealHandled, revealRequest])
+
+  useEffect(()=>{if(workspaceView !== 'results')preview.current?.querySelectorAll('audio').forEach(player=>player.pause())},[workspaceView])
 
   const updatePreference = <K extends keyof TtsPreferences>(
     key: K,
@@ -511,7 +530,8 @@ export function TtsPage({
       }
       const job = await (inputMode==='document'?api.submitTtsDocument(data):api.submitTts(data))
       onJobSubmitted(job)
-      setNotice(t('tts.notices.submitted'))
+      setLastSubmitted(current=>({...current,[inputMode]:job}))
+      setNotice('')
     } catch (cause) {
       setError((cause as Error).message)
     } finally {
@@ -519,9 +539,6 @@ export function TtsPage({
     }
   }
   const resetPreferences = () => {
-    sessionStorage.removeItem('audio-intel:document-draft')
-    setDocumentSelection(undefined)
-    setInputMode('text')
     const next = { ...defaultTtsPreferences, computeDevice: defaultComputeDevice }
     clearTtsPreferences()
     saveTtsPreferences(next)
@@ -531,39 +548,25 @@ export function TtsPage({
     setError('')
   }
 
-  return (
-    <div className="tts-grid hud-page">
-      <section className="tts-editor" data-module="TTS_CONSOLE / SYN_02">
-        <div className="section-title">
-          <div>
-            <h1 tabIndex={-1}>{t('tts.title')}</h1>
-            <p>
+  const qualityNote = (<div className="quality-note">
+            <b>{t('tts.quality.title')}</b>
+            <span>
+              {t('tts.quality.official',{model:selectedTtsModel?.name.replace('Qwen3-TTS ','')||'0.6B'})} ·{' '}
               {effectiveTtsDevice === 'cpu'
-                ? t('tts.subtitleCpu')
-                : t('tts.subtitleGpu')}
-            </p>
-          </div>
-          <div className="section-actions">
-            <span className="performance-badge">
-              {effectiveTtsDevice === 'cpu'
-                ? draft.accelerateSingleTask
-                  ? 'CPU · FP32 · SDPA · AUTO BATCH'
-                  : 'CPU · FP32 · SDPA · BATCH 1'
-                : draft.accelerateSingleTask
-                  ? 'GPU · BF16 · SDPA · AUTO BATCH'
-                  : 'GPU · BF16 · SDPA · BATCH 1'}
+                ? t('tts.quality.cpu')
+                : t('tts.quality.gpu')}
             </span>
-            <button
-              className="reset-settings"
-              type="button"
-              onClick={resetPreferences}
-            >
-              <RotateCcw size={14} />
-              {t('tts.restoreDefaults')}
-            </button>
-          </div>
-        </div>
-        <div
+            {!instructionSupported ? (
+              <small className="tts-control-note">
+                {t('tts.quality.noInstruction')}
+              </small>
+            ) : (
+              <small className="tts-control-note">
+                {t('tts.quality.instruction')}
+              </small>
+            )}
+          </div>)
+  const modeTabs = (<div
           className="tabs"
           role="tablist"
           aria-label={t('tts.mode.label')}
@@ -604,31 +607,41 @@ export function TtsPage({
               {t('tts.mode.design')}
             </button>
           ) : null}
+        </div>)
+
+  return (
+    <div className="tts-grid hud-page tts-workspace">
+      <section className="tts-editor" data-module="TTS_CONSOLE / SYN_02">
+        <div className="section-title"><h1 tabIndex={-1}>{t('tts.title')}</h1></div>
+        <div className="tts-workspace-tabs" role="tablist" aria-label={t('tts.workspace.label')} onKeyDown={handleTabKeys}>
+          {(['text', ...(documentCapability?.supported ? ['document' as const] : []), 'results'] as WorkspaceView[]).map(view=><button
+            key={view} id={`tts-workspace-${view}`} type="button" role="tab"
+            aria-selected={workspaceView===view} aria-controls={view==='results'?'tts-result-content':'tts-mode-content'}
+            tabIndex={workspaceView===view?0:-1} onClick={()=>selectWorkspace(view)}
+          >{t(`tts.workspace.${view}`)}</button>)}
         </div>
         <div
           id="tts-mode-content"
+          hidden={workspaceView==='results'}
+          className="document-prepare"
           role="tabpanel"
-          aria-labelledby={
-            draft.mode === 'preset'
-              ? 'tts-mode-preset'
-              : draft.mode === 'voice_design'
-                ? 'tts-mode-voice-design'
-                : 'tts-mode-clone'
-          }
+          aria-labelledby={`tts-workspace-${inputMode}`}
         >
-          {documentCapability?.supported?<div className="document-input-tabs">
-            <button type="button" aria-pressed={inputMode==='text'} onClick={()=>setInputMode('text')}>{t('document.shortText')}</button>
-            <button type="button" aria-pressed={inputMode==='document'} onClick={()=>setInputMode('document')}>{t('document.document')}</button>
-          </div>:null}
-          {inputMode==='document'&&documentCapability?<DocumentInput capability={documentCapability} onChange={setDocumentSelection}/>:<label className="text-editor">
-            {t('tts.text')}
-            <textarea
-              value={draft.text}
-              maxLength={50000}
-              onChange={(event) => updateContent('text', event.target.value)}
-            />
-            <small>{draft.text.length} / 50,000</small>
-          </label>}
+          <div className="tts-input-content">
+            <div hidden={inputMode!=='document'} className="tts-document-input">
+              {documentVisited&&documentCapability?<DocumentInput capability={documentCapability} onChange={setDocumentSelection}/>:null}
+            </div>
+            <label className="text-editor" hidden={inputMode!=='text'}>
+              {t('tts.text')}
+              <textarea value={draft.text} maxLength={50000} onChange={event=>updateContent('text',event.target.value)}/>
+              <small>{draft.text.length} / 50,000</small>
+            </label>
+          </div>
+          <section className={`tts-settings${settingsOpen?' expanded':''}`} aria-label={t('document.settings')}>
+            <button className="document-settings-toggle" type="button" aria-expanded={!compactWorkspace||settingsOpen} aria-controls="tts-settings-body" onClick={()=>setSettingsOpen(value=>!value)}><strong>{t('document.settings')}</strong><span>{draft.mode==='preset'?draft.speaker:t(draft.mode==='voice_design'?'tts.mode.design':'tts.mode.clone')} · {selectedTtsModel?.name} · {effectiveTtsDevice.toUpperCase()}</span>{compactWorkspace&&!settingsOpen&&draft.computeDevice==='gpu'&&effectiveTtsDevice==='cpu'?<span className="document-settings-warning">{computeUnavailableReason(ttsGpu,t,t('tts.gpuFallback'))}</span>:null}</button>
+            <div id="tts-settings-body" className="tts-settings-body">
+            <button className="reset-settings" type="button" onClick={resetPreferences}><RotateCcw size={14}/>{t('tts.restoreDefaults')}</button>
+            {modeTabs}
           {draft.mode === 'inline_clone' ? (
             <div
               className="clone-source"
@@ -1189,7 +1202,10 @@ export function TtsPage({
               text={t('tts.accelerationHelp')}
             />
           </div>
+          <details className="document-quality-help"><summary>{t('tts.quality.title')}</summary><p>{t('tts.modelHelp')}</p><p>{t('tts.languageHelp')}</p>{qualityNote}</details>
+            </div>
           <div className="submission-actions">
+            {inputMode==='document'&&documentSelection?<p className="document-submit-summary">{t('document.selected',{count:documentSelection.section_ids.length,chars:documentSelection.selected_chars||0})}</p>:null}
             {error ? (
               <p className="error" role="alert">
                 {error}
@@ -1200,9 +1216,11 @@ export function TtsPage({
                 {notice}
               </p>
             ) : null}
+            {lastSubmitted[inputMode]?<div className="tts-submitted" role="status"><span>{t('tts.notices.submitted')} · {lastSubmitted[inputMode]!.display_name}</span><button type="button" className="button" onClick={()=>{onSelect(lastSubmitted[inputMode]!);setWorkspaceView('results')}}>{t('tts.workspace.viewSubmitted')}</button></div>:null}
             {submitBlockReason&&!busy?<p id="tts-submit-reason" className="submit-block-reason" role="status">{submitBlockReason}</p>:null}
             <button
               className="primary synth"
+              aria-label={busy ? t('tts.submit.submitting') : t('tts.submit.generate')}
               disabled={Boolean(submitBlockReason)}
               aria-describedby={submitBlockReason?'tts-submit-reason':undefined}
               onClick={() => void submit()}
@@ -1211,33 +1229,38 @@ export function TtsPage({
               {busy ? t('tts.submit.submitting') : t('tts.submit.generate')}
             </button>
           </div>
-          <div className="quality-note">
-            <b>{t('tts.quality.title')}</b>
-            <span>
-              {t('tts.quality.official',{model:selectedTtsModel?.name.replace('Qwen3-TTS ','')||'0.6B'})} ·{' '}
-              {effectiveTtsDevice === 'cpu'
-                ? t('tts.quality.cpu')
-                : t('tts.quality.gpu')}
-            </span>
-            {!instructionSupported ? (
-              <small className="tts-control-note">
-                {t('tts.quality.noInstruction')}
-              </small>
-            ) : (
-              <small className="tts-control-note">
-                {t('tts.quality.instruction')}
-              </small>
-            )}
-          </div>
+          </section>
         </div>
-      </section>
-      <aside
+      <section
         ref={preview}
+        id="tts-result-content"
+        role="tabpanel"
+        tabIndex={-1}
+        aria-labelledby="tts-workspace-results"
+        hidden={workspaceView!=='results'}
         className="tts-preview"
         data-module="RENDER_QUEUE / Q_02"
       >
-        <h2>{t('tts.results.title')}</h2>
-        {selectedSummary && jobDetails[selectedSummary.id]?.state === 'loading' ? (
+        <aside className="tts-task-list">
+          <h2>{t('tts.workspace.recentTasks')}</h2>
+          <ResourceStatePanel state={jobsError?'error':jobsReady?'ready':'loading'} loadingLabel={t('tts.workspace.loadingTasks')} errorLabel={jobsError} retry={()=>void refreshJobs()}/>
+          {jobsReady&&visibleJobs.length?<>
+            <label className="tts-task-picker">{t('tts.workspace.selectTask')}<select value={selectedSummary?.id||''} onChange={event=>{const job=visibleJobs.find(item=>item.id===event.target.value);if(job)onSelect(job)}}>
+              {!selectedSummary?<option value="">{t('tts.workspace.selectTask')}</option>:null}
+              {visibleJobs.map(job=><option key={job.id} value={job.id}>{job.display_name} · {t(`jobs.states.${job.state}`)}</option>)}
+            </select></label>
+            <div className="tts-recent-jobs">{visibleJobs.map(job=><JobMini key={job.id} job={job} isSelected={job.id===selectedSummary?.id} onOpen={onSelect}/>)}</div>
+          </>:jobsReady&&!jobsError?<p>{t('tts.results.empty')}</p>:null}
+          <button type="button" className="button tts-manage-jobs" onClick={onManageJobs}>{t('tts.workspace.manageTasks')}</button>
+        </aside>
+        <div className="tts-result-detail" hidden={!jobsReady&&!selectedSummary}>
+        <h2>{t('tts.workspace.taskDetail')}</h2>
+        {selectedSummary&&selectedSummary.state!=='succeeded'?<div className="tts-task-status" role="status">
+          <JobMini job={selectedSummary} onOpen={onManageJobs}/>
+          {selectedSummary.error_message?<p className="error">{selectedSummary.error_message}</p>:null}
+          <p>{t(selectedSummary.state==='queued'||selectedSummary.state==='running'?'tts.workspace.pendingResult':'tts.workspace.terminalResult')}</p>
+        </div>:selectedJobId&&!selectedSummary&&jobsReady?<p role="status">{t('tts.workspace.taskUnavailable')}</p>:!jobsReady&&!selectedSummary?<ResourceStatePanel state={jobsError?'error':'loading'} loadingLabel={t('tts.workspace.loadingTasks')} errorLabel={jobsError} retry={()=>void refreshJobs()}/>:
+        selectedSummary && (!jobDetails[selectedSummary.id] || jobDetails[selectedSummary.id]?.state === 'loading') ? (
           <div className="empty small" role="status">
             <Sparkles />
             <p>{t('tts.results.loading')}</p>
@@ -1271,12 +1294,13 @@ export function TtsPage({
                 <small className="tts-result-instruction">{t('tts.results.instruction',{value:selected.result.instruct})}</small>
               ) : null}
             </div>
-            {selected.result.document ? <DocumentResults key={selected.id} jobId={selected.id} result={selected.result.document}/> : selected.result.sequence ? (
+            {selected.result.document ? <DocumentResults key={selected.id} jobId={selected.id} result={selected.result.document} active={workspaceView==='results'}/> : selected.result.sequence ? (
               <ol className="tts-sequence-results">
                 {selected.result.sequence.items.map(item => (
                   <li key={item.id}>
                     <h3>{item.id}</h3>
                     <AudioTransport
+                      active={workspaceView==='results'}
                       src={artifactUrl(selected.id,item.artifact_name)}
                       duration={item.duration}
                     />
@@ -1289,6 +1313,7 @@ export function TtsPage({
               </ol>
             ) : selected.result.artifacts?.[0] ? (
               <AudioTransport
+                      active={workspaceView==='results'}
                 src={artifactUrl(
                   selected.id,
                   selected.result.artifacts[0].name,
@@ -1316,16 +1341,9 @@ export function TtsPage({
             <p>{t('tts.results.empty')}</p>
           </div>
         )}
-        <h2>{t('tts.taskList')}</h2>
-        {visibleJobs.map((job) => (
-          <JobMini
-            key={job.id}
-            job={job}
-            isSelected={job.id === selectedSummary?.id}
-            onOpen={(item) => item.state === 'succeeded' && onSelect(item)}
-          />
-        ))}
-      </aside>
+        </div>
+      </section>
+      </section>
     </div>
   )
 }

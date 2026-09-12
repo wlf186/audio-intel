@@ -152,6 +152,8 @@ def test_document_contract_checkpoint_resume_streams_and_purge(document_client,m
     assert before==(first.stat().st_mtime_ns,first.read_bytes())
     assert len(result['artifacts'])==2 and all(p.suffix=='.mp3' for p in context.output_dir.iterdir())
     db.finish_job(job['id'],'succeeded',result_json=result)
+    from audio_intel.waveforms import cached
+    assert all(cached(Path(a['path'])) is not None for a in result['artifacts'])
     files=[(a['name'],Path(a['path'])) for a in result['artifacts']]
     streamed=client.get(f"/api/v1/jobs/{job['id']}/document/download?mode=sections")
     assert streamed.status_code==200 and streamed.headers['accept-ranges']=='none'

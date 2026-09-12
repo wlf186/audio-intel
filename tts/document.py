@@ -48,6 +48,7 @@ def retry_delay(job: dict[str, Any], error: Exception) -> int | None:
 def process_loaded(context: Any, request: dict[str, Any], model: Any, device: str,
                    acceleration: dict[str, Any], model_definition: dict[str, Any], checkpoint: dict[str, Any]) -> dict[str, Any]:
     import av
+    from audio_intel.waveforms import prepare_optional
     import numpy as np
     from . import pipeline as pipeline
     from audio_intel.gpu import compute_device_name
@@ -154,9 +155,12 @@ def process_loaded(context: Any, request: dict[str, Any], model: Any, device: st
                 artifact = {"name": path.name, "path": str(path), "mime_type": "audio/mpeg", "size_bytes": path.stat().st_size,
                             "sha256": file_hash(path), "duration": round(samples / rate, 3), "sample_rate": rate,
                             "waveform": peaks, "batch_size": section_actual, "oom_fallbacks": section_fallbacks}
+                prepare_optional(path)
                 store.checkpoint(context.job_id, item["id"], "complete", artifact)
             finally:
                 partial.unlink(missing_ok=True)
+        if valid:
+            prepare_optional(path)
         actual = max(actual, artifact.get("batch_size", 1))
         fallbacks.extend(artifact.get("oom_fallbacks", []))
         artifacts.append(artifact)

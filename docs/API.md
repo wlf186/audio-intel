@@ -336,3 +336,17 @@ Imports are retained until explicitly deleted. `GET /api/v1/tts/document-imports
 The typed section response is stable before and after executor initialization: `index` is the original document section number, `position` is the selected job order, `start/end` and their `start_offset/end_offset` aliases address the canonical text. `char_count`, `basis`, optional page bounds, `state`, `retries`, `artifact` and `updated_at` are always represented. Whitespace-only sections are merged losslessly; affected old previews return 409 on submission and must be reviewed again. Persisted job snapshots remain unchanged.
 
 ZIP and complete MP3 downloads are streamed without stored exports. Handle 401/404/409/429 before consuming the body and honor `Retry-After` (also `retry_after_seconds` in problem JSON). After the response has begun, transport failures terminate the download; retry from the beginning. The browser UI retains the page on an error and delegates large downloads to the browser download manager without a whole-file Blob.
+
+### 音频波形 / Audio waveforms
+
+`GET /api/v1/jobs/{job_id}/artifacts/{name}/waveform` 使用浏览器会话或 Bearer 鉴权。`name` 必须来自成功任务的 `artifacts[].name`，并进行 URL 编码。返回 `{ "artifact_name": "speech.wav", "duration": 1.5, "waveform": [0.1, 0.4, 0.2] }`，其中峰值按时间均匀分布，范围为 0–1，最多 240 项。
+
+单段文本、文档章节与有序序列在音频生成后准备波形。历史音频或缓存缺失时分块解码补算；同一文件合并计算，最多并发补算两段。尚未成功返回 409，文件缺失或越界返回 404，非 WAV/MP3/FLAC 返回 415，无法解码返回 422，计算繁忙返回 429 和 `Retry-After: 2`。补算期间清理任务返回 409。缓存随任务删除，既有结果字段和契约版本保持兼容。
+
+The authenticated endpoint above returns uniformly timed peak amplitudes for each audio artifact. New single, document and sequence audio is precomputed; historical audio is decoded incrementally on demand and cached. At most two cold computations run concurrently; busy clients should honor `Retry-After`. Waveform files are removed with their job. Existing result schemas and contract versions remain compatible.
+
+可执行示例 / Executable example:
+
+```bash
+.runtime/api/bin/python scripts/tts_document.py manuscript.md --waveform
+```

@@ -10,6 +10,8 @@
 
 分段 ZIP 使用 ZIP_STORED 和 ZIP64，完整 MP3 仅重封装现有音频包；两者即时流式传输，背压限制缓冲，不额外写入服务器 SSD。默认同时最多两项批量下载。断开连接释放文件和下载名额，下载中不能删除任务。批量下载不支持 Range，失败后从头下载；单段 MP3 支持 Range。MP3 编码帧可能在章节边界留下少量填充，不承诺无缝播放。反向代理应遵循 `X-Accel-Buffering: no` 并允许长连接。
 
+## API 调用与资源限制 / API workflow and limits
+
 API 顺序：
 
 1. `POST /api/v1/tts/document-imports`，multipart `file`，必须带 `Idempotency-Key`；首次 202，重放 200，冲突 409，容量不足 429。
@@ -26,6 +28,18 @@ SQLite v11 增加导入与检查点表，保留历史任务、序号和声音库
 
 English: Document TTS accepts EPUB, TXT, Markdown, text PDFs, DOCX, XLSX and PPTX independently of the ordinary 50,000-character TTS limit. Review extraction warnings, choose structural or length segmentation, select sections, and reuse existing voice controls. Synthesis uses the existing queue and writes incremental section MP3 files with durable verified checkpoints. Manual retries reuse complete sections. ZIP64 and packet-remuxed MP3 downloads stream directly without an additional server export file; batch downloads restart from the beginning, while individual artifacts support Range. The local OpenAPI includes bilingual contracts and the executable Python client above supports preview, submission and bounded streaming downloads. Schema v11 is additive; back up data before upgrading.
 
+
+## 网页合成工作台 / Browser workspace
+
+语音合成页使用位置固定的“文本合成／文档合成／任务与结果”三个页签。文本和文档共享合成设置：桌面采用内容区与 340 px 设置栏，小于 1200 px 时设置位于内容下方并可展开。提交按钮独占布局空间，不覆盖内容。两种输入页不展示历史音频；试听与下载统一进入“任务与结果”。
+
+文档分段列表宽屏每页 20 项、小屏每页 10 项，选择跨页保留。正文预览和导入管理使用可访问弹窗；正文按页获取，关闭阅读窗口后恢复焦点及列表位置。切换三个页签保留文本草稿、文档选择、分页位置与声音设置。
+
+提交后保留当前编辑页，并选中本次任务；“查看本次任务”定位提交返回的任务 ID。结果页展示最近 5 个合成任务及较早的选中任务，桌面采用列表与详情两栏，小屏采用任务选择器。排队、运行、失败及取消任务展示各自状态，成功后展示结果，不使用其他任务的旧音频替代。后续进度更新不会抢走用户选中的任务；列表与详情提供独立的加载、错误和重试状态。完整历史及取消、重试等操作进入全局任务管理。
+
+结果包含章节选择、播放器、单段下载、完整 MP3 和分段 ZIP，沿用原有流式下载及错误处理。离开结果页暂停播放，返回保留所选任务及章节。恢复默认配置仅重置合成参数与指令，不清空文本、文档草稿或切换页签；移除文档使用文档区的明确操作。文档草稿继续使用现有 sessionStorage，TTS 参数沿用现有存储；页签和折叠状态仅保存在当前页面内。
+
+English: The synthesis page has three fixed tabs: Text, Document, and Tasks & results. Both input types share one settings panel (a 340 px desktop sidebar, expandable below the input under 1200 px). Submission controls occupy their own layout space. Document selection persists across pages (20 sections on wide screens, 10 on smaller screens); text previews and import management use accessible dialogs. Switching tabs preserves drafts, section selection, pagination and voice settings. Submitting retains the editor and selects the accepted task; View submitted task opens that exact task. Results show five recent synthesis tasks plus an older selected task, with a mobile task picker. Pending and unsuccessful tasks show their own status rather than another task’s audio. List and detail loading, errors and retries remain distinct. Full history and task management use the existing global Tasks page. Playback and downloads share the existing streaming APIs; leaving results pauses playback and retains the selected section. Restore defaults resets synthesis settings and instructions only, preserving text, document drafts and the current tab. Existing draft/preference storage lifetimes remain unchanged; navigation and expansion state are page-local.
 
 ## 办公文档
 
@@ -63,3 +77,11 @@ English: Office files share the native document import, preview, job and streami
 任务章节 API 使用稳定的类型化结构：`index` 为原文分段编号，`position` 为所选任务内顺序；`start/end` 及其 `start_offset/end_offset` 别名、`char_count/basis` 来自快照，状态和音频来自检查点。浏览器下载错误在页内显示并可再次点击下载；429 展示等待时间，401 返回登录流程。开始传输后的状态和中断由浏览器下载管理器显示。
 
 文档页面与短文本页面共享设备能力处理：没有可用 GPU 时显示 CPU 及原因，提交使用界面显示的设备；API 客户端显式指定不可用 GPU 仍返回 503，不在后端静默降级。
+
+## 章节波形 / Section waveforms
+
+每章音频完成后预先准备最多 240 个均匀时间峰值，与单段文本和有序序列共用波形计算和播放器。历史章节首次查看时补算。长音频分块读取，缓存每段仅几 KB，不保存额外音频副本；流式 ZIP 和完整 MP3 下载保持原有机制。
+
+结果页只读取当前章节、或进入可见区域的序列项波形。加载或失败时仍可播放、下载，并可重试波形；切换章节不会沿用上一章的图形。浏览器仅使用最多 64 项内存缓存，退出登录时清空，不新增持久化存储。旧章节产物中的按文本块计算的 `waveform` 字段保留兼容；准确的均匀时间波形通过统一音频产物接口读取。
+
+Each section receives up to 240 uniformly timed peaks after audio generation, sharing the algorithm and player with single-text and ordered-sequence synthesis. Historical audio is backfilled on demand using bounded streaming reads. Only visible audio waveforms are fetched; loading or failure does not block playback or download. The browser keeps at most 64 entries in memory, clears them on logout, and adds no persistent storage. Legacy chunk-based artifact peaks remain for compatibility; the shared artifact waveform endpoint supplies accurate time bins.

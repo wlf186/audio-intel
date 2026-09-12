@@ -11,6 +11,7 @@ const captureLocales=[
   asrText:'欢迎使用完全本地化',
   ttsLanguage:'Chinese',ttsName:'本地语音工作站演示',
   ttsText:'欢迎使用 Sandevistan Audio。这是一套完全本地运行的语音智能服务。',
+  resultsTab:'任务与结果',
   headings:{asr:'音频转写',tts:'语音合成',jobs:'任务记录'},
  },
  {
@@ -18,6 +19,7 @@ const captureLocales=[
   asrText:'Welcome to your fully',
   ttsLanguage:'English',ttsName:'Local speech workstation demo',
   ttsText:'Welcome to Sandevistan Audio, a private speech intelligence service running entirely on your machine.',
+  resultsTab:'Tasks & results',
   headings:{asr:'Transcription',tts:'Speech synthesis',jobs:'Task history'},
  },
 ]
@@ -134,15 +136,9 @@ async function capturePage(browser,context,config,hash,readySelector,name){
  page.on('pageerror',error=>errors.push(error.message))
  await page.goto(`${baseUrl}/#${hash}`,{waitUntil:'networkidle'})
  await page.getByRole('heading',{name:config.headings[hash],exact:true}).waitFor({state:'visible'})
+ if(hash==='asr'||hash==='tts')await page.getByRole('tab',{name:config.resultsTab,exact:true}).click()
  await page.locator(readySelector).first().waitFor({state:'visible'})
  if(hash==='asr')await page.getByText(config.asrText,{exact:false}).first().waitFor({state:'visible'})
- if(hash==='tts'){
-  const editor=page.locator('.text-editor textarea')
-  await editor.fill(config.ttsText)
-  if(await editor.inputValue()!==config.ttsText){
-   throw new Error(`${config.locale} TTS draft does not match the localized capture content`)
-  }
- }
  const documentLocale=await page.locator('html').getAttribute('lang')
  if(documentLocale!==config.locale)throw new Error(`${hash} resolved ${documentLocale} instead of ${config.locale}`)
  await page.waitForTimeout(500)

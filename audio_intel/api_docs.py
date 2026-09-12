@@ -63,6 +63,14 @@ curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
 
 </details>
 
+### 音频产物波形 / Audio artifact waveforms
+
+适用于单段文本、有序序列和文档章节音频。 / Available for single-text, ordered-sequence and document-section audio.
+
+每段音频波形可通过 `GET /api/v1/jobs/{job_id}/artifacts/{name}/waveform` 读取，返回 `artifact_name`、`duration` 和最多 240 个 `waveform` 峰值；名称须 URL 编码。新音频预先计算，历史音频首次查看时补算。
+
+Read each audio waveform through `GET /api/v1/jobs/{job_id}/artifacts/{name}/waveform`, using a URL-encoded artifact name. The response contains `artifact_name`, `duration`, and up to 240 `waveform` peaks. New audio is precomputed; historical audio is backfilled on first access.
+
 <details>
 <summary><strong>提交契约、默认值与语种 / Submission contract, defaults, and languages</strong></summary>
 

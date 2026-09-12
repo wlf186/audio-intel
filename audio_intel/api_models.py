@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -857,3 +857,9 @@ class OpenAISpeechRequest(PublicModel):
     accelerate_single_task: bool = Field(
         True, description="启用质量中性的单任务自动批处理 / Enable quality-neutral single-job auto-batching",
     )
+
+
+class ArtifactWaveformResponse(PublicModel):
+    artifact_name: str = Field(description="音频产物名称 / Audio artifact name")
+    duration: float = Field(gt=0, description="波形对应的音频时长（秒） / Waveform audio duration in seconds")
+    waveform: list[Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]] = Field(min_length=1, max_length=240, description="按时间均匀分布的峰值，范围 0–1 / Uniformly timed peak amplitudes in [0, 1]")

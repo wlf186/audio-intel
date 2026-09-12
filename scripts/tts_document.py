@@ -13,6 +13,7 @@ import os
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 
@@ -32,6 +33,7 @@ def main() -> None:
     parser.add_argument("--mode", choices=("auto", "length"), default="auto")
     parser.add_argument("--target", type=int, default=10000)
     parser.add_argument("--preview-only", action="store_true")
+    parser.add_argument("--waveform", action="store_true", help="Print the first section waveform using the authenticated artifact API")
     parser.add_argument("--output", type=Path, help="Optional local ZIP destination")
     args = parser.parse_args()
     if not args.list_imports and bool(args.document) == bool(args.import_id):
@@ -102,6 +104,9 @@ def main() -> None:
             job = read("/api/v1/jobs/" + job["id"])
         if job["state"] != "succeeded":
             raise RuntimeError(f"{job['state']}: {job.get('error_message')}; retry this job to retain completed sections")
+        if args.waveform:
+            name = job["result"]["document"]["sections"][0]["artifact_name"]
+            print(json.dumps(read(f"/api/v1/jobs/{job['id']}/artifacts/{quote(name, safe='')}/waveform")))
         if args.output:
             with client.stream("GET", f"/api/v1/jobs/{job['id']}/document/download", params={"mode": args.download_mode}) as response:
                 response.raise_for_status()

@@ -76,7 +76,7 @@ def purge_jobs(job_ids: list[str], compact: bool = True) -> dict[str, Any]:
             from .document_download import deletion_guard
             with deletion_guard(job_id) as allowed:
                 if not allowed:
-                    failed.append({"id": job_id, "code": "downloading", "message": "Document audio is being downloaded / 文档音频正在下载"})
+                    failed.append({"id": job_id, "code": "downloading", "message": "Task audio is being read / 任务音频正在读取"})
                     continue
                 job = prepare_job_for_purge(job_id)
                 if job is None:

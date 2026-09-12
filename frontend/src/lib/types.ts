@@ -44,7 +44,7 @@ export type DocumentCapability={supported:boolean;formats:string[];max_upload_by
 export type DocumentImport={id:string;name:string;size_bytes:number;storage_bytes:number;created_at:string;updated_at:string;state:'queued'|'running'|'ready'|'failed';metadata:{title?:string;total_chars?:number;warnings?:string[]};error?:string}
 export type DocumentSection={id:string;index:number;title:string;start:number;end:number;char_count:number;basis:string;page_start?:number|null;page_end?:number|null}
 export type DocumentPreview={preview_revision:string;segmentation_mode:'auto'|'length';target_section_chars:number;sections:DocumentSection[];total_chars:number;title:string;warnings:string[]}
-export type DocumentSelection={importId:string;name:string;preview_revision:string;segmentation_mode:'auto'|'length';target_section_chars:number;section_ids:string[]}
+export type DocumentSelection={selected_chars?:number;importId:string;name:string;preview_revision:string;segmentation_mode:'auto'|'length';target_section_chars:number;section_ids:string[]}
 export type DocumentResult={contract_version:1;title:string;sections:Array<{id:string;index:number;title:string;artifact_name:string;duration:number;sample_rate:number}>;downloads:{sections:string;complete:string}}
 
 export type DocumentJobSection=DocumentSection&{job_id:string;position:number;start_offset:number;end_offset:number;state:'pending'|'generating'|'complete';retries:number;artifact:Artifact|null;updated_at:string}

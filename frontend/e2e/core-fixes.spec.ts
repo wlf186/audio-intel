@@ -38,12 +38,17 @@ test('sequence results play and download every item in order on desktop and mobi
  const detail={...summary,request:{voice_mode:'preset',compute_device:'cpu'},result:{duration:7,model:'qwen3-tts-0.6b',format:'wav',sequence:{contract_version:1,items},artifacts:[...items].reverse().map(item=>({name:item.artifact_name,mime_type:'audio/wav',path:item.artifact_name,size_bytes:100}))}}
  await page.route('**/api/v1/jobs',route=>route.fulfill({json:{items:[summary],count:1,total:1,limit:100,offset:0,has_more:false}}))
  await page.route('**/api/v1/jobs/sequence-result',route=>route.fulfill({json:detail}))
+ await page.route('**/api/v1/jobs/sequence-result/artifacts/*/waveform',route=>{
+  const item=items.find(item=>route.request().url().includes(item.artifact_name))!
+  return route.fulfill({json:{artifact_name:item.artifact_name,duration:item.duration,waveform:Array(240).fill(.4)}})
+ })
  await page.route('**/api/v1/jobs/sequence-result/artifacts/*',route=>{
   const item=items.find(item=>route.request().url().endsWith(item.artifact_name))!
   return route.fulfill({contentType:'audio/wav',headers:{'Content-Disposition':`attachment; filename="${item.artifact_name}"`},body:wave(item.duration)})
  })
  await page.goto('/#tts')
  await expect(page).toHaveTitle(/Sandevistan/)
+ await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  await expect(page.locator('.audio-card')).toContainText('多段语音（2 段）')
  const rows=page.locator('.tts-sequence-results li')
  await expect(rows.locator('h3')).toHaveText(['first','second'])
@@ -51,6 +56,7 @@ test('sequence results play and download every item in order on desktop and mobi
   await page.setViewportSize({width,height:width===390?844:900})
   const second=rows.nth(1)
   await second.scrollIntoViewIfNeeded()
+  await expect(second.locator('canvas')).not.toHaveClass(/waveform-empty/)
   await expect(rows.nth(0).locator('.transport-row')).toContainText('/ 00:00:02')
   await expect(second.locator('.transport-row')).toContainText('/ 00:00:05')
   await second.getByRole('button',{name:'播放当前合成结果'}).click()
@@ -92,7 +98,7 @@ test('pending voiceprint polling stops after session expiry and resumes after lo
   return route.fulfill({json:{items:[{id:'person',name:'测试声纹',sample_count:1,include_in_hotword_library:false,created_at:now,updated_at:now,samples:[{id:'sample',person_id:'person',state,language:'Chinese',transcript:'测试',words:[],tts_eligible:state==='ready',embedding_status:'ready',created_at:now,updated_at:now}]}]}})
  })
  await page.goto('/#tts')
- await expect(page.getByRole('heading',{name:'当前合成结果'})).toBeVisible()
+ await expect(page.getByRole('heading',{name:'语音合成',exact:true})).toBeVisible()
  await expect.poll(()=>calls).toBe(1)
  await page.clock.fastForward(2100)
  await expect(page.getByRole('heading',{name:'访问验证'})).toBeVisible()

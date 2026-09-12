@@ -13,11 +13,12 @@ BLOCK = 256 * 1024
 _lock = threading.Lock()
 _leases: Counter[str] = Counter()
 _deleting: set[str] = set()
+_readers: Counter[str] = Counter()
 
 
 def in_use(job_id: str) -> bool:
     with _lock:
-        return bool(_leases[job_id])
+        return bool(_leases[job_id] or _readers[job_id])
 
 
 @contextmanager
@@ -36,9 +37,25 @@ def lease(job_id: str, limit: int) -> Iterator[None]:
 
 
 @contextmanager
+def reader_lease(job_id: str) -> Iterator[None]:
+    """Protect waveform readers without consuming document download slots."""
+    with _lock:
+        if job_id in _deleting:
+            raise FileNotFoundError("Task is being deleted")
+        _readers[job_id] += 1
+    try:
+        yield
+    finally:
+        with _lock:
+            _readers[job_id] -= 1
+            if not _readers[job_id]:
+                del _readers[job_id]
+
+
+@contextmanager
 def deletion_guard(job_id: str) -> Iterator[bool]:
     with _lock:
-        allowed = not _leases[job_id] and job_id not in _deleting
+        allowed = not (_leases[job_id] or _readers[job_id]) and job_id not in _deleting
         if allowed:
             _deleting.add(job_id)
     try:

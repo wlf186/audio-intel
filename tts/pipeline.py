@@ -16,7 +16,7 @@ from audio_intel.gpu import compute_device_name, gpu_diagnostics, gpu_lease
 from audio_intel.model_registry import model_installation, resolve_tts_checkpoint, resolve_tts_model
 from audio_intel.performance import lower_batch_size, resolve_acceleration
 from audio_intel.progress import ThrottledProgress
-from audio_intel.utils import waveform_peaks
+from audio_intel.waveforms import prepare_optional
 from audio_intel.worker import JobContext, mark_executor_for_recycle
 
 
@@ -447,6 +447,7 @@ def _process_loaded(
     output_format = request.get("response_format", "wav")
     context.progress(0.94, "writing_audio")
     path = encode(context.output_dir / f"speech.{output_format}", merged, rate, output_format)
+    waveform = prepare_optional(path, merged, rate)
     mime = {"wav": "audio/wav", "flac": "audio/flac", "mp3": "audio/mpeg"}[output_format]
     return {
         "duration": round(len(merged) / rate, 3), "sample_rate": rate, "format": output_format,
@@ -474,7 +475,7 @@ def _process_loaded(
             "stage_batch_sizes": {"generation": max(actual_batch_sizes, default=1), "decoder": 1},
             "oom_fallbacks": [{"stage": "generation", **fallback} for fallback in fallbacks],
         },
-        "waveform": waveform_peaks(merged, 240),
+        **({"waveform": waveform["waveform"]} if waveform else {}),
         "artifacts": [{"name": path.name, "path": str(path), "mime_type": mime, "size_bytes": path.stat().st_size}],
     }
 
@@ -735,6 +736,7 @@ def _process_sequence_loaded(
                 for part in ((silence,) if chunk_index else ()) + (waveform,)
             ])
         path = encode(context.output_dir / f"item-{item_index:04d}.wav", merged, rate, "wav")
+        prepare_optional(path, merged, rate)
         duration = round(len(merged) / rate, 3)
         total_duration += duration
         artifact = {

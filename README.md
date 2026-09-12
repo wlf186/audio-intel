@@ -42,7 +42,7 @@
 ![Sandevistan Audio local ASR workspace showing a speaker-separated transcript and export controls](docs/assets/readme/en-US/asr-workspace.webp)
 
 <p align="center">
-  <img src="docs/assets/readme/en-US/tts-workspace.webp" width="49%" alt="Sandevistan Audio TTS workspace with preset voice synthesis">
+  <img src="docs/assets/readme/en-US/tts-workspace.webp" width="49%" alt="Sandevistan Audio synthesis tasks with waveform playback and downloads">
   <img src="docs/assets/readme/en-US/job-history.webp" width="49%" alt="Sandevistan Audio persistent ASR and TTS task history">
 </p>
 
@@ -51,6 +51,8 @@
 > [!NOTE]
 > The Web UI supports Simplified Chinese and English. Use the language selector in the header or sign-in dialog; the choice is stored locally in the browser. The local Swagger API guide is also bilingual.
 
+ASR separates New transcription from Tasks & results; TTS provides fixed Text, Document, and Tasks & results tabs. Inputs and settings have their own workspace, with direct access to the submitted task. Single audio, ordered sequences, and document sections share waveform playback and downloads.
+
 ## What it does
 
 | Area | Capabilities |
@@ -58,6 +60,7 @@
 | **Local speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, and JSON/SRT/VTT/TXT export |
 | **Speaker intelligence** | Voiceprints distinguish namesakes by notes and support named, renameable samples; custom and voiceprint-derived hotword lists improve domain vocabulary while completed tasks retain immutable snapshots |
 | **Local voice studio** | Qwen3-TTS 0.6B/1.7B, preset voices, one-off or library-based voice cloning, 1.7B VoiceDesign, and WAV/FLAC/MP3 output |
+| **Document synthesis** | EPUB, TXT, Markdown, text PDF, DOCX, XLSX and PPTX; segmentation previews, checkpoint recovery, and streamed ZIP / complete MP3 downloads |
 | **Durable task engine** | Persistent SQLite queues, upload and inference progress, local ETA history, SSE updates, cancellation, retry, task history, and safe purge |
 | **Web UI and APIs** | Bilingual local Web UI and Swagger guide, native asynchronous APIs, and OpenAI-compatible transcription and speech endpoints |
 | **Deployment-aware operation** | Recommended full CPU/GPU profile plus an optional CPU-only profile; the UI and API expose only devices and model controls available in the active deployment |
@@ -171,6 +174,8 @@ ASR, TTS, and the internal long-reference aligner use separate Python environmen
 
 The default-on single-task acceleration increases internal batch sizes according to hardware and model size without changing model identity, precision, diarization semantics, ASR chunking, or the sequential TTS decoder. OOM retries step down to batch 1 inside the same task. See [Architecture and capabilities](docs/ARCHITECTURE.md) for the full execution, cancellation, model, progress, and capability contracts.
 
+Document TTS accepts up to 5 million characters and 2,000 sections by default. Preview and select sections, reuse existing voice controls, and resume from completed section checkpoints. Retained imports can be reused or deleted; see [Document TTS](docs/DOCUMENT_TTS.md) for API examples, limits and streaming downloads.
+
 ## API and integrations
 
 The seven native asynchronous submission surfaces—ASR, single-item TTS, ordered TTS sequences, clone-reference analysis, voiceprint sample upload, document import, and document TTS—require an 8–128 character `Idempotency-Key`. First acceptance returns `202`; a same-request replay returns `200`; reusing a key with different input returns `409`. Sequence jobs load one model for up to 100 ordered items and return one WAV artifact per item; discover the exact limits at `tts.sequence_jobs`.
@@ -210,6 +215,7 @@ Add `Authorization: Bearer $AUDIO_INTEL_API_KEY` when authentication is configur
 | --- | --- |
 | [Installation](docs/INSTALL.md) | Linux prerequisites, full and partial setup, proxy, directories, and service modes |
 | [Native Windows](docs/WINDOWS.md) | Windows setup, lifecycle behavior, firewall, and troubleshooting |
+| [Document TTS](docs/DOCUMENT_TTS.md) | Import, segmentation, synthesis, API examples, and streaming downloads |
 | [API](docs/API.md) | Native asynchronous and OpenAI-compatible usage contracts |
 | [Architecture and capabilities](docs/ARCHITECTURE.md) | Pipelines, models, devices, acceleration, queues, progress, and cancellation |
 | [Local HTTPS](docs/HTTPS.md) | Project CA, certificate trust, SAN renewal, and fingerprint verification |
@@ -242,5 +248,3 @@ Models, task inputs, generated outputs, the SQLite database, voices, voiceprints
 ## License
 
 Project-owned code is licensed under the [Apache License 2.0](LICENSE). Downloaded model weights are not included in the repository and remain subject to their upstream licenses; see [third-party and model notices](THIRD_PARTY_NOTICES.md). The code license does not grant rights to third-party names or intellectual property; see the [brand and project status notice](BRAND_NOTICE.md).
-
-文档整篇 TTS（EPUB / TXT / Markdown / PDF / DOCX / XLSX / PPTX）、分段恢复和流式下载见 [文档 TTS](docs/DOCUMENT_TTS.md)。

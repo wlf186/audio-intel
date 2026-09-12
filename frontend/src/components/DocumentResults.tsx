@@ -4,7 +4,7 @@ import type {DocumentResult} from '../lib/types'
 import {artifactUrl} from '../lib/api'
 import {AudioTransport} from './AudioTransport'
 import './document.css'
-export function DocumentResults({jobId,result}:{jobId:string;result:DocumentResult}){
+export function DocumentResults({jobId,result,active=true}:{jobId:string;result:DocumentResult;active?:boolean}){
  const {t}=useTranslation()
  const [index,setIndex]=useState(0)
  const [error,setError]=useState('')
@@ -33,10 +33,10 @@ export function DocumentResults({jobId,result}:{jobId:string;result:DocumentResu
  }
  const item=result.sections[index]||result.sections[0]
  return <section className="document-results">
+  <label>{t('document.selectAudio')}<select value={index} onChange={e=>setIndex(Number(e.target.value))}>{result.sections.map((s,i)=><option key={s.id} value={i}>{s.index}. {s.title}</option>)}</select></label>
+  {item?<><AudioTransport active={active} key={`${jobId}:${item.id}`} src={artifactUrl(jobId,item.artifact_name)} duration={item.duration}/><a className="button" href={artifactUrl(jobId,item.artifact_name)}>{t('tts.results.download',{format:'MP3'})} · {item.title}</a></>:null}
   <div className="document-downloads"><a className="button primary" href={`/api/v1/jobs/${jobId}/document/download?mode=sections`} onClick={event=>{event.preventDefault();download('sections')}}>{t('document.zip')}</a><a className="button" href={`/api/v1/jobs/${jobId}/document/download?mode=complete`} onClick={event=>{event.preventDefault();download('complete')}}>{t('document.complete')}</a></div>
   {error?<p role="alert">{error}</p>:requested?<p role="status">{t('document.downloadRequested')}</p>:null}
-  <p>{t('document.streamNote')}</p>
-  <label>{t('document.selectAudio')}<select value={index} onChange={e=>setIndex(Number(e.target.value))}>{result.sections.map((s,i)=><option key={s.id} value={i}>{s.index}. {s.title}</option>)}</select></label>
-  {item?<><AudioTransport key={`${jobId}:${item.id}`} src={artifactUrl(jobId,item.artifact_name)} duration={item.duration}/><a className="button" href={artifactUrl(jobId,item.artifact_name)}>{t('tts.results.download',{format:'MP3'})} · {item.title}</a></>:null}
+  <details><summary>{t('document.downloadHelp')}</summary><p>{t('document.streamNote')}</p></details>
  </section>
 }

@@ -879,6 +879,8 @@ def test_tts_sequence_writes_one_ordered_artifact_per_item(tmp_path, monkeypatch
     }
     assert [item["name"] for item in result["artifacts"]] == ["item-0000.wav", "item-0001.wav"]
     assert all((output / item["name"]).is_file() for item in result["artifacts"])
+    from audio_intel.waveforms import cached
+    assert all(cached(output / item["name"]) is not None for item in result["artifacts"])
     assert result["acceleration"]["stage_batch_sizes"] == {"generation": 2, "decoder": 1}
 
 

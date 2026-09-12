@@ -119,7 +119,7 @@ ASR and TTS share a project-local GPU file lock, so only one service task loads 
 
 Acceleration does not change model identity, precision, ASR chunking, diarization semantics, or the TTS decoder's sequential block order. Task results record the model-adjusted targets, effective stage batches, hardware diagnostics, penalty steps, and OOM fallback count.
 
-Batch OOM recovery only reduces the effective batch within the same task. A model-load OOM or an OOM that remains at batch 1 is terminal: the task fails without CPU fallback or automatic retry, captures before/after memory and visible-GPU-process diagnostics, and the supervisor waits for the complete executor process tree to exit before starting a clean replacement.
+Batch OOM recovery only reduces the effective batch within the same task. For ordinary ASR, single-item TTS and ordered sequences, a model-load OOM or an OOM that remains at batch 1 is terminal: the task fails without CPU fallback or automatic retry, captures before/after memory and visible-GPU-process diagnostics, and the supervisor waits for the complete executor process tree to exit before starting a clean replacement.
 
 ## Progress, ETA, and events
 
@@ -166,8 +166,22 @@ TTS requests snapshot person names, notes, and sample names with reference audio
 
 Schema v11 adds `document_imports` and `document_sections` without replacing historical task, library or idempotency data. The API runtime owns a serial, offline parser child with a time/RSS limit; its five queued/running slots include uploads still being received. Authentication, idempotency validation, shared submission concurrency and cumulative disk reservations run before receiving new uploads. Files stream to a caller-owned partial source on the data volume and are atomically renamed. Identical replays hash without another file or parser slot. Source archives have independent expanded-size and member limits; Office dependencies stay in the API environment.
 
-A ready import holds canonical text and structural metadata. Versioned previews partition it without dropping characters; blank-only intervals merge into adjacent spoken text. Snapshot copies serialize with import deletion. Document jobs enter the normal TTS queue with independent source/text/section snapshots and one common voice configuration. Incremental MP3 encoding bounds waveform memory; per-section hashes and checkpoints preserve completed work across cancellation and retry. The existing executor process-tree retirement contract remains authoritative.
+A ready import holds canonical text and structural metadata. Versioned previews partition it without dropping characters; blank-only intervals merge into adjacent spoken text. Snapshot copies serialize with import deletion. Document jobs enter the normal TTS queue with independent source/text/section snapshots and one common voice configuration. Incremental MP3 encoding bounds waveform memory; per-section hashes and checkpoints preserve completed work across cancellation and retry. The existing executor process-tree retirement contract remains authoritative. Document jobs additionally allow two resource-recovery waits (30 and 120 seconds) after retiring the executor; they retain their queue position and reuse verified sections. Cancellation, disk exhaustion, invalid input and missing models do not trigger this automatic retry.
 
 Global job lists/SSE remain summary-only. Typed per-document APIs expose paginated stable section metadata and lazy text. Imports are retained until manual deletion; browser sessionStorage stores a versioned selection draft, including explicit empty selections, not the document text. Language changes do not reload or reset the draft. The import manager UI supports reuse, parser retry and deletion.
 
 ZIP_STORED ZIP64 export and packet-remuxed complete MP3 run on demand with bounded chunks and backpressure. Export files are not persisted. Download leases limit concurrency and exclude task purge; disconnects close iterators and release leases. Native browser downloads use same-origin hidden frames so structured pre-stream failures stay in the app; a begun transfer is owned by the browser download manager. No complete-file Blob is created.
+
+## Audio artifact waveforms
+
+Single-item, ordered-sequence and document TTS prepare up to 240 uniformly timed normalized peaks after encoding. Optional waveform preparation must not fail synthesis. Historical audio is decoded in bounded blocks on first access through the authenticated artifact waveform endpoint; only declared artifacts of successful jobs are eligible. Existing request/result snapshots and legacy inline peaks remain compatible.
+
+Each job owns `waveforms/<sha256(artifact_name)>.json` sidecars containing a cache version, source size/mtime fingerprint and waveform response. Atomic replacement prevents partial JSON reads; stale fingerprints trigger regeneration. These few-KB files contain no duplicate audio and are removed with the job. Same-file computations coalesce, with at most two cold computations in the API process; saturation returns 429 with Retry-After. A reader lease prevents purge during waveform reads/computation without consuming the separate batch-download slots. Interrupted temporary waveform files are removed during task cleanup.
+
+## Browser workspaces and state
+
+ASR uses fixed create/results tabs; TTS uses fixed text/document/results tabs. Opening results selects a task explicitly and loads successful-job details lazily with separate loading, error and retry states. Background completions do not replace the selected task; recent lists retain an explicitly selected older task. Full history and management remain on the global Tasks page. Leaving results pauses playback.
+
+ASR file objects live only in page memory: tab switches retain them, successful submission clears them, and refresh or leaving the ASR page discards them. Existing ASR/TTS parameter preferences keep their localStorage lifetime; document selection drafts retain sessionStorage semantics. Workspace navigation and expansion state are page-local. Returning to the same ASR result preserves search, speaker filters and reading position; changing tasks resets them.
+
+Waveforms are fetched only for visible players. The browser limits the shared cache to 64 memory entries, clears it on logout and adds no persistent storage. Loading or failing to fetch a waveform does not block audio playback or download. Result-detail caching remains separate from the summary-only job list and SSE.

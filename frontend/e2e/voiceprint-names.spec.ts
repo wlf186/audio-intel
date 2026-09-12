@@ -1,3 +1,5 @@
+import {showAsrResults} from './asr-helpers'
+import {expandTtsSettings} from './tts-helpers'
 import {expect,test,type Page} from '@playwright/test'
 
 // Drain async route callbacks before Playwright closes the page.
@@ -93,7 +95,8 @@ for(const width of [1440,390]){
   await expect(rename).toHaveCount(0)
   expect(people[0].samples[2].name).toBe('待分析会议录音')
   await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'语音合成'}).click()
-  await page.getByRole('tab',{name:'声音克隆'}).click()
+  await expandTtsSettings(page)
+ await page.getByRole('tab',{name:'声音克隆'}).click()
   await page.getByRole('tab',{name:'声纹库',exact:true}).click()
   const person=page.getByLabel('声纹人员',{exact:true})
   const sample=page.getByLabel('TTS 声纹样本')
@@ -132,6 +135,7 @@ test('ASR enrollment requires a choice for ambiguous names and keeps creation er
  let target=''
  await page.route('**/api/v1/voiceprints/people/*/samples/from-asr',route=>{target=new URL(route.request().url()).pathname;return route.fulfill({status:201,json:{items:[]}})})
  await page.goto('/#asr')
+ await showAsrResults(page)
  await page.getByLabel('选择片段 1').check()
  await page.getByRole('button',{name:'加入声纹库',exact:true}).click()
  const dialog=page.getByRole('dialog',{name:'加入声纹库'})
@@ -157,6 +161,7 @@ test('completed clone shows saved names and actual reference duration without re
  await page.route(/\/api\/v1\/jobs(?:\?.*)?$/,route=>route.fulfill({json:{items:[job],count:1,total:1,limit:100,offset:0,has_more:false}}))
  await page.route('**/api/v1/jobs/tts-names',route=>route.fulfill({json:job}))
  await page.goto('/#tts')
+ await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  await expect(page.locator('.audio-card')).toContainText('历史姓名（历史备注）')
  await expect(page.locator('.audio-card')).toContainText('参考样本：历史样本名')
  await expect(page.locator('.audio-card')).toContainText('原长 28 秒，实际使用 14.72 秒')
@@ -174,6 +179,7 @@ test('long person and sample names remain fully readable without mobile overflow
  people[0].samples[0].name='会议录音'.repeat(20)
  await page.setViewportSize({width:390,height:844})
  await page.goto('/#tts')
+ await expandTtsSettings(page)
  await page.getByRole('tab',{name:'声音克隆'}).click()
  await page.getByRole('tab',{name:'声纹库',exact:true}).click()
  await expect(page.locator('.sample-summary')).toContainText(people[0].samples[0].name)
@@ -202,6 +208,7 @@ test('clone library loading and failure stay distinct from an empty library and 
   return route.fulfill({json:{items:people}})
  })
  await page.goto('/#tts')
+ await expandTtsSettings(page)
  await page.getByRole('tab',{name:'声音克隆'}).click()
  await page.getByRole('tab',{name:'声纹库',exact:true}).click()
  await expect(page.locator('.clone-person-picker .resource-state.loading')).toBeVisible()

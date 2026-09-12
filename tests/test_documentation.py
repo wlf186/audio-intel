@@ -182,3 +182,27 @@ def test_document_tts_docs_cover_imports_retries_and_streaming():
     assert "storage_bytes" in api and "start_offset/end_offset" in api
     assert "Schema v11" in architecture and "Document imports" in architecture
     assert "v0.1.12" in upgrade and "sessionStorage" in upgrade
+
+
+def test_document_guide_keeps_api_workflow_and_resource_configuration() -> None:
+    guide = (ROOT / "docs" / "DOCUMENT_TTS.md").read_text(encoding="utf-8")
+    for endpoint in (
+        "/api/v1/tts/document-imports", "/api/v1/tts/document-jobs",
+        "/api/v1/jobs/{job_id}/document/sections",
+    ):
+        assert endpoint in guide
+    for field in ("Idempotency-Key", "preview_revision", "section_ids"):
+        assert field in guide
+    for setting in (
+        "MAX_DOCUMENT_BYTES", "MAX_DOCUMENT_CHARS", "MAX_DOCUMENT_SECTIONS",
+        "MAX_DOCUMENT_DOWNLOADS", "DOCUMENT_PARSE_SECONDS",
+        "DOCUMENT_PARSE_MEMORY_BYTES", "DOCUMENT_ARCHIVE_BYTES",
+    ):
+        assert f"AUDIO_INTEL_{setting}" in guide
+    assert "scripts/tts_document.py" in guide and "--preview-only" in guide
+    assert "SQLite v11" in guide
+    for name in ("README.md", "README_CN.md"):
+        assert any(
+            line.startswith("| [") and "docs/DOCUMENT_TTS.md)" in line
+            for line in (ROOT / name).read_text(encoding="utf-8").splitlines()
+        )

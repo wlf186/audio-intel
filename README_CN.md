@@ -42,7 +42,7 @@
 ![Sandevistan Audio 本地 ASR 工作区，展示说话人分离结果与导出控件](docs/assets/readme/zh-CN/asr-workspace.webp)
 
 <p align="center">
-  <img src="docs/assets/readme/zh-CN/tts-workspace.webp" width="49%" alt="Sandevistan Audio 预置音色语音合成工作区">
+  <img src="docs/assets/readme/zh-CN/tts-workspace.webp" width="49%" alt="Sandevistan Audio 语音合成任务、波形播放与下载">
   <img src="docs/assets/readme/zh-CN/job-history.webp" width="49%" alt="Sandevistan Audio 持久化 ASR 与 TTS 任务记录">
 </p>
 
@@ -51,6 +51,8 @@
 > [!NOTE]
 > Web UI 支持简体中文和英文，可在页眉或登录对话框中切换，选择会保存在当前浏览器。本地 Swagger API 指南同样提供中英双语内容。
 
+ASR 使用固定的“新建转写 / 任务与结果”页签；TTS 使用“文本合成 / 文档合成 / 任务与结果”页签。输入和配置与结果分开，提交后可定位本次任务；单段、序列和文档章节提供波形播放与下载。
+
 ## 主要能力
 
 | 范围 | 能力 |
@@ -58,6 +60,7 @@
 | **本地语音识别** | Qwen3-ASR 0.6B/1.7B、FSMN-VAD、CAM++ 说话人分离、句段与字词时间戳，以及 JSON/SRT/VTT/TXT 导出 |
 | **说话人与声纹** | 声纹人员通过姓名＋备注区分同名，样本支持按来源命名和重命名；自定义及声纹衍生热词表改善领域词汇，已完成任务保留不可变快照 |
 | **本地语音工作室** | Qwen3-TTS 0.6B/1.7B、预置音色、一次性或声纹库声音克隆、1.7B VoiceDesign，以及 WAV/FLAC/MP3 输出 |
+| **文档语音合成** | EPUB、TXT、Markdown、文本 PDF、DOCX、XLSX、PPTX，分段预览、检查点恢复及流式 ZIP / 完整 MP3 下载 |
 | **持久任务引擎** | SQLite 持久化队列、上传与推理进度、本机历史 ETA、SSE、取消、重试、任务记录和安全清理 |
 | **Web UI 与 API** | 中英双语本地 Web UI 和 Swagger 指南、原生异步 API，以及 OpenAI 兼容转写与语音端点 |
 | **部署感知运行** | 默认推荐的 CPU/GPU 全量配置和可选 CPU-only 配置；UI 与 API 只展示当前部署真正可用的设备和模型控制项 |
@@ -212,6 +215,7 @@ curl --fail-with-body -sS \
 | --- | --- |
 | [安装与复原](docs/INSTALL.md) | Linux 前提、完整/部分安装、代理、目录和服务模式 |
 | [原生 Windows](docs/WINDOWS.md) | Windows 安装、生命周期、防火墙和排障 |
+| [文档 TTS](docs/DOCUMENT_TTS.md) | 文档导入、分段、合成、API 示例和流式下载 |
 | [API](docs/API.md) | 原生异步与 OpenAI 兼容使用契约 |
 | [架构与能力](docs/ARCHITECTURE.md) | 管线、模型、设备、加速、队列、进度和取消 |
 | [局域网 HTTPS](docs/HTTPS.md) | 项目 CA、证书信任、SAN 更新和指纹核对 |

@@ -1,7 +1,9 @@
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Download, FileAudio, Pause, Pencil, Play, RotateCcw, Search, UploadCloud, UserPlus, X } from 'lucide-react'
 import { api, HttpError, artifactUrl, formatTime, isUploadCancelled, sourceUrl, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
 import type { AsrModelCapability, ComputeDevice, HotwordLibraryCapability, HotwordList, Job, JobDetailResource, JobResult, JobSummary, ResourceState, ResultRevealRequest, Segment, Speaker, VoiceprintPerson } from '../lib/types'
+import './asr.css'
+import { ResourceStatePanel } from '../components/ResourceStatePanel'
 import { Waveform } from '../components/Waveform'
 import { JobMini } from '../components/JobMini'
 import { Modal } from '../components/Modal'
@@ -51,9 +53,9 @@ const SegmentRow = memo(function SegmentRow({ segment, speaker, active, currentT
   const match = speaker?.label_source === 'voiceprint' ? speaker.voiceprint_match : undefined
   return (
     <article className={`${active ? 'active ' : ''}${selected ? 'selected-segment' : ''}`}>
-      <div className="segment-select">
+      <label className="segment-select">
         <input type="checkbox" checked={selected} disabled={disabled} aria-label={t('asr.segment.select', { number: segment.id + 1 })} onChange={() => onToggle(segment)} />
-      </div>
+      </label>
       <div className="segment-time">
         <b>{formatTime(segment.start)}</b>
         <span>—</span>
@@ -94,6 +96,11 @@ const SegmentRow = memo(function SegmentRow({ segment, speaker, active, currentT
 })
 
 type Props = {
+  jobsReady: boolean
+  jobsError: string
+  refreshJobs: () => Promise<void>
+  refreshHotwords: () => Promise<void>
+  onManageJobs: () => void
   jobs: JobSummary[]
   jobDetails: Record<string, JobDetailResource>
   loadJobDetail: (job: JobSummary, force?: boolean) => void
@@ -118,8 +125,20 @@ type Props = {
   onRevealHandled: (token: number) => void
 }
 
-export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
+export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const { t, i18n } = useTranslation()
+  const [view, setView] = useState<'create'|'results'>('create')
+  const [compact, setCompact] = useState(()=>matchMedia('(max-width: 1199px)').matches)
+  useEffect(()=>{const media=matchMedia('(max-width: 1199px)');const change=()=>setCompact(media.matches);media.addEventListener('change',change);return()=>media.removeEventListener('change',change)},[])
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [hotwordsOpen, setHotwordsOpen] = useState(false)
+  const [hotwordQuery, setHotwordQuery] = useState('')
+  const [lastSubmitted, setLastSubmitted] = useState<JobSummary>()
+  const [renameBusy, setRenameBusy] = useState(false)
+  const [libraryBusy, setLibraryBusy] = useState(false)
+  const [renameError, setRenameError] = useState('')
+  const [resultNotice, setResultNotice] = useState('')
+  const [resultError, setResultError] = useState('')
   const [file, setFile] = useState<File>()
   const [preferences, setPreferences] = useState<AsrPreferences>(() => loadAsrPreferences(maxSpeakers,defaultComputeDevice))
   const [busy, setBusy] = useState(false)
@@ -151,11 +170,16 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   const audio = useRef<HTMLAudioElement>(null)
   const resultPanel = useRef<HTMLElement>(null)
   const segmentList = useRef<HTMLDivElement>(null)
+  const readingPosition = useRef(0)
+  const selectWorkspace = (next: 'create'|'results') => {
+    if (view === 'results' && next !== 'results') readingPosition.current = segmentList.current?.scrollTop || 0
+    setView(next)
+  }
   const loadMoreSentinel = useRef<HTMLDivElement>(null)
   const stopAt = useRef<number | undefined>(undefined)
   const uploadController=useRef<AbortController|undefined>(undefined)
   const asrJobs = useMemo(() => jobs.filter((job) => job.kind === 'asr'), [jobs])
-  const selectedSummary = asrJobs.find((job) => job.id === selectedJobId && job.state === 'succeeded') || asrJobs.find((job) => job.state === 'succeeded')
+  const selectedSummary = asrJobs.find((job) => job.id === selectedJobId)
   const visibleJobs = useMemo(() => visibleWorkspaceJobs(asrJobs, selectedSummary?.id), [asrJobs, selectedSummary?.id])
   const detail = selectedSummary ? jobDetails[selectedSummary.id] : undefined
   const selected = detail?.job
@@ -208,6 +232,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   const model = chosenModel.id
   const effectiveComputeDevice: ComputeDevice = computeDevice === 'gpu' && gpuCapability?.available === false ? 'cpu' : computeDevice
   const selectedHotwordIds = useMemo(() => new Set(preferences.hotwordListIds), [preferences.hotwordListIds])
+  const matchingHotwords = hotwordLists.filter(item=>hotwordListDisplayName(item,t).toLocaleLowerCase().includes(hotwordQuery.trim().toLocaleLowerCase()))
   const selectedHotwordStats = useMemo(() => hotwordStats(hotwordLists, selectedHotwordIds), [hotwordLists, selectedHotwordIds])
   const selectedHotwordIssue = hotwordLimitIssue(selectedHotwordIds.size, selectedHotwordStats, hotwordLimits, t('asr.hotwords.currentSelection'), t)
   const fileLimitError=file?uploadLimitMessage(file,maxUploadBytes,t,i18n.resolvedLanguage||'zh-CN'):''
@@ -241,8 +266,15 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
     })
   }, [hotwordLists, hotwordsState])
   useEffect(() => {
-    if (selectedSummary) loadJobDetail(selectedSummary)
-  }, [loadJobDetail, selectedSummary])
+    if (view === 'results' && selectedSummary?.state === 'succeeded') loadJobDetail(selectedSummary)
+  }, [loadJobDetail, selectedSummary, view])
+  useEffect(() => {
+    if (view === 'results' && jobsReady && !selectedJobId && asrJobs[0]) onSelect(asrJobs[0])
+  }, [view, jobsReady, selectedJobId, asrJobs, onSelect])
+  useEffect(() => { if (view !== 'results') audio.current?.pause() }, [view])
+  useLayoutEffect(() => {
+    if (view === 'results' && segmentList.current) segmentList.current.scrollTop = readingPosition.current
+  }, [view, selected?.id])
   useEffect(() => {
     const player = audio.current
     if (player) {
@@ -256,6 +288,11 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
     setMediaError('')
     setSelectedSegments(new Set())
     setSpeakerFilter('all')
+    setQuery('')
+    readingPosition.current = 0
+    setResultError('')
+    setResultNotice('')
+    if (segmentList.current) segmentList.current.scrollTop = 0
   }, [selectedSummary?.id])
   useEffect(() => setVisibleSegmentCount(segmentBatchSize), [normalizedQuery, selectedSummary?.id, speakerFilter])
   useEffect(() => {
@@ -266,25 +303,26 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   useEffect(() => {
     const root = segmentList.current
     const target = loadMoreSentinel.current
-    if (!root || !target || visibleSegmentCount >= segments.length) return
+    if (view !== 'results' || !root || !target || visibleSegmentCount >= segments.length) return
     const observer = new IntersectionObserver((entries) => {if(entries.some((entry) => entry.isIntersecting))loadMoreSegments()}, {root,rootMargin:'0px 0px 360px'})
     observer.observe(target)
     return () => observer.disconnect()
-  }, [loadMoreSegments, segments.length, visibleSegmentCount])
+  }, [loadMoreSegments, segments.length, visibleSegmentCount, view])
   useEffect(() => {
-    if (!revealRequest || revealRequest.jobId !== selectedSummary?.id) return
+    if (!revealRequest) return
+    setView('results')
     const frame = requestAnimationFrame(() => {
-      if (matchMedia('(max-width: 900px)').matches)
-        resultPanel.current?.scrollIntoView({
-          block: 'start',
-          behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-        })
+      document.querySelector<HTMLElement>('#main-content')?.scrollTo({top:0,left:0,behavior:'auto'})
+      window.scrollTo({top:0,left:0,behavior:'auto'})
+      resultPanel.current?.focus({preventScroll:true})
       onRevealHandled(revealRequest.token)
     })
     return () => cancelAnimationFrame(frame)
-  }, [onRevealHandled, revealRequest, selectedSummary?.id])
+  }, [onRevealHandled, revealRequest])
+
 
   const submit = async () => {
+    if (selectedHotwordIds.size && hotwordsState !== 'ready') { setError(t('asr.workspace.hotwordsUnavailable')); return }
     if (selectedHotwordIssue) {
       setError(selectedHotwordIssue)
       return
@@ -314,6 +352,8 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
       if (selectedHotwordIds.size) data.set('hotword_list_ids', [...selectedHotwordIds].join(','))
       const job = await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
       onJobSubmitted(job)
+      setLastSubmitted(job)
+      onSelect(job)
       setFile(undefined)
       setNotice(t('asr.notices.submitted'))
       if (input.current) input.current.value = ''
@@ -386,22 +426,23 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
     setSpeakerFilter(next)
   }
   const openRename = useCallback((segment: Segment) => {
+    setRenameError('')
     setRenameSpeaker({ id: segment.speaker, label: segment.speaker_label })
     setRenameValue(segment.speaker_label)
   }, [])
   const saveRename = async () => {
     if (!selected || !renameSpeaker || !renameValue.trim()) return
-    setBusy(true)
-    setError('')
+    setRenameBusy(true)
+    setRenameError('')
     try {
       const next = await api.renameSpeaker(selected.id, renameSpeaker.id, renameValue.trim())
       onJobResultUpdated(selected.id, next)
       setRenameSpeaker(undefined)
-      setNotice(t('asr.notices.renamed',{from:renameSpeaker.label,to:renameValue.trim()}))
+      setResultNotice(t('asr.notices.renamed',{from:renameSpeaker.label,to:renameValue.trim()}))
     } catch (cause) {
-      setError((cause as Error).message)
+      setRenameError((cause as Error).message)
     } finally {
-      setBusy(false)
+      setRenameBusy(false)
     }
   }
   const openLibrary = () => {
@@ -420,7 +461,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   }
   const addToLibrary = async () => {
     if (!selected || !selectedSegments.size || targetPersonId==='__choose__') return
-    setBusy(true)
+    setLibraryBusy(true)
     setLibraryError('')
     let creatingPerson=!targetPersonId
     let created=false
@@ -437,14 +478,14 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
       await api.addAsrSamples(personId, selected.id, [...selectedSegments])
       setSelectedSegments(new Set())
       setLibraryOpen(false)
-      setNotice(t('asr.notices.addedToVoiceprints'))
-      if(!created)await refreshVoiceprints().catch(cause=>setError((cause as Error).message))
+      setResultNotice(t('asr.notices.addedToVoiceprints'))
+      if(!created)await refreshVoiceprints().catch(cause=>setResultError((cause as Error).message))
     } catch (cause) {
       setLibraryError(cause instanceof HttpError&&cause.status===409&&creatingPerson?t('voiceprintNames.personConflict'):(cause as Error).message)
       if(creatingPerson)libraryNameRef.current?.focus()
     } finally {
-      if(created)await refreshPeopleAndHotwords().catch(cause=>setError((cause as Error).message))
-      setBusy(false)
+      if(created)await refreshPeopleAndHotwords().catch(cause=>setResultError((cause as Error).message))
+      setLibraryBusy(false)
     }
   }
   const resetPreferences = () => {
@@ -457,35 +498,36 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
   }
 
   return (
-    <div className="workbench hud-page">
-      <aside className="control-panel" data-module="AUDIO_INPUT / UP_01">
-        <div className="control-heading">
-          <div>
-            <h1>{t('asr.title')}</h1>
-            <p className="subtitle">{t('asr.subtitle')}</p>
-          </div>
-          <button className="reset-settings" type="button" onClick={resetPreferences}>
-            <RotateCcw size={14} />
-            {t('asr.restoreDefaults')}
-          </button>
-        </div>
+    <div className="workbench hud-page asr-workspace">
+      <header className="asr-heading"><h1>{t('asr.title')}</h1></header>
+      <div className="asr-tabs" role="tablist" aria-label={t('asr.title')} onKeyDown={event=>{
+        const tabs=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role=tab]'))
+        const index=tabs.indexOf(document.activeElement as HTMLButtonElement)
+        const next=event.key==='Home'?0:event.key==='End'?1:event.key==='ArrowRight'||event.key==='ArrowLeft'?1-index:-1
+        if(next<0)return
+        event.preventDefault();tabs[next]?.focus();selectWorkspace(next===0?'create':'results')
+      }}>
+        {(['create','results'] as const).map(item=><button key={item} id={`asr-tab-${item}`} role="tab" aria-selected={view===item} aria-controls={`asr-${item}`} tabIndex={view===item?0:-1} onClick={()=>selectWorkspace(item)}>{t(`asr.workspace.${item}`)}</button>)}
+      </div>
+      <aside className="control-panel asr-create" id="asr-create" role="tabpanel" aria-labelledby="asr-tab-create" hidden={view!=='create'} data-module="AUDIO_INPUT / UP_01">
+      <div className="asr-upload">
+
         <input ref={input} hidden type="file" accept="audio/*,video/*" disabled={busy} onChange={(event) => chooseFile(event.target.files?.[0])} />
         <button className="dropzone" disabled={busy} onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={chooseDropped}>
           <UploadCloud size={44} />
           <b>{file?.name || t('asr.dropzone.title')}</b>
           <span>{file ? t('asr.dropzone.reselect') : t('asr.dropzone.formats')}</span>
         </button>
-        <label>
-          {t('asr.model')}
-          <select aria-label={t('asr.model')} value={model} onChange={(event) => updatePreference('model', event.target.value)}>
-            {models.map((item) => (
-              <option key={item.id} value={item.id} disabled={!item.installed}>
-                {item.name}
-                {item.installed ? '' : t('asr.notInstalled')}
-              </option>
-            ))}
-          </select>
-        </label>
+        {file?<div className="asr-file-info"><span>{file.name} · {(file.size/1024/1024).toFixed(2)} MB</span><button className="button" disabled={busy} onClick={()=>{setFile(undefined);if(input.current)input.current.value='';setError('')}}>{t('asr.workspace.removeFile')}</button></div>:null}
+        <p>{t('asr.subtitle')}</p>
+      </div>
+      <section className={`asr-settings${settingsOpen?' expanded':''}`}>
+        <button className="asr-settings-toggle" aria-expanded={!compact||settingsOpen} aria-controls="asr-settings-body" onClick={()=>{if(compact)setSettingsOpen(value=>!value)}}>{t('asr.workspace.settings')} · {language==='Auto'?t('common.languages.Auto'):language} · {effectiveComputeDevice.toUpperCase()}</button>
+        {computeDevice==='gpu'&&effectiveComputeDevice==='cpu'?<p className="notice">{computeUnavailableReason(gpuCapability,t)}</p>:null}
+        {selectedHotwordIds.size>0&&hotwordsState!=='ready'?<ResourceStatePanel state={hotwordsState} loadingLabel={t('asr.workspace.loadingHotwords')} errorLabel={t('asr.workspace.hotwordsUnavailable')} retry={()=>void refreshHotwords().catch(()=>undefined)}/>:null}
+        {selectedHotwordIssue?<p id="asr-hotword-submit-error" className="error" role="alert">{selectedHotwordIssue}</p>:null}
+        <div id="asr-settings-body" className="asr-settings-body">
+          <button className="reset-settings" onClick={resetPreferences}><RotateCcw size={14}/>{t('asr.restoreDefaults')}</button>
         <label>
           {t('asr.language')}
           <select value={language} onChange={(event) => updatePreference('language', event.target.value)}>
@@ -496,54 +538,6 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
             ))}
           </select>
         </label>
-        <fieldset className="hotword-picker">
-          <legend>{t('asr.hotwords.label')}</legend>
-          {hotwordLists.length ? (
-            hotwordLists.map((item) => {
-              const issue = hotwordSelectionIssue(item)
-              const issueId = issue ? `hotword-option-issue-${item.id}` : undefined
-              return (
-                <label key={item.id} className={issue ? 'hotword-option blocked' : 'hotword-option'} title={issue || undefined}>
-                  <input
-                    type="checkbox"
-                    checked={selectedHotwordIds.has(item.id)}
-                    disabled={Boolean(issue)}
-                    aria-describedby={issueId}
-                    onChange={() => setPreferences((current) => {
-                      const selected = new Set(current.hotwordListIds)
-                      selected.has(item.id) ? selected.delete(item.id) : selected.add(item.id)
-                      const next = { ...current, hotwordListIds: [...selected] }
-                      saveAsrPreferences(next)
-                      return next
-                    })}
-                  />
-                  <span>
-                    {hotwordListDisplayName(item,t)}
-                    {item.kind === 'system' ? <em>{t('hotwords.system')}</em> : null}
-                  </span>
-                  <small className="hotword-option-count">{t('asr.hotwords.termCount',{count:item.term_count})}</small>
-                  {issue ? (
-                    <small id={issueId} className="hotword-option-issue">
-                      {issue}
-                    </small>
-                  ) : null}
-                </label>
-              )
-            })
-          ) : (
-            <small className="device-hint">{t('asr.hotwords.emptyHelp')}</small>
-          )}
-          {hotwordLists.length ? (
-            <small className={`hotword-selection-summary${selectedHotwordIssue ? ' invalid' : ''}`}>
-              {t('asr.hotwords.summary',{lists:selectedHotwordIds.size,maxLists:hotwordLimits?.max_selected_lists||8,terms:selectedHotwordStats.terms,maxTerms:hotwordLimits?.max_selected_terms||500,characters:selectedHotwordStats.promptChars,maxCharacters:hotwordLimits?.max_prompt_chars||8000})}
-            </small>
-          ) : null}
-          {selectedHotwordIssue ? (
-            <p id="asr-hotword-limit-error" className="hotword-limit-error" role="alert">
-              {selectedHotwordIssue} {t('asr.hotwords.removeOne')}
-            </p>
-          ) : null}
-        </fieldset>
         <label>
           {t('asr.speakerCount')}
           <select value={speakers} onChange={(event) => updatePreference('speakerCount', event.target.value)}>
@@ -558,6 +552,24 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
           <select value={align ? 'word' : 'segment'} onChange={(event) => updatePreference('align', event.target.value === 'word')}>
             <option value="word">{t('asr.timestamps.word')}</option>
             <option value="segment">{t('asr.timestamps.segment')}</option>
+          </select>
+        </label>
+        <div className="asr-hotword-summary">
+          <span>{t('asr.hotwords.label')}</span>
+          <p>{hotwordsState==='ready'?t('asr.workspace.hotwordSummary',{lists:selectedHotwordIds.size,terms:selectedHotwordStats.terms}):t(hotwordsState==='loading'?'asr.workspace.loadingHotwords':'asr.workspace.hotwordsUnavailable')}</p>
+          <button className="button" onClick={()=>setHotwordsOpen(true)}>{t('asr.workspace.chooseHotwords')}</button>
+          {selectedHotwordIds.size?<button className="button" onClick={()=>updatePreference('hotwordListIds',[])}>{t('asr.workspace.clearHotwords')}</button>:null}
+        </div>
+        <details className="asr-advanced"><summary>{t('asr.workspace.advanced')} · {chosenModel.name} · {effectiveComputeDevice.toUpperCase()}</summary>
+        <label>
+          {t('asr.model')}
+          <select aria-label={t('asr.model')} value={model} onChange={(event) => updatePreference('model', event.target.value)}>
+            {models.map((item) => (
+              <option key={item.id} value={item.id} disabled={!item.installed}>
+                {item.name}
+                {item.installed ? '' : t('asr.notInstalled')}
+              </option>
+            ))}
           </select>
         </label>
         <label className="toggle-label">
@@ -583,9 +595,9 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
           </label>
           <InfoTooltip id="asr-acceleration-help" text={t('asr.accelerationHelp')} />
         </div>
-        <label>
-          {t('asr.exportFormat')}<div className="select-like">JSON · SRT · VTT · TXT</div>
-        </label>
+        </details>
+        </div>
+        <p className="asr-export-note">{t('asr.exportFormat')} · JSON / SRT / VTT / TXT</p>
         <div className="submission-actions">
           {error||fileLimitError ? (
             <p className="error" role="alert">
@@ -597,21 +609,37 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
               {notice}
             </p>
           ) : null}
+          {lastSubmitted?<div className="asr-submitted"><span>{lastSubmitted.display_name}</span><button className="button" onClick={()=>{onSelect(lastSubmitted);setView('results')}}>{t('asr.workspace.viewSubmitted')}</button></div>:null}
           {uploadProgress?<SubmissionProgress label={t('asr.uploadLabel')} progress={uploadProgress} onCancel={()=>uploadController.current?.abort()}/>:null}
-          <button className="primary" disabled={busy || !chosenModel.installed || Boolean(selectedHotwordIssue) || Boolean(fileLimitError)} aria-describedby={selectedHotwordIssue ? 'asr-hotword-limit-error' : undefined} onClick={submit}>
+          <button className="primary" disabled={busy || !chosenModel.installed || Boolean(selectedHotwordIssue) || Boolean(fileLimitError) || (selectedHotwordIds.size>0&&hotwordsState!=='ready')} aria-describedby={selectedHotwordIssue ? 'asr-hotword-submit-error' : undefined} onClick={submit}>
             <Play size={18} />
             {submitLabel}
           </button>
         </div>
-        <section className="aside-jobs">
-          <h2>{t('asr.taskList')}</h2>
-          {visibleJobs.map((job) => (
-            <JobMini key={job.id} job={job} isSelected={job.id === selectedSummary?.id} onOpen={(item) => item.state === 'succeeded' && onSelect(item)} />
-          ))}
-        </section>
+      </section>
       </aside>
-      <section ref={resultPanel} className="result-panel" data-module="TRANSCRIPT_CORE / TRN_01">
-        {selectedSummary && detail?.state === 'loading' ? (
+      <section className="asr-results" id="asr-results" role="tabpanel" aria-labelledby="asr-tab-results" hidden={view!=='results'}>
+        <aside className="asr-task-list">
+          <h2>{t('asr.taskList')}</h2>
+          <ResourceStatePanel state={jobsError?'error':jobsReady?'ready':'loading'} loadingLabel={t('asr.workspace.loadingJobs')} errorLabel={jobsError} retry={()=>void refreshJobs()}/>
+          {jobsReady&&visibleJobs.length?<>
+            <label className="asr-task-picker"><span className="sr-only">{t('asr.workspace.selectTask')}</span><select value={selectedSummary?.id||''} onChange={event=>{const job=visibleJobs.find(item=>item.id===event.target.value);if(job)onSelect(job)}}>
+              {!selectedSummary?<option value="">{t('asr.workspace.selectTask')}</option>:null}
+              {visibleJobs.map(job=><option key={job.id} value={job.id}>{job.display_name} · {t(`jobs.states.${job.state}`)}</option>)}
+            </select></label>
+            <div className="asr-recent-jobs">{visibleJobs.map(job=><JobMini key={job.id} job={job} isSelected={job.id===selectedSummary?.id} onOpen={onSelect}/>)}</div>
+          </>:jobsReady&&!jobsError?<p>{t('asr.results.empty')}</p>:null}
+          <button className="button asr-manage" onClick={onManageJobs}>{t('asr.workspace.manage')}</button>
+        </aside>
+      <section ref={resultPanel} tabIndex={-1} hidden={!jobsReady&&!selectedSummary} className="result-panel" data-module="TRANSCRIPT_CORE / TRN_01">
+        {resultNotice?<p className="notice" role="status">{resultNotice}</p>:null}
+        {resultError?<div className="error" role="alert"><p>{resultError}</p><button className="button" onClick={()=>void refreshPeopleAndHotwords().then(()=>setResultError('')).catch(cause=>setResultError((cause as Error).message))}>{t('common.actions.retry')}</button></div>:null}
+        {selectedSummary&&selectedSummary.state!=='succeeded'?<div className="asr-task-status" role="status">
+          <JobMini job={selectedSummary} onOpen={onManageJobs}/>
+          {selectedSummary.error_message?<p className="error">{selectedSummary.error_message}</p>:null}
+          <p>{t('asr.workspace.pending')}</p>
+        </div>:selectedJobId&&!selectedSummary&&jobsReady?<p role="status">{t('asr.workspace.unavailable')}</p>:!selectedSummary&&!jobsReady?<ResourceStatePanel state={jobsError?'error':'loading'} loadingLabel={t('asr.workspace.loadingJobs')} errorLabel={jobsError} retry={()=>void refreshJobs()}/>:
+        selectedSummary && (!detail || detail.state === 'loading') ? (
           <div className="empty" role="status">
             <FileAudio size={52} />
             <h2>{t('asr.results.loading')}</h2>
@@ -646,7 +674,7 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
             <audio
               ref={audio}
               className="sr-only"
-              preload="metadata"
+              preload={view==='results'?'metadata':'none'}
               src={selected.source_url || sourceUrl(selected.id)}
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
@@ -739,20 +767,79 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
           </div>
         )}
       </section>
+      </section>
+      {hotwordsOpen?<Modal title={t('asr.hotwords.label')} closeLabel={t('common.actions.close')} onClose={()=>setHotwordsOpen(false)}>
+        <ResourceStatePanel state={hotwordsState} loadingLabel={t('asr.workspace.loadingHotwords')} errorLabel={t('asr.workspace.hotwordsUnavailable')} retry={()=>void refreshHotwords().catch(()=>undefined)}/>
+        {selectedHotwordIds.size?<button className="button" onClick={()=>updatePreference('hotwordListIds',[])}>{t('asr.workspace.clearHotwords')}</button>:null}
+        {hotwordsState==='ready'?<><input aria-label={t('asr.workspace.searchHotwords')} placeholder={t('asr.workspace.searchHotwords')} value={hotwordQuery} onChange={event=>setHotwordQuery(event.target.value)}/>
+        {hotwordLists.length>0&&matchingHotwords.length===0?<p role="status">{t('asr.workspace.noHotwordMatches')}</p>:null}
+        <fieldset className="hotword-picker">
+          <legend>{t('asr.hotwords.label')}</legend>
+          {hotwordLists.length ? (
+            matchingHotwords.map((item) => {
+              const issue = hotwordSelectionIssue(item)
+              const issueId = issue ? `hotword-option-issue-${item.id}` : undefined
+              return (
+                <label key={item.id} className={issue ? 'hotword-option blocked' : 'hotword-option'} title={issue || undefined}>
+                  <input
+                    type="checkbox"
+                    checked={selectedHotwordIds.has(item.id)}
+                    disabled={Boolean(issue)}
+                    aria-describedby={issueId}
+                    onChange={() => setPreferences((current) => {
+                      const selected = new Set(current.hotwordListIds)
+                      selected.has(item.id) ? selected.delete(item.id) : selected.add(item.id)
+                      const next = { ...current, hotwordListIds: [...selected] }
+                      saveAsrPreferences(next)
+                      return next
+                    })}
+                  />
+                  <span>
+                    {hotwordListDisplayName(item,t)}
+                    {item.kind === 'system' ? <em>{t('hotwords.system')}</em> : null}
+                  </span>
+                  <small className="hotword-option-count">{t('asr.hotwords.termCount',{count:item.term_count})}</small>
+                  {issue ? (
+                    <small id={issueId} className="hotword-option-issue">
+                      {issue}
+                    </small>
+                  ) : null}
+                </label>
+              )
+            })
+          ) : (
+            <small className="device-hint">{t('asr.hotwords.emptyHelp')}</small>
+          )}
+          {hotwordLists.length ? (
+            <small className={`hotword-selection-summary${selectedHotwordIssue ? ' invalid' : ''}`}>
+              {t('asr.hotwords.summary',{lists:selectedHotwordIds.size,maxLists:hotwordLimits?.max_selected_lists||8,terms:selectedHotwordStats.terms,maxTerms:hotwordLimits?.max_selected_terms||500,characters:selectedHotwordStats.promptChars,maxCharacters:hotwordLimits?.max_prompt_chars||8000})}
+            </small>
+          ) : null}
+          {selectedHotwordIssue ? (
+            <p id="asr-hotword-limit-error" className="hotword-limit-error" role="alert">
+              {selectedHotwordIssue} {t('asr.hotwords.removeOne')}
+            </p>
+          ) : null}
+        </fieldset>
+
+        </>:null}
+        <button className="button" onClick={()=>setHotwordsOpen(false)}>{t('asr.workspace.close')}</button>
+      </Modal>:null}
       {renameSpeaker ? (
-        <Modal title={t('asr.rename.title')} closeLabel={t('asr.rename.close')} onClose={() => setRenameSpeaker(undefined)}>
+        <Modal title={t('asr.rename.title')} closeLabel={t('asr.rename.close')} onClose={() => {if(!renameBusy)setRenameSpeaker(undefined)}}>
+          {renameError?<p className="error" role="alert">{renameError}</p>:null}
           <p>{t('asr.rename.help',{name:renameSpeaker.label})}</p>
           <label>
             {t('asr.rename.newName')}
             <input value={renameValue} maxLength={80} onChange={(event) => setRenameValue(event.target.value)} />
           </label>
-          <button className="primary" disabled={busy || !renameValue.trim()} onClick={saveRename}>
+          <button className="primary" disabled={renameBusy || !renameValue.trim()} onClick={saveRename}>
             {t('asr.rename.save')}
           </button>
         </Modal>
       ) : null}
       {libraryOpen ? (
-        <Modal title={t('asr.library.title')} closeLabel={t('asr.library.close')} onClose={() => {if(!busy)setLibraryOpen(false)}}>
+        <Modal title={t('asr.library.title')} closeLabel={t('asr.library.close')} onClose={() => {if(!libraryBusy)setLibraryOpen(false)}}>
           <p>
             {t('asr.library.help',{count:selectedSegments.size,speaker:selectionLabel})}
           </p>
@@ -794,8 +881,8 @@ export function AsrPage({ jobs, jobDetails, loadJobDetail, onJobSubmitted, onJob
               {voiceprints.filter(person=>person.id===targetPersonId).map(voiceprintPersonLabel).join('')}
             </p>
           )}
-          <button className="primary" disabled={busy || targetPersonId==='__choose__' || (!targetPersonId && !newPersonName.trim())} onClick={addToLibrary}>
-            {busy ? t('voiceprints.saving') : t('asr.library.confirm')}
+          <button className="primary" disabled={libraryBusy || targetPersonId==='__choose__' || (!targetPersonId && !newPersonName.trim())} onClick={addToLibrary}>
+            {libraryBusy ? t('voiceprints.saving') : t('asr.library.confirm')}
           </button>
         </Modal>
       ) : null}
