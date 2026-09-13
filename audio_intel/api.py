@@ -13,6 +13,7 @@ import sqlite3
 import ssl
 import time
 import uuid
+from contextlib import ExitStack, contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -25,7 +26,7 @@ from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBea
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from . import __version__
+from . import __version__, reference_ranges
 from .document_api import capabilities as document_capabilities
 from .config import settings
 from .deployment import deployment_metadata
@@ -384,7 +385,9 @@ def tts_library_identity(operation: str, request: dict[str, Any]) -> dict[str, A
                   "instruct", "response_format", "compute_device", "accelerate_single_task", "voiceprint_sample_id")
     else:
         return None
-    return {field: request.get(field) for field in fields}
+    identity = {field: request.get(field) for field in fields}
+    identity.update({field: request[field] for field in reference_ranges.RANGE_FIELDS if request.get(field) is not None})
+    return identity
 
 
 def replay_tts_library_job(operation: str, key: str, request: dict[str, Any]) -> dict[str, Any] | None:
@@ -658,6 +661,23 @@ def validate_asr_model_device(identifier: str, value: str) -> tuple[dict[str, An
     return model, normalized, str(snapshot["name"])
 
 
+def validate_sample_range(selection: dict[str, Any], sample: dict[str, Any], source: Path) -> None:
+    start, end = (selection.get(field) for field in reference_ranges.RANGE_FIELDS)
+    if start is None:
+        return
+    try:
+        duration = reference_ranges.audio_duration(source)
+        reference_ranges.validate(start, end, duration)
+        text, words = str(sample.get("transcript") or ""), sample.get("words") or []
+        try:
+            reference_ranges.aligned_words(text, words, duration)
+        except ValueError:
+            return  # The offline worker aligns the immutable snapshot before synthesis.
+        reference_ranges.resolve(text, words, start, end, duration)
+    except (ValueError, OSError) as exc:
+        raise ApiProblem(422, "invalid_reference_range", str(exc)) from exc
+
+
 def tts_model_controls(model: dict[str, Any]) -> dict[str, Any]:
     instruction_modes = ["preset", "voice_design"] if model["public_id"] == "qwen3-tts-1.7b" else []
     return {
@@ -667,6 +687,7 @@ def tts_model_controls(model: dict[str, Any]) -> dict[str, Any]:
         "speaking_rate_parameter": False,
         "pitch_parameter": False,
         "sampling_parameters": False,
+        "reference_range": reference_ranges.capability(),
     }
 
 
@@ -1235,7 +1256,7 @@ def create_app() -> FastAPI:
             "limits": {
                 "max_upload_bytes": settings.max_upload_bytes,
                 "max_tts_chars": settings.max_tts_chars,
-                "max_clone_reference_seconds": 15,
+                "max_clone_reference_seconds": reference_ranges.DEFAULT_SECONDS,
                 "max_queued_asr": settings.max_queued_asr,
                 "max_queued_tts": settings.max_queued_tts,
                 "max_concurrent_submissions": settings.max_concurrent_submissions,
@@ -1526,6 +1547,8 @@ def create_app() -> FastAPI:
         speaker: str | None = Form(None, description="preset 模式的官方音色 / Official speaker for preset mode"),
         voice_profile_id: str | None = Form(None, description="profile 模式的声音档案 ID / Voice profile ID for profile mode"),
         voiceprint_sample_id: str | None = Form(None, description="voiceprint 模式的具体可用样本 ID / Concrete eligible sample ID for voiceprint mode"),
+        reference_start_seconds: float | None = Form(None, ge=0, allow_inf_nan=False, description="voiceprint 手动区间起点（秒），与终点同时传入 / Manual voiceprint range start in seconds; supply both endpoints"),
+        reference_end_seconds: float | None = Form(None, ge=0, allow_inf_nan=False, description="voiceprint 手动区间终点（秒），区间长 3–30 秒；省略两端时最多使用前 15 秒 / Manual range end; 3–30 seconds long; omit both for automatic first 15 seconds"),
         reference_audio: UploadFile | None = File(None, description="inline_clone 模式参考音频 / Reference audio for inline_clone"),
         reference_text: str | None = Form(None, description="必须与参考音频逐字一致 / Must exactly match the reference audio"),
         reference_job_id: str | None = Form(None, description="自动参考分析成功后的 ASR 任务 ID / Successful automatic reference-analysis ASR job ID"),
@@ -1553,7 +1576,7 @@ def create_app() -> FastAPI:
             allowed = {"document_import_id", "preview_revision", "section_ids", "segmentation_mode", "target_section_chars",
                 "model", "language", "voice_mode", "speaker", "voice_profile_id", "voiceprint_sample_id", "reference_audio",
                 "reference_text", "reference_job_id", "reference_language", "instruct", "response_format", "display_name",
-                "compute_device", "accelerate_single_task"}
+                "compute_device", "accelerate_single_task", "reference_start_seconds", "reference_end_seconds"}
             if set(form) - allowed or any(len(form.getlist(k)) > 1 for k in form if k != "section_ids"):
                 raise HTTPException(422, "Undeclared or duplicate document request fields")
             if "response_format" in form and response_format != "mp3":
@@ -1566,6 +1589,9 @@ def create_app() -> FastAPI:
 
         elif document_import_id is not None or section_ids is not None or preview_revision is not None:
             raise HTTPException(422, "Use /api/v1/tts/document-jobs for documents")
+        range_form = await http_request.form()
+        if any(len(range_form.getlist(field)) > 1 for field in reference_ranges.RANGE_FIELDS):
+            raise ApiProblem(422, "invalid_reference_range", "Reference range fields must not be duplicated")
         clean_text = (text or "").strip()
         if not is_document and (not clean_text or len(clean_text) > settings.max_tts_chars):
             raise HTTPException(status_code=422, detail=f"Text must contain 1-{settings.max_tts_chars} characters")
@@ -1585,6 +1611,14 @@ def create_app() -> FastAPI:
             "compute_device_name": compute_device_name,
             "accelerate_single_task": accelerate_single_task,
         }
+        try:
+            reference_ranges.validate(reference_start_seconds, reference_end_seconds)
+        except ValueError as exc:
+            raise ApiProblem(422, "invalid_reference_range", str(exc)) from exc
+        if reference_start_seconds is not None:
+            if voice_mode != "voiceprint":
+                raise ApiProblem(422, "invalid_reference_range", "Reference ranges require voiceprint mode")
+            request_data.update(reference_start_seconds=reference_start_seconds, reference_end_seconds=reference_end_seconds)
         if is_document:
             if not section_ids or len(section_ids) != len(set(section_ids)):
                 raise HTTPException(422, "Choose unique document section IDs")
@@ -1633,6 +1667,8 @@ def create_app() -> FastAPI:
             voice = get_voice(voice_profile_id or "")
             if voice is None:
                 raise HTTPException(status_code=422, detail="Voice profile not found")
+            if is_document:
+                request_data["voice_profile_name"] = voice["name"]
             source = Path(voice["ref_audio_path"]).resolve()
             target = settings.jobs_dir / job_id / "input" / "voice-reference.wav"
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -1653,6 +1689,7 @@ def create_app() -> FastAPI:
             source = Path(sample["audio_path"]).resolve()
             if settings.voiceprints_dir.resolve() not in source.parents and settings.voices_dir.resolve() not in source.parents:
                 raise HTTPException(status_code=422, detail="Voiceprint sample audio is unavailable")
+            await run_in_threadpool(validate_sample_range, request_data, sample, source)
             target = settings.jobs_dir / job_id / "input" / "voiceprint-reference.wav"
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
@@ -1774,6 +1811,12 @@ def create_app() -> FastAPI:
         cleaned: list[dict[str, Any]] = []
         total_chars = 0
         for item in payload.items:
+            try:
+                reference_ranges.validate(item.reference_start_seconds, item.reference_end_seconds)
+            except ValueError as exc:
+                raise ApiProblem(422, "invalid_reference_range", str(exc)) from exc
+            if item.reference_start_seconds is not None and payload.voice_mode != "voiceprint":
+                raise ApiProblem(422, "invalid_reference_range", "Reference ranges require voiceprint mode")
             text = item.text.strip()
             if not text:
                 raise ApiProblem(422, "invalid_tts_sequence_text", "Every sequence item must contain text")
@@ -1795,6 +1838,7 @@ def create_app() -> FastAPI:
                 cleaned.append({
                     "id": item.id, "text": text,
                     "voiceprint_sample_id": item.voiceprint_sample_id,
+                    **{field: getattr(item, field) for field in reference_ranges.RANGE_FIELDS if getattr(item, field) is not None},
                 })
         if total_chars > settings.max_tts_chars:
             raise ApiProblem(
@@ -1860,6 +1904,12 @@ def create_app() -> FastAPI:
                         "reference_duration": sample.get("duration"),
                     }
                     reference_snapshots[sample_id] = snapshot
+            for item in cleaned:
+                if item.get("reference_start_seconds") is not None:
+                    snapshot = reference_snapshots[item["voiceprint_sample_id"]]
+                    await run_in_threadpool(validate_sample_range, item, {
+                        "transcript": snapshot["reference_text"], "words": snapshot["reference_words"],
+                    }, Path(snapshot["reference_audio_path"]))
             request_data["voiceprint_references"] = reference_snapshots
             job, replayed = idempotent_job(
                 "tts", safe_filename(payload.display_name, "tts-sequence"), request_data, job_id,
@@ -1927,11 +1977,12 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Voice profile not found")
         if not purge:
             raise HTTPException(status_code=409, detail="Set purge=true to permanently delete this voice profile")
-        for sample in list_voiceprint_samples(person["id"]):
-            path = Path(sample["audio_path"]).resolve() if sample.get("audio_path") else None
-            if path and (settings.voices_dir.resolve() in path.parents or settings.voiceprints_dir.resolve() in path.parents):
-                path.unlink(missing_ok=True)
-        delete_voice_record(person["id"])
+        samples = list_voiceprint_samples(person["id"])
+        ensure_sample_jobs_inactive(samples)
+        with deleting_samples(samples):
+            for sample in samples:
+                remove_voiceprint_audio(sample)
+            delete_voice_record(person["id"])
         return Response(status_code=204)
 
     @app.get(
@@ -2006,13 +2057,24 @@ def create_app() -> FastAPI:
             if source_job and (source_job.get("request") or {}).get("purpose") == "voiceprint_import" and source_job["state"] in {"queued", "running"}:
                 raise HTTPException(status_code=409, detail="Cancel the active voiceprint import task before deleting its sample")
 
+    @contextmanager
+    def deleting_samples(samples: list[dict[str, Any]]):
+        from .document_download import deletion_guard
+        with ExitStack() as stack:
+            for sample in samples:
+                if not stack.enter_context(deletion_guard("voiceprint:" + sample["id"])):
+                    raise HTTPException(409, "Voiceprint audio is being read; retry shortly")
+            yield
+
     def remove_voiceprint_audio(sample: dict[str, Any]) -> None:
         if not sample.get("audio_path"):
             return
         path = Path(sample["audio_path"]).resolve()
         roots = {settings.voiceprints_dir.resolve(), settings.voices_dir.resolve()}
         if any(root in path.parents for root in roots):
+            from .waveforms import cache_path
             path.unlink(missing_ok=True)
+            cache_path(path, path.parent / "waveforms").unlink(missing_ok=True)
 
     @app.delete(
         "/api/v1/voiceprints/people/{person_id}", status_code=204, tags=[VOICEPRINT_TAG],
@@ -2031,10 +2093,11 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=409, detail="Set purge=true to permanently delete this person")
         samples = list_voiceprint_samples(person["id"])
         ensure_sample_jobs_inactive(samples)
-        for sample in samples:
-            remove_voiceprint_audio(sample)
-        delete_voiceprint_person_record(person["id"])
-        shutil.rmtree(settings.voiceprints_dir / person["id"], ignore_errors=True)
+        with deleting_samples(samples):
+            for sample in samples:
+                remove_voiceprint_audio(sample)
+            delete_voiceprint_person_record(person["id"])
+            shutil.rmtree(settings.voiceprints_dir / person["id"], ignore_errors=True)
         return Response(status_code=204)
 
     @app.post(
@@ -2236,9 +2299,35 @@ def create_app() -> FastAPI:
         if not purge:
             raise HTTPException(status_code=409, detail="Set purge=true to permanently delete this sample")
         ensure_sample_jobs_inactive([sample])
-        remove_voiceprint_audio(sample)
-        delete_voiceprint_sample_record(sample_id)
+        with deleting_samples([sample]):
+            remove_voiceprint_audio(sample)
+            delete_voiceprint_sample_record(sample_id)
         return Response(status_code=204)
+
+    @app.get(
+        "/api/v1/voiceprints/samples/{sample_id}/audio/waveform",
+        response_model=ArtifactWaveformResponse, tags=[VOICEPRINT_TAG],
+        summary="读取声纹样本波形 / Get voiceprint sample waveform",
+        description=bilingual("读取最多 240 个时间峰值，按需缓存；繁忙时返回 429 和 Retry-After。", "Read up to 240 timed peaks, cached on demand; busy responses return 429 with Retry-After."),
+        operation_id="getVoiceprintSampleWaveform",
+        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **VALIDATION_RESPONSE,
+                   429: {**problem_response("波形计算繁忙 / Waveform calculation busy", 429),
+                         "headers": {"Retry-After": {"schema": {"type": "integer"}}}}},
+    )
+    def voiceprint_sample_waveform(sample_id: str, _: None = Depends(require_api_key)) -> dict[str, Any]:
+        from .document_download import reader_lease
+        from .waveforms import retrieve, WaveformBusy
+        try:
+            with reader_lease("voiceprint:" + sample_id):
+                audio = voiceprint_sample_audio(sample_id)
+                path = Path(audio.path)
+                return retrieve(path, cache_directory=path.parent / "waveforms")
+        except FileNotFoundError:
+            raise HTTPException(404, "Voiceprint sample audio is unavailable") from None
+        except WaveformBusy:
+            raise HTTPException(429, "Waveform calculation busy", headers={"Retry-After": "2"}) from None
+        except (ValueError, OSError):
+            raise HTTPException(422, "Audio waveform could not be decoded") from None
 
     @app.get(
         "/api/v1/voiceprints/samples/{sample_id}/audio", response_class=FileResponse,

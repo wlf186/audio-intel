@@ -125,12 +125,13 @@ def zip_stream(files: list[tuple[str, Path]]) -> Iterator[bytes]:
         yield sink.drain()
 
 
-def mp3_stream(files: list[tuple[str, Path]]) -> Iterator[bytes]:
+def mp3_stream(files: list[tuple[str, Path]], metadata: dict[str, str] | None = None) -> Iterator[bytes]:
     import av
     sink = Sink()
     cursor = 0
     expected = None
     with av.open(sink, "w", format="mp3", options={"write_xing": "0", "id3v2_version": "3", "write_id3v1": "0"}) as target:
+        target.metadata.update(metadata or {})
         stream = None
         for _, path in files:
             with av.open(str(path)) as source:

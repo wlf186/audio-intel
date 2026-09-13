@@ -50,7 +50,7 @@ def validate_wav_artifacts(
             raise RuntimeError(f"Artifact {name} is not a valid non-empty WAV")
 
 
-def load_items(args: argparse.Namespace) -> list[dict[str, str]]:
+def load_items(args: argparse.Namespace) -> list[dict[str, Any]]:
     if args.items_json or args.candidate_json:
         payload = json.loads(Path(args.items_json or args.candidate_json).read_text(encoding="utf-8"))
         if args.candidate_json:
@@ -69,6 +69,17 @@ def load_items(args: argparse.Namespace) -> list[dict[str, str]]:
             source = payload.get("items") if isinstance(payload, dict) else payload
         if not isinstance(source, list) or not source:
             raise ValueError("Benchmark JSON must contain a non-empty item list")
+        if getattr(args, "voice_mode", "preset") == "voiceprint":
+            items = [{"id": str(item.get("id") or f"item-{index:03d}"),
+                      "text": str(item.get("text") or "").strip(),
+                      "voiceprint_sample_id": str(item.get("voiceprint_sample_id") or ""),
+                      **{key: item[key] for key in ("reference_start_seconds", "reference_end_seconds") if key in item}}
+                     for index, item in enumerate(source) if isinstance(item, dict)]
+            if len(items) != len(source) or any(not item["text"] or not item["voiceprint_sample_id"] for item in items):
+                raise ValueError("Each clone benchmark item requires text and voiceprint_sample_id")
+            if len({item["id"] for item in items}) != len(items):
+                raise ValueError("Benchmark item IDs must be unique")
+            return items
         items = [
             {
                 "id": str(item.get("id") or f"item-{index:03d}"),
@@ -93,7 +104,7 @@ def load_items(args: argparse.Namespace) -> list[dict[str, str]]:
 
 def submit_single(
     client: httpx.Client, base_url: str, headers: dict[str, str], text: str, speaker: str,
-    model: str, device: str,
+    model: str, device: str, reference: dict[str, Any] | None = None,
 ) -> str:
     response = client.post(
         f"{base_url}/api/v1/tts/jobs",
@@ -102,6 +113,7 @@ def submit_single(
             "text": text, "language": "Chinese", "voice_mode": "preset", "speaker": speaker,
             "model": model, "response_format": "wav", "compute_device": device,
             "accelerate_single_task": "true",
+            **({"voice_mode":"voiceprint", "speaker":"", **{key: reference[key] for key in ("voiceprint_sample_id", "reference_start_seconds", "reference_end_seconds") if key in reference}} if reference else {}),
         },
     )
     response.raise_for_status()
@@ -125,7 +137,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         try:
             if not args.no_warmup:
                 warmup_id = submit_single(
-                    client, base_url, headers, items[0]["text"], items[0]["speaker"], args.model, args.device,
+                    client, base_url, headers, items[0]["text"], items[0].get("speaker", ""), args.model, args.device,
+                    items[0] if getattr(args, "voice_mode", "preset") == "voiceprint" else None,
                 )
                 job_ids.append(warmup_id)
                 warmup = wait_for_job(client, base_url, headers, warmup_id)
@@ -136,7 +149,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 started = time.perf_counter()
                 for item in items:
                     job_id = submit_single(
-                        client, base_url, headers, item["text"], item["speaker"], args.model, args.device,
+                        client, base_url, headers, item["text"], item.get("speaker", ""), args.model, args.device,
+                        item if getattr(args, "voice_mode", "preset") == "voiceprint" else None,
                     )
                     job_ids.append(job_id)
                     job = wait_for_job(client, base_url, headers, job_id)
@@ -152,7 +166,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     f"{base_url}/api/v1/tts/sequence-jobs",
                     headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
                     json={
-                        "model": args.model, "language": "Chinese", "voice_mode": "preset",
+                        "model": args.model, "language": "Chinese", "voice_mode": getattr(args, "voice_mode", "preset"),
                         "compute_device": args.device, "items": items,
                     },
                 )
@@ -207,6 +221,7 @@ def main() -> None:
     parser.add_argument("--base-url", default="http://127.0.0.1:20810")
     parser.add_argument("--api-key", default="")
     parser.add_argument("--model", default="qwen3-tts-0.6b")
+    parser.add_argument("--voice-mode", choices=("preset", "voiceprint"), default="preset")
     parser.add_argument("--device", choices=("cpu", "gpu"), default="gpu")
     parser.add_argument("--speaker-a", default="Vivian")
     parser.add_argument("--speaker-b", default="Dylan")
@@ -218,6 +233,8 @@ def main() -> None:
     parser.add_argument("--no-warmup", action="store_true")
     parser.add_argument("--keep-jobs", action="store_true")
     args = parser.parse_args()
+    if args.voice_mode == "voiceprint" and not args.items_json:
+        parser.error("voiceprint benchmarks require --items-json")
     if args.repetitions < 1:
         parser.error("--repetitions must be at least 1")
     if sum(bool(value) for value in (args.items_json, args.candidate_json, args.text)) > 1:

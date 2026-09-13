@@ -12,6 +12,22 @@
 
 ## API 调用与资源限制 / API workflow and limits
 
+### 下载音频的专辑标签 / Downloaded audio album tags
+
+新建文档任务的 MP3 自动携带 ID3v2.3 标签。专辑名为 `文档标题 · 音色名称或声纹人员姓名 · YYMMDDHHmm`，时间固定为任务创建时的 UTC。同一分钟的同名任务追加 `· 2`、`· 3`。Artist 和 Album Artist 均使用音色名称；Title 使用分段标题；Track 按本任务实际选择的分段顺序写入 `1/N` 至 `N/N`。声音档案使用提交时保存的档案名称；参考音频克隆和声音设计分别标为“参考音频克隆”“声音设计”。
+
+服务端在创建事务内保存可选的 `request.document.audio_metadata`（`version: 1`、`album`、`artist`、`album_artist`），不接受调用方传入这些字段。后续声纹改名、删除、任务重试和幂等重放不会改变专辑。标题沿用保存的文档标题，不自动缩短或改写书名。分段 ZIP 与单段下载包含相同标签；完整 MP3 使用相同专辑，Title 为“文档标题 · 完整音频”，不写分段曲序，仍即时流式重封装。
+
+旧任务默认保持原样。需要定向补写时，先用 `.runtime/api/bin/python scripts/tag_document_audio.py --job-id JOB_ID` 只读预览；停止使用该数据目录的服务后添加 `--apply`。工具校验原始检查点，备份 SQLite 和该任务文件，验证补写前后的编码音频包和解码内容一致，再更新该任务的文件大小及 SHA-256。备份位于 `data/backups/document-metadata/`；停服状态下使用 `--job-id JOB_ID --rollback BACKUP_DIRECTORY` 可恢复。支持 `--data-dir`，不支持全量补写；已经完整写入时重复执行不修改文件。已有客户端文件需要重新下载。
+
+English: Newly submitted document jobs write ID3v2.3 album, artist, album artist, title and track tags. Album names combine the saved document title, voice/person name and creation time in UTC (`YYMMDDHHmm`); same-minute name collisions receive `· 2`, `· 3`, etc. Track numbers run from 1/N through N/N for the selected sections. Profile names are snapshotted; unnamed inline clones and voice designs use fixed mode labels. The server persists an optional `request.document.audio_metadata` snapshot with version 1, album, artist and album_artist; callers cannot supply it. Renaming/removing a voice, retrying or replaying a submission preserves the album. Complete MP3 streams use the same album and a complete-audio title without a track number. Existing jobs stay unchanged unless explicitly processed by the offline, single-job `scripts/tag_document_audio.py` tool. Preview is read-only; `--apply` creates verified backups and updates artifact checksums, while `--rollback BACKUP_DIRECTORY` restores that job. Re-download previously obtained files to receive their new tags. No schema migration, additional model inference, re-encoding or cached complete export is needed for tagging.
+
+可执行下载和标签检查示例 / Executable download and tag inspection:
+
+```bash
+.runtime/api/bin/python scripts/tts_document.py manuscript.epub --output sections.zip --inspect-tags
+```
+
 API 顺序：
 
 1. `POST /api/v1/tts/document-imports`，multipart `file`，必须带 `Idempotency-Key`；首次 202，重放 200，冲突 409，容量不足 429。
@@ -40,6 +56,20 @@ English: Document TTS accepts EPUB, TXT, Markdown, text PDFs, DOCX, XLSX and PPT
 结果包含章节选择、播放器、单段下载、完整 MP3 和分段 ZIP，沿用原有流式下载及错误处理。离开结果页暂停播放，返回保留所选任务及章节。恢复默认配置仅重置合成参数与指令，不清空文本、文档草稿或切换页签；移除文档使用文档区的明确操作。文档草稿继续使用现有 sessionStorage，TTS 参数沿用现有存储；页签和折叠状态仅保存在当前页面内。
 
 English: The synthesis page has three fixed tabs: Text, Document, and Tasks & results. Both input types share one settings panel (a 340 px desktop sidebar, expandable below the input under 1200 px). Submission controls occupy their own layout space. Document selection persists across pages (20 sections on wide screens, 10 on smaller screens); text previews and import management use accessible dialogs. Switching tabs preserves drafts, section selection, pagination and voice settings. Submitting retains the editor and selects the accepted task; View submitted task opens that exact task. Results show five recent synthesis tasks plus an older selected task, with a mobile task picker. Pending and unsuccessful tasks show their own status rather than another task’s audio. List and detail loading, errors and retries remain distinct. Full history and task management use the existing global Tasks page. Playback and downloads share the existing streaming APIs; leaving results pauses playback and retains the selected section. Restore defaults resets synthesis settings and instructions only, preserving text, document drafts and the current tab. Existing draft/preference storage lifetimes remain unchanged; navigation and expansion state are page-local.
+
+### 文档来源、分段与阅读
+
+“上传新文档”从本地上传新文件；“已导入文档”打开可复用的导入列表；“取消使用当前文档”仅清空当前文档草稿和分段选择，不删除导入文件。浏览或关闭导入列表不会清空草稿，当前文档标记为“当前使用中”。上传失败或取消上传保留原草稿，服务接受新导入后才切换到新文档；新导入解析失败时可重试。
+
+“优先按文档结构”的“备用分段目标字数”仅用于无可靠结构的全文或章前正文，完整章节不受此目标限制；“按目标字数”尽量在自然边界附近切分，实际长度可超过目标。预览摘要显示已经应用的实际切分方式，尚未点击“重新分段”的参数不会改变摘要。重新分段会重新选中全部分段。每段明确区分“结构分段 · 文档目录／文档标题／工作表／幻灯片／文档文件边界”和“字数分段 · 段落边界／句末边界／换行边界／词边界／剩余正文”，强制切分保留核对提示。
+
+桌面左侧文档卡片与右侧合成设置对齐，分段列表利用剩余高度独立滚动，底部分页保持可达；低屏高或长提示展开时允许外层滚动。小屏维持页面自然纵向滚动。正文预览默认使用“原文换行”，保留提取文本的换行和空白；PDF 中的短行会如实显示。“连续阅读”仅在显示时合并单换行、保留空行分段，不修改提取文本、分段偏移、任务快照或合成输入。正文仍按最多 4000 字符分页读取。同一阅读弹窗内翻页、切换分段保留显示模式；切换显示模式保留分段和页码、正文滚动回顶部；关闭后恢复默认原文模式，并恢复列表焦点及位置。
+
+导入列表每页 20 条，批量勾选跨页保留；“全选本页可移除文档”仅影响本页，当前合成文档与待移除勾选分别标识。解析完成或失败的文档可移除，等待解析／正在解析的文档不能移除。单项和批量移除均显示文件清单并要求应用内确认；包含当前文档时明确提示将清空其草稿。移除逐项执行并报告已移除、已不存在和失败项，失败项保留供重试，变为解析中的项取消勾选。删除结果与列表刷新错误分别显示。已提交任务及其音频不受导入移除影响。关闭列表会清除批量勾选，不会清空当前合成草稿。
+
+文档草稿继续使用原有 sessionStorage 生命周期；批量勾选和阅读显示模式仅保存在各自弹窗的临时内存中。TTS 参数存储、正文提取与音频合成契约均保持不变。
+
+English: Upload new document imports a local file; Imported documents reuses or removes existing imports; Stop using this document clears only the current draft and section selection. Browsing the library, cancelling an upload, or an upload failure preserves the draft. Structural segmentation labels its character target as a fallback and explains the applied split strategy. Each section identifies both the strategy and the boundary used. Desktop lists fill the available panel height with reachable pagination; mobile uses natural page scrolling. The reader defaults to Original line breaks, with an optional Continuous reading view that collapses single line breaks and retains blank-line paragraphs without changing synthesis text or offsets. Text remains paginated at up to 4000 characters. Display mode persists while navigating within one reader and resets on close. Imported documents support selection across 20-item pages, page-only select-all, and confirmed removal with individual outcomes and retryable failures. Active imports cannot be removed. Only removal of the current import clears its draft; submitted jobs and audio keep independent snapshots. Bulk selection resets when the library closes. Draft sessionStorage lifetime and TTS preference storage remain unchanged; bulk selection and reader mode are temporary in-memory state.
 
 ## 办公文档
 
@@ -85,3 +115,12 @@ English: Office files share the native document import, preview, job and streami
 结果页只读取当前章节、或进入可见区域的序列项波形。加载或失败时仍可播放、下载，并可重试波形；切换章节不会沿用上一章的图形。浏览器仅使用最多 64 项内存缓存，退出登录时清空，不新增持久化存储。旧章节产物中的按文本块计算的 `waveform` 字段保留兼容；准确的均匀时间波形通过统一音频产物接口读取。
 
 Each section receives up to 240 uniformly timed peaks after audio generation, sharing the algorithm and player with single-text and ordered-sequence synthesis. Historical audio is backfilled on demand using bounded streaming reads. Only visible audio waveforms are fetched; loading or failure does not block playback or download. The browser keeps at most 64 entries in memory, clears them on logout, and adds no persistent storage. Legacy chunk-based artifact peaks remain for compatibility; the shared artifact waveform endpoint supplies accurate time bins.
+
+
+## 声纹参考区间
+
+文本与文档合成共用声纹参考设置。默认自动使用样本开头，最多 15 秒；选择声纹库样本后，可通过“高级 · 参考区间”打开波形弹窗，从任意位置选择 3～30 秒，试听并查看对应文字。边界向内对齐到完整词，实际有效时长不足 3 秒时需要扩大选区。
+
+“应用区间”按样本保存在当前浏览器；取消不保存。自定义模式下的“改用自动截取（最多前 15 秒）”只清除当前样本的区间。顶部“恢复默认配置”重置当前合成设置及当前使用的声纹样本区间，其他样本的记忆保留。上传/录音参考保持原行为。
+
+API 和 CLI 参数见 [API：手动声纹区间](API.md#manual-voiceprint-reference-ranges)。文档所有章节使用同一份参考快照和区间；任务结果回显实际使用起止时间、时长与文字。

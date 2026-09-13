@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import time
 import uuid
@@ -30,12 +31,25 @@ def main() -> None:
     parser.add_argument("--device", choices=("cpu", "gpu"), default="gpu")
     parser.add_argument("--model", default="qwen3-tts-0.6b")
     parser.add_argument("--speaker", default="Vivian")
+    parser.add_argument("--voiceprint-sample-id", help="Use an eligible voiceprint sample instead of a preset speaker")
+    parser.add_argument("--reference-start-seconds", type=float)
+    parser.add_argument("--reference-end-seconds", type=float)
     parser.add_argument("--mode", choices=("auto", "length"), default="auto")
     parser.add_argument("--target", type=int, default=10000)
     parser.add_argument("--preview-only", action="store_true")
     parser.add_argument("--waveform", action="store_true", help="Print the first section waveform using the authenticated artifact API")
     parser.add_argument("--output", type=Path, help="Optional local ZIP destination")
+    parser.add_argument("--inspect-tags", action="store_true", help="Read MP3 metadata from the saved download (requires --output)")
     args = parser.parse_args()
+    reference = {}
+    if args.reference_start_seconds is not None or args.reference_end_seconds is not None:
+        start, end = args.reference_start_seconds, args.reference_end_seconds
+        if not args.voiceprint_sample_id or start is None or end is None or not all(math.isfinite(v) for v in (start,end)) or start < 0 or not 3 <= end-start <= 30:
+            parser.error("Provide --voiceprint-sample-id and both reference endpoints defining 3–30 seconds")
+        reference = {"reference_start_seconds": start, "reference_end_seconds": end}
+    voice = {"voice_mode":"voiceprint", "voiceprint_sample_id":args.voiceprint_sample_id, **reference} if args.voiceprint_sample_id else {"voice_mode":"preset", "speaker":args.speaker}
+    if args.inspect_tags and (not args.output or args.preview_only or args.list_imports):
+        parser.error("--inspect-tags requires --output and synthesis/download")
     if not args.list_imports and bool(args.document) == bool(args.import_id):
         parser.error("Provide a document file or --import-id")
     if args.retry_parse and not args.import_id:
@@ -93,7 +107,7 @@ def main() -> None:
             "document_import_id": imported["id"], "preview_revision": preview["preview_revision"],
             "segmentation_mode": args.mode, "target_section_chars": args.target,
             "section_ids": [s["id"] for s in preview["sections"]], "model": args.model,
-            "voice_mode": "preset", "speaker": args.speaker, "compute_device": args.device,
+            **voice, "compute_device": args.device,
             "display_name": Path(imported["name"]).stem,
         })
         response.raise_for_status()
@@ -113,6 +127,16 @@ def main() -> None:
                 with args.output.open("wb") as target:
                     for chunk in response.iter_bytes(256 * 1024):
                         target.write(chunk)
+            if args.inspect_tags:
+                import av
+                import zipfile
+                if args.download_mode == "sections":
+                    with zipfile.ZipFile(args.output) as archive:
+                        with archive.open(archive.namelist()[0]) as handle, av.open(handle) as audio:
+                            print(json.dumps(dict(audio.metadata), ensure_ascii=False, indent=2))
+                else:
+                    with av.open(str(args.output)) as audio:
+                        print(json.dumps(dict(audio.metadata), ensure_ascii=False, indent=2))
         print("Complete:", job["id"])
 
 

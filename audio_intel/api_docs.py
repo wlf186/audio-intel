@@ -977,6 +977,7 @@ def _capabilities_example() -> dict[str, Any]:
         "instruction_voice_modes": [], "instruction_required_voice_modes": [],
         "max_instruction_chars": 1000, "speaking_rate_parameter": False,
         "pitch_parameter": False, "sampling_parameters": False,
+        "reference_range": {"voice_modes": ["voiceprint"], "min_seconds": 3, "max_seconds": 30, "default_max_seconds": 15},
     }
     tts_entries = []
     physical_models = []

@@ -1,3 +1,4 @@
+import type {ReferenceRangeCapability} from './referenceRanges'
 export type JobState='queued'|'running'|'succeeded'|'failed'|'cancelled'
 export type ComputeDevice='cpu'|'gpu'
 export type ResourceState='loading'|'ready'|'error'
@@ -8,8 +9,9 @@ export type Segment={id:number;start:number;end:number;speaker:string;speaker_la
 export type Speaker={id:string;label:string;label_source?:'default'|'voiceprint'|'manual';voiceprint_match?:{person_id:string;name:string;note?:string;score:number}}
 export type Acceleration={requested:boolean;active:boolean;device:ComputeDevice;target_batch_size:number;stage_batch_sizes:Record<string,number>;oom_fallbacks:Array<{stage:string;from:number;to:number}>}
 export type HotwordContext={enabled:boolean;list_ids:string[];list_names:string[];term_count:number}
-export type TtsSequenceResult={contract_version:1;items:Array<{id:string;artifact_name:string;duration:number;sample_rate:number}>}
-export type JobResult={document?:DocumentResult;sequence?:TtsSequenceResult;text?:string;language?:string;duration?:number;timestamp_precision?:string;segments?:Segment[];speakers?:Speaker[];waveform?:number[];artifacts?:Artifact[];speaker?:string;format?:string;model?:string;model_name?:string;model_revision?:string;instruct?:string;hotword_context?:HotwordContext;compute_device?:ComputeDevice;compute_device_name?:string;precision?:string;quantized?:boolean;voiceprint_person_id?:string;voiceprint_sample_id?:string;reference_duration_original?:number;reference_duration_used?:number;reference_truncated?:boolean;acceleration?:Acceleration}
+export type TtsSequenceResult={contract_version:1;items:Array<ReferenceUsage&{id:string;artifact_name:string;duration:number;sample_rate:number}>}
+export type ReferenceUsage={reference_start_seconds_used?:number;reference_end_seconds_used?:number;reference_text_used?:string;reference_duration_original?:number;reference_duration_used?:number;reference_truncated?:boolean}
+export type JobResult=ReferenceUsage&{document?:DocumentResult;sequence?:TtsSequenceResult;text?:string;language?:string;duration?:number;timestamp_precision?:string;segments?:Segment[];speakers?:Speaker[];waveform?:number[];artifacts?:Artifact[];speaker?:string;format?:string;model?:string;model_name?:string;model_revision?:string;instruct?:string;hotword_context?:HotwordContext;compute_device?:ComputeDevice;compute_device_name?:string;precision?:string;quantized?:boolean;voiceprint_person_id?:string;voiceprint_sample_id?:string;reference_duration_original?:number;reference_duration_used?:number;reference_truncated?:boolean;acceleration?:Acceleration}
 export type JobQueue={scope:'asr'|'tts';position?:number;depth:number;capacity:number;waiting_for?:'worker'|'gpu'}
 export type ProgressBasis='observed'|'estimated'
 export type JobProgressActivity={sequence:number;current:number;total?:number;unit:'codec_frame'|'output_token'|'model_layer'|string;basis:ProgressBasis;updated_at:string}
@@ -25,7 +27,7 @@ export type JobHistoryQuery={kind:'all'|JobSummary['kind'];state:'all'|JobState;
 export type VoiceprintSample={name?:string;id:string;person_id:string;state:'pending'|'ready'|'failed';language:string;transcript?:string;words:Word[];duration?:number;source_job_id?:string;source_segment_id?:number;source_speaker_id?:string;error_message?:string;created_at:string;updated_at:string;tts_eligible:boolean;embedding_status:'pending'|'ready'|'failed';audio_url?:string}
 export type VoiceprintPerson={id:string;name:string;note?:string;include_in_hotword_library:boolean;sample_count:number;samples:VoiceprintSample[];created_at:string;updated_at:string}
 export type TtsVoiceMode='preset'|'profile'|'inline_clone'|'voiceprint'|'voice_design'
-export type TtsControls={instruction_voice_modes:TtsVoiceMode[];instruction_required_voice_modes:TtsVoiceMode[];max_instruction_chars:number;speaking_rate_parameter:boolean;pitch_parameter:boolean;sampling_parameters:boolean}
+export type TtsControls={reference_range?:ReferenceRangeCapability;instruction_voice_modes:TtsVoiceMode[];instruction_required_voice_modes:TtsVoiceMode[];max_instruction_chars:number;speaking_rate_parameter:boolean;pitch_parameter:boolean;sampling_parameters:boolean}
 export type ComputeCapability={id:ComputeDevice;available:boolean;default:boolean;quantized:boolean;label?:string;precision:string;minimum_memory_mib?:number;total_memory_mib?:number;unavailable_reason_code?:string;unavailable_reason?:string}
 export type AsrModelCapability={id:string;name:string;default:boolean;installed:boolean;installation_state:string;revision:string;compute_devices:ComputeCapability[]}
 export type TtsCheckpointCapability={variant:'base'|'custom_voice'|'voice_design'|string;name:string;revision:string;installed:boolean;installation_state:string}

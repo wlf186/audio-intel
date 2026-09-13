@@ -11,6 +11,7 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Iterator
 
+from audio_intel import reference_ranges
 from audio_intel.config import settings
 from audio_intel.gpu import compute_device_name, gpu_diagnostics, gpu_lease
 from audio_intel.model_registry import model_installation, resolve_tts_checkpoint, resolve_tts_model
@@ -24,7 +25,7 @@ _cpu_models: dict[str, Any] = {}
 GPU_TTS_BATCH_SIZE = 2
 GPU_TTS_MIN_TOTAL_MIB = 3500
 GPU_TTS_MIN_EFFECTIVE_FREE_MIB = 1100
-MAX_CLONE_REFERENCE_SECONDS = 15.0
+MAX_CLONE_REFERENCE_SECONDS = float(reference_ranges.DEFAULT_SECONDS)
 TTS_CODEC_FRAMES_PER_SECOND = 12.5
 TTS_INITIAL_CODEC_FRAMES_PER_TEXT_TOKEN = 4.5
 MAX_IN_FLIGHT_BATCH_PROGRESS = 0.95
@@ -465,6 +466,7 @@ def _process_loaded(
         "reference_duration_original": request.get("reference_duration_original"),
         "reference_duration_used": request.get("reference_duration_used"),
         "reference_truncated": bool(request.get("reference_truncated")),
+        **reference_ranges.result(request),
         "compute_device": compute_device,
         "compute_device_name": compute_device_name(compute_device, request.get("compute_device_name")),
         "precision": "FP32" if compute_device == "cpu" else "BF16",
@@ -528,14 +530,25 @@ def _process_sequence_job(context: JobContext) -> dict[str, Any]:
             initial_gpu_diagnostics = gpu_diagnostics(0)
         references = dict(request.get("voiceprint_references") or {})
         if voice_mode == "voiceprint":
-            prepared: dict[str, dict[str, Any]] = {}
-            for sample_id, snapshot in references.items():
+            prepared: dict[reference_ranges.ReferenceKey, dict[str, Any]] = {}
+            for item in items:
+                sample_id = str(item.get("voiceprint_sample_id") or "")
+                selection_key = reference_ranges.key(item)
+                if selection_key in prepared:
+                    continue
+                if sample_id not in references:
+                    raise ValueError(f"Missing snapshotted voiceprint reference for item {item.get('id')}")
+                snapshot = references[sample_id]
                 value = dict(snapshot)
+                value.update({field: item[field] for field in reference_ranges.RANGE_FIELDS if field in item})
                 _prepare_clone_reference(
                     context, value, compute_device,
                     output_name=f"clone-reference-{len(prepared):03d}.wav",
                 )
-                prepared[str(sample_id)] = value
+                # Full-sample alignment can be shared; cropped audio/text must not be.
+                if value.get("reference_words"):
+                    snapshot["reference_words"] = value["reference_words"]
+                prepared[selection_key] = value
             references = prepared
         model = None if settings.mock_mode else load_model(model_definition, voice_mode, compute_device)
         context.progress(
@@ -575,7 +588,7 @@ def _process_sequence_loaded(
     context: JobContext,
     request: dict[str, Any],
     items: list[dict[str, Any]],
-    references: dict[str, dict[str, Any]],
+    references: dict[reference_ranges.ReferenceKey, dict[str, Any]],
     model: Any,
     compute_device: str,
     acceleration: dict[str, Any],
@@ -583,7 +596,7 @@ def _process_sequence_loaded(
     checkpoint: dict[str, Any],
 ) -> dict[str, Any]:
     voice_mode = request["voice_mode"]
-    clone_prompts: dict[str, Any] = {}
+    clone_prompts: dict[reference_ranges.ReferenceKey, Any] = {}
     if model is not None and voice_mode == "voiceprint":
         for sample_id, reference in references.items():
             context.progress(0.12, "preparing_voice_clone")
@@ -602,7 +615,7 @@ def _process_sequence_loaded(
     for item_index, item in enumerate(items):
         metadata = dict(item)
         if voice_mode == "voiceprint":
-            sample_id = str(item.get("voiceprint_sample_id") or "")
+            sample_id = reference_ranges.key(item)
             if sample_id not in references:
                 raise ValueError(f"Missing snapshotted voiceprint reference for item {item.get('id')}")
             metadata.update(references[sample_id])
@@ -747,6 +760,7 @@ def _process_sequence_loaded(
         sequence_items.append({
             "id": item["id"], "artifact_name": path.name,
             "duration": duration, "sample_rate": rate,
+            **(reference_ranges.result(references[reference_ranges.key(item)]) if voice_mode == "voiceprint" else {}),
         })
     return {
         "duration": round(total_duration, 3),
@@ -838,6 +852,32 @@ def _prepare_clone_reference(
         import av
         with av.open(path) as container:
             duration = float(container.duration or 0) / float(av.time_base)
+    start = request.get("reference_start_seconds")
+    end = request.get("reference_end_seconds")
+    reference_ranges.validate(start, end, duration)
+    if start is not None:
+        if request.get("voice_mode", "voiceprint") != "voiceprint":
+            raise ValueError("Reference ranges are supported only for voiceprint mode")
+        words = list(request.get("reference_words") or [])
+        try:
+            reference_ranges.aligned_words(request["reference_text"], words, duration)
+        except ValueError:
+            words = _align_reference(context, request, duration, compute_device)
+            request["reference_words"] = words
+        used_start, used_end, used_text = reference_ranges.resolve(
+            request["reference_text"], words, start, end, duration,
+        )
+        from audio_intel.media import extract_audio_clip
+        clipped = context.work_dir / output_name
+        extract_audio_clip(Path(path), clipped, used_start, used_end)
+        request.update(reference_audio_path=str(clipped), reference_text=used_text,
+                       reference_start_seconds_used=used_start, reference_end_seconds_used=used_end,
+                       reference_text_used=used_text, reference_duration_original=round(duration, 3),
+                       reference_duration_used=round(used_end-used_start, 3),
+                       reference_truncated=used_start > 0 or used_end < duration)
+        return
+    request.update(reference_start_seconds_used=0.0, reference_end_seconds_used=round(duration, 3),
+                   reference_text_used=request["reference_text"])
     request["reference_duration_original"] = round(duration, 3)
     request["reference_duration_used"] = round(duration, 3)
     request["reference_truncated"] = False
@@ -871,5 +911,7 @@ def _prepare_clone_reference(
     extract_audio_clip(Path(path), clipped, 0.0, cutoff)
     request["reference_audio_path"] = str(clipped)
     request["reference_text"] = request["reference_text"][:text_end]
+    request["reference_end_seconds_used"] = round(cutoff, 3)
+    request["reference_text_used"] = request["reference_text"]
     request["reference_duration_used"] = round(cutoff, 3)
     request["reference_truncated"] = True

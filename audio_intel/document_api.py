@@ -446,7 +446,9 @@ def register(app: FastAPI, api: Any) -> None:
                     await run_in_threadpool(validate_mp3, files)
                 except (ValueError, OSError) as exc:
                     raise HTTPException(409, "Document audio is invalid or incompatible") from exc
-            iterator = zip_stream(files) if mode == "sections" else mp3_stream(files)
+            from .document_metadata import tags
+            metadata = tags(job["request"], job["request"]["document"]["title"] + " · 完整音频")
+            iterator = zip_stream(files) if mode == "sections" else mp3_stream(files, metadata)
 
             def next_chunk():
                 return next(iterator, None)
@@ -488,6 +490,17 @@ def enrich_document_docs(schema: dict[str, Any]) -> None:
     for (path, method), (zh, en) in descriptions.items():
         operation = schema["paths"][path][method]
         operation["description"] = zh + "\n\n**English:** " + en
+        if path in {"/api/v1/tts/document-jobs", "/api/v1/jobs/{job_id}/document/download"}:
+            operation["description"] += (
+                "\n\n新任务的 MP3 写入 ID3v2.3 专辑、艺术家、标题及曲序。专辑名由文档标题、音色名称及创建时间 UTC YYMMDDHHmm 组成；"
+                "同名追加短序号。服务端保存只读 request.document.audio_metadata 快照（version=1、album、artist、album_artist），"
+                "重试和幂等重放保留原值。分段按本任务选择顺序编号；完整音频不设置曲序。旧任务默认不补写。"
+                "\n\n**English:** New document MP3s carry ID3v2.3 album, artist, album artist, title and track tags. "
+                "Album names combine the document title, voice name and creation time in UTC YYMMDDHHmm, with a short suffix for collisions. "
+                "The server saves a read-only request.document.audio_metadata snapshot (version=1, album, artist, album_artist); "
+                "retries and idempotent replays retain it. Sections use selected-section order; complete audio has no track number. "
+                "Existing jobs are not automatically retagged."
+            )
         operation.setdefault("summary", zh + " / " + en.split(".", 1)[0])
 
     upload = schema["paths"]["/api/v1/tts/document-imports"]["post"]

@@ -93,13 +93,13 @@ def _fingerprint(path: Path) -> dict[str, Any]:
     return {"name": path.name, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
 
 
-def cache_path(path: Path) -> Path:
-    return path.parent.parent / "waveforms" / (hashlib.sha256(path.name.encode()).hexdigest() + ".json")
+def cache_path(path: Path, cache_directory: Path | None = None) -> Path:
+    return (cache_directory if cache_directory is not None else path.parent.parent / "waveforms") / (hashlib.sha256(path.name.encode()).hexdigest() + ".json")
 
 
-def cached(path: Path) -> dict[str, Any] | None:
+def cached(path: Path, cache_directory: Path | None = None) -> dict[str, Any] | None:
     try:
-        target = cache_path(path)
+        target = cache_path(path, cache_directory)
         if target.stat().st_size > 16384:
             return None
         value = json.loads(target.read_text(encoding="utf-8"))
@@ -115,8 +115,8 @@ def cached(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def prepare(path: Path, samples: Any = None, rate: int | None = None) -> dict[str, Any]:
-    existing = cached(path)
+def prepare(path: Path, samples: Any = None, rate: int | None = None, *, cache_directory: Path | None = None) -> dict[str, Any]:
+    existing = cached(path, cache_directory)
     if existing is not None:
         return existing
     before = _fingerprint(path)
@@ -127,7 +127,7 @@ def prepare(path: Path, samples: Any = None, rate: int | None = None) -> dict[st
         raise ValueError("Audio changed while calculating waveform")
     temporary = None
     try:
-        target = cache_path(path)
+        target = cache_path(path, cache_directory)
         target.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent, prefix="waveform-", suffix=".partial", delete=False) as stream:
             temporary = Path(stream.name)
@@ -150,8 +150,8 @@ def prepare_optional(path: Path, samples: Any = None, rate: int | None = None) -
         return None
 
 
-def retrieve(path: Path) -> dict[str, Any]:
-    existing = cached(path)
+def retrieve(path: Path, *, cache_directory: Path | None = None) -> dict[str, Any]:
+    existing = cached(path, cache_directory)
     if existing is not None:
         return existing
     key = str(path)
@@ -166,7 +166,7 @@ def retrieve(path: Path) -> dict[str, Any]:
     if not owner:
         return future.result()
     try:
-        result = prepare(path)
+        result = prepare(path, cache_directory=cache_directory) if cache_directory is not None else prepare(path)
         future.set_result(result)
         return result
     except Exception as exc:

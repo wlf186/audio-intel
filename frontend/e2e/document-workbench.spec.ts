@@ -59,7 +59,7 @@ for(const [width,height] of [[1440,900],[1280,720],[1024,768],[720,450],[390,844
   await expect(page.locator('.document-text-preview pre')).toContainText('可分页阅读')
   expect(await page.getByRole('dialog').evaluate(dialog=>{const close=dialog.querySelector('.modal-close')!.getBoundingClientRect();const range=document.createRange();range.selectNodeContents(dialog.querySelector('h2')!);return [...range.getClientRects()].some(r=>r.left<close.right&&r.right>close.left&&r.top<close.bottom&&r.bottom>close.top)})).toBe(false)
   if(width===1440||width===390)await page.screenshot({path:`/tmp/document-workbench-reader-${width}.png`,fullPage:false})
-  await page.getByRole('button',{name:'下一章节',exact:true}).click()
+  await page.getByRole('button',{name:'下一分段',exact:true}).click()
   await expect(page.getByRole('dialog').getByRole('heading')).toContainText('第 2 章')
   await page.keyboard.press('Escape')
   await expect(trigger).toBeFocused()

@@ -380,6 +380,7 @@ def test_api_queues_asr_and_validates_tts(tmp_path, monkeypatch) -> None:
             "speaking_rate_parameter": False,
             "pitch_parameter": False,
             "sampling_parameters": False,
+            "reference_range": {"voice_modes": ["voiceprint"], "min_seconds": 3, "max_seconds": 30, "default_max_seconds": 15},
         }
 
 

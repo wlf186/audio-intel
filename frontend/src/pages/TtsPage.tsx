@@ -22,6 +22,8 @@ import type {
   TtsModelCapability,
   VoiceprintPerson,
 } from '../lib/types'
+import { ReferenceRangeControl } from '../components/ReferenceRangeControl'
+import {loadReferenceRanges,saveReferenceRanges,rangeError,referenceTime,type ReferenceRange} from '../lib/referenceRanges'
 import { DocumentInput } from '../components/DocumentInput'
 import { DocumentResults } from '../components/DocumentResults'
 import type { DocumentCapability, DocumentSelection } from '../lib/types'
@@ -168,6 +170,10 @@ export function TtsPage({
   const [preferences, setPreferences] =
     useState<TtsPreferences>(()=>loadTtsPreferences(defaultComputeDevice))
   const [content, setContent] = useState<TtsContent>(()=>loadTtsContent(t('tts.defaultText')))
+  const [referenceRanges,setReferenceRanges]=useState(loadReferenceRanges)
+  const changeReferenceRange=(sampleId:string,value?:ReferenceRange)=>{
+    setReferenceRanges(current=>{const next={...current};if(value)next[sampleId]=value;else delete next[sampleId];saveReferenceRanges(next);return next})
+  }
   const [referenceSource, setReferenceSource] =
     useState<ReferenceSource>('upload')
   const [referenceName, setReferenceName] = useState('')
@@ -243,11 +249,16 @@ export function TtsPage({
       draft.mode,
     ),
   )
+  const rangeCapability=selectedTtsModel?.controls.reference_range
+  const selectedReferenceRange=sample?referenceRanges[sample.id]:undefined
+  const usingLibrary=draft.mode==='inline_clone'&&draft.cloneSource==='voiceprint'
+  const referenceRangeError=usingLibrary&&selectedReferenceRange
+    ?(!rangeCapability?.voice_modes.includes('voiceprint')?'unsupported':rangeError(selectedReferenceRange,sample?.duration,rangeCapability,false)):undefined
   const selectedReferenceModel=asrModels.find(item=>item.id===referenceAsrModel)||asrModels.find(item=>item.default)
   const referenceGpu=selectedReferenceModel?.compute_devices.find(item=>item.id==='gpu')
   const effectiveReferenceDevice:ComputeDevice=referenceAsrDevice==='gpu'&&(referenceGpu?.available===false||gpuAvailable===false)?'cpu':referenceAsrDevice
   const referenceBusyReason=referenceUploadProgress?.phase==='creating'?t('tts.reference.creating'):referenceUploadProgress?t('tts.reference.uploading'):t('tts.reference.analyzing')
-  const submitBlockReason=busy?t('tts.validation.submitting'):referenceBusy?referenceBusyReason:(inputMode==='document'?!documentSelection?.section_ids.length:!draft.text.trim())?t(inputMode==='document'?'document.chooseSections':'tts.validation.textRequired'):!selectedTtsModel?.installed?t('tts.validation.modelMissing'):instructionRequired&&!draft.instruct.trim()?t('tts.validation.instructionRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='upload'&&(!referenceReady||!draft.refText.trim())?t('tts.validation.referenceRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='voiceprint'&&(voiceprintsState!=='ready'||!sample)?t('tts.validation.sampleRequired'):''
+  const submitBlockReason=referenceRangeError?t(`referenceRange.${referenceRangeError}`):busy?t('tts.validation.submitting'):referenceBusy?referenceBusyReason:(inputMode==='document'?!documentSelection?.section_ids.length:!draft.text.trim())?t(inputMode==='document'?'document.chooseSections':'tts.validation.textRequired'):!selectedTtsModel?.installed?t('tts.validation.modelMissing'):instructionRequired&&!draft.instruct.trim()?t('tts.validation.instructionRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='upload'&&(!referenceReady||!draft.refText.trim())?t('tts.validation.referenceRequired'):draft.mode==='inline_clone'&&draft.cloneSource==='voiceprint'&&(voiceprintsState!=='ready'||!sample)?t('tts.validation.sampleRequired'):''
 
   useEffect(() => {
     saveTtsContent(content)
@@ -466,6 +477,7 @@ export function TtsPage({
     setNotice(t('tts.notices.referenceCleared'))
   }
   const submit = async () => {
+    if(referenceRangeError){setError(t(`referenceRange.${referenceRangeError}`));return}
     if (inputMode==='document'?!documentSelection?.section_ids.length:!draft.text.trim()) {
       setError(t(inputMode==='document'?'document.chooseSections':'tts.validation.textRequired'))
       return
@@ -522,6 +534,7 @@ export function TtsPage({
       } else if (draft.cloneSource === 'voiceprint') {
         data.set('voice_mode', 'voiceprint')
         data.set('voiceprint_sample_id', sample!.id)
+        if(selectedReferenceRange){data.set('reference_start_seconds',String(selectedReferenceRange.start));data.set('reference_end_seconds',String(selectedReferenceRange.end))}
       } else {
         data.set('voice_mode', 'inline_clone')
         data.set('reference_job_id', draft.refJobId)
@@ -539,6 +552,7 @@ export function TtsPage({
     }
   }
   const resetPreferences = () => {
+    if(usingLibrary&&sample)changeReferenceRange(sample.id)
     const next = { ...defaultTtsPreferences, computeDevice: defaultComputeDevice }
     clearTtsPreferences()
     saveTtsPreferences(next)
@@ -640,7 +654,7 @@ export function TtsPage({
           <section className={`tts-settings${settingsOpen?' expanded':''}`} aria-label={t('document.settings')}>
             <button className="document-settings-toggle" type="button" aria-expanded={!compactWorkspace||settingsOpen} aria-controls="tts-settings-body" onClick={()=>setSettingsOpen(value=>!value)}><strong>{t('document.settings')}</strong><span>{draft.mode==='preset'?draft.speaker:t(draft.mode==='voice_design'?'tts.mode.design':'tts.mode.clone')} · {selectedTtsModel?.name} · {effectiveTtsDevice.toUpperCase()}</span>{compactWorkspace&&!settingsOpen&&draft.computeDevice==='gpu'&&effectiveTtsDevice==='cpu'?<span className="document-settings-warning">{computeUnavailableReason(ttsGpu,t,t('tts.gpuFallback'))}</span>:null}</button>
             <div id="tts-settings-body" className="tts-settings-body">
-            <button className="reset-settings" type="button" onClick={resetPreferences}><RotateCcw size={14}/>{t('tts.restoreDefaults')}</button>
+            <button className="reset-settings" type="button" title={t('referenceRange.resetHelp')} onClick={resetPreferences}><RotateCcw size={14}/>{t('tts.restoreDefaults')}</button>
             {modeTabs}
           {draft.mode === 'inline_clone' ? (
             <div
@@ -1091,6 +1105,7 @@ export function TtsPage({
           ) : null}
           {draft.mode === 'inline_clone' &&
           draft.cloneSource === 'voiceprint' ? (
+            <div>
             <label>
               {t('tts.sample.label')}
               <select
@@ -1105,7 +1120,7 @@ export function TtsPage({
                 {eligibleSamples.length ? (
                   eligibleSamples.map((item) => (
                     <option key={item.id} value={item.id}>
-                      {voiceprintSampleName(item,person?.samples||[],t)} · {cloneReferenceUsage(item.duration,maxCloneReferenceSeconds,t)}
+                      {voiceprintSampleName(item,person?.samples||[],t)} · {referenceRanges[item.id]?`${t('referenceRange.manual')} ${referenceTime(referenceRanges[item.id].start)}–${referenceTime(referenceRanges[item.id].end)}`:cloneReferenceUsage(item.duration,maxCloneReferenceSeconds,t)}
                     </option>
                   ))
                 ) : (
@@ -1114,13 +1129,16 @@ export function TtsPage({
               </select>
               {sample ? (
                 <small className="sample-summary">
-                  {person?voiceprintPersonLabel(person):''} · {voiceprintSampleName(sample,person?.samples||[],t)}<br/>{cloneReferenceUsage(sample.duration,maxCloneReferenceSeconds,t)}<br/>{sample.language} · {sample.transcript}
-                  {sample.duration && sample.duration > maxCloneReferenceSeconds
+                  {person?voiceprintPersonLabel(person):''} · {voiceprintSampleName(sample,person?.samples||[],t)}<br/>{selectedReferenceRange?t('referenceRange.manual'):cloneReferenceUsage(sample.duration,maxCloneReferenceSeconds,t)}<br/>{sample.language} · {sample.transcript}
+                  {!selectedReferenceRange && sample.duration && sample.duration > maxCloneReferenceSeconds
                     ? ` · ${t('voiceprintNames.referenceHelp',{limit:maxCloneReferenceSeconds})}`
                     : ''}
                 </small>
               ) : null}
             </label>
+            {sample&&rangeCapability?.voice_modes.includes('voiceprint')?<ReferenceRangeControl key={sample.id} sample={sample} capability={rangeCapability} value={selectedReferenceRange} onChange={value=>changeReferenceRange(sample.id,value)}/>:null}
+            {referenceRangeError==='unsupported'?<p className="error" role="alert">{t('referenceRange.unsupported')} <button type="button" onClick={()=>sample&&changeReferenceRange(sample.id)}>{t('referenceRange.useAuto',{seconds:maxCloneReferenceSeconds})}</button></p>:null}
+            </div>
           ) : null}
           {instructionSupported ? (
             <section className="tts-instruction-panel" aria-label={t('tts.instruction.panel')}>
@@ -1289,6 +1307,7 @@ export function TtsPage({
                 {selected.result.precision || ''}
               </span>
               {typeof selected.request.voiceprint_sample_name==='string'?<small>{t('voiceprintNames.sampleSnapshot',{name:selected.request.voiceprint_sample_name})}</small>:null}
+              {typeof selected.result.reference_start_seconds_used==='number'&&typeof selected.result.reference_end_seconds_used==='number'?<small>{t('referenceRange.effective')} {referenceTime(selected.result.reference_start_seconds_used)} – {referenceTime(selected.result.reference_end_seconds_used)}</small>:null}
               {typeof selected.result.reference_duration_original==='number'&&typeof selected.result.reference_duration_used==='number'?<small>{t('voiceprintNames.actualReference',{original:selected.result.reference_duration_original,used:selected.result.reference_duration_used})}</small>:null}
               {selected.result.instruct ? (
                 <small className="tts-result-instruction">{t('tts.results.instruction',{value:selected.result.instruct})}</small>
@@ -1299,6 +1318,7 @@ export function TtsPage({
                 {selected.result.sequence.items.map(item => (
                   <li key={item.id}>
                     <h3>{item.id}</h3>
+                    {typeof item.reference_start_seconds_used==='number'&&typeof item.reference_end_seconds_used==='number'?<small>{t('referenceRange.effective')} {referenceTime(item.reference_start_seconds_used)} – {referenceTime(item.reference_end_seconds_used)}</small>:null}
                     <AudioTransport
                       active={workspaceView==='results'}
                       src={artifactUrl(selected.id,item.artifact_name)}

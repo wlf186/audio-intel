@@ -80,7 +80,7 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         for method, operation in methods.items()
         if method in HTTP_METHODS
     ]
-    assert len(operations) == 56
+    assert len(operations) == 57
     assert len({operation["operationId"] for operation in operations}) == len(operations)
     assert all(operation.get("tags") for operation in operations)
     assert all("**English:**" in operation.get("description", "") for operation in operations)
@@ -163,7 +163,7 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
     controls_schema = schema["components"]["schemas"]["TtsControlCapability"]["properties"]
     assert set(controls_schema) == {
         "instruction_voice_modes", "instruction_required_voice_modes", "max_instruction_chars",
-        "speaking_rate_parameter", "pitch_parameter", "sampling_parameters",
+        "speaking_rate_parameter", "pitch_parameter", "sampling_parameters", "reference_range",
     }
     expected_controls = {
         "instruction_voice_modes": [],
@@ -172,6 +172,7 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         "speaking_rate_parameter": False,
         "pitch_parameter": False,
         "sampling_parameters": False,
+        "reference_range": {"voice_modes": ["voiceprint"], "min_seconds": 3, "max_seconds": 30, "default_max_seconds": 15},
     }
     assert schema["components"]["schemas"]["TtsControlCapability"]["example"] == expected_controls
     assert schema["components"]["schemas"]["TtsCapability"]["example"]["controls"] == expected_controls

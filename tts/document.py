@@ -48,6 +48,8 @@ def retry_delay(job: dict[str, Any], error: Exception) -> int | None:
 def process_loaded(context: Any, request: dict[str, Any], model: Any, device: str,
                    acceleration: dict[str, Any], model_definition: dict[str, Any], checkpoint: dict[str, Any]) -> dict[str, Any]:
     import av
+    from audio_intel import reference_ranges
+    from audio_intel.document_metadata import tags
     from audio_intel.waveforms import prepare_optional
     import numpy as np
     from . import pipeline as pipeline
@@ -84,7 +86,10 @@ def process_loaded(context: Any, request: dict[str, Any], model: Any, device: st
             section_fallbacks = []
             index = 0; samples = 0; rate = 24000; section_actual = 1; peaks: list[float] = []
             try:
-                with av.open(str(partial), "w", format="mp3") as output:
+                metadata = tags(request, item["title"], number, len(items))
+                options = {"id3v2_version": "3", "write_id3v1": "0"} if metadata else {}
+                with av.open(str(partial), "w", format="mp3", options=options) as output:
+                    output.metadata.update(metadata)
                     stream = None
 
                     def write(waveform: Any) -> None:
@@ -176,4 +181,5 @@ def process_loaded(context: Any, request: dict[str, Any], model: Any, device: st
             "precision": "FP32" if device == "cpu" else "BF16", "quantized": False,
             "acceleration": {**acceleration, "active": actual > 1, "stage_batch_sizes": {"generation": actual, "decoder": 1}, "oom_fallbacks": fallbacks},
             **{key: request.get(key) for key in ("instruct", "voiceprint_person_id", "voiceprint_sample_id", "reference_duration_original", "reference_duration_used", "reference_truncated")},
+            **reference_ranges.result(request),
             "artifacts": artifacts}

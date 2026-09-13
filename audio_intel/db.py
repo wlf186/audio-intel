@@ -669,6 +669,10 @@ def create_job_idempotent(
             if row is None:  # pragma: no cover - protected by the foreign key
                 raise RuntimeError("Idempotency record refers to a missing job")
             return _decode(row), True  # type: ignore[return-value]
+        if request.get("purpose") == "tts_document":
+            from .document_metadata import snapshot
+            request = {**request, "document": {**request["document"],
+                "audio_metadata": snapshot(db, request, now)}}
         db.execute(
             """INSERT INTO jobs(
                id,kind,display_name,request_json,queue_seq,stage_code,created_at,updated_at

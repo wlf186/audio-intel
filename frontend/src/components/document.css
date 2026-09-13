@@ -184,3 +184,65 @@
 }
 
 .waveform-status{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:12px;min-height:24px}.waveform-status button{min-height:44px;min-width:44px}
+
+/* Source actions, split explanations, and independent import selection. */
+.document-source-actions>button:last-child{white-space:normal}
+.document-split-toggle{max-width:100%;text-align:left;white-space:normal}
+.document-input .document-split-summary{margin:6px 0 0;line-height:1.5}
+.document-sections small.document-forced{color:var(--orange)}
+.document-library-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}
+.document-library-actions>span{flex:1;min-width:120px;font-size:13px}
+.document-library .document-import-check{display:flex;align-items:center;gap:8px;min-height:44px;min-width:44px;margin:0;cursor:pointer}
+.document-library .document-import-check input{width:20px;height:20px;min-height:20px;margin:0;padding:0;flex:none;accent-color:var(--cyan)}
+.document-library .document-import-list li{display:grid;grid-template-columns:44px minmax(0,1fr) auto auto;gap:8px}
+.document-library .document-import-list button{white-space:normal}
+.document-removal-names{max-height:35dvh;overflow:auto;padding-left:24px;overflow-wrap:anywhere}
+.document-removal-names li{padding:6px 0}
+.document-removal-result{border-left:3px solid var(--cyan);padding:0 12px;margin:12px 0;overflow-wrap:anywhere}
+.document-removal-result[role=alert]{border-color:var(--orange)}
+.document-library .document-removal-result ul{max-height:28dvh;overflow:auto}
+.document-library .document-removal-result li{display:block;padding:6px 0;font-size:13px}
+@media(min-width:1200px){
+ .document-input{height:100%;display:flex;flex-direction:column;min-height:0;overflow:auto}
+ .document-input>*{flex-shrink:0}
+ .document-input>.document-sections{flex:1 1 0;min-height:132px;max-height:none;overflow:auto}
+}
+
+/* Fixed navigation surrounds a scrollable reading area; text remains selectable. */
+.modal-card:has(.document-text-preview){display:flex;flex-direction:column;height:calc(100dvh - 48px);max-height:calc(100dvh - 48px);overflow:hidden}
+.modal-card:has(.document-text-preview)>h2{flex:none;margin-top:0;margin-bottom:12px}
+.document-text-preview{display:flex;flex-direction:column;min-height:0;flex:1}
+.document-reader-navigation{flex:none;margin:8px 0;min-width:0}
+.document-reader-navigation button{min-width:0;white-space:normal}
+.document-reader-mode{display:flex;gap:0;flex:none;border-bottom:1px solid var(--line)}
+.document-reader-mode [role=tab]{min-height:44px;padding:10px 16px;border:0;border-bottom:3px solid transparent;border-radius:0;background:transparent;color:var(--muted);font:inherit}
+.document-reader-mode [role=tab]:hover{color:var(--text)}
+.document-reader-mode [role=tab][aria-selected=true]{border-bottom-color:var(--yellow);color:var(--yellow)}
+.document-text-preview .document-reader-help{flex:none;margin:8px 0;line-height:1.5}
+.document-reader-body{flex:1;min-height:0;overflow:auto;padding:16px;background:var(--panel-2);border:1px solid var(--line);font-size:16px;line-height:1.8;text-align:start}
+.document-reader-body:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+.document-reader-body pre,.document-reader-flow{width:100%;max-width:48em;margin:0 auto;padding:0;border:0;background:none;font:inherit;max-height:none;overflow:visible;overflow-wrap:anywhere}
+.document-reader-body pre{white-space:pre-wrap}
+.document-text-preview .document-reader-flow p{white-space:normal;margin:0 0 1em;font:inherit;color:inherit}
+@media(max-width:600px){
+ .document-library .document-import-list li{grid-template-columns:44px minmax(0,1fr)}
+ .document-library .document-import-list li>button{grid-column:2;width:100%}
+ .document-library-actions>button{flex:1 1 140px}
+ .document-library-actions>span{flex-basis:100%}
+ .modal-card:has(.document-text-preview){height:calc(100dvh - 16px);max-height:calc(100dvh - 16px)}
+ .document-reader-body{padding:12px}
+ .document-reader-mode button{flex:1;min-width:0}
+}
+
+/* Keep bulk actions and pagination reachable while browsing long import lists. */
+.modal-card:has(.document-library){display:flex;flex-direction:column;height:calc(100dvh - 48px);max-height:calc(100dvh - 48px);overflow:hidden}
+.modal-card:has(.document-library)>h2{flex:none;margin-top:0;margin-bottom:12px}
+.document-library{display:flex;flex-direction:column;flex:1;min-height:0;overflow:auto}
+.document-library>*{flex-shrink:0}
+.document-library>.document-import-list{flex:1 1 0;min-height:132px;overflow:auto;margin:8px 0}
+@media(max-width:600px){
+ .modal-card:has(.document-library){height:calc(100dvh - 16px);max-height:calc(100dvh - 16px)}
+}
+.modal-card:has(>.document-removal-names)>h2{padding-right:48px;min-height:44px}
+.modal-card:has(>.document-removal-names)>.modal-close{width:44px;height:44px;min-height:44px;display:grid;place-items:center}
+.modal-card:has(>.document-removal-names) .modal-actions button{white-space:normal;height:auto;min-height:44px;padding:10px 12px}

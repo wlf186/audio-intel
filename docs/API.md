@@ -322,7 +322,7 @@ curl --fail-with-body -sS -X PATCH -H "Authorization: Bearer $AUDIO_INTEL_API_KE
 
 TTS cloning selects a stable sample ID. New single and sequence requests snapshot `voiceprint_person_name`, `voiceprint_person_note`, and `voiceprint_sample_name` (inside `voiceprint_references` for sequences). Renaming the library does not rewrite accepted jobs or invalidate same-request idempotent replay. Failed/cancelled retries use the complete persisted request. Legacy `POST /api/v1/tts/voices` returns `409` when a name matches multiple people; use the native voiceprint endpoints with an explicit person ID instead.
 
-The clone-reference limit comes from `limits.max_clone_reference_seconds` (currently 15). Long references use the beginning through the last complete word within that limit, leaving the original sample intact. Before submission, the UI displays the limit; after a single clone completes, `reference_duration_original` and `reference_duration_used` provide measured seconds, and `reference_truncated` indicates truncation. Missing historical durations remain unknown. Ordered sequence results retain contract v1.
+The automatic clone-reference limit comes from `limits.max_clone_reference_seconds` (currently 15); manual voiceprint ranges are advertised separately in `tts.model_capabilities[].controls.reference_range`. Long references use the beginning through the last complete word within that limit, leaving the original sample intact. Before submission, the UI displays the limit; after a single clone completes, `reference_duration_original` and `reference_duration_used` provide measured seconds, and `reference_truncated` indicates truncation. Missing historical durations remain unknown. Ordered sequence results retain contract v1.
 
 
 ## Document TTS
@@ -350,3 +350,39 @@ The authenticated endpoint above returns uniformly timed peak amplitudes for eac
 ```bash
 .runtime/api/bin/python scripts/tts_document.py manuscript.md --waveform
 ```
+
+
+## Manual voiceprint reference ranges
+
+`POST /api/v1/tts/jobs` and `/api/v1/tts/document-jobs` accept optional form fields `reference_start_seconds` and `reference_end_seconds`. Both must be supplied together, only with `voice_mode=voiceprint`. Sequence requests accept the same numeric fields on each `items[]` entry. The requested interval must lie within the original sample and be 3–30 seconds long; it may start anywhere, including beyond the first 30 seconds. Non-finite values, incomplete pairs, duplicate form endpoints, unsupported modes and out-of-bounds ranges return `422`.
+
+Omit both endpoints to keep the existing automatic beginning-of-sample selection, up to 15 seconds. Browser-saved ranges are local preferences, never server defaults for API callers. Explicit ranges are part of request identity: replaying the same key and interval returns `200`, while changing the interval with that key returns `409`. Old requests without these fields remain replayable.
+
+Audio and transcript are narrowed together to complete aligned words inside the requested interval. The effective interval must still contain 3–30 seconds; otherwise select a wider range. Existing word timestamps are reused. Missing or inconsistent alignment is recomputed offline in the TTS worker from the submitted snapshot; unavailable language/alignment or insufficient complete speech fails the job explicitly. No alternate interval is silently substituted. The original library sample is not cropped or rewritten.
+
+Single/document results, and each voiceprint sequence result item, expose `reference_start_seconds_used`, `reference_end_seconds_used`, and `reference_text_used`, alongside `reference_duration_original`, `reference_duration_used`, and `reference_truncated`. Times are relative to the original sample. Retries use submission-time snapshots; sequence contract v1 and output order are unchanged. The same sample can have different intervals in different sequence items.
+
+```bash
+curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -F 'text=这次使用样本中间的声音。' -F 'voice_mode=voiceprint' \
+  -F "voiceprint_sample_id=$SAMPLE_ID" -F 'compute_device=gpu' \
+  -F 'reference_start_seconds=10' -F 'reference_end_seconds=40' \
+  "$BASE_URL/api/v1/tts/jobs"
+```
+
+For `/api/v1/tts/sequence-jobs`, supply an item such as:
+
+```json
+{"id":"middle","text":"使用中间区间。","voiceprint_sample_id":"sample_id","reference_start_seconds":10,"reference_end_seconds":40}
+```
+
+The document CLI supports the same selection:
+
+```bash
+.runtime/api/bin/python scripts/tts_document.py manuscript.md \
+  --base-url "$BASE_URL" --voiceprint-sample-id "$SAMPLE_ID" \
+  --reference-start-seconds 10 --reference-end-seconds 40
+```
+
+`GET /api/v1/voiceprints/samples/{sample_id}/audio/waveform` returns the same `{artifact_name,duration,waveform}` shape as artifact waveforms, with at most 240 timed peaks. It requires Bearer or browser-session authentication. Fetch only when the editor is opened; honor `429`/`Retry-After`, allow retry, and use the protected sample audio endpoint for playback and Range requests. Waveform caches are isolated per sample location and removed with the sample. Deletion during waveform reading returns `409`; retry after the reader finishes.

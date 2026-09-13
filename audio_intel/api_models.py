@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class PublicModel(BaseModel):
@@ -137,7 +137,16 @@ class AccelerationCapability(PublicModel):
     default: bool
 
 
+class ReferenceRangeCapability(PublicModel):
+    voice_modes: list[Literal["voiceprint"]]
+    min_seconds: int
+    max_seconds: int
+    default_max_seconds: int
+
+
 class TtsControlCapability(PublicModel):
+    reference_range: ReferenceRangeCapability | None = None
+
     model_config = ConfigDict(
         extra="allow",
         json_schema_extra={
@@ -148,6 +157,7 @@ class TtsControlCapability(PublicModel):
                 "speaking_rate_parameter": False,
                 "pitch_parameter": False,
                 "sampling_parameters": False,
+                "reference_range": {"voice_modes": ["voiceprint"], "min_seconds": 3, "max_seconds": 30, "default_max_seconds": 15},
             }
         },
     )
@@ -287,6 +297,16 @@ class TtsSequenceCapability(PublicModel):
 
 
 class TtsSequenceItem(PublicModel):
+    reference_start_seconds: float | None = Field(None, ge=0, allow_inf_nan=False, description="voiceprint 区间起点（秒）；与终点同时提供 / Voiceprint range start in seconds; supply both endpoints")
+    reference_end_seconds: float | None = Field(None, ge=0, allow_inf_nan=False, description="区间终点（秒）；长度 3–30 秒，省略两端则自动截取前 15 秒 / Range end in seconds; length 3–30 seconds; omit both for automatic first 15 seconds")
+
+    @field_validator("reference_start_seconds", "reference_end_seconds", mode="before")
+    @classmethod
+    def numeric_range(cls, value: Any) -> Any:
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
+            raise ValueError("Reference endpoints must be numbers")
+        return value
+
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(
@@ -517,6 +537,13 @@ class HotwordContextResponse(PublicModel):
 
 
 class TtsSequenceResultItem(PublicModel):
+    reference_duration_original: float | None = None
+    reference_duration_used: float | None = None
+    reference_truncated: bool | None = None
+    reference_start_seconds_used: float | None = None
+    reference_end_seconds_used: float | None = None
+    reference_text_used: str | None = None
+
     id: str = Field(description="原样返回调用方项目 ID / Original caller-provided item ID")
     artifact_name: str = Field(description="对应 artifacts[].name；用于鉴权产物下载接口 / Matching artifacts[].name for the authenticated artifact download endpoint")
     duration: float = Field(description="本项音频时长，单位秒 / Item audio duration in seconds")
@@ -529,6 +556,10 @@ class TtsSequenceResult(PublicModel):
 
 
 class JobResultResponse(PublicModel):
+    reference_start_seconds_used: float | None = None
+    reference_end_seconds_used: float | None = None
+    reference_text_used: str | None = None
+
     document: dict[str, Any] | None = None
     text: str | None = None
     language: str | None = None
