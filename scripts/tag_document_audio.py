@@ -149,7 +149,7 @@ def inspect(db: sqlite3.Connection, data_dir: Path, job_id: str) -> tuple[dict, 
 
 
 def restore(db: sqlite3.Connection, data_dir: Path, job_id: str, backup: Path) -> None:
-    journal = json.loads((backup / 'journal.json').read_text())
+    journal = json.loads((backup / 'journal.json').read_text(encoding='utf-8'))
     if journal['job_id'] != job_id or journal['data_dir'] != str(data_dir):
         raise ValueError('Backup belongs to a different task or data directory')
     job, request, result, sections = load_job(db, job_id)

@@ -104,7 +104,20 @@ def test_new_tags_downloads_and_stable_retry(document_client):
     assert individual.status_code == 206 and individual.content == before[0][:100]
 
 
-def test_targeted_backfill_and_rollback(document_client):
+@pytest.fixture
+def legacy_journal_locale(monkeypatch):
+    """Exercise Windows' non-UTF-8 locale even on UTF-8 development hosts."""
+    original_open = Path.open
+
+    def open_with_legacy_default(path, mode='r', buffering=-1, encoding=None, errors=None, newline=None):
+        if path.name == 'journal.json' and 'r' in mode and 'b' not in mode and encoding in (None, 'locale'):
+            encoding = 'cp1252'
+        return original_open(path, mode, buffering, encoding, errors, newline)
+
+    monkeypatch.setattr(Path, 'open', open_with_legacy_default)
+
+
+def test_targeted_backfill_and_rollback(document_client, legacy_journal_locale):
     client, local = document_client
     job = synthesize(client, local, legacy=True)
     other = synthesize(client, local, legacy=True)
@@ -133,7 +146,7 @@ def test_targeted_backfill_and_rollback(document_client):
         assert 'album' not in source.metadata
 
 
-def test_backfill_failure_restores_files_and_database(document_client, monkeypatch):
+def test_backfill_failure_restores_files_and_database(document_client, monkeypatch, legacy_journal_locale):
     client, local = document_client
     job = synthesize(client, local, legacy=True)
     original = {a['path']: Path(a['path']).read_bytes() for a in job['result']['artifacts']}
