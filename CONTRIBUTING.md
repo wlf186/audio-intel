@@ -59,6 +59,19 @@ Run isolated Linux service lifecycle tests when changing startup, shutdown, read
 
 Native Windows CI runs `tests/test_service_windows.py` and browser smoke coverage. Do not treat Linux process behavior as proof of Windows compatibility.
 
+### Cross-platform development
+
+For changes involving text files, filesystem operations, process lifecycle, service scripts or asynchronous browser behavior, use native Windows CI early in the authorized development/PR workflow. The existing workflows support pull requests; use that feedback before release preparation. PR results complement the exact-commit main and tag gates below. Windows CI covers native service behavior and mock pipelines; it does not establish real Windows GPU inference quality or performance.
+
+- Specify the encoding when reading and writing project-owned text formats, including JSON journals, benchmark reports and test fixtures. Use UTF-8 consistently on both sides; preserve format-specific decoding for imported documents. The album rollback failure came from reading a UTF-8 journal with the system default encoding. Its regression tests emulate a non-UTF-8 default on Linux while preserving strict snapshot comparisons.
+- Check file access modes, open-handle lifetimes and replacement behavior on Windows. MP3 checkpoint synchronization requires a writable descriptor for `fsync`; the regression test emulates that requirement on Linux. File replacement and process cleanup still need native coverage where a local simulation cannot reproduce Windows behavior.
+- Wait for the observable state an assertion depends on. Loaded waveform data does not guarantee a painted canvas. For virtual-clock tests, pause time before navigation and advance it deliberately after the required UI state is ready. Preserve meaningful assertions rather than relying on fixed sleeps or machine speed.
+- Turn demonstrated platform defects into focused regression cases, using local emulation where practical and native Windows checks for the remaining behavior. See the [document TTS validation record](docs/DOCUMENT_TTS_VALIDATION.md) for the checkpoint, session-clock, canvas and rollback incidents and their validation limits.
+
+### Clean-checkout validation
+
+Validate affected documentation and build outputs from a clean checkout or source archive of the candidate, with test state and build artifacts isolated from the running service. A clean `git status` alone does not rule out ignored files masking missing release content. Public document links must resolve to files shipped in Git and valid section anchors; the existing documentation tests check file existence and Git inclusion, so also check anchors when adding or changing them. An earlier release candidate linked to an ignored local skill file that existed only in the development workspace. Keep public guidance self-contained and let local tooling reference it.
+
 ### Real inference requirements
 
 - Run real ASR and TTS GPU cancellation smoke tests for process supervision or device cleanup changes.
@@ -96,6 +109,8 @@ The seven native asynchronous submission endpoints (ASR, single-item TTS, ordere
 
 ## Releases
 
+Before the version/tag gates, review the candidate changes against [cross-platform development](#cross-platform-development) and [clean-checkout validation](#clean-checkout-validation). Confirm relevant regression coverage and inspect the current workflows for the checks actually run. Match checks to the affected behavior; documentation-only edits do not require real-model inference.
+
 1. Synchronize remote tags with `git fetch origin --tags --prune`, confirm the next version is unused locally/remotely, and identify the exact candidate SHA in a clean worktree.
 2. Set `RELEASE_VERSION` in `audio_intel/version.py` and the version in `frontend/package.json` to the same `X.Y.Z` in the candidate. Require successful Linux and native Windows **main** workflows for that exact SHA before any official tag.
 3. Temporarily tag that SHA locally, run tag-specific version tests and a production frontend build, and verify `/api/v1/health`, `/api/v1/system` and OpenAPI `info.version` report exactly `X.Y.Z`. Remove the temporary local tag and verify cleanup. Recheck SHA and worktree; repeat the gate if either changes.
@@ -104,6 +119,12 @@ The seven native asynchronous submission endpoints (ASR, single-item TTS, ordere
 6. Publish and read back the Release, confirming the tag/SHA, draft/prerelease state and latest status. Include workflow links and upgrade/validation notes. Keep authentication process-scoped; never persist tokens in remotes, Git configuration or release artifacts.
 
 Between releases, source checkouts append local SemVer build metadata derived from `git describe`. This lookup is offline; do not add a runtime GitHub request to resolve the version. README release badges should remain dynamic rather than hard-coding a release number.
+
+### CI failure handling
+
+Record the workflow URL, commit SHA, failing step and relevant error or test before deciding how to recover. Distinguish application/platform defects, test timing assumptions, missing checkout content and runner/network failures. A run cancelled by a newer commit is superseded, not evidence that the new candidate failed; it also cannot satisfy a success gate.
+
+For code or test defects, reproduce the failure where practical, correct the cause and run focused regression checks before submitting the corrected candidate to the full workflows. Rerun the same SHA when evidence points to a transient infrastructure failure; repeated runs alone do not resolve a known defect. Preserve assertions and required checks instead of skipping failures or increasing timeouts without a diagnosed need. Any changed SHA must pass its own release gates. A failed official tag remains subject to the immutable-tag rules above.
 
 ## Pull requests
 

@@ -18,6 +18,12 @@ setup 会自动沿用 `.runtime/deployment-profile` 中的 full/cpu 配置；默
 
 Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `data\`。
 
+## v0.1.15 跨平台开发与发布规范
+
+本版整理 Windows CI 与发布经验，并同步前后端发布版本号。功能、API 请求与响应结构、SQLite v11、模型、依赖锁和推理行为均与 v0.1.14 相同；历史任务和音频无需迁移或重新生成。
+
+贡献指南新增跨平台开发、干净源码验证与 CI 失败处理规范，涵盖明确文本编码、Windows 文件句柄差异、异步页面就绪条件和文档交付检查。AGENTS 在开发阶段引用这些规则，发布继续要求准确提交的 Linux/Windows main 与 tag 检查通过。详见 [贡献指南](../CONTRIBUTING.md#cross-platform-development)。
+
 ## v0.1.14 参考区间、文档体验与异常生成保护
 
 本版无数据库迁移，SQLite 仍为 v11。模型、依赖锁、默认精度、采样参数和序列契约 v1 保持不变。升级保留历史请求、结果、文档检查点及声纹样本；历史音频不会自动重新生成或补写专辑。
