@@ -219,9 +219,9 @@
     "safelyStopping": "Stopping safely",
     "states": {"queued": "Waiting", "running": "Processing", "succeeded": "Completed", "failed": "Failed", "cancelled": "Cancelled"},
     "stages": {
-      "document_retry_wait": "Waiting to retry document",
+      "tts_chunk_retry":"Retrying abnormal speech","document_retry_wait": "Waiting to retry document",
       "document_synthesis": "Synthesizing document sections","queued": "Waiting", "starting": "Starting", "loading_tts_model": "Loading TTS model", "waiting_for_gpu": "Waiting for GPU", "preparing_voice_clone": "Preparing voice clone", "synthesis": "Synthesizing speech", "writing_output": "Writing output", "decoding_audio": "Decoding audio", "vad": "Detecting speech activity", "diarization": "Separating speakers", "transcription": "Transcribing speech", "alignment": "Aligning words", "merging": "Merging speakers and timestamps", "completed": "Completed", "succeeded": "Completed", "failed": "Failed", "cancelled": "Cancelled", "cancelling": "Releasing compute resources"},
-    "units": {"document_section": "section", "text_chunk": "text chunks", "audio_chunk": "audio chunks", "codec_frame": "codec frames", "output_token": "output tokens", "model_layer": "model layers", "item": "items", "batch": "batches"},
+    "units": {"attempt":"retry","document_section": "section", "text_chunk": "text chunks", "audio_chunk": "audio chunks", "codec_frame": "codec frames", "output_token": "output tokens", "model_layer": "model layers", "item": "items", "batch": "batches"},
     "progress": {"count": "{{unit}} {{current}}/{{total}}", "estimatedTotal": " (estimated total)", "currentBatch": "Current batch {{count}} {{unit}}{{estimateMark}}"},
     "mini": {"queue": "Queue position {{position}} / {{depth}}", "waitingGpu": "Waiting for GPU resources", "remaining": "About {{lower}}–{{upper}} remaining", "warming": "Learning ETA · {{count}}/5 samples"},
     "history": {
@@ -239,7 +239,7 @@
       "pagination": "Task pagination", "pageSummary": "Page {{current}} / {{total}} · {{count}} total", "firstPage": "First page", "previousPage": "Previous page", "pageNumber": "Page {{value}}", "nextPage": "Next page", "lastPage": "Last page",
       "deleteTitle": "Permanently delete tasks", "deleteDescription": "Permanently delete the selected {{count}} tasks? {{queued}}Inputs, outputs, temporary files, and database records will be removed and cannot be recovered.", "queuedDelete": "{{count}} queued tasks will be cancelled first. ", "failureDetails": "Task failure details", "closeFailure": "Close failure details", "errorCode": "Error code", "technicalDetails": "Technical details", "noErrorDetails": "The service provided no additional error details."
     },
-    "failure": {
+    "failure": {"generationTitle":"Speech generation could not recover","generationAdvice":"A text chunk still failed generation checks after 3 retries. Invalid audio was not published. Review the text or reference sample before generating again.",
       "memoryTitle": "Insufficient GPU or system memory",
       "memoryAdvice": "Free compute resources and retry, or submit again using CPU or a smaller model.",
       "workerTitle": "Worker process exited unexpectedly",
@@ -311,7 +311,7 @@
     "sample":{"label":"Voiceprint sample","ariaLabel":"TTS voiceprint sample","number":"Sample {{number}}","autoTruncate":"auto truncate","empty":"No samples are available for TTS","truncateHelp":"Before cloning, this sample will be precisely truncated to 15 seconds or less at word boundaries."},
     "instruction":{"separator":", ","panel":"Advanced TTS instruction","designLabel":"Voice and expression instruction","styleLabel":"Style and expression instruction (optional)","designPlaceholder":"For example: a warm, mature female voice with a slightly low pitch, relaxed pace, and restrained joy.","stylePlaceholder":"For example: speak slightly slowly in a gentle, happy tone.","help":"Describe pace, pitch, and emotion in natural language, not numeric parameters.","examples":"Instruction examples","example":{"slowSteady":"slow and steady pace","brisk":"brisk pace and tight rhythm","highPitch":"higher pitch with clear variation","lowGentle":"speak in a low, gentle voice","happy":"happy and excited","sad":"sad but restrained","angry":"clearly angry with crisp articulation"}},
     "submit":{"submitting":"Submitting…","generate":"Generate speech"},"quality":{"title":"Local quality policy","official":"Official {{model}} weights · no quantization","cpu":"CPU FP32; compatibility first.","gpu":"GPU BF16; official native-precision acceleration.","noInstruction":"The current model and voice mode derive prosody from text and punctuation and do not accept advanced natural-language instructions.","instruction":"Official natural-language instruction control is enabled; separate rate, pitch, and low-level sampling controls remain disabled."},
-    "results":{"title":"Current synthesis result","loading":"Loading the full synthesis result on demand…","loadFailed":"Could not load synthesis result.","designedVoice":"Designed voice","sequence":"Speech sequence ({{count}} items)","downloadItem":"Download {{id}} WAV","clonedVoice":"Cloned voice","instruction":"Instruction: {{value}}","download":"Download {{format}}","empty":"Completed synthesis can be previewed and downloaded here."},
+    "results":{"title":"Current synthesis result","loading":"Loading the full synthesis result on demand…","loadFailed":"Could not load synthesis result.","recovered":"Automatically recovered {{count}} chunks","designedVoice":"Designed voice","sequence":"Speech sequence ({{count}} items)","downloadItem":"Download {{id}} WAV","clonedVoice":"Cloned voice","instruction":"Instruction: {{value}}","download":"Download {{format}}","empty":"Completed synthesis can be previewed and downloaded here."},
     "workspace": {
       "label": "Synthesis workspace",
       "text": "Text",

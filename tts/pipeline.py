@@ -19,6 +19,7 @@ from audio_intel.performance import lower_batch_size, resolve_acceleration
 from audio_intel.progress import ThrottledProgress
 from audio_intel.waveforms import prepare_optional
 from audio_intel.worker import JobContext, mark_executor_for_recycle
+from . import generation_guard
 
 
 _cpu_models: dict[str, Any] = {}
@@ -135,6 +136,17 @@ def _sequential_speech_decode(model: Any) -> Iterator[None]:
 
 
 def _generate_tts_batch(
+    model: Any, request: dict[str, Any], texts: list[str], clone_prompt: Any,
+    progress_callback: Any | None = None,
+    item_requests: list[dict[str, Any]] | None = None,
+) -> tuple[list[Any], int]:
+    guard = generation_guard.current_guard()
+    if guard is not None:
+        return guard.generate(_generate_tts_batch_unchecked, request, texts, clone_prompt, progress_callback, item_requests)
+    return _generate_tts_batch_unchecked(model, request, texts, clone_prompt, progress_callback, item_requests)
+
+
+def _generate_tts_batch_unchecked(
     model: Any,
     request: dict[str, Any],
     texts: list[str],
@@ -148,7 +160,7 @@ def _generate_tts_batch(
     item_requests = item_requests or [request] * len(texts)
     if len(item_requests) != len(texts):
         raise ValueError("TTS batch metadata does not match the text batch")
-    decode_context = _sequential_speech_decode(model) if batched else nullcontext()
+    decode_context = _sequential_speech_decode(model) if batched and generation_guard.current_guard() is None else nullcontext()
     with _observe_tts_decode(model, progress_callback), decode_context:
         if request["voice_mode"] == "voice_design":
             return model.generate_voice_design(
@@ -203,18 +215,7 @@ def _observe_tts_decode(model: Any, callback: Any | None) -> Iterator[None]:
 
 
 def _tts_text_token_counts(model: Any, texts: list[str]) -> list[int]:
-    try:
-        prompt = int(model.processor(
-            text=model._build_assistant_text(""), return_tensors="pt", padding=True,
-        )["input_ids"].shape[-1])
-        return [
-            max(1, int(model.processor(
-                text=model._build_assistant_text(text), return_tensors="pt", padding=True,
-            )["input_ids"].shape[-1]) - prompt)
-            for text in texts
-        ]
-    except (AttributeError, IndexError, TypeError, ValueError):
-        return [max(1, len(text)) for text in texts]
+    return generation_guard.token_counts(model, texts)[0]
 
 
 def encode(path: Path, audio: Any, rate: int, output_format: str) -> Path:
@@ -293,10 +294,14 @@ def process_job(context: JobContext) -> dict[str, Any]:
             0.12, "loading_tts_model", stage_progress=1.0,
             activity={"sequence": 1, "current": 1, "total": 1, "unit": "model_load", "basis": "observed"},
         )
-        return _process_loaded(
-            context, request, chunks, model, compute_device, acceleration,
-            model_definition, checkpoint,
-        )
+        with generation_guard.job_guard(context, model) as guard:
+            result = _process_loaded(
+                context, request, chunks, model, compute_device, acceleration,
+                model_definition, checkpoint,
+            )
+            if guard is not None:
+                result["generation_guard"] = guard.summary()
+            return result
     except Exception as exc:
         if compute_device == "gpu" and not settings.mock_mode:
             import torch
@@ -369,6 +374,7 @@ def _process_loaded(
         ):
             batch_size = 1
         texts = chunks[index:index + batch_size]
+        generation_guard.locate("speech", index)
         current_token_counts = token_counts[index:index + batch_size]
         frames_per_token = (
             observed_codec_frames / observed_text_tokens
@@ -555,10 +561,14 @@ def _process_sequence_job(context: JobContext) -> dict[str, Any]:
             0.12, "loading_tts_model", stage_progress=1.0,
             activity={"sequence": 1, "current": 1, "total": 1, "unit": "model_load", "basis": "observed"},
         )
-        return _process_sequence_loaded(
-            context, request, items, references, model, compute_device, acceleration,
-            model_definition, checkpoint,
-        )
+        with generation_guard.job_guard(context, model) as guard:
+            result = _process_sequence_loaded(
+                context, request, items, references, model, compute_device, acceleration,
+                model_definition, checkpoint,
+            )
+            if guard is not None:
+                result["generation_guard"] = guard.summary()
+            return result
     except Exception as exc:
         if compute_device == "gpu" and not settings.mock_mode:
             import torch
@@ -653,6 +663,7 @@ def _process_sequence_loaded(
     while index < len(chunks):
         batch_size = min(configured_batch_size, len(chunks) - index)
         current = chunks[index:index + batch_size]
+        generation_guard.locate("sequence", index)
         current_texts = [chunk["text"] for chunk in current]
         current_metadata = [chunk["metadata"] for chunk in current]
         current_token_counts = token_counts[index:index + batch_size]
@@ -884,28 +895,19 @@ def _prepare_clone_reference(
     if duration <= MAX_CLONE_REFERENCE_SECONDS:
         return
     words = list(request.get("reference_words") or [])
-    if not words:
+    try:
+        mapped = reference_ranges.aligned_words(request["reference_text"], words, duration)
+    except ValueError:
         words = _align_reference(context, request, duration, compute_device)
         request["reference_words"] = words
-        if request.get("voiceprint_sample_id"):
-            from audio_intel.db import update_voiceprint_sample
-            update_voiceprint_sample(request["voiceprint_sample_id"], words_json=words)
-    eligible = [index for index, word in enumerate(words) if float(word.get("end", 0)) <= MAX_CLONE_REFERENCE_SECONDS]
+        mapped = reference_ranges.aligned_words(request["reference_text"], words, duration)
+    eligible = [word for word in mapped if word["end"] <= MAX_CLONE_REFERENCE_SECONDS]
     if not eligible:
         raise ValueError("Clone reference contains no complete aligned word within 15 seconds")
-    last_index = eligible[-1]
-    cutoff = float(words[last_index]["end"])
-    text_end = _word_text_end(request["reference_text"], words, last_index)
-    if text_end is None:
-        words = _align_reference(context, request, duration, compute_device)
-        last_index = max(
-            (index for index, word in enumerate(words) if float(word.get("end", 0)) <= MAX_CLONE_REFERENCE_SECONDS),
-            default=-1,
-        )
-        text_end = _word_text_end(request["reference_text"], words, last_index) if last_index >= 0 else None
-        if text_end is None:
-            raise ValueError("Aligned clone reference text does not match the stored transcript")
-        cutoff = float(words[last_index]["end"])
+    cutoff = eligible[-1]["end"]
+    if any(word["start"] < cutoff < word["end"] for word in mapped):
+        raise ValueError("Clone reference cutoff crosses overlapping words")
+    text_end = eligible[-1]["text_end"]
     from audio_intel.media import extract_audio_clip
     clipped = context.work_dir / output_name
     extract_audio_clip(Path(path), clipped, 0.0, cutoff)

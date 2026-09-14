@@ -33,6 +33,7 @@ export type JobFailurePresentation={title:string;advice:string}
 export function jobFailurePresentation(job:Pick<JobSummary,'error_code'|'error_message'>,t:TFunction):JobFailurePresentation{
  const code=(job.error_code||'').toLocaleLowerCase()
  const message=(job.error_message||'').toLocaleLowerCase()
+ if(code==='ttsgenerationguarderror')return{title:t('jobs.failure.generationTitle'),advice:t('jobs.failure.generationAdvice')}
  if(code.includes('outofmemory')||code.includes('memoryerror')||message.includes('out of memory')||message.includes('\u663e\u5b58\u4e0d\u8db3'))return{title:t('jobs.failure.memoryTitle'),advice:t('jobs.failure.memoryAdvice')}
  if(code==='workerprocessexit'||message.includes('worker process'))return{title:t('jobs.failure.workerTitle'),advice:t('jobs.failure.workerAdvice')}
  if(code.includes('valueerror')||code.includes('validation')||code.includes('invalid'))return{title:t('jobs.failure.inputTitle'),advice:t('jobs.failure.inputAdvice')}

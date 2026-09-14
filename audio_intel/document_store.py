@@ -119,6 +119,13 @@ def clean_partials(job_id: str, root: Path) -> None:
         for path in waveforms.glob("waveform-*.partial"):
             path.unlink(missing_ok=True)
 
+    diagnostics = root / job_id / "diagnostics" / "tts-generation"
+    if diagnostics.is_dir() and diagnostics.resolve() == root.resolve() / job_id / "diagnostics" / "tts-generation":
+        for pattern in ("*/*.partial", "*/chunks/*.partial"):
+            for path in diagnostics.glob(pattern):
+                if path.parent.resolve().is_relative_to(diagnostics.resolve()):
+                    path.unlink(missing_ok=True)
+
 
 def main() -> None:
     """Parser child; writes only to its caller-owned import directory."""

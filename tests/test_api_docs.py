@@ -461,3 +461,22 @@ def test_sequence_result_schema_and_examples_preserve_legacy_results(tmp_path, m
         "unknown_tts_speaker", "invalid_tts_sequence_item", "voiceprint_sample_unavailable",
     } <= set(errors)
     assert "instruction_required" not in errors
+
+
+def test_generation_guard_is_optional_detail_only_and_documented(tmp_path, monkeypatch):
+    from audio_intel.api_models import JobResultResponse, JobSummaryResponse
+    from audio_intel.api_docs import RESULT_EXAMPLES, JOB_EXAMPLES
+    local = docs_settings(tmp_path)
+    monkeypatch.setattr(api_module, 'settings', local)
+    monkeypatch.setattr(db_module, 'settings', local)
+    schema = api_module.create_app().openapi()
+    assert 'generation_guard' in schema['components']['schemas']['JobResultResponse']['properties']
+    assert 'generation_guard' not in schema['components']['schemas']['JobSummaryResponse']['properties']
+    assert 'generation_guard' not in JobResultResponse.model_validate({'duration':1.0}).model_dump(exclude_unset=True)
+    recovered = JobResultResponse.model_validate(RESULT_EXAMPLES['tts_recovered']['value'])
+    assert recovered.generation_guard.retry_attempts == 2
+    assert recovered.generation_guard.recovered_chunks == 1
+    progress = JOB_EXAMPLES['tts_chunk_retry']['value']['progress_detail']
+    assert progress['unit'] == 'attempt' and progress['total'] == 3
+    examples = schema['paths']['/api/v1/jobs/{job_id}/result']['get']['responses']['200']['content']['application/json']['examples']
+    assert examples['tts_recovered'] == RESULT_EXAMPLES['tts_recovered']

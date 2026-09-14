@@ -386,3 +386,26 @@ The document CLI supports the same selection:
 ```
 
 `GET /api/v1/voiceprints/samples/{sample_id}/audio/waveform` returns the same `{artifact_name,duration,waveform}` shape as artifact waveforms, with at most 240 timed peaks. It requires Bearer or browser-session authentication. Fetch only when the editor is opened; honor `429`/`Retry-After`, allow retry, and use the protected sample audio endpoint for playback and Range requests. Waveform caches are isolated per sample location and removed with the sample. Deletion during waveform reading returns `409`; retry after the reader finishes.
+
+### TTS generation guard / 语音生成保护
+
+真实 TTS 生成默认启用逐文本块保护，覆盖单条、文档、有序序列和 OpenAI 兼容请求。正常调用保持固定模型、精度、采样配置和分块方式。预算由目标文本 token 数计算：`min(8192, max(750, ceil(tokens * 13.5)))`；无 tokenizer 计数时使用明确标记的字符估算。预算不是精确时长预测。达到预算但没有自然 EOS、空音频或非有限波形不会作为成功产物发布。
+
+Each failing original text chunk gets at most **three additional singleton generation calls** with the same voice/reference and default sampling parameters. Only retries may remove clearly identified table-of-contents dot leaders; title/page-number content remains intact. A durable ledger retains the allowance through document resource recovery. User-initiated whole-job retry starts a new allowance; ordered sequences still retry the entire saved request. Exhaustion fails the job with `error_code=TtsGenerationGuardError`; completed document sections remain reusable, while the incomplete section is not published.
+
+`progress_detail.stage_code=tts_chunk_retry` uses `current/total` and `unit=attempt` for retry count; codec-frame activity remains observed and overall progress does not decrease. Job detail/result responses may include:
+
+```json
+{"generation_guard":{"version":1,"checked_chunks":8,"retried_chunks":1,"retry_attempts":2,"recovered_chunks":1}}
+```
+
+Counters describe original chunks actually checked in the current job attempt; reused historical sections are not newly checked. Missing `generation_guard` means no recorded guard coverage (including older results and mock mode), never an implied successful check. Recovery counters do not constitute comprehensive audio-quality assessment. No new submission parameters or sampling controls are exposed. Global job lists and SSE remain summary-only.
+
+Existing authenticated polling clients can inspect the optional result without changing submission:
+
+```bash
+curl --fail-with-body -sS "${AUTH[@]}" "$BASE_URL/api/v1/jobs/$JOB_ID/result" \
+  | jq 'if has("generation_guard") then .generation_guard else {status:"not_recorded"} end'
+```
+
+对需要裁剪的参考音频，默认和手动选择均校验对齐时间及文本映射；无效对齐只重新计算一次，仍无效则明确失败。默认最多 15 秒、手动 3–30 秒不变；默认短样本不受手动区间的 3 秒下限影响。不会自动修改历史音频或参考转写。

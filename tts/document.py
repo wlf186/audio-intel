@@ -110,6 +110,7 @@ def process_loaded(context: Any, request: dict[str, Any], model: Any, device: st
                                          "document_synthesis", number - 1, len(items), stage_progress=index / len(chunks), unit="document_section")
                         if shutil.disk_usage(config.data_dir).free < config.min_free_disk_bytes:
                             raise OSError(errno.ENOSPC, "Insufficient disk space for document audio")
+                        pipeline.generation_guard.locate(f"document:{item['id']}", index)
                         batch = chunks[index:index + configured]
                         activity_sequence += 1
                         def progress(current: int) -> None:
@@ -162,6 +163,9 @@ def process_loaded(context: Any, request: dict[str, Any], model: Any, device: st
                             "waveform": peaks, "batch_size": section_actual, "oom_fallbacks": section_fallbacks}
                 prepare_optional(path)
                 store.checkpoint(context.job_id, item["id"], "complete", artifact)
+            except pipeline.generation_guard.TtsGenerationGuardError:
+                store.checkpoint(context.job_id, item["id"], "pending")
+                raise
             finally:
                 partial.unlink(missing_ok=True)
         if valid:

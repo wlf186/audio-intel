@@ -1309,6 +1309,7 @@ export function TtsPage({
               {typeof selected.request.voiceprint_sample_name==='string'?<small>{t('voiceprintNames.sampleSnapshot',{name:selected.request.voiceprint_sample_name})}</small>:null}
               {typeof selected.result.reference_start_seconds_used==='number'&&typeof selected.result.reference_end_seconds_used==='number'?<small>{t('referenceRange.effective')} {referenceTime(selected.result.reference_start_seconds_used)} – {referenceTime(selected.result.reference_end_seconds_used)}</small>:null}
               {typeof selected.result.reference_duration_original==='number'&&typeof selected.result.reference_duration_used==='number'?<small>{t('voiceprintNames.actualReference',{original:selected.result.reference_duration_original,used:selected.result.reference_duration_used})}</small>:null}
+              {selected.result.generation_guard && selected.result.generation_guard.recovered_chunks > 0 ? <small>{t('tts.results.recovered',{count:selected.result.generation_guard.recovered_chunks})}</small> : null}
               {selected.result.instruct ? (
                 <small className="tts-result-instruction">{t('tts.results.instruction',{value:selected.result.instruct})}</small>
               ) : null}

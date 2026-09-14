@@ -597,3 +597,30 @@ def test_v10_migration_preserves_historical_jobs_and_queue(tmp_path, monkeypatch
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
     replay = client.post('/api/v1/tts/jobs', data=data, headers=headers)
     assert replay.status_code == 200 and replay.json()['id'] == job['id']
+
+
+def test_quality_failure_keeps_completed_sections_without_resource_retry(document_client,monkeypatch):
+    from audio_intel import db,document_store
+    from audio_intel.worker import JobContext
+    import tts.pipeline as pipeline
+    from tts.document import retry_delay
+    from tts.generation_guard import TtsGenerationGuardError
+    client,local=document_client
+    identifier,preview=import_document(client)
+    job,_=submit_document(client,identifier,preview)
+    claimed=db.claim_job('tts','quality-test')
+    context=JobContext(claimed,'quality-test')
+    original=pipeline.mock_speech
+    def fail_second(text,*args):
+        if 'World' in text:
+            raise TtsGenerationGuardError('quality limit reached')
+        return original(text,*args)
+    monkeypatch.setattr(pipeline,'mock_speech',fail_second)
+    with pytest.raises(TtsGenerationGuardError):
+        pipeline.process_job(context)
+    first,second=document_store.sections(job['id'])
+    assert first['state']=='complete' and Path(first['artifact']['path']).is_file()
+    assert second['state']=='pending' and second['artifact'] is None
+    assert second['retries']==0
+    assert not list(context.output_dir.glob('*.partial'))
+    assert retry_delay(claimed,TtsGenerationGuardError('failed')) is None

@@ -245,3 +245,39 @@ def test_sequence_missing_alignment_computed_once_without_library_write(document
     assert len(calls)==1
     assert [i['reference_duration_used'] for i in result['sequence']['items']]==[15,30]
     assert db.get_voiceprint_sample(sample['id'])['words']==[]
+
+
+@pytest.mark.parametrize('invalid', ['backwards','nonfinite','text'])
+def test_default_crop_validates_existing_alignment_once(document_client,monkeypatch,invalid):
+    _,local=document_client
+    sample,path=sample_fixture(local)
+    words=copy.deepcopy(sample['words'])
+    if invalid=='backwards':words[10]['start']=0
+    elif invalid=='nonfinite':words[10]['end']=float('nan')
+    else:words[10]['text']='not in transcript'
+    request={'voice_mode':'voiceprint','voiceprint_sample_id':sample['id'],
+             'reference_audio_path':str(path),'reference_text':sample['transcript'],
+             'reference_words':words,'language':'Chinese'}
+    work=local.temp_dir/'default-validation';work.mkdir(parents=True)
+    calls=[]
+    def align(*args):
+        calls.append(args)
+        return copy.deepcopy(sample['words'])
+    monkeypatch.setattr(pipeline,'_align_reference',align)
+    pipeline._prepare_clone_reference(SimpleNamespace(work_dir=work),request,'cpu')
+    assert len(calls)==1 and request['reference_duration_used']==15
+    assert request['reference_text']==' '.join(str(i) for i in range(15))
+    assert db.get_voiceprint_sample(sample['id'])['words']==sample['words']
+
+
+def test_default_crop_refuses_crossing_overlapping_word(document_client):
+    _,local=document_client
+    sample,path=sample_fixture(local)
+    words=copy.deepcopy(sample['words'])
+    words[15]['start']=14.5
+    request={'voice_mode':'voiceprint','reference_audio_path':str(path),'reference_text':sample['transcript'],
+             'reference_words':words,'language':'Chinese'}
+    work=local.temp_dir/'overlap';work.mkdir(parents=True)
+    with pytest.raises(ValueError,match='overlapping'):
+        pipeline._prepare_clone_reference(SimpleNamespace(work_dir=work),request,'cpu')
+    assert not (work/'clone-reference.wav').exists()

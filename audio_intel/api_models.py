@@ -555,7 +555,16 @@ class TtsSequenceResult(PublicModel):
     items: list[TtsSequenceResultItem] = Field(description="与输入顺序一致的逐项 WAV 结果；整批成功后返回 / Per-item WAV results in input order; returned after the entire job succeeds")
 
 
+class TtsGenerationGuardResponse(PublicModel):
+    version: Literal[1] = Field(description="语音生成保护策略版本 / Generation guard policy version")
+    checked_chunks: int = Field(ge=0, description="本次任务运行实际检查的原始文本块数，不含历史复用章节 / Original chunks checked in this job attempt; excludes reused historical sections")
+    retried_chunks: int = Field(ge=0, description="发生局部重试的原始块数 / Original chunks requiring local recovery")
+    retry_attempts: int = Field(ge=0, description="额外生成调用次数，每原始块最多三次 / Additional recovery calls, at most three per original chunk")
+    recovered_chunks: int = Field(ge=0, description="重试后通过生成保护的块数；不表示全面音质评估 / Recovered chunks; not a comprehensive audio-quality assessment")
+
+
 class JobResultResponse(PublicModel):
+    generation_guard: TtsGenerationGuardResponse | None = Field(None, description="仅实际执行保护的 TTS 任务返回；历史缺失不表示检查通过 / Only guarded TTS runs return this; absence does not imply validation")
     reference_start_seconds_used: float | None = None
     reference_end_seconds_used: float | None = None
     reference_text_used: str | None = None

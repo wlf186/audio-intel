@@ -918,6 +918,27 @@ RESULT_EXAMPLES = {
 }
 
 
+RESULT_EXAMPLES["tts"]["value"]["generation_guard"] = {
+    "version": 1, "checked_chunks": 1, "retried_chunks": 0,
+    "retry_attempts": 0, "recovered_chunks": 0,
+}
+RESULT_EXAMPLES["tts_recovered"] = {
+    "summary": "异常块局部恢复 / Locally recovered TTS chunk",
+    "value": {**RESULT_EXAMPLES["tts"]["value"], "generation_guard": {
+        "version": 1, "checked_chunks": 8, "retried_chunks": 1,
+        "retry_attempts": 2, "recovered_chunks": 1,
+    }},
+}
+JOB_EXAMPLES["tts_chunk_retry"] = {
+    "summary": "异常音频局部重试 / Local recovery of abnormal audio",
+    "value": {**JOB_EXAMPLES["running"]["value"], "stage": "tts_chunk_retry", "progress_detail": {
+        "stage_code": "tts_chunk_retry", "basis": "observed", "current": 1, "total": 3,
+        "unit": "attempt", "activity": {"sequence": 3, "current": 80, "unit": "codec_frame",
+        "basis": "observed", "updated_at": "2026-08-27T12:00:10+00:00"},
+    }},
+}
+
+
 RESULT_EXAMPLES["tts_sequence"] = {
     "summary": "有序 TTS 结果与产物映射 / Ordered TTS result and artifact mapping",
     "value": {
