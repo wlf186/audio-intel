@@ -259,7 +259,8 @@ test('changing chapter ignores a pending old waveform',async({page})=>{
  await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  await expect(page.locator('.document-results select')).toHaveValue('1')
  await expect(page.locator('.document-results canvas')).not.toHaveClass(/waveform-empty/)
- expect(await page.locator('.document-results canvas').evaluate(element=>(element as HTMLCanvasElement).toDataURL())).toBe(image)
+ // Cached peaks can arrive before ResizeObserver paints the remounted canvas.
+ await expect.poll(()=>page.locator('.document-results canvas').evaluate(element=>(element as HTMLCanvasElement).toDataURL())).toBe(image)
  expect(state.waveformReads).toHaveLength(1)
  expect(errors).toEqual([])
 })
