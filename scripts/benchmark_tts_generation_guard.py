@@ -84,7 +84,7 @@ def main() -> None:
             last_check = time.monotonic()
             if db.execute("SELECT COUNT(*) FROM jobs WHERE state IN ('queued','running')").fetchone()[0]:
                 raise RuntimeError('Production work is active; stop this isolated benchmark')
-    cases = json.loads(args.cases_json.read_text())
+    cases = json.loads(args.cases_json.read_text(encoding="utf-8"))
     if not isinstance(cases,list) or not cases:
         parser.error('--cases-json must contain a nonempty case list')
     records = []
@@ -162,7 +162,7 @@ def main() -> None:
                           'identical':pair['baseline']['audio_hashes']==pair['guard']['audio_hashes'],
                           'change_percent':(pair['guard']['seconds']/pair['baseline']['seconds']-1)*100}
                 records.append(result)
-                (output/'results.json').write_text(json.dumps(records,ensure_ascii=False,indent=2))
+                (output/'results.json').write_text(json.dumps(records,ensure_ascii=False,indent=2),encoding='utf-8')
                 print(json.dumps(result,ensure_ascii=False),flush=True)
         finally:
             if model is not None:
@@ -179,7 +179,7 @@ def main() -> None:
                'median_change_percent':statistics.median(changes),
                'p95_change_percent':changes[max(0,__import__('math').ceil(len(changes)*.95)-1)],
                'retries':sum(r['pair']['guard']['generation_guard']['retry_attempts'] for r in records)}
-    (output/'summary.json').write_text(json.dumps(summary,indent=2))
+    (output/'summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
     print('SUMMARY',json.dumps(summary),flush=True)
     if summary['identical_pairs'] != len(records) or summary['retries']:
         raise SystemExit('Normal-output equivalence gate failed')
