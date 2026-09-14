@@ -36,11 +36,9 @@ jobs:
       - name: Verify dependency locks
         run: .runtime/api/bin/python scripts/lock_dependencies.py --check
 
-      - name: Backend and frontend checks
-        run: |
-          .runtime/api/bin/python -m pytest -q
-          corepack pnpm@10.15.1 --dir frontend typecheck
-          corepack pnpm@10.15.1 --dir frontend build
+      # setup api already runs i18n, both TypeScript checks and the full frontend build.
+      - name: Backend checks
+        run: .runtime/api/bin/python -m pytest -q --durations=20
 
       - name: Dependency audits
         run: |

@@ -42,14 +42,11 @@ jobs:
           & .\.runtime\api\Scripts\python.exe scripts\lock_dependencies.py --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Backend and frontend checks
+      # setup api already runs i18n, both TypeScript checks and the full frontend build.
+      - name: Backend checks
         shell: powershell
         run: |
-          & .\.runtime\api\Scripts\python.exe -m pytest -q
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & corepack.cmd pnpm@10.15.1 --dir frontend typecheck
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & corepack.cmd pnpm@10.15.1 --dir frontend build
+          & .\.runtime\api\Scripts\python.exe -m pytest -q --durations=20
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Dependency audits
