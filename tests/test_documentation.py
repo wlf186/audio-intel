@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -14,6 +16,7 @@ PUBLIC_DOCS = (
     ROOT / "CONTRIBUTING.md",
     ROOT / "docs" / "API.md",
     ROOT / "docs" / "DOCUMENT_TTS.md",
+    ROOT / "docs" / "DOCUMENT_TTS_VALIDATION.md",
     ROOT / "docs" / "ARCHITECTURE.md",
     ROOT / "docs" / "HTTPS.md",
     ROOT / "docs" / "INSTALL.md",
@@ -47,6 +50,23 @@ def test_public_document_relative_links_exist() -> None:
         if not target.exists()
     ]
     assert not missing, "Missing documentation targets:\n" + "\n".join(missing)
+
+    # Local ignored files can hide broken links in CI and release source archives.
+    if (ROOT / ".git").exists() and shutil.which("git"):
+        tracked = {
+            (ROOT / name).resolve()
+            for name in subprocess.check_output(
+                ["git", "ls-files", "-z"], cwd=ROOT, text=True,
+            ).split("\0") if name
+        }
+        unpublished = [
+            f"{document.relative_to(ROOT)} -> {target}"
+            for document in PUBLIC_DOCS
+            for target in _relative_targets(document)
+            if target.is_file() and target not in tracked
+        ]
+        assert not unpublished, "Documentation links must ship in Git:\n" + "\n".join(unpublished)
+
 
 
 def test_readmes_keep_parallel_information_architecture() -> None:

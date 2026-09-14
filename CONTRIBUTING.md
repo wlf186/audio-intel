@@ -101,7 +101,7 @@ The seven native asynchronous submission endpoints (ASR, single-item TTS, ordere
 3. Temporarily tag that SHA locally, run tag-specific version tests and a production frontend build, and verify `/api/v1/health`, `/api/v1/system` and OpenAPI `info.version` report exactly `X.Y.Z`. Remove the temporary local tag and verify cleanup. Recheck SHA and worktree; repeat the gate if either changes.
 4. Create and push the official `vX.Y.Z` tag once. Wait for both Linux and native Windows **tag** workflows for that tag and SHA to pass before publishing a GitHub Release. A main run alone is insufficient.
 5. If tag validation fails, preserve the immutable tag as audit history and stop publication. Never move/reuse the tag or invent another version to bypass a failed release.
-6. Publish and read back the Release, confirming the tag/SHA, draft/prerelease state and latest status. Include workflow links and upgrade/validation notes. Follow the repository-local [release workflow](.agents/skills/github-release/SKILL.md) and [environment authentication](.agents/skills/github-env-auth/SKILL.md).
+6. Publish and read back the Release, confirming the tag/SHA, draft/prerelease state and latest status. Include workflow links and upgrade/validation notes. Keep authentication process-scoped; never persist tokens in remotes, Git configuration or release artifacts.
 
 Between releases, source checkouts append local SemVer build metadata derived from `git describe`. This lookup is offline; do not add a runtime GitHub request to resolve the version. README release badges should remain dynamic rather than hard-coding a release number.
 
