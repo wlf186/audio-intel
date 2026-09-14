@@ -32,7 +32,7 @@ cd audio-intel
 curl -fsS http://127.0.0.1:20810/api/v1/health
 ```
 
-`setup all` 创建 `.runtime/api`、`.runtime/asr`、`.runtime/tts` 和 `.runtime/aligner`，构建 `frontend/dist`，并将模型下载到 `models/`。`setup asr/all` 下载固定 revision 的 Qwen3-ASR 0.6B 与 1.7B；`setup tts/all` 下载 Qwen3-TTS 0.6B/1.7B 的 Base、CustomVoice，以及 1.7B VoiceDesign。TTS 与 Qwen ASR 要求互斥的 Transformers 版本，因此长参考音频的对齐使用独立 aligner 环境；不要把两个 Qwen 包装进同一环境。所有缓存和临时文件也留在仓库目录中。下载完成后，`service.sh start` 默认设置 Hugging Face 与 Transformers 离线模式。
+`setup all` 创建 `.runtime/api`、`.runtime/asr`、`.runtime/tts` 和 `.runtime/aligner`，构建 `frontend/dist`，并将模型下载到 `models/`。`setup asr/all` 下载固定 revision 的 Qwen3-ASR 0.6B 与 1.7B；`setup tts/all` 下载 Qwen3-TTS 0.6B/1.7B 的 Base、CustomVoice，以及 1.7B VoiceDesign。TTS 与 Qwen ASR 要求互斥的 Transformers 版本，因此默认截取及手动声纹区间所需的按需对齐使用独立 aligner 环境；不要把两个 Qwen 包装进同一环境。所有缓存和临时文件也留在仓库目录中。下载完成后，`service.sh start` 默认设置 Hugging Face 与 Transformers 离线模式。
 
 ### 可选 CPU-only 精简配置
 

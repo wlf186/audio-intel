@@ -65,6 +65,7 @@ Native Windows CI runs `tests/test_service_windows.py` and browser smoke coverag
 - Run `scripts/benchmark_single_task_acceleration.py` for batch sizing or inference-call changes.
 - For sequence TTS inference or batching changes, also run `scripts/benchmark_tts_sequence.py` against real models; see [the sequence benchmark contract](docs/ARCHITECTURE.md#tts-pipeline). Verify ordered per-item artifacts and snapshotted voiceprint references.
 - Validate affected 0.6B/1.7B, CPU/GPU, clone, diarization, alignment, and OOM paths in proportion to the change.
+- Run the generation-guard tests in the TTS runtime as well as API tests: the API-only environment skips inference-dependent tests. For guard changes, use `scripts/benchmark_tts_generation_guard.py` with fresh isolated output directories and matched seeds; compare raw audio, false retries, duration, latency and peak memory. See [validation evidence and limits](docs/DOCUMENT_TTS_VALIDATION.md#v0114-reference-ranges-albums-and-generation-protection).
 - Preserve model identity, precision, ASR chunking, diarization semantics, and TTS sequential decoding when changing single-task acceleration.
 
 ## API and persistence changes
@@ -73,7 +74,7 @@ Public API changes must update the bilingual `/docs`, `/openapi.json`, executabl
 
 SQLite jobs, queue ordering, history, idempotency records, hotwords, voices, voiceprints, and completed-task snapshots are compatibility surfaces. Back up `data/` before migration development and cover migration from the previous schema in tests.
 
-The five native asynchronous submission endpoints (ASR, single-item TTS, ordered TTS sequences, clone-reference analysis, and voiceprint sample upload) require `Idempotency-Key` and must preserve first-accept `202`, same-request replay `200`, conflict `409`, and admission `429` semantics.
+The seven native asynchronous submission endpoints (ASR, single-item TTS, ordered TTS sequences, clone-reference analysis, voiceprint sample upload, document import, and document TTS) require `Idempotency-Key` and must preserve first-accept `202`, same-request replay `200`, conflict `409`, and admission `429` semantics.
 
 ## Frontend changes
 
@@ -95,10 +96,12 @@ The five native asynchronous submission endpoints (ASR, single-item TTS, ordered
 
 ## Releases
 
-1. Synchronize remote tags with `git fetch origin --tags --prune`, confirm the intended release commit, and keep the worktree clean.
-2. Update `RELEASE_VERSION` in `audio_intel/version.py` and the private frontend package version in `frontend/package.json` to the intended `X.Y.Z` in the tested release commit. API versions omit the tag's leading `v`.
-3. Create `vX.Y.Z` on that exact commit without moving or reusing an existing tag. Wait for both Linux and Windows tag workflows to pass before publishing the GitHub Release.
-4. Confirm that the GitHub Release targets the same tag and commit, then verify `/api/v1/health`, `/api/v1/system`, and OpenAPI `info.version` all report `X.Y.Z` from a clean tag checkout.
+1. Synchronize remote tags with `git fetch origin --tags --prune`, confirm the next version is unused locally/remotely, and identify the exact candidate SHA in a clean worktree.
+2. Set `RELEASE_VERSION` in `audio_intel/version.py` and the version in `frontend/package.json` to the same `X.Y.Z` in the candidate. Require successful Linux and native Windows **main** workflows for that exact SHA before any official tag.
+3. Temporarily tag that SHA locally, run tag-specific version tests and a production frontend build, and verify `/api/v1/health`, `/api/v1/system` and OpenAPI `info.version` report exactly `X.Y.Z`. Remove the temporary local tag and verify cleanup. Recheck SHA and worktree; repeat the gate if either changes.
+4. Create and push the official `vX.Y.Z` tag once. Wait for both Linux and native Windows **tag** workflows for that tag and SHA to pass before publishing a GitHub Release. A main run alone is insufficient.
+5. If tag validation fails, preserve the immutable tag as audit history and stop publication. Never move/reuse the tag or invent another version to bypass a failed release.
+6. Publish and read back the Release, confirming the tag/SHA, draft/prerelease state and latest status. Include workflow links and upgrade/validation notes. Follow the repository-local [release workflow](.agents/skills/github-release/SKILL.md) and [environment authentication](.agents/skills/github-env-auth/SKILL.md).
 
 Between releases, source checkouts append local SemVer build metadata derived from `git describe`. This lookup is offline; do not add a runtime GitHub request to resolve the version. README release badges should remain dynamic rather than hard-coding a release number.
 

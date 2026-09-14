@@ -7,7 +7,7 @@
 | api | Python 3.12、FastAPI 0.141.1、Uvicorn 0.52.4 | API、队列管理、测试与前端托管 |
 | asr | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-asr 0.0.6、Transformers 4.57.6 | ASR、ForcedAligner、VAD、说话人分离 |
 | tts | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-tts 0.1.1、Transformers 4.57.3 | 0.6B/1.7B Base、CustomVoice 与 VoiceDesign 推理 |
-| aligner | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-asr 0.0.6、Transformers 4.57.6 | TTS 超长参考样本的按需对齐 |
+| aligner | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-asr 0.0.6、Transformers 4.57.6 | TTS 默认参考截取及手动声纹区间的按需对齐 |
 
 qwen-tts 0.1.1 与 qwen-asr 0.0.6 精确要求不同 Transformers 版本，严禁同环境安装。Torch 2.11 要求 `setuptools<82`，因此模型环境固定到已修复已知旧版公告且满足该约束的 setuptools 81.0.0。
 

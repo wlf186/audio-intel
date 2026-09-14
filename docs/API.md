@@ -329,11 +329,15 @@ The automatic clone-reference limit comes from `limits.max_clone_reference_secon
 
 Use [Document TTS](DOCUMENT_TTS.md) for EPUB, TXT, Markdown, text PDF, DOCX, XLSX and PPTX. Upload a document, poll its import to `ready`, request a segmentation preview, then submit its revision and selected IDs to `/api/v1/tts/document-jobs`. This accepts up to the capability-advertised section count (2,000 by default) with either multipart or URL-encoded forms. Ordinary TTS retains its 50,000-character limit.
 
-Imports are retained until explicitly deleted. `GET /api/v1/tts/document-imports?offset=0&limit=20` preserves the array response and includes `size_bytes` (source) and `storage_bytes` (source, parsed text and log). Omit pagination to list all imports. Reuse an existing ready import without uploading again. `DELETE .../{identifier}` rejects active parsing or snapshot copying with 409 and does not remove already submitted jobs.
+The browser bulk-removal flow invokes the existing single-import DELETE for each selected entry, reports individual outcomes and retains failures for retry; there is no atomic bulk-delete endpoint. Imports are retained until explicitly deleted. `GET /api/v1/tts/document-imports?offset=0&limit=20` preserves the array response and includes `size_bytes` (source) and `storage_bytes` (source, parsed text and log). Omit pagination to list all imports. Reuse an existing ready import without uploading again. `DELETE .../{identifier}` rejects active parsing or snapshot copying with 409 and does not remove already submitted jobs.
 
 `POST /api/v1/tts/document-imports/{identifier}/retry` requeues only a failed parser import using the saved file (202; 409 if no longer failed or source missing). It shares upload/parse admission (429 with Retry-After), needs no Idempotency-Key, and never silently retries a malformed document. Uploads authenticate and reserve capacity before reading the body, stream directly to a temporary source, and remove partial files on failure. Same-key upload retries validate the complete file hash and reuse the original import.
 
+`segmentation_mode=auto` prefers reliable structure; `target_section_chars` is only a fallback for unstructured text or a preface, not a cap on structural chapters. `length` uses the target throughout. `basis` identifies a structural source or a text boundary, not a second segmentation-mode parameter.
+
 The typed section response is stable before and after executor initialization: `index` is the original document section number, `position` is the selected job order, `start/end` and their `start_offset/end_offset` aliases address the canonical text. `char_count`, `basis`, optional page bounds, `state`, `retries`, `artifact` and `updated_at` are always represented. Whitespace-only sections are merged losslessly; affected old previews return 409 on submission and must be reviewed again. Persisted job snapshots remain unchanged.
+
+New document jobs persist server-owned `request.document.audio_metadata`; callers cannot supply it. All section downloads and the complete MP3 share the album, using the saved document title, voice/person name and UTC creation minute; selected section order supplies track numbers. Historical jobs are not automatically retagged. See [album rules and the offline single-job tool](DOCUMENT_TTS.md#下载音频的专辑标签--downloaded-audio-album-tags).
 
 ZIP and complete MP3 downloads are streamed without stored exports. Handle 401/404/409/429 before consuming the body and honor `Retry-After` (also `retry_after_seconds` in problem JSON). After the response has begun, transport failures terminate the download; retry from the beginning. The browser UI retains the page on an error and delegates large downloads to the browser download manager without a whole-file Blob.
 
@@ -387,7 +391,7 @@ The document CLI supports the same selection:
 
 `GET /api/v1/voiceprints/samples/{sample_id}/audio/waveform` returns the same `{artifact_name,duration,waveform}` shape as artifact waveforms, with at most 240 timed peaks. It requires Bearer or browser-session authentication. Fetch only when the editor is opened; honor `429`/`Retry-After`, allow retry, and use the protected sample audio endpoint for playback and Range requests. Waveform caches are isolated per sample location and removed with the sample. Deletion during waveform reading returns `409`; retry after the reader finishes.
 
-### TTS generation guard / 语音生成保护
+## TTS generation guard / 语音生成保护
 
 真实 TTS 生成默认启用逐文本块保护，覆盖单条、文档、有序序列和 OpenAI 兼容请求。正常调用保持固定模型、精度、采样配置和分块方式。预算由目标文本 token 数计算：`min(8192, max(750, ceil(tokens * 13.5)))`；无 tokenizer 计数时使用明确标记的字符估算。预算不是精确时长预测。达到预算但没有自然 EOS、空音频或非有限波形不会作为成功产物发布。
 

@@ -112,3 +112,31 @@ The release separates ASR creation from results and provides fixed text/document
 - Earlier real pinned 0.6B GPU validation for the same waveform implementation succeeded for single WAV, two-item WAV sequence and two-section MP3 document jobs. Each artifact returned 240 peaks, with sidecars of 2,069–2,102 bytes; waveform access preserved audio hashes. This release preparation changed documentation, screenshot capture and the i18n test, not that validated inference implementation.
 
 SQLite remains v11; no migration, historical result rewrite, model change or inference dependency change is introduced. Runtime data, Office samples, generated audio and temporary QA logs remain outside the commit. Publication requires the exact candidate SHA to pass Linux and native Windows main workflows, followed by local tag/version validation and successful workflows for the immutable v0.1.13 tag.
+
+## v0.1.14 reference ranges, albums and generation protection
+
+The release combines library reference ranges, document interaction improvements, immutable album tags and per-chunk generation protection. SQLite remains v11 and sequence results remain contract v1. API-only tests cannot validate all guard internals: inference-dependent tests also run in the separate TTS environment.
+
+Real-model validation on the pinned local runtimes before release preparation covered:
+
+| Check | Observed result |
+| --- | --- |
+| Normal GPU guard A/B, 30 pairs | Identical raw audio in all pairs, zero recovery calls; median latency +0.70%, P95 +3.82%, peak GPU memory change below 0.001% |
+| Normal CPU guard A/B, 6 pairs | Identical raw audio, zero recovery calls; median latency −1.21%, P95 +4.72% |
+| Edge cases, 23 pairs / 48 compared output rows | Identical raw audio, zero recovery calls; numbers, URLs, abbreviations, TOC leaders, mixed languages, short text and slow instructed speech |
+| Closest observed edge budget | Slow English: 769/1161 steps (66.24%), 61.44 seconds; long Chinese: 926/2039 steps, 74 seconds |
+| Reproducible runaway cases | Two bad chunks recovered in one retry each; normal batch mates stayed unchanged |
+| Real queue and exports | Acceleration, preset and multi-reference sequences, document synthesis, complete MP3 decoding and album tags passed |
+| Cancellation | Complete TTS executor exit, temporary-file cleanup and next-job completion without supervisor restart passed |
+
+The normal GPU matrix included 0.6B/1.7B Base and CustomVoice plus 1.7B VoiceDesign, CPU/GPU reference handling and approximately 3/15/30 second references. Edge-case timing was measured separately: the first 20 pairs had median +0.06%, P95 +5.98%; three longer pairs had median +0.99%, P95 +1.07%. These are measurements on selected samples and one local setup, not population error rates or guarantees for all hardware/text.
+
+A separately authorized historical repair regenerated three sections from two jobs. All 107 final internal chunks ended naturally and passed MP3 decoding and independent ASR/text review; album tags and complete downloads were checked. One directory section needed an additional, case-specific render with formatting dot leaders removed after ASR exposed repetition despite natural EOS. This extra cleanup did **not** become generic preprocessing. Other section audio and input snapshots were preserved. This evidence supports those repaired outputs, not a claim that the guard detects every kind of noise or repetition. No human listening assessment is claimed.
+
+Reproduce normal-output checks with the TTS runtime and `scripts/benchmark_tts_generation_guard.py`, following the [case format](DOCUMENT_TTS.md#复核正常生成开销). Use fresh isolated output directories, fixed matching inputs/seeds and at least 30 paired normal cases; CPU is a separate run. The script rejects changed normal audio, normal-case retries, median slowdown over 5%, P95 over 10%, or peak-memory growth over 5%. Keep private references and raw diagnostic/audio artifacts outside Git. Re-run affected real inference whenever model calls or protection policy change.
+
+Release-candidate backend, browser and version gates are recorded separately from these earlier real-model measurements. Exact-SHA Linux and native Windows main/tag workflows must pass before publication; links belong in the GitHub Release.
+
+Local release gates: 347 backend tests passed with 16 platform/inference-environment skips; all 19 generation-guard tests passed in the TTS runtime using the API environment’s pytest tooling without installing inference dependencies. Playwright passed 102 scenarios, with five optional private Office-sample scenarios skipped because their external fixture directory was unavailable; synthetic parser/API fixtures remain covered by pytest. The canvas-repaint regression also passed ten repeated runs. Desktop and 390 px checks covered reference selection, document management, reader modes and generation recovery, including console errors and overflow. Browser plugin not available; repository Playwright with local Chromium was used against an isolated mock service.
+
+Frontend typechecking/i18n and production build, all platform/profile dependency-lock checks, frontend and Linux API dependency audits, and mock ASR/TTS smoke passed. Documentation file/anchor links were checked. The build retains the existing non-failing bundle-size advisory. Test audio, screenshots and logs remain local.

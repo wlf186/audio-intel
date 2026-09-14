@@ -540,9 +540,9 @@ class TtsSequenceResultItem(PublicModel):
     reference_duration_original: float | None = None
     reference_duration_used: float | None = None
     reference_truncated: bool | None = None
-    reference_start_seconds_used: float | None = None
-    reference_end_seconds_used: float | None = None
-    reference_text_used: str | None = None
+    reference_start_seconds_used: float | None = Field(None, description="实际起点，原样本相对秒数 / Actual start in seconds relative to the original sample")
+    reference_end_seconds_used: float | None = Field(None, description="实际完整词边界终点，原样本相对秒数 / Actual complete-word end in original-sample seconds")
+    reference_text_used: str | None = Field(None, description="与实际参考音频匹配的文字快照 / Text snapshot matching the actual reference audio")
 
     id: str = Field(description="原样返回调用方项目 ID / Original caller-provided item ID")
     artifact_name: str = Field(description="对应 artifacts[].name；用于鉴权产物下载接口 / Matching artifacts[].name for the authenticated artifact download endpoint")
@@ -565,9 +565,9 @@ class TtsGenerationGuardResponse(PublicModel):
 
 class JobResultResponse(PublicModel):
     generation_guard: TtsGenerationGuardResponse | None = Field(None, description="仅实际执行保护的 TTS 任务返回；历史缺失不表示检查通过 / Only guarded TTS runs return this; absence does not imply validation")
-    reference_start_seconds_used: float | None = None
-    reference_end_seconds_used: float | None = None
-    reference_text_used: str | None = None
+    reference_start_seconds_used: float | None = Field(None, description="实际起点，原样本相对秒数 / Actual start in seconds relative to the original sample")
+    reference_end_seconds_used: float | None = Field(None, description="实际完整词边界终点，原样本相对秒数 / Actual complete-word end in original-sample seconds")
+    reference_text_used: str | None = Field(None, description="与实际参考音频匹配的文字快照 / Text snapshot matching the actual reference audio")
 
     document: dict[str, Any] | None = None
     text: str | None = None

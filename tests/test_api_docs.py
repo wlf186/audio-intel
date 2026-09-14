@@ -480,3 +480,30 @@ def test_generation_guard_is_optional_detail_only_and_documented(tmp_path, monke
     assert progress['unit'] == 'attempt' and progress['total'] == 3
     examples = schema['paths']['/api/v1/jobs/{job_id}/result']['get']['responses']['200']['content']['application/json']['examples']
     assert examples['tts_recovered'] == RESULT_EXAMPLES['tts_recovered']
+
+
+def test_reference_range_docs_match_generated_contract(tmp_path, monkeypatch):
+    local = docs_settings(tmp_path)
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    schema = api_module.create_app().openapi()
+    description = schema["info"]["description"]
+    assert "Manual voiceprint reference ranges" in description
+    assert "TTS generation guard" in description
+    assert "invalid_reference_range" in description
+    for path in ("/api/v1/tts/jobs", "/api/v1/tts/document-jobs"):
+        body = schema["paths"][path]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
+        if "$ref" in body:
+            body = schema["components"]["schemas"][body["$ref"].split("/")[-1]]
+        for field in ("reference_start_seconds", "reference_end_seconds"):
+            assert field in body["properties"]
+            assert field not in body.get("required", [])
+    for model in ("JobResultResponse", "TtsSequenceResultItem"):
+        properties = schema["components"]["schemas"][model]["properties"]
+        for field in ("reference_start_seconds_used", "reference_end_seconds_used", "reference_text_used"):
+            assert properties[field]["description"]
+    preview = schema["paths"]["/api/v1/tts/document-imports/{identifier}/preview"]["post"]
+    assert "not a cap on structural chapters" in preview["description"]
+    download = schema["paths"]["/api/v1/jobs/{job_id}/document/download"]["get"]
+    assert "UTC" in download["description"]
+    assert "audio_metadata" in download["description"]

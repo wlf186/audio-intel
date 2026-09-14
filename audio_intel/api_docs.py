@@ -428,9 +428,57 @@ TTS 使用稳定样本 ID，提交时保存人员姓名、备注和样本名称�
 
 TTS uses stable sample IDs and snapshots person names, notes, and sample names at submission. Later renames preserve history and same-request idempotent replay; retries use the persisted request. Ordered results remain contract v1. Legacy `POST /api/v1/tts/voices` returns 409 when a name matches multiple people; use the voiceprint API with an explicit person ID instead.
 
-克隆参考上限读取 `limits.max_clone_reference_seconds`（当前 15 秒）。超长参考保留开头至上限以内的最后一个完整字词边界，原样本保持完整；提交前显示上限，不承诺精确使用时长。单条克隆完成后 `reference_duration_original` 和 `reference_duration_used` 为实际测得时长，`reference_truncated` 表示是否截取；历史结果缺少字段时不推测时长。
+自动克隆参考上限读取 `limits.max_clone_reference_seconds`（当前 15 秒）。超长参考保留开头至上限以内的最后一个完整字词边界，原样本保持完整；提交前显示上限，不承诺精确使用时长。单条克隆完成后 `reference_duration_original` 和 `reference_duration_used` 为实际测得时长，`reference_truncated` 表示是否截取；历史结果缺少字段时不推测时长。
 
-Read `limits.max_clone_reference_seconds` (currently 15). Long references use the beginning through the last complete word within that limit; original samples remain intact. Before submission the UI states the limit, not an exact cutoff. Completed single-clone results report measured `reference_duration_original`, `reference_duration_used`, and `reference_truncated`; missing historical values are never inferred.
+Read `limits.max_clone_reference_seconds` (currently 15) for automatic selection only. Manual library ranges are advertised separately by `tts.model_capabilities[].controls.reference_range`; the original sample remains intact. Missing historical duration/range values are never inferred.
+
+## 手动声纹参考区间 / Manual voiceprint reference ranges
+
+单条和文档提交使用成对表单字段 `reference_start_seconds` / `reference_end_seconds`；序列在每个 `items[]` 内提供。仅支持 `voice_mode=voiceprint`，区间可从原样本任意位置开始，长度 3–30 秒。省略两端时仍自动使用最多前 15 秒；浏览器记忆不会成为 API 默认值。不完整、重复、非有限、越界区间或不支持的模式返回 `422`（区间业务校验使用 `invalid_reference_range`）。
+
+Single/document jobs accept paired form endpoints; sequences accept endpoints per item. Only library voiceprint mode supports a manual interval, 3–30 seconds long anywhere in the original sample. Omit both for automatic selection of at most the first 15 seconds. Invalid pairs, duplicate form fields, non-finite/out-of-bounds values or unsupported modes return 422. The interval is part of idempotent request identity: same input replays with 200, changed interval with the same key returns 409.
+
+音频与文字向内对齐到完整词，实际区间仍需至少 3 秒；缺失或无效对齐在独立离线 aligner 中重新计算一次，仍无效则任务明确失败。任务使用提交快照，不修改原样本。结果的 `reference_start_seconds_used`、`reference_end_seconds_used`、`reference_text_used` 回显实际范围；序列在对应 item 回显。
+
+Audio and text are cropped together to complete aligned words; effective manual duration must remain at least 3 seconds. Missing/invalid alignment is recomputed once offline, then fails explicitly if still invalid. Result fields above report the actual original-sample interval and text, per item for sequences. Retries retain submission snapshots.
+
+```bash
+set -euo pipefail
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
+SAMPLE_ID=${SAMPLE_ID:?export a ready voiceprint sample ID first}
+TTS_KEY=${TTS_KEY:-$(python3 -c 'import uuid; print(uuid.uuid4())')}
+AUTH=(); if [[ -n "${AUDIO_INTEL_API_KEY:-}" ]]; then AUTH=(-H "Authorization: Bearer $AUDIO_INTEL_API_KEY"); fi
+curl --fail-with-body -sS "${AUTH[@]}" -H "Idempotency-Key: $TTS_KEY" \
+  -F 'text=这次使用样本中间的声音。' -F voice_mode=voiceprint \
+  -F "voiceprint_sample_id=$SAMPLE_ID" -F compute_device=cpu \
+  -F reference_start_seconds=10 -F reference_end_seconds=40 \
+  "$BASE_URL/api/v1/tts/jobs"
+```
+
+示例要求样本至少 40 秒且选区含充分完整语音；相同提交重试复用 `TTS_KEY`。/ This example requires a sample of at least 40 seconds with sufficient complete speech; retain `TTS_KEY` for retries.
+
+`GET /api/v1/voiceprints/samples/{sample_id}/audio/waveform` 返回 `{artifact_name,duration,waveform}`，最多 240 个时间均匀峰值，需鉴权；繁忙时遵循 429/Retry-After，读取期间删除返回 409。 / This authenticated waveform endpoint returns up to 240 timed peaks; honor busy 429/Retry-After responses and retry deletion after an active reader releases its lease (409).
+
+## 文档分段与专辑 / Document segmentation and albums
+
+`auto` 优先结构，目标字数仅用于无可靠结构的正文或章前内容；完整结构章节不受目标限制。`length` 按目标字数寻找自然边界。`basis` 表示结构来源或文本边界，不是另一个模式参数。批量移除由客户端逐项调用既有 DELETE，分别报告成功/失败，不是原子批量接口。
+
+Structural `auto` uses the character target only as a fallback for unstructured text/prefaces; `length` applies the target throughout. Section basis identifies structural sources or text boundaries. Bulk removal uses individual DELETE calls with per-entry outcomes, not an atomic bulk endpoint.
+
+新文档任务保存服务端只读 `request.document.audio_metadata`，专辑由文档标题、音色/人员姓名及 UTC 创建时间组成；分段按选择顺序写入曲序。单段、ZIP、完整 MP3 使用相同专辑，完整音频无分段曲序。下载按需流式重封装；旧任务不自动补写。
+
+New document jobs snapshot server-owned album metadata. Section, ZIP and complete MP3 exports share the document/voice/UTC-time album; selected sections have track order, complete audio has no section track number. Downloads stream on demand without stored complete exports. Historical jobs are not automatically retagged.
+
+## 语音生成保护 / TTS generation guard
+
+单条、文档、序列及兼容 TTS 默认按内部文本块限制异常生成；8192 是生成上限，不是文档分段字数。未自然结束、空音频或非有限波形触发局部重试，每原始块最多额外 3 次；只在重试时清理符合条件的目录点线。重试次数通过日志跨文档资源恢复保留；手动任务重试开启新预算，序列仍完整重跑保存请求。
+
+Generation protection covers single, document, sequence and compatible TTS. Only invalid original chunks receive up to three extra singleton calls, with the same voice/reference and existing sampling parameters. Normal rows are preserved. Durable journals preserve the allowance through resource recovery. User-initiated retries start a new attempt; sequences replay the complete saved request. Exhaustion fails with `TtsGenerationGuardError`, retaining complete document sections and cleaning the incomplete section.
+
+`tts_chunk_retry` 阶段以 `current/total`、`unit=attempt` 表示额外尝试，整体进度不倒退。详情/结果可选 `generation_guard` 包含 `version`、`checked_chunks`、`retried_chunks`、`retry_attempts`、`recovered_chunks`；不计历史复用段，字段缺失表示未记录，不能视为已检查。全局列表/SSE 仍仅摘要。
+
+The retry stage reports attempts while overall progress remains monotonic. Optional detail/result counters describe checked original chunks in this attempt, excluding historical sections reused without generation. Missing counters do not imply coverage; global lists/SSE remain summary-only. Natural EOS and finite audio do not certify pronunciation, absence of repetition, or listening quality. No public sampling controls are added.
+
 """
 
 

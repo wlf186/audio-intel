@@ -59,8 +59,8 @@ ASR separates New transcription from Tasks & results; TTS provides fixed Text, D
 | --- | --- |
 | **Local speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, and JSON/SRT/VTT/TXT export |
 | **Speaker intelligence** | Voiceprints distinguish namesakes by notes and support named, renameable samples; custom and voiceprint-derived hotword lists improve domain vocabulary while completed tasks retain immutable snapshots |
-| **Local voice studio** | Qwen3-TTS 0.6B/1.7B, preset voices, one-off or library-based voice cloning, 1.7B VoiceDesign, and WAV/FLAC/MP3 output |
-| **Document synthesis** | EPUB, TXT, Markdown, text PDF, DOCX, XLSX and PPTX; segmentation previews, checkpoint recovery, and streamed ZIP / complete MP3 downloads |
+| **Local voice studio** | Qwen3-TTS 0.6B/1.7B, preset voices, one-off or library-based voice cloning with optional 3–30 second library reference ranges, 1.7B VoiceDesign, and WAV/FLAC/MP3 output |
+| **Document synthesis** | EPUB, TXT, Markdown, text PDF, DOCX, XLSX and PPTX; structural/length previews, reusable imports with bulk removal, checkpoint recovery, and album-tagged ZIP / complete MP3 downloads |
 | **Durable task engine** | Persistent SQLite queues, upload and inference progress, local ETA history, SSE updates, cancellation, retry, task history, and safe purge |
 | **Web UI and APIs** | Bilingual local Web UI and Swagger guide, native asynchronous APIs, and OpenAI-compatible transcription and speech endpoints |
 | **Deployment-aware operation** | Recommended full CPU/GPU profile plus an optional CPU-only profile; the UI and API expose only devices and model controls available in the active deployment |
@@ -170,11 +170,15 @@ See the [Linux installation guide](docs/INSTALL.md) or [native Windows guide](do
                     └── WAV / FLAC / MP3
 ```
 
-ASR, TTS, and the internal long-reference aligner use separate Python environments because Qwen ASR and Qwen TTS require incompatible Transformers versions. ASR and TTS GPU jobs share a project-local lock so only one large model occupies the GPU at a time. Used executors stay warm briefly for burst traffic and are recycled only after their same-kind queue remains empty and the old process tree has exited.
+ASR, TTS, and the internal reference aligner use separate Python environments because Qwen ASR and Qwen TTS require incompatible Transformers versions. ASR and TTS GPU jobs share a project-local lock so only one large model occupies the GPU at a time. Used executors stay warm briefly for burst traffic and are recycled only after their same-kind queue remains empty and the old process tree has exited.
 
 The default-on single-task acceleration increases internal batch sizes according to hardware and model size without changing model identity, precision, diarization semantics, ASR chunking, or the sequential TTS decoder. OOM retries step down to batch 1 inside the same task. See [Architecture and capabilities](docs/ARCHITECTURE.md) for the full execution, cancellation, model, progress, and capability contracts.
 
-Document TTS accepts up to 5 million characters and 2,000 sections by default. Preview and select sections, reuse existing voice controls, and resume from completed section checkpoints. Retained imports can be reused or deleted; see [Document TTS](docs/DOCUMENT_TTS.md) for API examples, limits and streaming downloads.
+Document TTS accepts up to 5 million characters and 2,000 sections by default. Preview and select sections, reuse existing voice controls, and resume from completed section checkpoints. Structural mode uses the character target only as a fallback; the reader offers original line breaks or continuous reading. Retained imports can be reused or removed in batches; see [Document TTS](docs/DOCUMENT_TTS.md) for API examples, limits and streaming downloads.
+
+Clone references default to at most the first 15 seconds. Library samples additionally support a waveform editor for a 3–30 second interval anywhere in the sample, with matching complete-word audio and transcript snapshots. See [reference ranges](docs/API.md#manual-voiceprint-reference-ranges).
+
+TTS guards each internal text chunk against runaway generation and invalid waveforms, retrying only a failing chunk up to three additional times. Completed document sections remain reusable. This is bounded generation protection, not comprehensive pronunciation or listening-quality assessment; see [behavior and limits](docs/API.md#tts-generation-guard--语音生成保护).
 
 ## API and integrations
 
