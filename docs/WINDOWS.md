@@ -182,8 +182,11 @@ Get-NetTCPConnection -LocalPort 20810 -ErrorAction SilentlyContinue
 
 ## 6. 升级与验证
 
+先检查当前版本到目标版本之间的全部变更，按[升级备份范围](UPGRADE.md#upgrade-backup-scope)选择备份。明确无数据迁移时无需额外备份；仅迁移数据库时创建 SQLite 快照；涉及文件时同时备份受影响文件；范围广泛或不明时完整备份实际数据目录。沿用原环境配置，确认没有未完成任务或导入；命令失败时停止后续步骤。
+
 ```powershell
 .\service.cmd stop all
+# 确认完整进程树退出；需要备份时在此执行，成功后再继续。
 git pull --ff-only
 .\service.cmd setup all
 # tls enable 保存的 HTTPS profile 会自动加载；外部证书环境变量仍需在新终端重新设置。
@@ -191,6 +194,6 @@ git pull --ff-only
 .\.runtime\api\Scripts\python.exe scripts\smoke_test.py
 ```
 
-升级前备份 `data\`。API 启动时会把数据库自动迁移到 schema v11；完整的不兼容 API 变更和迁移说明见 [升级指南](UPGRADE.md)。不要从其他机器复制 `.runtime\`；在目标机器重新 setup。模型目录可以复制，但每个模型的 `.complete` 内容必须与项目固定的 revision 一致。
+需要备份时必须在新版本首次启动前完成，示例支持现有 Windows API Python。API 启动时会把旧数据库自动迁移到 schema v11；完整的不兼容 API 变更和迁移说明见 [升级指南](UPGRADE.md)。不要从其他机器复制 `.runtime\`；在目标机器重新 setup。模型目录可以复制，但每个模型的 `.complete` 内容必须与项目固定的 revision 一致。
 
 `setup tts` 同时维护独立的 `.runtime\aligner`，这是默认参考截取与手动声纹区间按需对齐所需的内部运行时，不是额外服务。更多版本与锁文件说明见 [依赖维护](DEPENDENCIES.md)。

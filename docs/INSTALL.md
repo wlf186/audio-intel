@@ -102,12 +102,13 @@ set -a; source .env; set +a
 
 ## 5. 数据与升级
 
-模型、数据库、任务输入输出、声纹样本和声音档案默认保留。升级前停止服务并备份 `data/`；随后执行：
+模型、数据库、任务输入输出、声纹样本和声音档案默认保留。升级前检查当前版本到目标版本之间的全部变更，按[升级备份范围](UPGRADE.md#upgrade-backup-scope)选择备份：明确无数据迁移时无需额外备份，仅迁移数据库时创建 SQLite 快照，涉及文件时备份数据库及受影响文件，范围广泛或不明时完整备份实际数据目录。记录并加载原配置，停止全部服务，完成所需备份后执行：
 
 ```bash
+set -e
 git pull --ff-only
 ./service.sh setup all
-# 若使用 .env，先执行：set -a; source .env; set +a
+# 沿用停服和备份前已经加载的原配置。
 ./service.sh restart all
 ```
 

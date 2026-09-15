@@ -87,7 +87,7 @@ Validate affected documentation and build outputs from a clean checkout or sourc
 
 Public API changes must update the bilingual `/docs`, `/openapi.json`, executable examples, and contract tests together.
 
-SQLite jobs, queue ordering, history, idempotency records, hotwords, voices, voiceprints, and completed-task snapshots are compatibility surfaces. Back up `data/` before migration development and cover migration from the previous schema in tests.
+SQLite jobs, queue ordering, history, idempotency records, hotwords, voices, voiceprints, and completed-task snapshots are compatibility surfaces. Before migration development, follow [upgrade backup scope](docs/UPGRADE.md#upgrade-backup-scope): snapshot SQLite for database-only changes, include affected files for file rewrites or deletions, and copy the full data directory for broad or uncertain changes. Confirmed updates without data migration require no additional upgrade backup. Cover migration from the previous schema in tests.
 
 The seven native asynchronous submission endpoints (ASR, single-item TTS, ordered TTS sequences, clone-reference analysis, voiceprint sample upload, document import, and document TTS) require `Idempotency-Key` and must preserve first-accept `202`, same-request replay `200`, conflict `409`, and admission `429` semantics.
 
@@ -118,7 +118,7 @@ Before the version/tag gates, review the candidate changes against [cross-platfo
 3. Temporarily tag that SHA locally, run tag-specific version tests and a production frontend build, and verify `/api/v1/health`, `/api/v1/system` and OpenAPI `info.version` report exactly `X.Y.Z`. Remove the temporary local tag and verify cleanup. Recheck SHA and worktree; repeat the gate if either changes.
 4. Create and push the official `vX.Y.Z` tag once. Wait for both Linux and native Windows **tag** workflows for that tag and SHA to pass before publishing a GitHub Release. A main run alone is insufficient.
 5. If tag validation fails, preserve the immutable tag as audit history and stop publication. Never move/reuse the tag or invent another version to bypass a failed release.
-6. Publish and read back the Release, confirming the tag/SHA, draft/prerelease state and latest status. Include workflow links and upgrade/validation notes. Keep authentication process-scoped; never persist tokens in remotes, Git configuration or release artifacts.
+6. Publish and read back the Release, confirming the tag/SHA, draft/prerelease state and latest status. Include workflow links and upgrade/validation notes. State the starting version, data migration category (none / database only / includes files), affected file paths when applicable, and required backup scope; cover all intervening changes for upgrades that skip versions. Do not infer data compatibility from the schema number alone. Keep authentication process-scoped; never persist tokens in remotes, Git configuration or release artifacts.
 
 GitHub publication and local deployment are separate completion results. For local development/release work, finish [local deployment acceptance](docs/UPGRADE.md#local-development-and-deployment) after the final source and tag changes, restoring the recorded service configuration and components. Do not treat an API version check as proof that the ASR/TTS supervisors and executors were refreshed. A remote-only inspection does not start or restart a local service; explicitly report a skipped, pending or failed local deployment instead of implying it succeeded.
 

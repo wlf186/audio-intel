@@ -2,16 +2,15 @@
 
 ## 升级前
 
-确认没有未完成任务或导入，记录实际启动配置，停止全部服务并备份 `data/`。这里包含 SQLite 队列、历史输入输出、声音档案和声纹库；不要删除或覆盖它。先阅读下方的本机部署收尾要求。
+先阅读当前版本到目标版本之间的全部升级说明，按[升级备份范围](#upgrade-backup-scope)确定是否需要备份。确认没有未完成任务或导入，记录实际启动配置，再停止全部服务。`data/` 包含 SQLite 队列、历史输入输出、声音档案和声纹库；升级应保留这些数据。先阅读下方的本机部署收尾要求。
 
 ```bash
+set -e
 # 若部署依赖 .env，先加载它；service.sh 不会自动读取环境文件。
 if [[ -f .env ]]; then set -a; source .env; set +a; fi
 if [[ -f .env.local-deploy ]]; then set -a; source .env.local-deploy; set +a; fi
 ./service.sh stop all
-backup_dir="backups/$(date +%Y%m%d-%H%M%S)"
-mkdir -p "$backup_dir"
-cp -a data "$backup_dir/data"
+# 需要备份时，在此按下文执行；备份失败则停止升级。
 git pull --ff-only
 ./service.sh setup all
 ./service.sh start all
@@ -19,7 +18,79 @@ git pull --ff-only
 
 setup 会自动沿用 `.runtime/deployment-profile` 中的 full/cpu 配置；默认配置仍为 full。不要在升级时仅重建单个推理环境来切换配置。需要切换时，先停止服务并清空非终态任务，再执行 `./service.sh setup all --profile cpu` 或 `--profile full`。Windows 使用同名 `service.cmd` 命令。
 
-Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `data\`。
+Windows 使用 `service.cmd`，备份范围遵循同一规则；命令失败时不要继续执行后续步骤。
+
+## Upgrade backup scope
+
+### 按升级影响选择备份
+
+| 当前版本到目标版本之间的升级影响 | 升级前备份要求 |
+| --- | --- |
+| 明确无数据库迁移，也不改写或删除历史文件 | 不强制创建升级备份；普通调试和重启同样无需重复复制数据 |
+| 仅迁移数据库，历史文件保持不变 | 创建 SQLite 数据库一致快照 |
+| 改写或删除历史音频、声纹等持久化文件 | 备份数据库及升级说明列出的受影响文件 |
+| 影响范围广泛，或无法确认范围 | 完整备份实际数据目录 |
+
+每个 Release 应写明“数据迁移：无／仅数据库／涉及文件”、适用的起始版本及备份范围。跨版本升级必须覆盖中间版本；不能仅凭目标版本号小、schema 未变化或最新一条说明判断。新增任务正常生成文件不属于这里的历史文件迁移。日常数据备份按数据重要性单独安排，不绑定每次发版。
+
+需要备份时，先停止使用该数据目录的全部服务，确认进程树退出，在新版本首次启动或迁移操作前完成备份。数据库和关联文件必须对应同一停服时点。本节升级备份放在项目内被 Git 忽略的 `backups/`，不得放入待复制的数据目录内部。沿用 `AUDIO_INTEL_DATA_DIR` 的实际配置，不要误备份默认路径。
+
+### 按需备份示例（Linux / Windows）
+
+仅当上表要求备份时执行。将以下标准库示例保存为项目内的 `tmp/backup-upgrade.py`（先创建 `tmp/`），从项目根目录使用现有 API Python 运行，无需安装依赖。`database` 只备份 SQLite；`full` 复制完整数据目录。数据库快照使用 Backup API，包含尚在 WAL 中的已提交数据，不能用单独复制主数据库文件代替。
+
+```python
+import os
+import shutil
+import sqlite3
+import sys
+import tempfile
+from contextlib import closing
+from pathlib import Path
+
+scope = sys.argv[1] if len(sys.argv) == 2 else ""
+if scope not in {"database", "full"}:
+    raise SystemExit("Usage: backup-upgrade.py database|full")
+root = Path.cwd().resolve()
+data = Path(os.environ.get("AUDIO_INTEL_DATA_DIR", "data")).resolve(strict=True)
+backups = (root / "backups").resolve()
+if not backups.is_relative_to(root) or backups.is_relative_to(data):
+    raise SystemExit("Backups must stay inside the project and outside the data directory")
+# mode=ro prevents a missing source database from being silently created.
+with closing(sqlite3.connect((data / "audio_intel.sqlite3").as_uri() + "?mode=ro", uri=True)) as source:
+    backups.mkdir(parents=True, exist_ok=True)
+    destination = Path(tempfile.mkdtemp(prefix="upgrade-" + scope + "-", dir=backups))
+    if scope == "database":
+        saved = destination / "audio_intel.sqlite3"
+        with closing(sqlite3.connect(saved)) as target:
+            source.backup(target)
+    else:
+        shutil.copytree(data, destination / "data")
+        saved = destination / "data" / "audio_intel.sqlite3"
+with closing(sqlite3.connect(saved.as_uri() + "?mode=ro", uri=True)) as check:
+    if check.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+        raise SystemExit("Backup integrity check failed; do not continue the upgrade")
+print("Verified backup:", destination)
+```
+
+Linux：
+
+```bash
+.runtime/api/bin/python tmp/backup-upgrade.py database
+# 完整备份时，将 database 改为 full；不要把两种模式都执行一遍。
+```
+
+Windows PowerShell：
+
+```powershell
+.\.runtime\api\Scripts\python.exe tmp\backup-upgrade.py database
+if ($LASTEXITCODE -ne 0) { throw "Backup failed; stop the upgrade" }
+# 完整备份时，将 database 改为 full。
+```
+
+只在命令成功并输出 `Verified backup:` 后继续；失败时可能留下不完整的备份目录，不得用于回退。涉及文件的升级，在数据库快照成功后，按升级说明将受影响文件以原相对路径复制到同一备份目录的 `data/` 下并核对副本；全部完成前保持停服。专用迁移工具已有数据库及受影响文件备份机制时，按该工具说明操作，无需再复制整个目录。
+
+回退必须停止新版本，使用同一时点的数据库和受影响文件备份。单独恢复数据库的前提是关联文件仍与该快照兼容；新版本已经处理任务或修改文件后，不能直接用旧数据库覆盖当前状态。既有备份保留，不在升级中自动清理。
 
 ## Local development and deployment
 
@@ -29,7 +100,7 @@ Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `da
 
 1. **记录现场。** 在停服前记录实际端口、host、数据及运行目录、启用的服务、full/cpu profile、mock 状态和 TLS 配置来源，以及 API、ASR/TTS supervisor、executor 和子进程的 PID 与创建时间。非敏感启动参数可以放在被忽略的 `.env.local-deploy` 中；鉴权密钥从原有安全来源加载，不写入日志或部署记录。`service.sh` 不自动读取环境文件，需如上显式加载；Windows 在 PowerShell 中设置对应环境变量，`service.cmd` 不解析 Bash 环境文件。
 2. **停止后再修改。** 先检查 queued/running/cancelling 任务、排队或执行中的文档导入等操作；有未完成工作时等待或报告，不擅自取消。进入停服窗口时可先 `stop api` 关闭新提交入口，再检查一次队列，确认空闲后 `stop all`。如出现新任务，恢复原 API 并等待，避免 `stop all` 中断它。确认记录的旧进程树已退出，再编辑运行代码或安装依赖。
-3. **按变更验证。** 测试沿用现有环境，临时实例使用独立的数据、PID、日志、缓存和临时目录。正式升级按上文备份数据；普通调试、重启无需重复复制数据。依赖锁变化才同步对应环境，前端源码/版本/依赖变化才重建前端；模型变化按 manifest 准备。纯 Python 修改不需要每次执行 `setup all`。测试进程要在收尾时退出，不能把 mock 服务留作日常实例。
+3. **按变更验证。** 测试沿用现有环境，临时实例使用独立的数据、PID、日志、缓存和临时目录。正式升级和迁移开发均按[升级备份范围](#upgrade-backup-scope)选择备份，记录选择依据及实际路径；明确无数据迁移的升级无需额外复制数据。依赖锁变化才同步对应环境，前端源码/版本/依赖变化才重建前端；模型变化按 manifest 准备。纯 Python 修改不需要每次执行 `setup all`。测试进程要在收尾时退出，不能把 mock 服务留作日常实例。
 4. **最终代码确定后恢复。** 完成最后一次修改、测试及相关 tag 操作，记录目标 SHA、预期应用版本和源码就绪时间。正式 release 部署要求已验证的干净提交；本地未提交修改要另外记录 dirty 状态和 diff 摘要，不能宣称部署了干净的发布版本。清理残留测试/服务进程，按记录的配置和组件重新启动。原本停止的组件保持停止，除非用户要求启动；用户要求继续停服时记录待部署状态。收尾后再次修改运行代码，必须重新完成这一轮。
 5. **验收后才算完成。** 按下表检查，并在被忽略的 `logs/local-deploy.json` 中记录部署状态、目标 SHA/dirty 状态、预期及实际版本、源码就绪时间、进程身份、检查结果和失败原因。开始维护时也记录原运行组件及配置文件位置，让后续会话能够继续收尾；不要保存凭据。GitHub Release 成功、本机部署成功分别报告。失败时保留诊断和待办，不能把发布成功当作部署成功；回退如涉及数据库迁移，必须配套使用升级前备份，不能只回退源码。
 
@@ -87,7 +158,7 @@ ASR 改为固定的“新建转写 / 任务与结果”页签，TTS 改为“文
 
 ## v0.1.12 文档 TTS
 
-升级前停止服务并备份 `data/`；首次启动执行 v10→v11 的增量迁移，新增导入与章节检查点表。已有任务、队列序号、幂等记录、声音库和提交快照保留。回退使用升级前备份，勿让旧程序写入 v11 数据库。运行 setup api 以安装固定版本的离线文档解析依赖。
+从 schema v10 升级时，数据迁移仅涉及数据库：停止服务并创建 SQLite 快照，历史文件无需复制；从更旧版本升级还需覆盖中间迁移的[备份要求](#upgrade-backup-scope)。首次启动执行 v10→v11 的增量迁移，新增导入与章节检查点表。已有任务、队列序号、幂等记录、声音库和提交快照保留。回退使用升级前备份，勿让旧程序写入 v11 数据库。运行 setup api 以安装固定版本的离线文档解析依赖。
 
 新增 EPUB/TXT/Markdown/文本 PDF/DOCX/XLSX/PPTX 导入及长文档合成。导入默认保留，可在管理列表复用和手动删除；关闭页面或退出登录只清除浏览器草稿，不删除服务器文档。草稿继续使用 sessionStorage，并保存明确的空章节选择；语言切换不重置配置。
 
@@ -100,10 +171,10 @@ ASR 改为固定的“新建转写 / 任务与结果”页签，TTS 改为“文
 - TTS 序列请求及每个 item 现在拒绝未声明字段，返回 `422`；旧客户端必须移除此前被静默忽略的 `speed`、`pitch`、采样参数和 `response_format`，序列仍固定输出 WAV。`/v1/audio/speech` 同样执行 `limits.max_tts_chars` 的去首尾空白文本上限。这些校验只作用于新提交，不改写已保存的请求和结果。
 - 任务重试现在执行与新提交相同的队列容量、提交并发和磁盘准入限制；客户端需处理 `429` 和 `Retry-After`。重试仍不要求 `Idempotency-Key`，不再允许并发请求将已运行的任务重置为排队状态，无数据库迁移。
 - 修复声纹序列的单条批次和尾批推理；Web UI 现在按顺序提供全部序列音频的播放与下载。待处理声纹轮询在会话失效后停止，重新登录后恢复；浏览器存储与草稿生命周期不变。
-- 升级到 v10 前先停止服务并备份 `data/`（Windows 为 `data\`）。v10 事务内重建人员组合唯一约束（规范化姓名＋备注），为样本增加人员内唯一的持久化名称，并校验外键；失败整体回滚。既有样本按升级前声纹库列表编号保存为“样本 N”，后续增删不会重新编号。任务、别名、音频路径与历史快照保持不变；回退须使用升级前备份，不能让旧版直接操作 v10 数据库。
+- 从 schema v9 升级到 v10 前先停止服务并创建 SQLite 快照；该迁移仅涉及数据库，历史文件无需复制。从更旧版本升级需合并中间迁移的[备份要求](#upgrade-backup-scope)。v10 事务内重建人员组合唯一约束（规范化姓名＋备注），为样本增加人员内唯一的持久化名称，并校验外键；失败整体回滚。既有样本按升级前声纹库列表编号保存为“样本 N”，后续增删不会重新编号。任务、别名、音频路径与历史快照保持不变；回退须使用升级前备份，不能让旧版直接操作 v10 数据库。
 - 样本上传新增可选 `name` 基名、样本响应新增 `name`，重命名使用样本 PATCH；所有状态均可改名。新建时名称冲突自动追加序号，手动改名冲突返回 `409`。人员组合重复同样返回 `409`，旧声音档案创建遇到同名多人时返回 `409`。TTS 新请求增加人员备注和样本名称快照，兼容旧请求、幂等记录及序列契约 v1。
 - 人员和样本编辑错误现在显示在对应弹窗内；编辑草稿仅留在当前弹窗状态，关闭或刷新即丢弃。现有浏览器偏好和 ASR/TTS 内容草稿的保存周期不变。
-- API 启动时自动将 SQLite 迁移到当前 schema v11。v8 新增的声纹人名系统词表在 v9 更名为“声纹库人名（全名）”，稳定 ID 不变；同时新增“声纹库人名（去姓）”，为已开启热词同步的既有人员回填可靠提取的两字中文名或英文首名。若升级前已有词表占用新系统名称，会保留内容并追加“原自定义”后缀；历史任务仍保留提交时的词表名称和内容。迁移是就地操作，因此备份必须在启动新版本前完成。
+- API 启动时自动将 SQLite 迁移到当前 schema v11。v8 新增的声纹人名系统词表在 v9 更名为“声纹库人名（全名）”，稳定 ID 不变；同时新增“声纹库人名（去姓）”，为已开启热词同步的既有人员回填可靠提取的两字中文名或英文首名。若升级前已有词表占用新系统名称，会保留内容并追加“原自定义”后缀；历史任务仍保留提交时的词表名称和内容。上述数据迁移仅涉及数据库，需在启动新版本前创建 SQLite 快照；已经使用当前 schema 且明确无其他数据迁移的更新无需额外备份。完整范围按[升级备份规则](#upgrade-backup-scope)判断。
 - 历史 ASR/TTS 任务、旧声音档案和既有声纹样本保持可读；人员名字、备注及开关变化不会回写历史任务或已提交热词快照。
 - 浏览器鉴权改用进程内会话 Cookie，升级或重启后需要重新输入 API Key。
 - `/api/v1/health` 现在是公开最小探针；原详细结构迁移到受保护的 `/api/v1/system`。监控脚本如依赖硬件、worker、模型或路径字段必须切换端点并增加 Bearer Header。

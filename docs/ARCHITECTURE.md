@@ -148,7 +148,7 @@ run/          supervisor PIDs, executor identities, and GPU lock
 .runtime/     deployment profile and isolated api/asr/tts/aligner Python environments
 ```
 
-Inputs and results persist by default. Permanent deletion applies path-containment checks, rejects unsafe active imports, removes files and database rows, then performs database cleanup. Back up `data/` before migrations or manual recovery.
+Inputs and results persist by default. Permanent deletion applies path-containment checks, rejects unsafe active imports, removes files and database rows, then performs database cleanup. Before migrations, choose the database/file backup scope using the [upgrade guide](UPGRADE.md#upgrade-backup-scope). Before manual recovery, preserve the affected state; use a full data backup when the impact is uncertain.
 
 Model installation, doctor, readiness, and health checks require each `.complete` file to contain the exact revision declared in `audio_intel/model_manifest.json`; file existence alone is insufficient. Runtime model loading is offline and never accepts user-supplied repositories, configs, or checkpoints.
 
