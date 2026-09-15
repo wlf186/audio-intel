@@ -8,6 +8,12 @@ Python is split into four boundaries: `api`, `asr`, `tts`, and the internal `ali
 
 Treat `models/`, `data/`, `cache/`, `tmp/`, `logs/`, `run/`, and `.runtime/` as local runtime state. The `run/` directory contains supervisor PID files and transient executor identity metadata. Never commit model weights, generated audio, databases, process metadata, or credentials.
 
+## Local Development and Deployment
+
+This checkout may also host a running service. Before changing runtime code or dependencies, follow [local development and deployment](docs/UPGRADE.md#local-development-and-deployment): record the active configuration and process identities, check unfinished work, and stop the service. Keep temporary test data and processes isolated. Local development or release work includes restoring the previously running service after the final changes and validation, unless the user asks to leave it stopped; read-only inspection does not authorize a restart. Preserve this maintenance context across turns in ignored local state.
+
+A commit, GitHub Release, successful health probe, or idle executor recycle does not establish that all local processes use the final code. Complete the documented deployment acceptance for the API, supervisors, and executors; report GitHub publication and local deployment separately. Public documentation must remain usable without repository-local skills.
+
 ## Build, Test, and Development Commands
 
 - `./service.sh setup all` installs the recommended full project-local runtimes and downloads required models. Developers may opt into CPU-only inference with `./service.sh setup all --profile cpu`; later setup/upgrade commands reuse `.runtime/deployment-profile`.

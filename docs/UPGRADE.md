@@ -2,13 +2,16 @@
 
 ## 升级前
 
-停止全部服务并备份 `data/`。这里包含 SQLite 队列、历史输入输出、声音档案和声纹库；不要删除或覆盖它。
+确认没有未完成任务或导入，记录实际启动配置，停止全部服务并备份 `data/`。这里包含 SQLite 队列、历史输入输出、声音档案和声纹库；不要删除或覆盖它。先阅读下方的本机部署收尾要求。
 
 ```bash
 # 若部署依赖 .env，先加载它；service.sh 不会自动读取环境文件。
 if [[ -f .env ]]; then set -a; source .env; set +a; fi
+if [[ -f .env.local-deploy ]]; then set -a; source .env.local-deploy; set +a; fi
 ./service.sh stop all
-cp -a data "data.backup.$(date +%Y%m%d-%H%M%S)"
+backup_dir="backups/$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$backup_dir"
+cp -a data "$backup_dir/data"
 git pull --ff-only
 ./service.sh setup all
 ./service.sh start all
@@ -17,6 +20,42 @@ git pull --ff-only
 setup 会自动沿用 `.runtime/deployment-profile` 中的 full/cpu 配置；默认配置仍为 full。不要在升级时仅重建单个推理环境来切换配置。需要切换时，先停止服务并清空非终态任务，再执行 `./service.sh setup all --profile cpu` 或 `--profile full`。Windows 使用同名 `service.cmd` 命令。
 
 Windows 使用 `service.cmd`，并通过资源管理器或备份工具复制 `data\`。
+
+## Local development and deployment
+
+### 单目录工作约定
+
+本机开发期间可以停止日常服务；继续使用同一份源码、运行环境和模型，无需创建第二套部署。以下流程适用于本机代码更新和开发/发版收尾，纯只读检查不触发启停。
+
+1. **记录现场。** 在停服前记录实际端口、host、数据及运行目录、启用的服务、full/cpu profile、mock 状态和 TLS 配置来源，以及 API、ASR/TTS supervisor、executor 和子进程的 PID 与创建时间。非敏感启动参数可以放在被忽略的 `.env.local-deploy` 中；鉴权密钥从原有安全来源加载，不写入日志或部署记录。`service.sh` 不自动读取环境文件，需如上显式加载；Windows 在 PowerShell 中设置对应环境变量，`service.cmd` 不解析 Bash 环境文件。
+2. **停止后再修改。** 先检查 queued/running/cancelling 任务、排队或执行中的文档导入等操作；有未完成工作时等待或报告，不擅自取消。进入停服窗口时可先 `stop api` 关闭新提交入口，再检查一次队列，确认空闲后 `stop all`。如出现新任务，恢复原 API 并等待，避免 `stop all` 中断它。确认记录的旧进程树已退出，再编辑运行代码或安装依赖。
+3. **按变更验证。** 测试沿用现有环境，临时实例使用独立的数据、PID、日志、缓存和临时目录。正式升级按上文备份数据；普通调试、重启无需重复复制数据。依赖锁变化才同步对应环境，前端源码/版本/依赖变化才重建前端；模型变化按 manifest 准备。纯 Python 修改不需要每次执行 `setup all`。测试进程要在收尾时退出，不能把 mock 服务留作日常实例。
+4. **最终代码确定后恢复。** 完成最后一次修改、测试及相关 tag 操作，记录目标 SHA、预期应用版本和源码就绪时间。正式 release 部署要求已验证的干净提交；本地未提交修改要另外记录 dirty 状态和 diff 摘要，不能宣称部署了干净的发布版本。清理残留测试/服务进程，按记录的配置和组件重新启动。原本停止的组件保持停止，除非用户要求启动；用户要求继续停服时记录待部署状态。收尾后再次修改运行代码，必须重新完成这一轮。
+5. **验收后才算完成。** 按下表检查，并在被忽略的 `logs/local-deploy.json` 中记录部署状态、目标 SHA/dirty 状态、预期及实际版本、源码就绪时间、进程身份、检查结果和失败原因。开始维护时也记录原运行组件及配置文件位置，让后续会话能够继续收尾；不要保存凭据。GitHub Release 成功、本机部署成功分别报告。失败时保留诊断和待办，不能把发布成功当作部署成功；回退如涉及数据库迁移，必须配套使用升级前备份，不能只回退源码。
+
+| 验收项 | 判断依据 |
+| --- | --- |
+| 实例与配置 | 实际监听端口/协议、数据路径、profile 和启用组件符合维护前记录；不要因新终端没有环境变量而回到默认端口或启用 mock |
+| API 版本 | 从真实运行实例读取 `/api/v1/health`，与最终源码解析出的预期版本一致；受保护信息继续使用正常鉴权 |
+| 旧进程退出 | 维护前记录的 PID **及创建时间**对应的进程均已退出；不能仅凭 PID 不同判断 |
+| 全部新进程 | API、启用的 ASR/TTS supervisor 和各自 executor 均来自目标目录/运行环境，并在源码就绪时间之后创建；executor 元数据与实际父子关系匹配 |
+| 功能与历史 | worker 已注册并可接任务，历史任务可读；按变更选择短任务验收，文档合成相关事故应覆盖文档 TTS 入口 |
+
+`status` 和启动就绪检查主要确认进程存活及注册状态，现有 worker 没有独立公开代码 SHA。上述验收通过“最终代码固定后启动全部新进程”的顺序确认装载一致性；API 的版本号不能代表仍在运行的其他旧进程。
+
+### 为什么发布后很久仍可能运行旧代码
+
+Python 会缓存已经导入的模块，首次使用时才导入的模块则可能从更新后的磁盘加载。同一进程因此可能同时使用旧管线和新文档模块，直到之后的任务才暴露不兼容。提交代码、打 tag 或发布 GitHub Release 都不会自动替换本机进程。
+
+默认 60 秒空闲回收用于释放**用过的**执行器资源，不是定时检查或部署新版本。新建但尚未执行任务的 executor 可以长期待命，supervisor 和 API 也不会因此重启。不要通过等待、只重启 API 或缩短空闲窗口来代替完整部署收尾。
+
+English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
+
+## v0.1.17 本机部署收尾
+
+本版统一前后端版本号，补充单目录开发、停服维护、配置保留和本机部署验收规范。GitHub Release 发布成功与本机部署成功分别确认；验收覆盖 API、ASR/TTS supervisor 和 executor，避免发布后仍由旧进程处理任务。数据备份示例统一放在被 Git 忽略的 `backups/` 下。
+
+本版不增加自动重载或运行时代码版本检测。现有安装完成更新后仍需按上述流程停止并启动全部原运行组件；仅等待空闲回收或调用 `start` 不能保证替换旧进程。模型、依赖锁、推理行为、HTTP API 和 SQLite v11 均保持兼容，历史任务与音频无需迁移或重新生成。本地技能和部署配置不包含在发布源码中，公开流程不依赖这些文件。
 
 ## v0.1.15 跨平台开发与发布规范
 

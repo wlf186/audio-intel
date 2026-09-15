@@ -4,6 +4,8 @@ Thanks for improving Sandevistan Audio. Keep changes focused, preserve Linux and
 
 ## Development setup
 
+If this checkout hosts your normal service, use the [single-directory development and deployment workflow](docs/UPGRADE.md#local-development-and-deployment). Record its configuration and running components, stop it before editing runtime code or installing dependencies, and restore it only after the final changes and validation. A second checkout or duplicate model installation is not required. Test instances must use separate data, PID, log and temporary paths, even while the normal service is stopped.
+
 Install the API runtime and frontend without downloading inference models:
 
 ```bash
@@ -117,6 +119,8 @@ Before the version/tag gates, review the candidate changes against [cross-platfo
 4. Create and push the official `vX.Y.Z` tag once. Wait for both Linux and native Windows **tag** workflows for that tag and SHA to pass before publishing a GitHub Release. A main run alone is insufficient.
 5. If tag validation fails, preserve the immutable tag as audit history and stop publication. Never move/reuse the tag or invent another version to bypass a failed release.
 6. Publish and read back the Release, confirming the tag/SHA, draft/prerelease state and latest status. Include workflow links and upgrade/validation notes. Keep authentication process-scoped; never persist tokens in remotes, Git configuration or release artifacts.
+
+GitHub publication and local deployment are separate completion results. For local development/release work, finish [local deployment acceptance](docs/UPGRADE.md#local-development-and-deployment) after the final source and tag changes, restoring the recorded service configuration and components. Do not treat an API version check as proof that the ASR/TTS supervisors and executors were refreshed. A remote-only inspection does not start or restart a local service; explicitly report a skipped, pending or failed local deployment instead of implying it succeeded.
 
 Between releases, source checkouts append local SemVer build metadata derived from `git describe`. This lookup is offline; do not add a runtime GitHub request to resolve the version. README release badges should remain dynamic rather than hard-coding a release number.
 
