@@ -8,22 +8,25 @@
 ./service.sh doctor
 ./service.sh status
 ./service.sh logs all
-curl -v http://127.0.0.1:20810/api/v1/health
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
+curl -v "$BASE_URL/api/v1/health"
 ```
 
 若配置了 HTTPS，探针地址也必须改为 `https://...`。`ERR_SSL_PROTOCOL_ERROR` 通常表示浏览器使用 HTTPS 访问了仍以 HTTP 启动的端口；运行 `./service.sh status` 或 `service.cmd status` 查看实际协议。证书名称错误通常表示当前 IP 不在证书 SAN 中，请重新执行 `tls enable --host 当前IP` 更新服务器证书并保持 HTTPS profile。
 
-`service.sh` 和 `service.cmd` 不自动读取通用 `.env`，但 `tls enable` 创建的 `<AUDIO_INTEL_DATA_DIR>/tls/service-profile.json`（默认 `data/tls/service-profile.json`）会自动加载，因此新终端可直接 `restart all` 并继续使用 HTTPS。若启用时覆盖了数据目录，新终端必须先恢复同一个 `AUDIO_INTEL_DATA_DIR`。运行 `tls status` 查看保存模式、证书和实际端点。显式 `AUDIO_INTEL_PROTOCOL` 或 TLS 文件变量优先于 profile；若旧终端仍保留这些变量，清除它们或按提示确认覆盖行为。只残留 TLS 文件但协议是 HTTP 时仍会被预检拒绝。
+`service.sh` 和 `service.cmd` 自动读取仓库根目录 `.env`，不自动读取 `.env.local-deploy`。外部已导出的环境变量（包括空值）优先于文件；若改文件后端口没有变化，先查看 `status` 的配置来源、`configured listener` 与实际端点，并检查旧终端是否保留同名变量。`start` 不替换运行中的组件，应用修改需 `restart`。`20810` 是默认端口，客户端探针需另设实际 `AUDIO_INTEL_BASE_URL`；服务不会把 `.env` 导出回客户端 shell。
+
+`tls enable` 创建的 `<AUDIO_INTEL_DATA_DIR>/tls/service-profile.json` 会自动加载。运行 `tls status` 查看保存模式、证书和实际端点；环境或 `.env` 中显式的协议/证书配置优先于 profile。只残留 TLS 文件但协议是 HTTP 时仍会被预检拒绝。配置语法错误会报告文件和行号；修复后重试，或在外部设置 `AUDIO_INTEL_LOAD_ENV=0` 跳过文件排查，停止服务时须同时恢复原 `AUDIO_INTEL_RUN_DIR`。
 
 若已启用 API Key，公开 `/health` 只返回最小状态。详细诊断使用：
 
 ```bash
-curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" http://127.0.0.1:20810/api/v1/system
+curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" "$BASE_URL/api/v1/system"
 ```
 
 ## 下载缓慢或中断
 
-确认代理已导出到执行 `setup` 的同一个 shell：
+确认代理已写入 `.env`，或导出到执行 `setup` 的同一个 shell：
 
 ```bash
 env | grep -i _proxy

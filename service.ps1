@@ -11,6 +11,8 @@ $ErrorActionPreference = "Stop"
 $ExtraArgs = @($ExtraArgs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 
 $RootDir = $PSScriptRoot
+. (Join-Path $RootDir "scripts\service_env.ps1")
+$ServiceEnvSource = Import-ServiceEnvironment (Join-Path $RootDir ".env")
 $RuntimeDir = Join-Path $RootDir ".runtime"
 $ServiceHelper = Join-Path $RootDir "scripts\service_process.py"
 $StartTimeoutSeconds = 20
@@ -388,6 +390,8 @@ function Invoke-StopTargets {
 
 function Invoke-StartTargets {
     param([bool]$RunPreflight = $true)
+    Write-Host "Environment: $ServiceEnvSource"
+    Write-Host "configured listener: $((Get-ProcessEnvironment 'AUDIO_INTEL_HOST')):$((Get-ProcessEnvironment 'AUDIO_INTEL_PORT'))"
     Set-EnabledServices
     if ($RunPreflight) { Invoke-Preflight }
     $started = @()
@@ -411,6 +415,10 @@ function Invoke-StartTargets {
         $endpoint = "$((Get-ProcessEnvironment 'AUDIO_INTEL_PROTOCOL'))://127.0.0.1:$((Get-ProcessEnvironment 'AUDIO_INTEL_PORT'))"
     }
     Write-Host "Sandevistan-Audio: $endpoint"
+    if (-not $endpoint.StartsWith((Get-ProcessEnvironment 'AUDIO_INTEL_PROTOCOL') + '://') -or
+        -not $endpoint.EndsWith(':' + (Get-ProcessEnvironment 'AUDIO_INTEL_PORT'))) {
+        Write-Warning "running endpoint differs from configuration; use restart to apply it"
+    }
 }
 
 if ($Action -in @("start", "restart")) { Import-TlsProfile }
@@ -441,6 +449,7 @@ if ($Action -eq "tls") {
             foreach ($name in @("AUDIO_INTEL_PROTOCOL", "AUDIO_INTEL_TLS_CERT_FILE", "AUDIO_INTEL_TLS_KEY_FILE", "AUDIO_INTEL_TLS_CA_FILE")) {
                 [Environment]::SetEnvironmentVariable($name, $null, "Process")
             }
+            Set-ProcessEnvironment "AUDIO_INTEL_LOAD_ENV" "0"
             & (Join-Path $RootDir "service.cmd") restart all
             exit $LASTEXITCODE
         }
@@ -460,6 +469,7 @@ switch ($Action) {
         Invoke-StartTargets $false
     }
     "status" {
+        Write-Host "Environment: $ServiceEnvSource"
         foreach ($component in @("api", "asr", "tts")) {
             $process = Get-TrackedProcess $component
             if ($null -eq $process) {
@@ -474,6 +484,7 @@ switch ($Action) {
         }
         $configured = Get-ConfiguredMode
         Write-Host "next start: $configured"
+        Write-Host "configured listener: $((Get-ProcessEnvironment 'AUDIO_INTEL_HOST')):$((Get-ProcessEnvironment 'AUDIO_INTEL_PORT'))"
         $deploymentProfilePath = Join-Path $RuntimeDir "deployment-profile"
         $deploymentProfile = if (Test-Path $deploymentProfilePath) { (Get-Content $deploymentProfilePath -Raw).Trim() } else { "full" }
         Write-Host "deployment profile: $deploymentProfile"
@@ -482,6 +493,9 @@ switch ($Action) {
             $configuredProtocol = ($configured -split " ")[0]
             if (-not $actual.StartsWith("$configuredProtocol`://")) {
                 Write-Warning "running protocol differs from the next-start configuration"
+            }
+            if (-not $actual.EndsWith(":" + (Get-ProcessEnvironment "AUDIO_INTEL_PORT"))) {
+                Write-Warning "running port differs from the next-start configuration; use restart to apply it"
             }
         }
     }

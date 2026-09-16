@@ -53,7 +53,7 @@ curl -fsS http://127.0.0.1:20810/api/v1/health
 ./service.sh start all
 ```
 
-`tls enable` 自动收集 localhost、主机名和活动网卡地址，并保留旧证书已有的 SAN；也可通过重复的 `--host` 追加容器无法发现的宿主机/VPN 地址。模式保存在 `<AUDIO_INTEL_DATA_DIR>/tls/service-profile.json`（默认是 `data/tls/service-profile.json`），新终端中的普通 `start`、`restart` 和 `run` 会自动沿用。地址变化后重新执行 `tls enable`；需要立即应用到后台服务时加 `--restart`。`tls enable --restart` 和 `tls disable --restart` 都会执行 `restart all`，重启 API、ASR 和 TTS；后者切回 HTTP 但不删除证书。20810 在 HTTPS 模式下只接受 HTTPS，不提供同端口 HTTP，也不自动重定向。客户端安装根证书、核对指纹和私钥保护步骤见[局域网 HTTPS 指南](HTTPS.md)。
+`tls enable` 自动收集 localhost、主机名和活动网卡地址，并保留旧证书已有的 SAN；也可通过重复的 `--host` 追加容器无法发现的宿主机/VPN 地址。模式保存在 `<AUDIO_INTEL_DATA_DIR>/tls/service-profile.json`（默认是 `data/tls/service-profile.json`），新终端中的普通 `start`、`restart` 和 `run` 会自动沿用。地址变化后重新执行 `tls enable`；需要立即应用到后台服务时加 `--restart`。`tls enable --restart` 和 `tls disable --restart` 都会执行 `restart all`，重启 API、ASR 和 TTS；后者切回 HTTP 但不删除证书。配置的监听端口（默认 20810）在 HTTPS 模式下只接受 HTTPS，不提供同端口 HTTP，也不自动重定向。客户端安装根证书、核对指纹和私钥保护步骤见[局域网 HTTPS 指南](HTTPS.md)。
 
 `start` 是后台模式；各组件在独立会话和进程组中运行，API 和 worker 真正就绪后命令才返回。关闭普通终端、调用脚本退出或上游仅清理启动命令所在进程组，不会停止这些后台组件。将服务作为容器主进程运行、需要前台监督，或所在执行器会在命令返回后清理整个 cgroup 时，使用：
 
@@ -61,7 +61,7 @@ curl -fsS http://127.0.0.1:20810/api/v1/health
 ./service.sh run all
 ```
 
-`run` 会保持前台并转发停止信号，无需 systemd 或其他守护程序。构建容器时应先完成 `.runtime`、前端和模型准备，运行时为当前 UID 提供可写的数据、临时、缓存、日志和 `run` 目录；这些位置可用 `.env.example` 已有的 `AUDIO_INTEL_*_DIR` 变量指向挂载卷。端口仍为非特权的 `20810`，rootless 不需要额外脚本分支。
+`run` 会保持前台并转发停止信号，无需 systemd 或其他守护程序。构建容器时应先完成 `.runtime`、前端和模型准备，运行时为当前 UID 提供可写的数据、临时、缓存、日志和 `run` 目录；这些位置可用 `.env.example` 已有的 `AUDIO_INTEL_*_DIR` 变量指向挂载卷。默认端口为非特权的 `20810`，可通过配置修改，rootless 不需要额外脚本分支。
 
 后台模式通过 `./service.sh restart all` 重启。重启会先完成运行时和模型预检，再停止目标的完整进程树；若任一组件未能完整停止，命令返回非零且不会启动新实例。前台模式应向当前 `run all` 进程发送 `SIGTERM`（交互终端可按 `Ctrl+C`），等待它清理完成后再执行 `./service.sh run all`；容器中直接使用 Docker、Podman 或编排器的重启操作。不要在另一个 shell 中对前台实例执行 `restart all`，也不要让容器的 `CMD` 使用后台 `start all`。独立会话不会逃逸容器或 systemd 的 cgroup，容器重启策略仍由运行时负责。
 
@@ -90,11 +90,21 @@ export HTTPS_PROXY=$HTTP_PROXY
 ```bash
 cp .env.example .env
 # 编辑 .env，不要提交该文件
-set -a; source .env; set +a
 ./service.sh start all
+./service.sh status
 ```
 
-`service.sh` 不会自动读取通用 `.env`；每个新 shell 使用其中的端口、目录、API Key 等设置前仍必须重新加载。项目管理的 HTTPS 例外：`tls enable` 写入当前 `AUDIO_INTEL_DATA_DIR` 下的专用 profile 会自动加载。若覆盖数据目录，应在执行 `tls enable` 和后续启停命令前保持相同的 `AUDIO_INTEL_DATA_DIR`。显式 `AUDIO_INTEL_PROTOCOL` 和证书变量优先于该 profile，适用于外部管理的证书；若旧终端仍导出了这些变量，脚本会提示它们正在覆盖保存模式。
+`service.sh` 和 `service.cmd` 的所有运维命令自动读取**仓库根目录**的 `.env`，与当前工作目录无关；文件不存在时使用默认配置。先加载配置，再解析数据、日志和 PID 目录，因此新终端中的 `start`、`stop`、`restart`、`status` 和 `logs` 使用同一套路径。只自动读取 `.env`；`.env.local-deploy` 是按需显式加载的维护快照，不会覆盖日常配置。
+
+优先级为 **外部已导出的环境变量 > `.env` > 默认值**，外部明确设置的空值也不会被文件覆盖；各配置项原有的空值/默认值规则仍然适用。临时覆盖可用 `AUDIO_INTEL_PORT=20816 ./service.sh start all`。旧终端中已导出的同名变量（包括 `PATH`）仍优先；修改文件后可清除旧变量或使用新终端。脚本只设置自身及子进程环境，不会把变量导出回调用者的 shell。
+
+配置文件是 UTF-8 键值数据，支持 BOM、LF/CRLF、空行、`#` 注释、可选的 `export` 和单/双引号。未加引号的值在空白后的 `#` 开始注释；包含空格或特殊字符的值建议用引号。单引号中的内容完全保留；双引号和未加引号的值支持 `$VAR` / `${VAR}`，引用外部环境或前面已生效的赋值，未定义引用为空，同名文件赋值以后者为准。双引号内支持 `\\`、`\"`、`\$`，其他反斜杠保留；Windows 路径建议使用单引号。多行值、命令替换、Shell 控制语句和 `${VAR:-fallback}` 等表达式不受支持。格式错误会报告文件和行号，不打印配置值，也不会静默按默认端口启动。
+
+在调用环境设置 `AUDIO_INTEL_LOAD_ENV=0` 可跳过 `.env`，适用于隔离测试、容器注入及配置损坏后的排查；不能把该开关写进 `.env`。跳过后，若停止自定义目录中的实例，仍须显式传入原来的 `AUDIO_INTEL_RUN_DIR`。修改数据或 PID 目录前，应先用原配置停止服务。`start` 不替换已运行组件；修改端口后使用 `restart`。`status` 显示实际运行端点、下次配置的监听地址和配置来源；`doctor` 的 `listener` 对象报告有效 `host`、`port` 和端口检查 `status`。
+
+`tls enable` 保存到当前 `AUDIO_INTEL_DATA_DIR` 下的专用 HTTPS profile 仍会自动加载。环境或 `.env` 中非空的 `AUDIO_INTEL_PROTOCOL` / TLS 文件变量作为显式覆盖，优先于该 profile；使用项目管理的 HTTPS 时应移除这些覆盖。`tls enable/disable --restart` 在本次重启应用刚保存的模式，保留端口和目录配置，并跳过二次加载旧 TLS 覆盖；下次独立启动仍遵循文件和环境的优先级。
+
+文档中的 `20810` 是默认端口；例如 `.env` 设置 `AUDIO_INTEL_PORT=20815` 后，访问实际的 `http://127.0.0.1:20815`（HTTPS 部署使用 `https://`）。API 客户端另外设置 `AUDIO_INTEL_BASE_URL` 和需要的 `AUDIO_INTEL_API_KEY`；服务自动加载文件不等于客户端已获得这些变量。
 
 默认最多分别保留 5 个排队中的 ASR/TTS 任务、同时持久化 2 个提交，并为数据卷保留至少 5 GiB 空闲空间。通过 `AUDIO_INTEL_MAX_QUEUED_ASR`、`AUDIO_INTEL_MAX_QUEUED_TTS`、`AUDIO_INTEL_MAX_CONCURRENT_SUBMISSIONS` 和 `AUDIO_INTEL_MIN_FREE_DISK_BYTES` 调整；完整默认值见 `.env.example`。达到限制时提交返回 `429`，不会丢弃既有任务。
 
@@ -107,12 +117,4 @@ set -a; source .env; set +a
 ```bash
 git pull --ff-only
 ./service.sh setup all
-# 若使用 .env，先执行：set -a; source .env; set +a
-./service.sh restart all
-```
-
-上例的 `restart all` 适用于后台模式。若部署入口为 `run all`，应让当前前台进程退出，再由终端或容器运行时重新启动它。
-
-不要复制 `.runtime/` 到另一台机器；在目标机器重新运行 setup。任务数据可按需要单独迁移。
-
-数据库会在启动时自动迁移到 schema v11，既有任务、旧声音档案与声纹样本保持可读。v10 支持“姓名＋备注”组合唯一及样本重命名，既有样本保留升级前的编号名称。v9 保留完整姓名系统词表的稳定 ID，并新增可独立选择的去姓人名系统词表；完整兼容性说明见 [升级指南](UPGRADE.md)。
+# 自动读取 .env；维护期间显式导出的原配置仍优先。

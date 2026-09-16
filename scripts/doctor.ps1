@@ -17,7 +17,10 @@ function Get-CommandVersion {
 }
 
 function Test-PortAvailable {
-    $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, 20810)
+    $listenHost = if ([string]::IsNullOrWhiteSpace($env:AUDIO_INTEL_HOST)) { "0.0.0.0" } else { $env:AUDIO_INTEL_HOST }
+    $listenPort = if ([string]::IsNullOrWhiteSpace($env:AUDIO_INTEL_PORT)) { 20810 } else { [int]$env:AUDIO_INTEL_PORT }
+    $listenAddress = [System.Net.Dns]::GetHostAddresses($listenHost.Trim([char[]]'[]'))[0]
+    $listener = New-Object System.Net.Sockets.TcpListener($listenAddress, $listenPort)
     try {
         $listener.Start()
         return "available"
@@ -89,7 +92,11 @@ $report = [ordered]@{
     path_contains_onedrive = $RootDir -like "*OneDrive*"
     long_paths_enabled = $longPaths -eq 1
     download_proxy_configured = -not [string]::IsNullOrWhiteSpace($env:HTTP_PROXY) -or -not [string]::IsNullOrWhiteSpace($env:HTTPS_PROXY)
-    port_20810 = Test-PortAvailable
+    listener = [ordered]@{
+        host = if ([string]::IsNullOrWhiteSpace($env:AUDIO_INTEL_HOST)) { "0.0.0.0" } else { $env:AUDIO_INTEL_HOST }
+        port = if ([string]::IsNullOrWhiteSpace($env:AUDIO_INTEL_PORT)) { 20810 } else { [int]$env:AUDIO_INTEL_PORT }
+        status = Test-PortAvailable
+    }
     deployment_profile = if (Test-Path (Join-Path $RootDir ".runtime\deployment-profile")) { (Get-Content (Join-Path $RootDir ".runtime\deployment-profile") -Raw).Trim() } else { "full" }
     inference_runtime_profiles = [ordered]@{}
     nvidia_smi = $null -ne $nvidia

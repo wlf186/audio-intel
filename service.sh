@@ -2,6 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$ROOT_DIR/scripts/service_env.sh"
+load_service_environment "$ROOT_DIR/.env"
+# File assignments are environment data, not service-script control variables.
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACTION="${1:-status}"
 TARGET="${2:-all}"
 START_TIMEOUT_SECONDS=20
@@ -345,6 +349,8 @@ rollback_started() {
 
 start_action() {
   local run_preflight="${1:-1}" component preserve_api=0
+  echo "Environment: $SERVICE_ENV_SOURCE"
+  echo "configured listener: $AUDIO_INTEL_HOST:$AUDIO_INTEL_PORT"
   STARTED_COMPONENTS=()
   configure_services
   (( run_preflight == 0 )) || preflight
@@ -362,6 +368,9 @@ start_action() {
   local endpoint
   endpoint="$(running_endpoint 2>/dev/null || true)"
   echo "Sandevistan-Audio: ${endpoint:-$AUDIO_INTEL_PROTOCOL://127.0.0.1:$AUDIO_INTEL_PORT}"
+  if [[ -n "$endpoint" && ( "$endpoint" != "$AUDIO_INTEL_PROTOCOL"://* || "$endpoint" != *":$AUDIO_INTEL_PORT" ) ]]; then
+    echo "warning: running endpoint differs from configuration; use restart to apply it"
+  fi
 }
 
 restart_action() {
@@ -392,6 +401,8 @@ run_cleanup() {
 
 run_action() {
   local component
+  echo "Environment: $SERVICE_ENV_SOURCE"
+  echo "configured listener: $AUDIO_INTEL_HOST:$AUDIO_INTEL_PORT"
   RUN_COMPONENTS=()
   declare -gA RUN_PIDS=()
   RUN_CLEANED=0
@@ -461,6 +472,7 @@ tls_action() {
     fi
     if (( restart == 1 )); then
       unset AUDIO_INTEL_PROTOCOL AUDIO_INTEL_TLS_CERT_FILE AUDIO_INTEL_TLS_KEY_FILE AUDIO_INTEL_TLS_CA_FILE
+      export AUDIO_INTEL_LOAD_ENV=0
       exec "$ROOT_DIR/service.sh" restart all
     fi
     echo "Apply it to a running background service with: ./service.sh restart all"
@@ -477,6 +489,7 @@ case "$ACTION" in
     ;;
   restart) restart_action ;;
   status)
+    echo "Environment: $SERVICE_ENV_SOURCE"
     for component in api asr tts; do
       remove_stale_pid "$component"
       if pid_alive "$component"; then
@@ -493,11 +506,13 @@ case "$ACTION" in
     done
     configured="$(configured_mode 2>/dev/null || echo 'invalid TLS profile')"
     echo "next start: $configured"
+    echo "configured listener: $AUDIO_INTEL_HOST:$AUDIO_INTEL_PORT"
     echo "deployment profile: $(deployment_profile 2>/dev/null || echo invalid)"
     if pid_alive api; then
       actual="$(running_endpoint 2>/dev/null || true)"
       configured_protocol="${configured%% *}"
       [[ "$actual" == "$configured_protocol"://* ]] || echo "warning: running protocol differs from the next-start configuration"
+      [[ "$actual" == *":$AUDIO_INTEL_PORT" ]] || echo "warning: running port differs from the next-start configuration; use restart to apply it"
     fi
     ;;
   logs) tail -n 120 -F "$LOG_DIR"/$( [[ "$TARGET" == all ]] && echo '*.log' || echo "$TARGET.log" ) ;;
