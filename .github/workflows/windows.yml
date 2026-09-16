@@ -46,7 +46,7 @@ jobs:
       - name: Backend checks
         shell: powershell
         run: |
-          & .\.runtime\api\Scripts\python.exe -m pytest -q --durations=20
+          & .\.runtime\api\Scripts\python.exe -m pytest -q --durations=20 -o faulthandler_timeout=120
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Dependency audits
