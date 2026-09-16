@@ -19,7 +19,10 @@ function Get-CommandVersion {
 function Test-PortAvailable {
     $listenHost = if ([string]::IsNullOrWhiteSpace($env:AUDIO_INTEL_HOST)) { "0.0.0.0" } else { $env:AUDIO_INTEL_HOST }
     $listenPort = if ([string]::IsNullOrWhiteSpace($env:AUDIO_INTEL_PORT)) { 20810 } else { [int]$env:AUDIO_INTEL_PORT }
-    $listenAddress = [System.Net.Dns]::GetHostAddresses($listenHost.Trim([char[]]'[]'))[0]
+    [System.Net.IPAddress]$listenAddress = $null
+    if (-not [System.Net.IPAddress]::TryParse($listenHost.Trim([char[]]'[]'), [ref]$listenAddress)) {
+        $listenAddress = [System.Net.Dns]::GetHostAddresses($listenHost)[0]
+    }
     $listener = New-Object System.Net.Sockets.TcpListener($listenAddress, $listenPort)
     try {
         $listener.Start()
