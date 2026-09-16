@@ -223,16 +223,18 @@ def test_fresh_shell_lifecycle_and_authenticated_client_on_file_port(tmp_path: P
         run_service(stage, "stop", "all")
 
 
-def test_doctor_checks_configured_listener(tmp_path: Path) -> None:
+@pytest.mark.parametrize("host", [None, "127.0.0.1"])
+def test_doctor_checks_configured_listener(tmp_path: Path, host: str | None) -> None:
     stage = stage_service(tmp_path)
     with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
+        listener.bind((host or "0.0.0.0", 0))
         port = listener.getsockname()[1]
-        (stage / ".env").write_text(f"AUDIO_INTEL_HOST=127.0.0.1\nAUDIO_INTEL_PORT={port}\n", encoding="utf-8")
+        configuration = f"AUDIO_INTEL_PORT={port}\n" + (f"AUDIO_INTEL_HOST={host}\n" if host else "")
+        (stage / ".env").write_text(configuration, encoding="utf-8")
         result = run_service(stage, "doctor")
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
-    assert report["listener"]["host"] == "127.0.0.1"
+    assert report["listener"]["host"] == (host or "0.0.0.0")
     assert report["listener"]["port"] == port
     assert report["listener"]["status"].startswith("in use")
     assert "port_20810" not in report
