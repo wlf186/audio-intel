@@ -8,6 +8,7 @@ import socket
 import ssl
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -133,8 +134,32 @@ def stage_service(tmp_path: Path, *, runtime: bool = False) -> Path:
 def run_service(stage: Path, *args: str, extra: dict[str, str] | None = None):
     command = ([os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", str(stage / "service.cmd")]
                if WINDOWS else [str(stage / "service.sh")])
-    return subprocess.run([*command, *args], cwd=stage.parent, env={**clean_environment(), **(extra or {})},
-                          capture_output=True, text=True, encoding="utf-8", timeout=60)
+    command = [*command, *args]
+    environment = {**clean_environment(), **(extra or {})}
+    if not WINDOWS:
+        return subprocess.run(command, cwd=stage.parent, env=environment,
+                              capture_output=True, text=True, encoding="utf-8", timeout=60)
+    # Detached Windows descendants can retain pipe handles after cmd.exe exits.
+    # Match the existing native lifecycle tests: files cannot hold communicate() open.
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file, tempfile.TemporaryFile(
+        mode="w+", encoding="utf-8",
+    ) as stderr_file:
+        process = subprocess.Popen(command, cwd=stage.parent, env=environment,
+                                   stdout=stdout_file, stderr=stderr_file, text=True)
+        timed_out = False
+        try:
+            process.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            subprocess.run(["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+                           capture_output=True, text=True, check=False, timeout=10)
+            process.wait(timeout=10)
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout, stderr = stdout_file.read(), stderr_file.read()
+    if timed_out:
+        stderr += "\nservice command timed out after 60 seconds"
+    return subprocess.CompletedProcess(command, 124 if timed_out else process.returncode, stdout, stderr)
 
 
 def test_status_loads_only_project_env_before_resolving_directories(tmp_path: Path) -> None:
