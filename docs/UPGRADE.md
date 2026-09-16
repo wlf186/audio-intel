@@ -122,6 +122,16 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## v0.1.19 服务配置自动加载
+
+从 v0.1.17 或 v0.1.18 升级：**数据迁移：无**。本版不迁移数据库、不改写或删除历史文件，无需额外创建升级备份；保留现有数据目录即可。从更早版本升级须同时检查中间版本的迁移说明，按实际影响选择备份范围。模型、依赖锁、推理行为和 HTTP API 请求/响应契约保持不变。
+
+Linux `service.sh` 与 Windows `service.cmd` 现在自动读取仓库根目录的 `.env`，外部已导出的环境变量优先，文件不存在时继续使用默认值。不自动加载 `.env.local-deploy`。设置 `AUDIO_INTEL_PORT=20815` 后直接启动即可监听该端口；修改配置后需 `restart` 才能替换已有进程。
+
+`.env` 按键值数据解析，支持引号、注释及变量引用，不执行 shell 命令；原文件若包含命令替换或其他 shell 语句，须先改成静态配置。完整语法、优先级和 `AUDIO_INTEL_LOAD_ENV=0` 排查方式见[安装配置](INSTALL.md)。升级前停止旧入口时仍应显式加载原配置，以确保使用原 PID 目录。
+
+`status` 显示配置来源、实际端点和下次监听地址；`doctor` 根据有效 host/port 检查端口，并修复 Windows 对 `0.0.0.0` 的检查。API 客户端仍需单独配置访问地址与凭据，服务读取 `.env` 不会修改调用者的 shell 环境。
+
 ## v0.1.17 本机部署收尾
 
 本版统一前后端版本号，补充单目录开发、停服维护、配置保留和本机部署验收规范。GitHub Release 发布成功与本机部署成功分别确认；验收覆盖 API、ASR/TTS supervisor 和 executor，避免发布后仍由旧进程处理任务。数据备份示例统一放在被 Git 忽略的 `backups/` 下。
