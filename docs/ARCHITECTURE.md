@@ -4,6 +4,8 @@ This document describes the runtime boundaries and behavioral contracts behind t
 
 ## Runtime boundaries
 
+`service.sh` (Linux) and `service.cmd` (native Windows) are the supported lifecycle entrypoints. They load the project-root `.env` before resolving directories and TLS, then pass the effective environment to the API and workers. Exported variables take precedence over file values; missing settings use their existing defaults. Only `.env` is automatic, while `.env.local-deploy` is an explicitly selected maintenance snapshot. `AUDIO_INTEL_LOAD_ENV=0` skips the file. Loading does not modify the caller's shell or configure independent API clients, and direct Python module invocations do not load `.env`. See the [configuration rules](INSTALL.md#4-代理与配置).
+
 The project deliberately uses four Python environments:
 
 | Boundary | Responsibility |

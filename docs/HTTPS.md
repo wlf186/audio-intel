@@ -51,7 +51,7 @@ Both commands perform a complete `restart all`. Disabling HTTPS preserves the CA
 
 Use `service.cmd` on Windows. `status` reads the actual API process and warns if its protocol differs from the saved next-start profile.
 
-HTTPS mode makes port 20810 HTTPS-only. It does not serve HTTP on the same port and does not redirect HTTP requests. A browser `ERR_SSL_PROTOCOL_ERROR` commonly means the URL and actual service mode do not match.
+HTTPS mode makes the configured listener (port 20810 by default) HTTPS-only. It does not serve HTTP on the same port and does not redirect HTTP requests. A browser `ERR_SSL_PROTOCOL_ERROR` commonly means the URL and actual service mode do not match.
 
 ## Trust the project root CA
 
@@ -87,7 +87,9 @@ Lower-level `tls create`, `tls renew`, and `tls fingerprint` commands remain ava
 
 ## External certificates and environment overrides
 
-`service.sh` and `service.cmd` do not load a general `.env` automatically. Explicit values override the saved project profile and are intended for reverse proxies or externally managed certificates:
+`service.sh` and `service.cmd` automatically load the project-root `.env` before resolving the data directory and TLS profile. Exported environment variables take precedence over `.env`; nonempty protocol or TLS file settings from either source override the saved profile. Remove those overrides when using project-managed HTTPS. Only `.env` is automatic; `.env.local-deploy` remains an explicitly selected maintenance snapshot. Set `AUDIO_INTEL_LOAD_ENV=0` in the calling environment to skip the file.
+
+`tls enable/disable --restart` applies the newly saved mode for that restart, reusing the loaded port/directories without reloading old TLS overrides. A later independent start uses the usual precedence again. Explicit values are intended for reverse proxies or externally managed certificates:
 
 ```bash
 export AUDIO_INTEL_PROTOCOL=https

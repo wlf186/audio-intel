@@ -10,6 +10,8 @@ Treat `models/`, `data/`, `cache/`, `tmp/`, `logs/`, `run/`, and `.runtime/` as 
 
 ## Local Development and Deployment
 
+Service entrypoints automatically load only the project-root `.env` before resolving runtime directories and TLS. Exported environment variables take precedence, including explicit empty values; existing per-setting defaults still apply. `.env.local-deploy` remains an opt-in maintenance snapshot. Isolated tests must set `AUDIO_INTEL_LOAD_ENV=0` or use a separate fixture checkout with its own `.env`, and must never rewrite the normal deployment's file. Client scripts separately receive their base URL and credentials; service loading does not export to the parent shell.
+
 This checkout may also host a running service. Before changing runtime code or dependencies, follow [local development and deployment](docs/UPGRADE.md#local-development-and-deployment): record the active configuration and process identities, check unfinished work, and stop the service. Keep temporary test data and processes isolated. Local development or release work includes restoring the previously running service after the final changes and validation, unless the user asks to leave it stopped; read-only inspection does not authorize a restart. Preserve this maintenance context across turns in ignored local state.
 
 A commit, GitHub Release, successful health probe, or idle executor recycle does not establish that all local processes use the final code. Complete the documented deployment acceptance for the API, supervisors, and executors; report GitHub publication and local deployment separately. Public documentation must remain usable without repository-local skills.
@@ -17,7 +19,7 @@ A commit, GitHub Release, successful health probe, or idle executor recycle does
 ## Build, Test, and Development Commands
 
 - `./service.sh setup all` installs the recommended full project-local runtimes and downloads required models. Developers may opt into CPU-only inference with `./service.sh setup all --profile cpu`; later setup/upgrade commands reuse `.runtime/deployment-profile`.
-- `./service.sh start all` starts the API, ASR worker, and TTS worker in the background on port 20810. Use `./service.sh run all` for a Linux foreground/container entrypoint; it is not a Windows action. Use `status`, `logs all`, and `stop all` for operations.
+- `./service.sh start all` starts the API, ASR worker, and TTS worker in the background on the configured port (20810 by default). Use `./service.sh run all` for a Linux foreground/container entrypoint; it is not a Windows action. Use `status`, `logs all`, and `stop all` for operations.
 - On native Windows 11, use `service.cmd` with the same background actions and targets except for the Linux-only `run`; successful starts wait for API/worker readiness and stops must remove complete process trees. See `docs/WINDOWS.md`.
 - `.runtime/api/bin/python -m pytest -q` runs backend tests.
 - `.runtime/api/bin/python scripts/lock_dependencies.py --check` verifies full and CPU-only Linux and Windows dependency locks.

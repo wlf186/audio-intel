@@ -131,6 +131,8 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 
 浏览器访问 <http://127.0.0.1:20810>。Web UI 支持简体中文和英文，可在页眉或登录对话框中切换，选择会保存在当前浏览器。中英双语交互式 API 指南位于 <http://127.0.0.1:20810/docs>，机器可读契约位于 `/openapi.json`。Swagger 资源和校验器均随服务本地托管。
 
+需要持久化配置时，复制 `.env.example` 为 `.env` 并编辑一次即可。两个服务入口的运维命令都会自动读取仓库根目录 `.env`，外部已导出的环境变量优先；新终端可直接 `start all`。只自动读取 `.env`，`.env.local-deploy` 是按需使用的维护快照。在调用环境设置 `AUDIO_INTEL_LOAD_ENV=0` 可跳过文件。`20810` 是默认端口；自定义端口或 HTTPS 时，以 `start`/`status` 显示的实际地址为准。详见[配置约定](docs/INSTALL.md#4-代理与配置)。
+
 选择 CPU-only 配置的开发者在专用安装命令后使用相同的启动命令：
 
 ```bash
@@ -157,7 +159,7 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 ## 工作原理
 
 ```text
-20810 FastAPI + 本地 React Web UI
+20810（默认）FastAPI + 本地 React Web UI
         │
         ├── SQLite WAL ASR 队列 ── ASR 监督器
         │       └── 可复用任务执行器
@@ -185,6 +187,8 @@ TTS 对每个内部文本块执行异常生成保护，异常块最多额外重�
 ## API 与集成
 
 ASR、单条 TTS、有序 TTS 序列、克隆参考分析、声纹样本上传、文档导入和文档 TTS 这七个原生异步提交入口都要求 8–128 字符的 `Idempotency-Key`。首次接受返回 `202`，同请求重放返回 `200`，同键更改输入返回 `409`。序列任务一次加载模型，最多处理 100 条有序文本，并为每条返回独立 WAV；实际限制以 `tts.sequence_jobs` 能力为准。
+
+服务读取 `.env` 不会把配置导出回客户端 shell。运行示例前，单独将 `AUDIO_INTEL_BASE_URL` 设为客户端可访问的实际地址（例如 `http://127.0.0.1:20815`）；启用鉴权时另行提供 `AUDIO_INTEL_API_KEY`。示例缺省使用 `http://127.0.0.1:20810`。
 
 使用 CPU 路径提交最小原生 ASR 任务：
 

@@ -29,6 +29,7 @@ def _unused_port() -> int:
 def _environment(tmp_path: Path, port: int | None = None) -> dict[str, str]:
     return {
         **os.environ,
+        "AUDIO_INTEL_LOAD_ENV": "0",
         "AUDIO_INTEL_HOST": "127.0.0.1",
         "AUDIO_INTEL_PORT": str(port or _unused_port()),
         "AUDIO_INTEL_MOCK_MODE": "1",

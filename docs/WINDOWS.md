@@ -52,7 +52,7 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 certutil -addstore -f Root .\data\tls\audio-intel-root-ca.cer
 ```
 
-IP 变化时重新运行 `.\service.cmd tls enable`；根 CA 保持不变，已安装客户端无需重新安装。启用和禁用默认只保存下次启动配置，`--restart` 才会立即应用；`tls enable --restart` 和 `tls disable --restart` 都会执行 `restart all`，重启 API、ASR 和 TTS。后者切回 HTTP，但证书不会删除。显式设置的 `AUDIO_INTEL_PROTOCOL` 和 TLS 文件环境变量仍优先于 profile，适合外部证书配置。启用 HTTPS 后 20810 仅接受 HTTPS，不同时提供 HTTP。不要分发 `data\tls\server-key.pem` 或 `data\tls\ca\rootCA-key.pem`。
+IP 变化时重新运行 `.\service.cmd tls enable`；根 CA 保持不变，已安装客户端无需重新安装。启用和禁用默认只保存下次启动配置，`--restart` 才会立即应用；`tls enable --restart` 和 `tls disable --restart` 都会执行 `restart all`，重启 API、ASR 和 TTS。后者切回 HTTP，但证书不会删除。显式设置的 `AUDIO_INTEL_PROTOCOL` 和 TLS 文件环境变量仍优先于 profile，适合外部证书配置。启用 HTTPS 后配置的监听端口（默认 20810）仅接受 HTTPS，不同时提供 HTTP。不要分发 `data\tls\server-key.pem` 或 `data\tls\ca\rootCA-key.pem`。
 
 只安装或启动部分能力：
 
@@ -89,7 +89,9 @@ $env:UV_SYSTEM_CERTS = '1'
 $env:REQUESTS_CA_BUNDLE = 'C:\certs\company-ca.pem'
 ```
 
-端口、目录、API Key 等通用运行配置仍使用当前 PowerShell 的环境变量；脚本不会自动读取 `.env`，新终端必须重新设置这些部署变量后再执行 `start` 或 `restart`。`tls enable` 保存的 HTTPS profile 会单独自动加载：
+`service.cmd` 的所有运维命令自动读取仓库根目录 `.env`，首次安装前也无需系统 Python。可复制 `.env.example` 为 `.env` 后编辑端口、目录和 API Key，新终端直接执行 `start` 或 `restart`。只自动读取 `.env`；`.env.local-deploy` 不自动加载。优先级为 **外部环境变量 > `.env` > 默认值**，下例演示临时覆盖。文件使用 UTF-8 键值格式，兼容 BOM、CRLF、注释和引号；Windows 路径建议用单引号，变量引用写成 `$VAR` / `${VAR}`，不执行 Bash 或 PowerShell 命令。完整语法见[配置约定](INSTALL.md#4-代理与配置)。
+
+`$env:AUDIO_INTEL_LOAD_ENV = '0'` 可跳过文件，之后用 `Remove-Item Env:AUDIO_INTEL_LOAD_ENV` 恢复自动加载。旧终端中的同名环境变量仍优先于文件；服务不会向父 PowerShell 导出配置，API 客户端需要另设访问地址和凭据。`tls enable` 保存的 HTTPS profile 自动加载，环境或 `.env` 中的显式 TLS 配置优先：
 
 ```powershell
 $env:AUDIO_INTEL_PORT = '20810'
@@ -189,7 +191,7 @@ Get-NetTCPConnection -LocalPort 20810 -ErrorAction SilentlyContinue
 # 确认完整进程树退出；需要备份时在此执行，成功后再继续。
 git pull --ff-only
 .\service.cmd setup all
-# tls enable 保存的 HTTPS profile 会自动加载；外部证书环境变量仍需在新终端重新设置。
+# .env 和保存的 HTTPS profile 会自动加载；外部环境变量优先于 .env。
 .\service.cmd start all
 .\.runtime\api\Scripts\python.exe scripts\smoke_test.py
 ```

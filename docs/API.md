@@ -9,6 +9,10 @@ The interactive bilingual contract at `/docs` and the generated `/openapi.json` 
 
 ## Base URL and authentication
 
+The service entrypoints automatically read the project-root `.env`; exported environment variables take precedence. This affects the service and its children, not the calling shell or remote API clients. Set `AUDIO_INTEL_BASE_URL` in the **client** environment to its actual reachable URL, including the configured protocol and port (for example `http://127.0.0.1:20815`); the examples below retain `http://127.0.0.1:20810` as the default. Use `service.sh status` or `service.cmd status` to inspect the running endpoint. The bind address `0.0.0.0` is not a remote client address.
+
+Provide the same `AUDIO_INTEL_API_KEY` separately to authenticated clients from your existing credential source. Starting the service does not populate that variable in your terminal. Swagger uses the origin serving `/docs` and the relative `/openapi.json`; no deployment-specific server URL is embedded in the contract. See the [configuration rules](INSTALL.md#4-代理与配置).
+
 ```bash
 BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
 ```

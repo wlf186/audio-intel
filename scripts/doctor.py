@@ -42,9 +42,11 @@ def memory_total() -> int | None:
 
 
 def check_port() -> str:
-    sock = socket.socket()
+    host = os.getenv("AUDIO_INTEL_HOST", "0.0.0.0")
+    port = int(os.getenv("AUDIO_INTEL_PORT", "20810"))
+    sock = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET)
     try:
-        sock.bind(("0.0.0.0", 20810))
+        sock.bind((host.strip("[]"), port))
         return "available"
     except OSError:
         return "in use (expected if the service is running)"
@@ -76,7 +78,11 @@ report = {
     "memory_total_bytes": memory_total(),
     "disk_free_bytes": shutil.disk_usage(ROOT).free,
     "download_proxy_configured": any(os.getenv(name) for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")),
-    "port_20810": check_port(),
+    "listener": {
+        "host": os.getenv("AUDIO_INTEL_HOST", "0.0.0.0"),
+        "port": int(os.getenv("AUDIO_INTEL_PORT", "20810")),
+        "status": check_port(),
+    },
     "deployment_profile": read_deployment_profile(ROOT),
     "deployment_profile_path": str(deployment_profile_path(ROOT)),
     "ffmpeg_required": False,

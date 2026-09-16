@@ -4,7 +4,7 @@ Thanks for improving Sandevistan Audio. Keep changes focused, preserve Linux and
 
 ## Development setup
 
-If this checkout hosts your normal service, use the [single-directory development and deployment workflow](docs/UPGRADE.md#local-development-and-deployment). Record its configuration and running components, stop it before editing runtime code or installing dependencies, and restore it only after the final changes and validation. A second checkout or duplicate model installation is not required. Test instances must use separate data, PID, log and temporary paths, even while the normal service is stopped.
+If this checkout hosts your normal service, use the [single-directory development and deployment workflow](docs/UPGRADE.md#local-development-and-deployment). Record its configuration and running components, stop it before editing runtime code or installing dependencies, and restore it only after the final changes and validation. A second checkout or duplicate model installation is not required. Test instances must use separate data, PID, log and temporary paths, even while the normal service is stopped. Service commands automatically load the project-root `.env`; exported variables take precedence. Set `AUDIO_INTEL_LOAD_ENV=0` for isolated tests, or stage a fixture checkout with its own file. Never overwrite the normal `.env` in tests. File parsing must remain compatible with Bash and native Windows PowerShell before Python setup.
 
 Install the API runtime and frontend without downloading inference models:
 
@@ -15,9 +15,15 @@ Install the API runtime and frontend without downloading inference models:
 Use mock mode for routine API, queue, worker, and browser development:
 
 ```bash
-AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all
-.runtime/api/bin/python scripts/smoke_test.py
-./service.sh stop all
+(
+  export AUDIO_INTEL_LOAD_ENV=0 AUDIO_INTEL_MOCK_MODE=1 AUDIO_INTEL_PORT=20910
+  export AUDIO_INTEL_DATA_DIR=tmp/dev-smoke/data AUDIO_INTEL_RUN_DIR=tmp/dev-smoke/run
+  export AUDIO_INTEL_LOG_DIR=tmp/dev-smoke/logs AUDIO_INTEL_TEMP_DIR=tmp/dev-smoke/tmp
+  export AUDIO_INTEL_CACHE_DIR=tmp/dev-smoke/cache AUDIO_INTEL_MODELS_DIR=tmp/dev-smoke/models
+  trap './service.sh stop all' EXIT
+  ./service.sh start all
+  AUDIO_INTEL_URL=http://127.0.0.1:20910 .runtime/api/bin/python scripts/smoke_test.py
+)
 ```
 
 Real-model inference is required when changing model loading, precision, device routing, runtime separation, audio pipelines, process supervision, or batch sizing.

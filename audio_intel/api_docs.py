@@ -15,6 +15,10 @@ API_DESCRIPTION = r"""
 
 本页、`/openapi.json`、Swagger 代码/样式/图标、数据和模型推理均由本机提供；运行期间不访问 CDN、在线校验器或模型云服务。 / This page, its assets, data, and inference stay local at runtime.
 
+服务入口自动读取仓库根目录 `.env`，外部已导出的环境变量优先；这不会把配置导出回客户端 shell。Swagger 使用当前访问源和相对 `/openapi.json`。复制到终端的 Bash/Python/JavaScript 示例默认访问 `http://127.0.0.1:20810`；自定义端口或 HTTPS 时，先在客户端设置实际 `AUDIO_INTEL_BASE_URL`（例如 `http://127.0.0.1:20815`），鉴权开启时从原有凭据来源另行提供 `AUDIO_INTEL_API_KEY`。用 `service.sh status` / `service.cmd status` 查看实际运行端点。
+
+Service entrypoints automatically load the project-root `.env`, with exported environment variables taking precedence; this does not export settings back to client shells. Swagger uses the current origin and relative `/openapi.json`. Copied Bash/Python/JavaScript examples default to `http://127.0.0.1:20810`. For a custom port or HTTPS, set the actual `AUDIO_INTEL_BASE_URL` in the client environment (for example `http://127.0.0.1:20815`) and provide `AUDIO_INTEL_API_KEY` separately from your existing credential source when authentication is enabled. Inspect the running endpoint with `service.sh status` / `service.cmd status`.
+
 1. `GET /api/v1/health`：公开健康探针 / public health probe。
 2. **Authorize** → `GET /api/v1/capabilities`：鉴权并读取实时能力和默认值 / authenticate and read live capabilities.
 3. 长任务使用异步 `/api/v1/asr/jobs` 或 `/api/v1/tts/jobs`；需要一次生成多个独立音频时使用 `/api/v1/tts/sequence-jobs`。复用 `Idempotency-Key` 并通过 SSE 或 `status_url` 跟踪；OpenAI 客户端可使用同步 `/v1/audio/transcriptions`、`/v1/audio/speech`。
@@ -74,7 +78,7 @@ Read each audio waveform through `GET /api/v1/jobs/{job_id}/artifacts/{name}/wav
 <details>
 <summary><strong>提交契约、默认值与语种 / Submission contract, defaults, and languages</strong></summary>
 
-HTTP 是默认协议；启用 HTTPS 时，把示例中的 `AUDIO_INTEL_BASE_URL` 设为实际 `https://IP:20810`，公开的 `/api/v1/tls/bootstrap` 会返回已配置根 CA 的下载地址和 SHA-256 指纹。 / HTTP is the default; for HTTPS, set `AUDIO_INTEL_BASE_URL` to the actual `https://IP:20810`, and use public `/api/v1/tls/bootstrap` for the configured root CA download URLs and SHA-256 fingerprint.
+HTTP 是默认协议；启用 HTTPS 时，把示例中的 `AUDIO_INTEL_BASE_URL` 设为实际 `https://IP:PORT`（默认端口 20810），公开的 `/api/v1/tls/bootstrap` 会返回已配置根 CA 的下载地址和 SHA-256 指纹。 / HTTP is the default; for HTTPS, set `AUDIO_INTEL_BASE_URL` to the actual `https://IP:PORT` (default port 20810), and use public `/api/v1/tls/bootstrap` for the configured root CA download URLs and SHA-256 fingerprint.
 
 原生异步 ASR、单条 TTS、有序 TTS 序列、克隆参考分析和声纹样本上传都强制要求 8–128 字符的 `Idempotency-Key`。首次接受返回 `202`；相同键和相同请求重放返回原任务、`200` 和 `Idempotency-Replayed: true`；相同键用于不同请求返回 `409 idempotency_key_conflict`。队列、提交并发或磁盘保护拒绝时返回 `429`、稳定 `code` 和 `Retry-After`，消费方应保留同一个键稍后重试。
 

@@ -4,11 +4,11 @@
 
 先阅读当前版本到目标版本之间的全部升级说明，按[升级备份范围](#upgrade-backup-scope)确定是否需要备份。确认没有未完成任务或导入，记录实际启动配置，再停止全部服务。`data/` 包含 SQLite 队列、历史输入输出、声音档案和声纹库；升级应保留这些数据。先阅读下方的本机部署收尾要求。
 
+如果升级前的旧版入口尚不支持自动加载 `.env`，先在原 shell 中执行一次 `if [[ -f .env ]]; then set -a; source .env; set +a; fi`，再按下方流程停服，确保仍使用原端口和 PID 目录。更新后的入口自动读取 `.env`，日常启停无需该步骤。维护快照 `.env.local-deploy` 仅在明确需要恢复其配置时显式加载；不要仅因文件存在就自动叠加，以免旧快照覆盖新配置。
+
 ```bash
 set -e
-# 若部署依赖 .env，先加载它；service.sh 不会自动读取环境文件。
-if [[ -f .env ]]; then set -a; source .env; set +a; fi
-if [[ -f .env.local-deploy ]]; then set -a; source .env.local-deploy; set +a; fi
+# 当前版本的入口会自动加载 .env；外部显式环境变量仍优先。
 ./service.sh stop all
 # 需要备份时，在此按下文执行；备份失败则停止升级。
 git pull --ff-only
@@ -98,7 +98,7 @@ if ($LASTEXITCODE -ne 0) { throw "Backup failed; stop the upgrade" }
 
 本机开发期间可以停止日常服务；继续使用同一份源码、运行环境和模型，无需创建第二套部署。以下流程适用于本机代码更新和开发/发版收尾，纯只读检查不触发启停。
 
-1. **记录现场。** 在停服前记录实际端口、host、数据及运行目录、启用的服务、full/cpu profile、mock 状态和 TLS 配置来源，以及 API、ASR/TTS supervisor、executor 和子进程的 PID 与创建时间。非敏感启动参数可以放在被忽略的 `.env.local-deploy` 中；鉴权密钥从原有安全来源加载，不写入日志或部署记录。`service.sh` 不自动读取环境文件，需如上显式加载；Windows 在 PowerShell 中设置对应环境变量，`service.cmd` 不解析 Bash 环境文件。
+1. **记录现场。** 在停服前记录实际端口、host、数据及运行目录、启用的服务、full/cpu profile、mock 状态和 TLS 配置来源，以及 API、ASR/TTS supervisor、executor 和子进程的 PID 与创建时间。非敏感启动参数可以放在被忽略的 `.env.local-deploy` 中；鉴权密钥从原有安全来源加载，不写入日志或部署记录。服务入口自动读取 `.env`，但不自动读取维护快照；需要恢复 `.env.local-deploy` 时仍显式加载。Windows 的 `.env` 使用相同键值语法，维护快照中的 Bash 语句不能在 PowerShell 中执行，应设置对应环境变量。
 2. **停止后再修改。** 先检查 queued/running/cancelling 任务、排队或执行中的文档导入等操作；有未完成工作时等待或报告，不擅自取消。进入停服窗口时可先 `stop api` 关闭新提交入口，再检查一次队列，确认空闲后 `stop all`。如出现新任务，恢复原 API 并等待，避免 `stop all` 中断它。确认记录的旧进程树已退出，再编辑运行代码或安装依赖。
 3. **按变更验证。** 测试沿用现有环境，临时实例使用独立的数据、PID、日志、缓存和临时目录。正式升级和迁移开发均按[升级备份范围](#upgrade-backup-scope)选择备份，记录选择依据及实际路径；明确无数据迁移的升级无需额外复制数据。依赖锁变化才同步对应环境，前端源码/版本/依赖变化才重建前端；模型变化按 manifest 准备。纯 Python 修改不需要每次执行 `setup all`。测试进程要在收尾时退出，不能把 mock 服务留作日常实例。
 4. **最终代码确定后恢复。** 完成最后一次修改、测试及相关 tag 操作，记录目标 SHA、预期应用版本和源码就绪时间。正式 release 部署要求已验证的干净提交；本地未提交修改要另外记录 dirty 状态和 diff 摘要，不能宣称部署了干净的发布版本。清理残留测试/服务进程，按记录的配置和组件重新启动。原本停止的组件保持停止，除非用户要求启动；用户要求继续停服时记录待部署状态。收尾后再次修改运行代码，必须重新完成这一轮。
@@ -211,11 +211,13 @@ ASR 改为固定的“新建转写 / 任务与结果”页签，TTS 改为“文
 
 ## 升级后验证
 
+先查看 `status` 的实际端点，再给客户端设置 `AUDIO_INTEL_BASE_URL`（例如 `http://127.0.0.1:20815`，HTTPS 部署使用实际 HTTPS 地址）及需要的 `AUDIO_INTEL_API_KEY`。服务加载 `.env` 不会把这些值导出回当前 shell。下方为 smoke 客户端显式传递它现有的 `AUDIO_INTEL_URL` 参数；默认 `20810` 只适用于未改端口的实例。
+
 ```bash
 ./service.sh doctor
 BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
 curl -fsS "$BASE_URL/api/v1/health"
-.runtime/api/bin/python scripts/smoke_test.py
+AUDIO_INTEL_URL="$BASE_URL" .runtime/api/bin/python scripts/smoke_test.py
 .runtime/api/bin/python -m pytest -q
 corepack pnpm@10.15.1 --dir frontend typecheck
 ```

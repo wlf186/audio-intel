@@ -131,6 +131,8 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 
 Open <http://127.0.0.1:20810>. The bilingual interactive API guide is served at <http://127.0.0.1:20810/docs>, and the machine-readable contract is at `/openapi.json`. Swagger assets and validation are hosted locally.
 
+For persistent settings, copy `.env.example` to `.env` and edit it once. Both service entrypoints automatically load the project-root `.env` for lifecycle commands; exported environment variables take precedence. New terminals can run `start all` directly. Only `.env` is automatic; `.env.local-deploy` is an opt-in maintenance snapshot. Set `AUDIO_INTEL_LOAD_ENV=0` in the calling environment to skip the file. Port `20810` is the default: use the actual address printed by `start`/`status` for custom ports or HTTPS. See the [configuration rules](docs/INSTALL.md#4-代理与配置).
+
 Developers who choose the CPU-only profile use the same startup command after profile-specific setup:
 
 ```bash
@@ -157,7 +159,7 @@ See the [Linux installation guide](docs/INSTALL.md) or [native Windows guide](do
 ## How it works
 
 ```text
-20810 FastAPI + local React Web UI
+20810 (default) FastAPI + local React Web UI
         │
         ├── SQLite WAL ASR queue ── ASR supervisor
         │       └── reusable task executor
@@ -183,6 +185,8 @@ TTS guards each internal text chunk against runaway generation and invalid wavef
 ## API and integrations
 
 The seven native asynchronous submission surfaces—ASR, single-item TTS, ordered TTS sequences, clone-reference analysis, voiceprint sample upload, document import, and document TTS—require an 8–128 character `Idempotency-Key`. First acceptance returns `202`; a same-request replay returns `200`; reusing a key with different input returns `409`. Sequence jobs load one model for up to 100 ordered items and return one WAV artifact per item; discover the exact limits at `tts.sequence_jobs`.
+
+Service-side `.env` loading does not export settings back to your client shell. Before running examples, set `AUDIO_INTEL_BASE_URL` to the actual client-reachable URL (for example `http://127.0.0.1:20815`) and provide `AUDIO_INTEL_API_KEY` separately when authentication is enabled. The examples default to `http://127.0.0.1:20810`.
 
 Minimal native ASR submission using the CPU path:
 

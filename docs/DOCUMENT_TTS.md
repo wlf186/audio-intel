@@ -36,7 +36,7 @@ API 顺序：
 4. `POST /api/v1/tts/document-jobs`，multipart `document_import_id`、`preview_revision`、重复的 `section_ids` 字段、相同分段配置及现有音色参数；必须带新的 `Idempotency-Key`。不接受 `text` 或未声明字段，输出固定 MP3。
 5. 使用现有任务详情、事件、取消和重试接口。`GET /api/v1/jobs/{job_id}/document/sections` 分页查询检查点；成功后 `/document/download?mode=sections|complete` 直接下载。
 
-完整可执行例子：`.runtime/api/bin/python scripts/tts_document.py manuscript.epub --preview-only`；移除 `--preview-only` 并添加 `--output ./sections.zip` 可生成并下载。认证读取环境变量 `AUDIO_INTEL_API_KEY`。交互式字段及错误契约见本地 `/docs`、`/openapi.json`。
+完整可执行例子：`.runtime/api/bin/python scripts/tts_document.py manuscript.epub --preview-only --base-url http://127.0.0.1:20810`；将 `--base-url` 改成实际协议、地址和端口，移除 `--preview-only` 并添加 `--output ./sections.zip` 可生成并下载。认证读取客户端环境变量 `AUDIO_INTEL_API_KEY`；服务入口自动读取 `.env` 不会向这个独立客户端导出配置。交互式字段及错误契约见本地 `/docs`、`/openapi.json`。
 
 默认限制由 `tts.document_jobs` 能力接口公开：100 MiB 上传、5,000,000 字符、2,000 段。配置项：`AUDIO_INTEL_MAX_DOCUMENT_BYTES`、`AUDIO_INTEL_MAX_DOCUMENT_CHARS`、`AUDIO_INTEL_MAX_DOCUMENT_SECTIONS`、`AUDIO_INTEL_MAX_DOCUMENT_DOWNLOADS`。解析在独立 API Python 子进程串行运行，默认 600 秒、2 GiB RSS、EPUB / Office 压缩包展开 256 MiB，分别由 `AUDIO_INTEL_DOCUMENT_PARSE_SECONDS`、`AUDIO_INTEL_DOCUMENT_PARSE_MEMORY_BYTES`、`AUDIO_INTEL_DOCUMENT_ARCHIVE_BYTES` 配置。
 
