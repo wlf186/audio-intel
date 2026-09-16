@@ -1305,6 +1305,8 @@ test('running task shows safe cancellation and becomes deletable after shutdown'
 })
 
 test('first TTS submission appears immediately and survives a stale poll',async({page})=>{
+ await page.clock.install()
+ await page.clock.pauseAt(new Date())
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
@@ -1329,6 +1331,7 @@ test('first TTS submission appears immediately and survives a stale poll',async(
  await page.goto('/#tts')
  await expect(page).toHaveTitle(/Sandevistan-Audio/)
  await expect(page.getByRole('heading',{name:'语音合成'})).toBeVisible()
+ await page.clock.runFor(5000)
  await staleStarted
  await page.getByRole('button',{name:'生成语音'}).click()
  await page.getByRole('button',{name:'查看本次任务'}).click()
@@ -1338,9 +1341,15 @@ test('first TTS submission appears immediately and survives a stale poll',async(
  await expect(queueItem).toContainText('等待处理')
  await expect(queueItem).toContainText('队列第 2 / 4')
  await expect(queueItem).toContainText('预计剩余 30 秒–2 分钟')
+ const staleResponse=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v1/jobs')
  releaseStale()
- await page.waitForTimeout(150)
+ await staleResponse
  await expect(queueItem).toBeVisible()
+ await expect(queueItem).toContainText('等待处理')
+ // Polling runs every five seconds; drive it instead of racing a five-second assertion timeout.
+ const runningResponse=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v1/jobs')
+ await page.clock.runFor(5000)
+ await runningResponse
  await expect(queueItem).toContainText('正在处理',{timeout:5000})
  await page.screenshot({path:'/tmp/audio-intel-tts-first-submit-after.png',fullPage:false})
  await page.setViewportSize({width:390,height:844})
