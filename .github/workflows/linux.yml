@@ -2,7 +2,7 @@ name: Linux quality gates
 
 on:
   push:
-    branches: [main]
+    branches: [main, ci/service-dotenv-config]
     tags: ["v*"]
   pull_request:
   schedule:

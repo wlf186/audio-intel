@@ -2,7 +2,7 @@ name: Native Windows smoke
 
 on:
   push:
-    branches: [main]
+    branches: [main, ci/service-dotenv-config]
     tags: ["v*"]
   pull_request:
 
