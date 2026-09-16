@@ -1179,7 +1179,8 @@ test('API key login and logout use an ephemeral browser session',async({page})=>
  await expect(page.locator('.local-mode')).toBeVisible()
  await expect(page.getByRole('link',{name:'打开 API 文档'})).toBeVisible()
  await expect(page.getByRole('button',{name:'退出本地会话'})).toBeVisible()
- expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ // Visibility alone does not establish that the responsive resize has settled.
+ await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
  await page.getByRole('button',{name:'退出本地会话'}).click()
  await expect(page.getByRole('dialog',{name:'访问验证'})).toBeVisible()
  expect(errors).toEqual([])
