@@ -105,3 +105,4 @@
  .asr-settings-toggle::after{content:'⌄';float:right}
  .asr-settings.expanded .asr-settings-toggle::after{content:'⌃'}
 }
+.asr-workspace .media-loading{margin:0;padding:9px 28px;color:var(--muted);font-size:12px}

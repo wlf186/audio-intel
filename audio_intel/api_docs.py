@@ -877,6 +877,7 @@ FIELD_DESCRIPTIONS = {
     "status_url": "任务状态与进度轮询地址 / Job status and progress polling URL",
     "result_url": "成功后读取结果的地址 / Result URL available after success",
     "source_url": "受保护的 ASR 原始音源地址 / Protected ASR source-media URL",
+    "playback_url": "与 ASR 时间戳一致的受保护 WAV 播放地址；历史任务可能缺失 / Protected WAV on the ASR timeline; may be absent in historical jobs",
     "poll_after_seconds": "建议轮询间隔秒数 / Suggested polling interval in seconds",
     "artifacts": "可通过受保护 URL 下载的任务产物 / Job artifacts available through protected URLs",
     "waveform": "归一化波形采样值 / Normalized waveform samples",
@@ -969,6 +970,8 @@ RESULT_EXAMPLES = {
     "tts": {"summary": "TTS 结果 / TTS result", "value": {"duration": 1.8, "format": "wav", "sample_rate": 24000, "voice_mode": "preset", "speaker": "Vivian", "model": "qwen3-tts-1.7b", "model_name": "Qwen3-TTS-12Hz-1.7B-CustomVoice", "model_revision": "0c0e3051f131929182e2c023b9537f8b1c68adfe", "instruct": "温柔、安心地说，语速稍慢。", "compute_device": "gpu", "precision": "BF16", "quantized": False, "artifacts": []}},
 }
 
+
+RESULT_EXAMPLES["asr"]["value"]["playback_url"] = "/api/v1/jobs/asr_example/playback"
 
 RESULT_EXAMPLES["tts"]["value"]["generation_guard"] = {
     "version": 1, "checked_chunks": 1, "retried_chunks": 0,

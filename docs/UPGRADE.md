@@ -122,6 +122,16 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## v0.1.20 ASR 片段播放时间轴
+
+从 v0.1.19 升级：**数据迁移：无**，不要求额外升级备份；常规数据备份可照常进行。更早版本升级还须合并阅读中间版本的备份要求。
+
+新 ASR 任务保留识别用的 16 kHz 单声道 PCM16 WAV，网页的片段、字词和波形定位统一使用该音频，修复 VBR MP3 跳转时混入上一句的问题。结果新增可选 `playback_url`，对应受保护且支持 Range 的 `GET /api/v1/jobs/{job_id}/playback`。原始文件仍由 `/source` 提供。播放失败可在页面重新加载。
+
+已有任务、时间戳、声纹和音频文件不改写，也不自动补生成播放 WAV；受影响的旧录音需要重新提交。新文件位于 `data/jobs/<job_id>/output/playback.wav`（以实际数据目录为准），每小时约增加 115 MB，随任务删除。模型、推理参数及数据库 schema v11 不变。完成源码和前端更新后，按上面的本地部署流程刷新 API、supervisor 和 executor。
+
+English: Upgrading from v0.1.19 requires no data migration or additional upgrade backup. New ASR jobs retain a 16 kHz mono PCM16 playback WAV on the recognition timeline, fixing inaccurate VBR MP3 seeks. The optional result field `playback_url` points to the authenticated, Range-capable `/api/v1/jobs/{job_id}/playback` endpoint. Original downloads remain available through `/source`. Historical jobs are not rewritten or backfilled; resubmit affected recordings. Playback files add about 115 MB per audio hour and are removed with the job. Earlier upgrades must also follow intervening versions' backup notes. Rebuild the frontend and refresh all service processes after updating.
+
 ## v0.1.19 服务配置自动加载
 
 从 v0.1.17 或 v0.1.18 升级：**数据迁移：无**。本版不迁移数据库、不改写或删除历史文件，无需额外创建升级备份；保留现有数据目录即可。从更早版本升级须同时检查中间版本的迁移说明，按实际影响选择备份范围。模型、依赖锁、推理行为和 HTTP API 请求/响应契约保持不变。

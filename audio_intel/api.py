@@ -2555,6 +2555,36 @@ def create_app() -> FastAPI:
         return FileResponse(path, media_type=mime, filename=path.name if download else None)
 
     @app.get(
+        "/api/v1/jobs/{job_id}/playback", response_class=FileResponse, tags=[JOB_TAG],
+        summary="播放与转写时间轴一致的音频 / Play audio on the ASR timeline",
+        description=bilingual(
+            "仅成功的新 ASR 任务可用，返回识别时保存的 16 kHz 单声道 PCM16 WAV。支持 Range；历史任务不补生成，缺失时返回 404。原文件仍由 source 接口提供。",
+            "Successful new ASR jobs only. Returns the saved 16 kHz mono PCM16 WAV used for recognition. Supports Range. Historical jobs are not backfilled; missing audio returns 404. The source endpoint continues to serve the original upload.",
+        ),
+        operation_id="getJobPlayback",
+        responses={
+            200: {"description": "完整 WAV / Full WAV", "content": {"audio/wav": {"schema": BINARY_SCHEMA}}, "headers": {"Accept-Ranges": {"schema": {"type": "string", "example": "bytes"}}}},
+            206: {"description": "部分 WAV / Partial WAV", "content": {"audio/wav": {"schema": BINARY_SCHEMA}}, "headers": {"Content-Range": {"schema": {"type": "string", "example": "bytes 0-43/96044"}}}},
+            416: {**problem_response("Range 超出文件范围 / Requested range is not satisfiable", 416), "headers": {"Content-Range": {"schema": {"type": "string", "example": "bytes */96044"}}}},
+            **AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE,
+        },
+    )
+    def job_playback(
+        job_id: str,
+        range_header: str | None = Header(None, alias="Range", description="可选单段字节范围 / Optional single byte range"),
+        _: None = Depends(require_api_key),
+    ) -> FileResponse:
+        del range_header  # FileResponse handles byte ranges from the ASGI scope.
+        job = job_or_404(job_id)
+        if job["kind"] != "asr" or job["state"] != "succeeded":
+            raise HTTPException(status_code=409, detail="Only successful ASR jobs have playback audio")
+        output = settings.jobs_dir.resolve() / job_id / "output"
+        path = (output / "playback.wav").resolve()
+        if not (job.get("result") or {}).get("playback_url") or path.parent != output or not path.is_file():
+            raise HTTPException(status_code=404, detail="Playback audio is unavailable")
+        return FileResponse(path, media_type="audio/wav")
+
+    @app.get(
         "/api/v1/jobs/{job_id}/artifacts/{name}", response_class=FileResponse,
         tags=[JOB_TAG], summary="下载任务产物 / Download job artifact",
         description=bilingual("名称必须来自成功任务结果的 `artifacts`，文件始终受鉴权和路径包含检查保护。", "The name must come from a successful result's `artifacts`; authentication and path-containment checks always apply."),

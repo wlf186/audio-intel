@@ -122,3 +122,98 @@ test('ASR task list failure retries and deleting a selected task does not select
  await expect(page.locator('.result-head')).toHaveCount(0)
  expect(errors.filter(e=>!e.includes('503'))).toEqual([])
 })
+
+// A chirp encodes its content time as frequency: f(t) = 400 + 200t Hz.
+// Reading the actual rendered samples catches wrong seeks that currentTime alone cannot.
+function playbackChirp(){
+ const buffer=wave()
+ for(let i=0;i<80000;i++){
+  const time=i/16000
+  buffer.writeInt16LE(Math.round(12000*Math.sin(2*Math.PI*(400*time+100*time*time))),44+i*2)
+ }
+ return buffer
+}
+for(const width of [1440,390])test(`ASR normalized playback has accurate audible seeks at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900})
+ const {state,errors}=await fixture(page)
+ const job=state.jobs[0]
+ job.result={...job.result,playback_url:`/api/v1/jobs/${job.id}/playback`,segments:[
+  {id:0,start:0,end:2,speaker:'Speaker_0',speaker_label:'张三',text:'前一句',words:[]},
+  {id:1,start:2,end:5,speaker:'Speaker_1',speaker_label:'李四',text:'后一句',words:[{text:'后一句',start:2.2,end:4.5}]},
+ ],speakers:[{id:'Speaker_0',label:'张三'},{id:'Speaker_1',label:'李四'}]}
+ let playbackReads=0,sourceReads=0
+ let releasePlayback=()=>{}
+ const playbackReady=new Promise<void>(resolve=>{releasePlayback=resolve})
+ await page.route('**/source',async route=>{sourceReads++;await route.fulfill({contentType:'audio/wav',body:wave()})})
+ await page.route('**/playback',async route=>{
+  playbackReads++
+  await playbackReady
+  const buffer=playbackChirp(),range=route.request().headers()['range']?.match(/bytes=(\d+)-(\d*)/)
+  const start=range?Number(range[1]):0,end=range?.[2]?Number(range[2]):buffer.length-1
+  await route.fulfill({status:range?206:200,contentType:'audio/wav',headers:{'Accept-Ranges':'bytes',...(range?{'Content-Range':`bytes ${start}-${end}/${buffer.length}`}:{})},body:buffer.subarray(start,end+1)})
+ })
+ await showAsrResults(page)
+ await expect(page.getByRole('status').filter({hasText:'正在加载播放音频'})).toBeVisible()
+ releasePlayback()
+ const player=page.locator('.result-panel audio')
+ await expect(player).toHaveAttribute('src',job.result.playback_url!)
+ await expect.poll(()=>player.evaluate((audio:HTMLAudioElement)=>audio.readyState)).toBeGreaterThanOrEqual(1)
+ const probe=await player.evaluateHandle((audio:HTMLAudioElement)=>{
+  const context=new AudioContext({sampleRate:16000}),source=context.createMediaElementSource(audio),analyser=context.createAnalyser()
+  analyser.fftSize=8192
+  source.connect(analyser);analyser.connect(context.destination)
+  return {audio,context,analyser}
+ })
+ await page.getByRole('button',{name:'播放片段 2',exact:true}).click()
+ await probe.evaluate(async({context})=>context.resume())
+ await expect.poll(()=>player.evaluate((audio:HTMLAudioElement)=>audio.currentTime)).toBeGreaterThan(2.85)
+ const measured=await probe.evaluate(({audio,context,analyser})=>{
+  const samples=new Float32Array(analyser.fftSize)
+  analyser.getFloatTimeDomainData(samples)
+  const position=audio.currentTime,crossings:number[]=[]
+  for(let i=1;i<samples.length;i++)if(samples[i-1]<0&&samples[i]>=0)crossings.push(i-samples[i]/(samples[i]-samples[i-1]))
+  const frequency=(crossings.length-1)*context.sampleRate/(crossings.at(-1)!-crossings[0])
+  return {audibleMidpoint:(frequency-400)/200,expectedMidpoint:position-samples.length/(2*context.sampleRate)}
+ })
+ expect(Math.abs(measured.audibleMidpoint-measured.expectedMidpoint)).toBeLessThan(.05)
+ await page.getByRole('button',{name:'暂停',exact:true}).click()
+ const second=page.locator('.segments article').nth(1)
+ await second.locator('.word-toggle').click()
+ await second.locator('.words button').click()
+ await expect.poll(()=>player.evaluate((audio:HTMLAudioElement)=>audio.currentTime)).toBeCloseTo(2.2,1)
+ const waveform=page.locator('.wave-area canvas')
+ await waveform.focus();await page.keyboard.press('Home')
+ await expect.poll(()=>player.evaluate((audio:HTMLAudioElement)=>audio.currentTime)).toBe(0)
+ const box=await waveform.boundingBox()
+ await waveform.click({position:{x:box!.width/2,y:box!.height/2}})
+ await expect.poll(()=>player.evaluate((audio:HTMLAudioElement)=>audio.currentTime)).toBeCloseTo(2.5,1)
+ expect(playbackReads).toBeGreaterThan(0);expect(sourceReads).toBe(0)
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+ await page.screenshot({path:`/tmp/asr-playback-${width}.png`})
+ await probe.evaluate(async({context})=>context.close())
+ await probe.dispose()
+ expect(errors).toEqual([])
+})
+
+test('ASR playback failure retries the WAV without falling back to the original',async({page})=>{
+ await page.setViewportSize({width:390,height:900})
+ const {state,errors}=await fixture(page)
+ state.jobs[0].result!.playback_url='/api/v1/jobs/asr-old/playback'
+ let unavailable=true,originalReads=0
+ await page.route('**/source',async route=>{originalReads++;await route.fulfill({contentType:'audio/wav',body:wave()})})
+ await page.route('**/playback',async route=>unavailable?route.fulfill({status:404,json:{detail:'Playback audio is unavailable'}}):route.fulfill({contentType:'audio/wav',body:playbackChirp()}))
+ await showAsrResults(page)
+ const alert=page.locator('.media-error')
+ await expect(alert).toBeVisible()
+ const retry=alert.getByRole('button',{name:'重新加载音频'})
+ const box=await retry.boundingBox()
+ expect(box!.height).toBeGreaterThanOrEqual(44)
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ await page.screenshot({path:'/tmp/asr-playback-error-390.png'})
+ unavailable=false;await retry.click()
+ await expect(alert).toBeHidden()
+ await page.getByRole('button',{name:'播放',exact:true}).click()
+ await expect.poll(()=>page.locator('.result-panel audio').evaluate((audio:HTMLAudioElement)=>audio.currentTime)).toBeGreaterThan(.1)
+ expect(originalReads).toBe(0)
+ expect(errors.filter(error=>!error.includes('404'))).toEqual([])
+})

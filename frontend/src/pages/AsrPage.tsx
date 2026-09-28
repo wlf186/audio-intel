@@ -146,6 +146,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const [notice, setNotice] = useState('')
   const [uploadProgress,setUploadProgress]=useState<UploadProgress>()
   const [mediaError, setMediaError] = useState('')
+  const [mediaLoading, setMediaLoading] = useState(true)
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const [speakerFilter, setSpeakerFilter] = useState('all')
@@ -286,6 +287,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     setCurrentTime(0)
     setPlaying(false)
     setMediaError('')
+    setMediaLoading(true)
     setSelectedSegments(new Set())
     setSpeakerFilter('all')
     setQuery('')
@@ -675,11 +677,13 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               ref={audio}
               className="sr-only"
               preload={view==='results'?'metadata':'none'}
-              src={selected.source_url || sourceUrl(selected.id)}
+              src={result.playback_url || selected.source_url || sourceUrl(selected.id)}
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
               onEnded={() => setPlaying(false)}
-              onError={() => setMediaError(t('asr.results.playbackError'))}
+              onLoadStart={() => { setMediaLoading(true); setMediaError('') }}
+              onLoadedMetadata={() => setMediaLoading(false)}
+              onError={() => { setMediaLoading(false); setMediaError(t('asr.results.playbackError')) }}
               onTimeUpdate={(event) => {
                 const value = event.currentTarget.currentTime
                 setCurrentTime(value)
@@ -708,14 +712,23 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
                 {result.language} · {result.timestamp_precision === 'word_or_character' ? t('asr.results.wordAlignment') : t('asr.results.segmentTimestamps')}
               </span>
             </div>
+            {mediaLoading && !mediaError ? <p className="media-loading" role="status">{t('asr.results.loadingAudio')}</p> : null}
             {alignmentDowngraded ? (
               <p className="notice alignment-notice" role="note">
                 {t('asr.results.alignmentDowngraded',{language:result.language})}
               </p>
             ) : null}
             {mediaError ? (
-              <p className="media-error">
+              <p className="media-error" role="alert">
                 {mediaError} <a href={sourceUrl(selected.id, true)}>{t('asr.results.downloadSource')}</a>
+                {' '}<button type="button" className="button" onClick={() => {
+                  audio.current?.load()
+                  stopAt.current = undefined
+                  setCurrentTime(0)
+                  setPlaying(false)
+                  setMediaError('')
+                  setMediaLoading(true)
+                }}>{t('asr.results.retryPlayback')}</button>
               </p>
             ) : null}
             <div className="transcript-tools">

@@ -466,12 +466,19 @@ def test_asr_auto_speaker_labels_are_canonical_after_merge() -> None:
     assert labels.tolist() == [0, 0, 1, 2, 1]
 
 
+def _fake_decoded_audio(_source: Path, output: Path):
+    import soundfile as sf
+    audio = np.zeros(32000, dtype=np.float32)
+    sf.write(output, audio, 16000, subtype="PCM_16")
+    return audio, 16000
+
+
 def test_asr_gpu_overlaps_batched_diarization(tmp_path, monkeypatch) -> None:
     local = replace(settings, temp_dir=tmp_path / "tmp", data_dir=tmp_path / "data", mock_mode=False)
     local.ensure_directories()
     monkeypatch.setattr(asr_pipeline, "settings", local)
     monkeypatch.setattr(asr_pipeline, "model_installation", lambda *_: {"installed": True})
-    monkeypatch.setattr(asr_pipeline, "decode_audio", lambda *_: ([0.0] * 32000, 16000))
+    monkeypatch.setattr(asr_pipeline, "decode_audio", _fake_decoded_audio)
     monkeypatch.setattr(asr_pipeline, "run_vad", lambda *_: [{"start": 0.0, "end": 2.0}])
     chunks = [{"index": 0, "path": "chunk.wav", "start": 0.0, "end": 2.0}]
     monkeypatch.setattr(asr_pipeline, "write_chunks", lambda *_: chunks)
@@ -516,7 +523,7 @@ def test_asr_segment_mode_aligns_multi_speaker_text_internally(tmp_path, monkeyp
     local.ensure_directories()
     monkeypatch.setattr(asr_pipeline, "settings", local)
     monkeypatch.setattr(asr_pipeline, "model_installation", lambda *_: {"installed": True})
-    monkeypatch.setattr(asr_pipeline, "decode_audio", lambda *_: ([0.0] * 32000, 16000))
+    monkeypatch.setattr(asr_pipeline, "decode_audio", _fake_decoded_audio)
     monkeypatch.setattr(asr_pipeline, "run_vad", lambda *_: [{"start": 0.0, "end": 2.0}])
     chunks = [{"index": 0, "path": "chunk.wav", "start": 0.0, "end": 2.0}]
     monkeypatch.setattr(asr_pipeline, "write_chunks", lambda *_: chunks)
@@ -574,7 +581,7 @@ def test_asr_auto_detection_outside_aligner_languages_returns_segments(tmp_path,
     local.ensure_directories()
     monkeypatch.setattr(asr_pipeline, "settings", local)
     monkeypatch.setattr(asr_pipeline, "model_installation", lambda *_: {"installed": True})
-    monkeypatch.setattr(asr_pipeline, "decode_audio", lambda *_: ([0.0] * 32000, 16000))
+    monkeypatch.setattr(asr_pipeline, "decode_audio", _fake_decoded_audio)
     monkeypatch.setattr(asr_pipeline, "run_vad", lambda *_: [{"start": 0.0, "end": 2.0}])
     chunks = [{"index": 0, "path": "chunk.wav", "start": 0.0, "end": 2.0}]
     monkeypatch.setattr(asr_pipeline, "write_chunks", lambda *_: chunks)

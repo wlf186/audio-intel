@@ -225,6 +225,22 @@ curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
 
 ASR source media is available at `GET /api/v1/jobs/{job_id}/source`, supports HTTP Range requests, and accepts `?download=true` to force a download.
 
+新完成的 ASR 任务在结果中提供 `playback_url`，指向 `GET /api/v1/jobs/{job_id}/playback`。它返回识别时保存的 16 kHz、单声道、PCM16 WAV，使片段、字词和波形跳转与识别时间轴一致，避免 VBR MP3 随机跳转偏差。该接口受 Bearer / 浏览器会话鉴权保护，支持 Range（`206` / `416`）；非 ASR 或尚未成功的任务返回 `409`，音频缺失返回 `404`。历史任务不补生成文件，缺少此字段时继续使用原音源。原文件下载和字幕时间戳保持不变。
+
+New successful ASR results include `playback_url`, pointing to `GET /api/v1/jobs/{job_id}/playback`. This serves the saved 16 kHz mono PCM16 WAV on the recognition timeline, avoiding inaccurate VBR MP3 seeks for segments, words and waveforms. Bearer or browser-session authentication is required. Range requests support `206` / `416`; non-ASR or unsuccessful jobs return `409`, and missing audio returns `404`. Historical jobs are not backfilled and continue using their original source when this field is absent. Original downloads and transcript timestamps are unchanged.
+
+播放 WAV 随任务删除；每小时音频约增加 115 MB 存储。它不加入字幕导出文件列表，也不改变浏览器偏好或草稿的保存期限。
+
+The playback WAV is deleted with its job and adds approximately 115 MB per audio hour. It is separate from transcript export artifacts and does not change browser preference or draft lifetimes.
+
+```bash
+# JOB_ID must identify a successful new ASR task.
+curl --fail-with-body \
+  -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  -H 'Range: bytes=0-43' \
+  "$AUDIO_INTEL_URL/api/v1/jobs/$JOB_ID/playback" -o playback-header.bin
+```
+
 ## Job operations
 
 Important job endpoints include:

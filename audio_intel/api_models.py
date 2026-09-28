@@ -564,6 +564,7 @@ class TtsGenerationGuardResponse(PublicModel):
 
 
 class JobResultResponse(PublicModel):
+    playback_url: str | None = Field(None, description="与 ASR 时间戳一致的受保护 PCM WAV 播放地址；历史任务可能缺失 / Protected PCM WAV playback matching the ASR timeline; may be absent in historical jobs")
     generation_guard: TtsGenerationGuardResponse | None = Field(None, description="仅实际执行保护的 TTS 任务返回；历史缺失不表示检查通过 / Only guarded TTS runs return this; absence does not imply validation")
     reference_start_seconds_used: float | None = Field(None, description="实际起点，原样本相对秒数 / Actual start in seconds relative to the original sample")
     reference_end_seconds_used: float | None = Field(None, description="实际完整词边界终点，原样本相对秒数 / Actual complete-word end in original-sample seconds")

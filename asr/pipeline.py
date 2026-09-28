@@ -787,6 +787,20 @@ def assemble(
     }
 
 
+def save_playback_audio(job_id: str, normalized: Path) -> str:
+    """Keep the exact ASR timeline after the executor's work directory is removed."""
+    output = settings.jobs_dir / job_id / "output"
+    output.mkdir(parents=True, exist_ok=True)
+    target = output / "playback.wav"
+    temporary = output / "playback.wav.partial"
+    try:
+        shutil.copy2(normalized, temporary)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return f"/api/v1/jobs/{job_id}/playback"
+
+
 def write_asr_exports(job_id: str, result: dict[str, Any], formats: list[str]) -> dict[str, Any]:
     output = settings.jobs_dir / job_id / "output"
     output.mkdir(parents=True, exist_ok=True)
@@ -1037,6 +1051,7 @@ def process_job(context: JobContext) -> dict[str, Any]:
     except Exception:
         result["waveform"] = []
     context.progress(0.96, "writing_exports")
+    result["playback_url"] = save_playback_audio(context.job_id, normalized)
     result = write_asr_exports(context.job_id, result, request.get("export_formats", ["json", "srt", "vtt", "txt"]))
     if request.get("purpose") == "voiceprint_import":
         _finalize_voiceprint_import(request, normalized, result)
