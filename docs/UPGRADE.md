@@ -122,6 +122,16 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## v0.1.21 ASR 播放修复与跨平台验证
+
+从 v0.1.19 或已部署的 v0.1.20 源码升级：**数据迁移：无**，无需额外升级备份，不改写历史任务或音频。更早版本仍须检查中间版本的升级要求。
+
+本版正式交付下节介绍的 ASR 播放时间轴修复，新增任务的播放 WAV 每小时约占 115 MB；旧任务不回填，受影响录音需重新提交。v0.1.20 因 Windows 浏览器测试失败未创建 GitHub Release，其标签保留作为审计记录。本版将上传进度测试改为显式推进事件和受控时钟，保留取消、幂等重试及移动端断言，生产上传行为不变。
+
+模型、依赖锁和 SQLite schema v11 不变。更新后重建前端，按本地部署流程刷新 API、ASR/TTS supervisor 和 executor。
+
+English: Upgrading from v0.1.19 or the deployed v0.1.20 source requires no data migration or additional upgrade backup. This release delivers the ASR playback fix described below; historical jobs are not rewritten or backfilled. The v0.1.20 tag is retained for audit history and has no GitHub Release because its Windows browser checks failed. Upload tests now advance events and time explicitly without changing production upload behavior. Models, dependency pins and schema v11 are unchanged. Rebuild the frontend and refresh all service processes. Earlier upgrades must account for intervening versions.
+
 ## v0.1.20 ASR 片段播放时间轴
 
 从 v0.1.19 升级：**数据迁移：无**，不要求额外升级备份；常规数据备份可照常进行。更早版本升级还须合并阅读中间版本的备份要求。

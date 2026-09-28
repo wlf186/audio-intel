@@ -1388,36 +1388,50 @@ test('first ASR submission appears immediately from the accepted job response',a
 })
 
 test('large ASR uploads expose progress, cancel safely, and retry with the same key',async({page})=>{
+ type UploadController={progress:(attempt:number,fraction:number)=>void;uploaded:(attempt:number)=>void;complete:(attempt:number)=>void}
+ type UploadWindow=typeof window&{__uploadController:UploadController;__uploadKeys?:string[]}
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ // Freeze before navigation so performance.now() and progress throttling are
+ // deterministic. Only the test advances uploads after asserting each UI state.
+ await page.clock.install({time:new Date('2026-01-01T00:00:00Z')})
+ await page.clock.pauseAt(new Date('2026-01-01T00:00:01Z'))
  await page.addInitScript(()=>{
-  let attempt=0
+  const requests:MockUploadXHR[]=[]
   const keys:string[]=[]
   class MockUploadXHR{
    status=0;statusText='';responseText='';withCredentials=false;timeout=0
    onload:(()=>void)|null=null;onerror:(()=>void)|null=null;ontimeout:(()=>void)|null=null;onabort:(()=>void)|null=null
    upload={onloadstart:null as ((event:ProgressEvent)=>void)|null,onprogress:null as ((event:ProgressEvent)=>void)|null,onload:null as ((event:ProgressEvent)=>void)|null}
-   private timers:number[]=[]
+   private aborted=false
+   private completed=false
    open(_method:string,_url:string){}
    setRequestHeader(name:string,value:string){if(name.toLowerCase()==='idempotency-key'){keys.push(value);(window as typeof window&{__uploadKeys?:string[]}).__uploadKeys=keys}}
    getResponseHeader(_name:string){return null}
    send(_body?:Document|XMLHttpRequestBodyInit|null){
-    attempt+=1
-    const currentAttempt=attempt
-    const total=1024*1024
+    requests.push(this)
     this.upload.onloadstart?.(new ProgressEvent('loadstart'))
-    this.timers.push(window.setTimeout(()=>this.upload.onprogress?.(new ProgressEvent('progress',{lengthComputable:true,loaded:total*.25,total})),30))
-    if(currentAttempt===1)return
-    this.timers.push(window.setTimeout(()=>this.upload.onprogress?.(new ProgressEvent('progress',{lengthComputable:true,loaded:total*.7,total})),200))
-    this.timers.push(window.setTimeout(()=>this.upload.onload?.(new ProgressEvent('load')),350))
-    this.timers.push(window.setTimeout(()=>{
-     this.status=202
-     this.responseText=JSON.stringify({id:'large-upload-job',kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'large-upload.wav',created_at:new Date().toISOString(),request:{compute_device:'gpu'}})
-     this.onload?.()
-    },800))
    }
-   abort(){this.timers.forEach(timer=>clearTimeout(timer));this.onabort?.()}
+   progress(fraction:number){
+    if(this.aborted||this.completed)return
+    const total=1024*1024
+    this.upload.onprogress?.(new ProgressEvent('progress',{lengthComputable:true,loaded:total*fraction,total}))
+   }
+   uploaded(){if(!this.aborted&&!this.completed)this.upload.onload?.(new ProgressEvent('load'))}
+   complete(){
+    if(this.aborted||this.completed)return
+    this.completed=true
+    this.status=202
+    this.responseText=JSON.stringify({id:'large-upload-job',kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'large-upload.wav',created_at:new Date().toISOString(),request:{compute_device:'gpu'}})
+    this.onload?.()
+   }
+   abort(){this.aborted=true;this.onabort?.()}
+  }
+  ;(window as UploadWindow).__uploadController={
+   progress:(attempt,fraction)=>requests[attempt].progress(fraction),
+   uploaded:attempt=>requests[attempt].uploaded(),
+   complete:attempt=>requests[attempt].complete(),
   }
   Object.defineProperty(window,'XMLHttpRequest',{configurable:true,value:MockUploadXHR})
  })
@@ -1428,16 +1442,27 @@ test('large ASR uploads expose progress, cancel safely, and retry with the same 
  await page.locator('input[type="file"]').setInputFiles({name:'large-upload.wav',mimeType:'audio/wav',buffer:Buffer.alloc(1024*1024,1)})
  await page.getByRole('button',{name:'开始转写'}).click()
  const status=page.getByRole('region',{name:'ASR 音频提交状态'})
+ // The real client throttles progress updates to one per 100 ms.
+ await page.clock.runFor(120)
+ await page.evaluate(()=>(window as UploadWindow).__uploadController.progress(0,.25))
  await expect(status).toContainText('25%')
  await page.getByRole('button',{name:'取消上传'}).click()
  await expect(page.getByRole('status')).toContainText('上传已取消')
  await expect(page.locator('.dropzone')).toContainText('large-upload.wav')
+ await page.evaluate(()=>(window as UploadWindow).__uploadController.complete(0))
+ await expect(page.getByRole('status')).toContainText('上传已取消')
+ await expect(page.getByRole('button',{name:'查看本次任务'})).toHaveCount(0)
  const firstKey=(await page.evaluate(()=>(window as typeof window&{__uploadKeys?:string[]}).__uploadKeys?.[0]))||''
+ expect(firstKey).not.toBe('')
  await page.setViewportSize({width:390,height:844})
  await page.getByRole('button',{name:'开始转写'}).click()
+ await page.clock.runFor(120)
+ await page.evaluate(()=>(window as UploadWindow).__uploadController.progress(1,.7))
  await expect(status).toContainText('70%')
+ await page.evaluate(()=>(window as UploadWindow).__uploadController.uploaded(1))
  await expect(status).toContainText('上传完成，正在创建任务')
  await expect(page.getByRole('button',{name:'取消上传'})).toHaveCount(0)
+ await page.evaluate(()=>(window as UploadWindow).__uploadController.complete(1))
  await page.getByRole('button',{name:'查看本次任务'}).click()
  await expect(page.locator('.asr-task-status')).toContainText('large-upload.wav')
  const uploadKeys=await page.evaluate(()=>(window as typeof window&{__uploadKeys?:string[]}).__uploadKeys||[])
