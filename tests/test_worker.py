@@ -285,14 +285,25 @@ def test_worker_reuses_executor_for_queue_then_recycles_once_when_idle(
             "use_voiceprint_library": False, "export_formats": ["json"],
         }
 
+    def wait_for_completion(job_id: str):
+        # Native Windows runners can spend over eight seconds synthesizing the
+        # mock waveform in a fresh executor. Completion is not a latency contract;
+        # keep the separate idle/recycle deadlines below unchanged.
+        job = _wait_for_job(
+            job_id, lambda job: job["state"] in {"succeeded", "failed", "cancelled"},
+            timeout=30,
+        )
+        assert job["state"] == "succeeded", job
+        return job
+
     try:
         initial_pid = _wait_for_executor_pid(metadata)
         tracked.add(initial_pid)
         first = db_module.create_job(kind, "first", request("第一批", long=True))
         second = db_module.create_job(kind, "second", request("第二批"))
 
-        _wait_for_job(first["id"], lambda job: job["state"] == "succeeded")
-        _wait_for_job(second["id"], lambda job: job["state"] == "succeeded")
+        wait_for_completion(first["id"])
+        wait_for_completion(second["id"])
         assert _wait_for_executor_pid(metadata) == initial_pid
 
         replacement_pid = _wait_for_executor_pid(
@@ -304,18 +315,16 @@ def test_worker_reuses_executor_for_queue_then_recycles_once_when_idle(
         assert _wait_for_executor_pid(metadata) == replacement_pid
 
         third = db_module.create_job(kind, "third", request("回收后继续"))
-        _wait_for_job(third["id"], lambda job: job["state"] == "succeeded")
+        wait_for_completion(third["id"])
         assert supervisor.poll() is None
         assert not (local.temp_dir / first["id"]).exists()
         assert not (local.temp_dir / second["id"]).exists()
         assert not (local.temp_dir / third["id"]).exists()
     finally:
-        supervisor.terminate()
-        try:
-            supervisor.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            supervisor.kill()
-            supervisor.wait(timeout=2)
+        # Popen.terminate() is a hard kill on Windows: it cannot ask the worker
+        # to reap its executor, especially when an earlier assertion failed.
+        assert worker_module._terminate_process_tree(supervisor.pid) == []
+        supervisor.wait(timeout=5)
         for pid in tracked:
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline and psutil.pid_exists(pid):
