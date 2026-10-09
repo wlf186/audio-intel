@@ -199,3 +199,10 @@ ASR file objects live only in page memory: tab switches retain them, successful 
 Waveforms are fetched only for visible players. The browser limits the shared cache to 64 memory entries, clears it on logout and adds no persistent storage. Loading or failing to fetch a waveform does not block audio playback or download. Result-detail caching remains separate from the summary-only job list and SSE.
 
 Library reference ranges use `audio-intel:tts-reference-ranges:v1` localStorage, keyed by sample ID, surviving refresh, navigation and logout. Applying stores the interval; cancelling does not. Automatic selection and Restore defaults clear only the current sample’s saved interval. These browser preferences never become defaults for independent API clients. Sample waveforms use the authenticated sample endpoint, the same bounded peak computation and reader leases, and are removed with the sample.
+
+
+## Video transcription and reading exports
+
+Video uploads use durable sequential offsets and chunk hashes (schema v12), with one append-only input file and same-filesystem rename on submission. Unfinished upload reservations reduce shared disk admission; they expire independently of completed tasks. `purpose=video_transcription` runs in the existing ASR supervisor/executor, preserving cancellation and queue ownership. Video PTS and audio PTS share a time origin. Sampled frames stay in memory; only representative JPEGs are retained, alongside one normalized playback WAV. Manual scene revisions and speaker edits share the task's edit lock and reader lease. Full scene/result data never enters global job summaries or SSE.
+
+Concise PDF is a protected, on-demand API export, with a bounded in-memory cache and one renderer. It uses the same paragraph/scene mapping as the browser's illustrated reading view. See [video contracts, resource limits and storage lifetime](VIDEO_TRANSCRIPTION.md).

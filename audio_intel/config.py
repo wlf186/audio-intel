@@ -45,6 +45,10 @@ class Settings:
         item.strip() for item in os.getenv("AUDIO_INTEL_SERVICES", "asr,tts").split(",") if item.strip()
     )
     max_upload_bytes: int = int(os.getenv("AUDIO_INTEL_MAX_UPLOAD_BYTES", str(4 * 1024**3)))
+    max_video_upload_bytes: int = int(os.getenv("AUDIO_INTEL_MAX_VIDEO_UPLOAD_BYTES", str(25 * 1024**3)))
+    video_upload_chunk_bytes: int = 32 * 1024**2
+    video_upload_idle_seconds: int = 24 * 3600
+    video_upload_lifetime_seconds: int = 7 * 24 * 3600
     max_tts_chars: int = int(os.getenv("AUDIO_INTEL_MAX_TTS_CHARS", "50000"))
     max_document_bytes: int = int(os.getenv("AUDIO_INTEL_MAX_DOCUMENT_BYTES", str(100 * 1024**2)))
     max_document_chars: int = int(os.getenv("AUDIO_INTEL_MAX_DOCUMENT_CHARS", "5000000"))

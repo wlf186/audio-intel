@@ -418,6 +418,16 @@ The stream immediately emits `event: job`, continues on changes, and closes at a
 </details>
 
 
+## 视频续传与简洁 PDF / Video uploads and concise PDF
+
+音频默认 4 GiB，视频通过独立接口默认 25 GiB。读取 `asr.audio_formats`、`asr.video` 获取格式、大小和分片限制。新建视频上传：`POST /api/v1/asr/video-uploads`（Idempotency-Key，JSON name/size_bytes）；顺序 PATCH `/api/v1/asr/video-uploads/{upload_id}`（Upload-Offset、Upload-Checksum，原始分片）；完成后 POST `/api/v1/asr/video-jobs`（独立 Idempotency-Key，JSON upload_id 与转写设置）。首次任务提交 202，幂等重放 200，冲突 409，队列/磁盘限制 429。
+
+Audio defaults to 4 GiB; the video API defaults to 25 GiB. Capabilities publish formats, chunk size and limits. Create a resumable upload, append exact-size checksummed chunks, then submit the complete upload to the shared ASR queue. GET the upload to verify persisted hashes before resuming. Unfinished uploads expire after 24 idle hours or 7 days total; DELETE immediately discards them. Submitted uploads follow task deletion.
+
+`GET /api/v1/jobs/{job_id}/video-scenes` 返回画面与合并发言；PATCH 同路径携带 revision，支持 merge_next / split / boundary / frame / restore；冲突后重新读取。`GET /api/v1/jobs/{job_id}/transcript.pdf` 对已完成音频返回简洁 PDF，对视频返回图文 PDF；同说话人连续发言合并时间与原文，保留口头语。原始逐句结果不丢弃。已有音频 JSON/TXT/SRT/VTT 保持可用。PDF 与截图预览均无需云服务。
+
+GET video-scenes for images/paragraphs; PATCH with revision for edits, reloading on conflicts. Concise PDF preserves words and combines adjacent same-speaker speech and time ranges; video adds representative images. Detailed audio formats remain available. PDF generation is bounded and memory-cached; previews do not write files. Busy operations return 429. Images are heuristic presentation representatives, not codec I-frames; brief or complex slide changes may require manual correction.
+
 ## 声纹人员与样本名称 / Voiceprint identities and sample names
 
 ### 转写任务中的说话人 / Speakers within transcription jobs
@@ -1117,6 +1127,10 @@ def _capabilities_example() -> dict[str, Any]:
     return {
         "services": ["asr", "tts"], "offline": True,
         "asr": {
+            "audio_formats": ["wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff"], "concise_pdf": True,
+            "video": {"supported": True, "formats": ["mp4", "m4v", "mov", "mkv", "webm", "avi", "mpeg", "mpg", "ts"],
+                      "max_upload_bytes": 26843545600, "chunk_bytes": 33554432, "upload_idle_seconds": 86400,
+                      "upload_lifetime_seconds": 604800, "max_scenes": 2000, "scene_editing": True},
             "model": default_asr["name"], "default_model": default_asr["id"], "models": asr_entries,
             "diarization": "CAM++ single-active-speaker", "speaker_count": {"min": 1, "max": 15, "default": "auto"},
             "voiceprint_library": True, "languages": ["Auto", "Chinese", "English"], "default_language": "Auto",

@@ -1,4 +1,5 @@
 import {defineConfig} from '@playwright/test'
+import {existsSync} from 'node:fs'
 
 export default defineConfig({
  testDir:'./e2e',
@@ -12,6 +13,6 @@ export default defineConfig({
   headless:true,
   viewport:{width:1440,height:900},
   locale:'zh-CN',
-  launchOptions:process.platform==='linux'?{executablePath:'/usr/bin/chromium',args:['--no-sandbox']}:undefined,
+  launchOptions:process.platform==='linux'?{executablePath:existsSync('/usr/bin/chromium')?'/usr/bin/chromium':undefined,args:['--no-sandbox']}:undefined,
  },
 })

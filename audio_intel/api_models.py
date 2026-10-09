@@ -233,7 +233,21 @@ class HotwordLibraryCapability(PublicModel):
     max_term_chars: int = Field(description="单个热词最大字符数 / Maximum hotword-term length")
 
 
+class VideoCapability(PublicModel):
+    supported: bool
+    formats: list[str]
+    max_upload_bytes: int
+    chunk_bytes: int
+    upload_idle_seconds: int
+    upload_lifetime_seconds: int
+    max_scenes: int
+    scene_editing: bool
+
+
 class AsrCapability(PublicModel):
+    audio_formats: list[str]
+    concise_pdf: bool
+    video: VideoCapability
     model: str = Field(description="默认模型显示名称的兼容字段 / Compatibility field containing the default model display name")
     default_model: str = Field(description="省略 model 时使用的规范模型 ID / Canonical model ID used when model is omitted")
     models: list[AsrModelCapability] = Field(description="所有可提交 ASR 模型及逐设备能力 / All submit-capable ASR models and per-device capabilities")
@@ -565,7 +579,27 @@ class TtsGenerationGuardResponse(PublicModel):
     recovered_chunks: int = Field(ge=0, description="重试后通过生成保护的块数；不表示全面音质评估 / Recovered chunks; not a comprehensive audio-quality assessment")
 
 
+class VideoSceneResponse(PublicModel):
+    id: str
+    start: float
+    end: float
+    frame_time: float
+    image: str
+
+
+class VideoAnalysisResponse(PublicModel):
+    contract_version: Literal[1]
+    revision: int
+    duration: float
+    time_origin: float
+    roi: dict[str, float] | None = None
+    detector: str
+    scenes: list[VideoSceneResponse]
+    original_scenes: list[VideoSceneResponse]
+
+
 class JobResultResponse(PublicModel):
+    video: VideoAnalysisResponse | None = Field(None, description="视频画面与原始自动分段快照 / Video sections and original automatic-section snapshot")
     playback_url: str | None = Field(None, description="与 ASR 时间戳一致的受保护 PCM WAV 播放地址；历史任务可能缺失 / Protected PCM WAV playback matching the ASR timeline; may be absent in historical jobs")
     generation_guard: TtsGenerationGuardResponse | None = Field(None, description="仅实际执行保护的 TTS 任务返回；历史缺失不表示检查通过 / Only guarded TTS runs return this; absence does not imply validation")
     reference_start_seconds_used: float | None = Field(None, description="实际起点，原样本相对秒数 / Actual start in seconds relative to the original sample")

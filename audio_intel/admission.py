@@ -51,7 +51,8 @@ class AdmissionController:
 
     def disk_free(self) -> int:
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        return int(shutil.disk_usage(self.data_dir).free)
+        from .video_uploads import remaining_bytes
+        return max(0, int(shutil.disk_usage(self.data_dir).free) - remaining_bytes())
 
     async def reserve(self, kind: str, expected_bytes: int) -> AdmissionDecision:
         async with self._lock:

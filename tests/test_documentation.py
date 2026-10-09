@@ -16,6 +16,7 @@ PUBLIC_DOCS = (
     ROOT / "CONTRIBUTING.md",
     ROOT / "docs" / "API.md",
     ROOT / "docs" / "DOCUMENT_TTS.md",
+    ROOT / "docs" / "VIDEO_TRANSCRIPTION.md",
     ROOT / "docs" / "DOCUMENT_TTS_VALIDATION.md",
     ROOT / "docs" / "ARCHITECTURE.md",
     ROOT / "docs" / "HTTPS.md",
@@ -160,7 +161,7 @@ def test_deployment_docs_keep_full_and_cpu_profile_contracts() -> None:
     assert "complete executor process tree to exit" in architecture
     assert "2.11.0+cu130（full）" in dependencies
     assert "2.11.0+cpu（CPU-only）" in dependencies
-    assert "SQLite schema v11 data" in agents
+    assert "SQLite schema v12 data" in agents
 
 
 def test_api_markdown_examples_use_public_contract_values() -> None:

@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from . import __version__, reference_ranges
 from .document_api import capabilities as document_capabilities
+from .video_api import capabilities as video_capabilities
 from .config import settings
 from .asr_speakers import merge_speakers, persist_speaker_result, speaker_identity, speaker_update_lock
 from .deployment import deployment_metadata
@@ -470,8 +471,8 @@ def public_job(job: dict[str, Any], context: dict[str, Any] | None = None) -> di
     result["processing_as_of"] = as_of
     result["request"] = job.get("request")
     request_data = job.get("request") or {}
-    if request_data.get("purpose") == "tts_document":
-        result["purpose"] = "tts_document"
+    if request_data.get("purpose") in {"tts_document", "video_transcription"}:
+        result["purpose"] = request_data["purpose"]
     result_data = job.get("result") or {}
     compute_device = result_data.get("compute_device") or request_data.get("compute_device") or (
         "gpu" if job.get("kind") == "asr" else "cpu"
@@ -1223,6 +1224,7 @@ def create_app() -> FastAPI:
                 "timestamp_precisions": ["segment", "word_or_character"],
                 "aligner_languages": ALIGNER_LANGUAGES,
                 "exports": ["json", "srt", "vtt", "txt"],
+                **video_capabilities(settings),
                 "compute_devices": default_capability["compute_devices"],
                 "single_task_acceleration": {"supported": True, "default": SINGLE_TASK_ACCELERATION_DEFAULT},
                 "hotword_library": {
@@ -2812,6 +2814,8 @@ def create_app() -> FastAPI:
     from .document_api import register as register_document_routes
     import sys
     register_document_routes(app, sys.modules[__name__])
+    from .video_api import register as register_video_routes
+    register_video_routes(app, sys.modules[__name__])
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa(full_path: str) -> Response:

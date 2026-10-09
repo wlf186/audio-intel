@@ -43,3 +43,10 @@ Voice cloning must only be used with audio and identities for which the operator
 This is responsible-use guidance, not an additional restriction on Apache-licensed code.
 
 The project is independent and unofficial. See [BRAND_NOTICE.md](BRAND_NOTICE.md) for its status, third-party-rights statement, and the boundary between the project name and the Apache-2.0 grant.
+
+## Concise transcript exports
+
+- **ReportLab 4.5.1** ([upstream](https://www.reportlab.com/opensource/)): BSD license; installed only in the API environment.
+- **Pillow 12.3.0** ([upstream](https://python-pillow.github.io/)): HPND license; image processing in API/ASR environments.
+- **@noble/hashes 2.0.1** ([upstream](https://github.com/paulmillr/noble-hashes)): MIT license; incremental-upload SHA-256 in a browser worker.
+- **Noto Sans SC** ([Noto CJK Sans2.004](https://github.com/notofonts/noto-cjk/tree/Sans2.004)): SIL Open Font License 1.1. Bundled regular font and license are in `audio_intel/assets/fonts/`. The source is `Sans/Variable/TTF/Subset/NotoSansSC-VF.ttf`, SHA-256 `d68bafcb48a2707749396aa12bbbd833cb70401f3a9a689fd2902c7e0d295964`, instantiated at `wght=400` using fontTools 4.61.1. Distributed static font SHA-256: `663d572086f23637ffb5b4bbf8fc3068114bfc6e2befcd20bf320587c3701ab4`. Fonts are embedded/subsetted in PDFs; no font or model download occurs at runtime.

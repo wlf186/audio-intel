@@ -1,0 +1,446 @@
+"""Authenticated presentation uploads, editing and concise PDF downloads."""
+from __future__ import annotations
+
+import asyncio
+import copy
+import hashlib
+import io
+import json
+import logging
+import threading
+import os
+import uuid
+from contextlib import asynccontextmanager, contextmanager
+from pathlib import Path
+from typing import Any, Literal
+from urllib.parse import quote
+
+from fastapi import Depends, Header, HTTPException, Query, Request, Response
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from starlette.concurrency import run_in_threadpool
+
+from . import db, video_uploads as store
+from .api_models import JobResponse, JobResultResponse, VideoSceneResponse
+from .asr_speakers import speaker_update_lock
+from .document_download import reader_lease
+from .transcript import scene_transcripts
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+
+
+class VideoUploadRequest(StrictModel):
+    name: str = Field(min_length=1, max_length=255, description='原始视频文件名 / Original video filename')
+    size_bytes: int = Field(gt=0, description='文件总字节数 / Total file bytes')
+
+
+class UploadChunk(BaseModel):
+    offset: int
+    size_bytes: int
+    sha256: str
+
+
+class VideoUploadResponse(BaseModel):
+    id: str
+    name: str
+    size_bytes: int
+    offset: int
+    expires_at: float
+    job_id: str | None
+    chunk_bytes: int
+    chunks: list[UploadChunk]
+
+
+class SceneParagraph(BaseModel):
+    speaker: str
+    speaker_label: str | None
+    start: float
+    end: float
+    text: str
+    segment_ids: list[int]
+
+
+class ReadingScene(VideoSceneResponse):
+    paragraphs: list[SceneParagraph]
+
+
+class VideoScenesResponse(BaseModel):
+    revision: int
+    scenes: list[ReadingScene]
+
+
+class VideoRegion(StrictModel):
+    x: float = Field(ge=0, lt=1)
+    y: float = Field(ge=0, lt=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+    @model_validator(mode='after')
+    def bounds(self):
+        if self.x + self.width > 1.000001 or self.y + self.height > 1.000001:
+            raise ValueError('Region must be inside the picture')
+        return self
+
+
+class VideoJobRequest(StrictModel):
+    upload_id: str = Field(pattern=r'^[a-f0-9]{32}$')
+    model: str = 'qwen3-asr-0.6b'
+    language: str = 'Auto'
+    speaker_count: int | None = Field(None, ge=1, le=15)
+    diarize: bool = True
+    align: bool = True
+    context: str = Field('', max_length=8000)
+    hotword_list_ids: list[str] = Field(default_factory=list, max_length=8)
+    compute_device: Literal['cpu', 'gpu'] | None = None
+    use_voiceprint_library: bool = True
+    accelerate_single_task: bool = True
+    video_roi: VideoRegion | None = None
+
+
+class SceneEdit(StrictModel):
+    revision: int = Field(ge=1)
+    action: Literal['merge_next', 'split', 'boundary', 'frame', 'restore']
+    scene_id: str | None = None
+    time: float | None = Field(None, ge=0)
+
+
+def capabilities(config: Any) -> dict[str, Any]:
+    return {'audio_formats': store.AUDIO_FORMATS, 'concise_pdf': True,
+            'video': {'supported': True, 'formats': store.VIDEO_FORMATS,
+                      'max_upload_bytes': config.max_video_upload_bytes,
+                      'chunk_bytes': config.video_upload_chunk_bytes,
+                      'upload_idle_seconds': config.video_upload_idle_seconds,
+                      'upload_lifetime_seconds': config.video_upload_lifetime_seconds,
+                      'max_scenes': 2000, 'scene_editing': True}}
+
+
+def register(app: Any, api: Any) -> None:
+    config = api.settings
+    auth = Depends(api.require_api_key)
+    locks: dict[str, tuple[asyncio.Lock, int]] = {}
+    preview_slots = threading.BoundedSemaphore(2)
+
+    @contextmanager
+    def task_reader(job_id: str):
+        try:
+            with reader_lease(job_id):
+                yield
+        except FileNotFoundError as exc:
+            raise HTTPException(404, 'Task or frame is no longer available') from exc
+
+
+    @contextmanager
+    def picture_slot():
+        if not preview_slots.acquire(blocking=False):
+            raise HTTPException(429, 'Frame decoder is busy; retry shortly', headers={'Retry-After': '2'})
+        try:
+            yield
+        finally:
+            preview_slots.release()
+
+    tags = [api.ASR_TAG]
+    errors = {401: {'description': '需要鉴权 / Authentication required'},
+              409: {'description': '状态、偏移或修订冲突 / State, offset or revision conflict'},
+              410: {'description': '上传已过期 / Upload expired'},
+              413: {'description': '超过大小上限 / Size limit exceeded'},
+              429: {'description': '资源不足，按 Retry-After 重试 / Resource limit; honor Retry-After'}}
+
+    @asynccontextmanager
+    async def upload_lock(key: str):
+        lock, users = locks.get(key, (asyncio.Lock(), 0))
+        locks[key] = (lock, users + 1)
+        try:
+            async with lock:
+                yield
+        finally:
+            _, users = locks[key]
+            if users == 1:
+                del locks[key]
+            else:
+                locks[key] = (lock, users - 1)
+
+    async def cleanup() -> None:
+        while True:
+            try:
+                for upload_id in await run_in_threadpool(store.expired_ids):
+                    if upload_id not in locks:
+                        async with upload_lock(upload_id):
+                            await run_in_threadpool(store.discard, config, upload_id, expired_only=True)
+            except Exception:
+                logging.getLogger(__name__).exception('Expired video upload cleanup failed')
+            await asyncio.sleep(900)
+
+    prior = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(application: Any):
+        async with prior(application):
+            task = asyncio.create_task(cleanup())
+            try:
+                yield
+            finally:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+    app.router.lifespan_context = lifespan
+
+    @app.post('/api/v1/asr/video-uploads', tags=tags, status_code=201, response_model=VideoUploadResponse, responses=errors,
+              description='创建 32 MiB 顺序分片上传，最大 25 GiB（以能力接口为准）。需 Idempotency-Key；24 小时未活动或满 7 天过期。\n\n**English:** Create a sequential 32 MiB upload, up to 25 GiB by default; capabilities are authoritative. Requires Idempotency-Key. Expires after 24 idle hours or 7 days total.',
+              summary='创建可续传视频上传 / Create resumable video upload')
+    async def create_upload(body: VideoUploadRequest, idempotency_key: str = Header(..., alias='Idempotency-Key'), _: None = auth) -> dict:
+        api.ensure_service('asr')
+        key = api.validate_idempotency_key(idempotency_key)
+        async with app.state.admission._lock:
+            row = await run_in_threadpool(store.create, config, body.name, body.size_bytes, key, app.state.admission._bytes)
+        return await run_in_threadpool(store.public, row, config)
+
+    @app.get('/api/v1/asr/video-uploads/{upload_id}', tags=tags, response_model=VideoUploadResponse, responses=errors,
+             description='返回已确认偏移和有序 SHA-256 校验表，用于重新选择文件后的完整性检查。\n\n**English:** Return the durable offset and ordered SHA-256 manifest for verifying a reselected local file.',
+              summary='读取续传偏移和校验值 / Read resume offset and checksums')
+    async def upload_status(upload_id: str, _: None = auth) -> dict:
+        async with upload_lock(upload_id):
+            return await run_in_threadpool(store.public, await run_in_threadpool(store.get, upload_id), config)
+
+    @app.head('/api/v1/asr/video-uploads/{upload_id}', tags=tags, responses=errors,
+              description='通过 Upload-Offset、Upload-Length、Upload-Expires 响应头返回状态。\n\n**English:** Read Upload-Offset, Upload-Length and Upload-Expires response headers.',
+              summary='读取已确认上传偏移 / Read confirmed upload offset')
+    async def upload_head(upload_id: str, _: None = auth) -> Response:
+        row = await run_in_threadpool(store.get, upload_id)
+        return Response(headers={'Upload-Offset': str(row['offset']), 'Upload-Length': str(row['size_bytes']), 'Upload-Expires': str(row['expires_at'])})
+
+    @app.patch('/api/v1/asr/video-uploads/{upload_id}', tags=tags, response_model=VideoUploadResponse, responses=errors,
+               description='二进制请求体，需 Upload-Offset 与十六进制 SHA-256 Upload-Checksum。每片大小等于 chunk_bytes，末片为剩余字节。校验通过并 fsync 后确认偏移。\n\n**English:** Send binary bytes with Upload-Offset and hexadecimal SHA-256 Upload-Checksum. Use exactly chunk_bytes except for the final remainder. Acknowledged offsets are checksum-verified and fsynced; identical replay does not rewrite bytes.',
+              summary='追加校验分片 / Append a checksummed chunk',
+               openapi_extra={'requestBody': {'required': True, 'content': {'application/octet-stream': {'schema': {'type': 'string', 'format': 'binary'}}}}})
+    async def append_upload(upload_id: str, request: Request, upload_offset: int = Header(..., ge=0),
+                            upload_checksum: str = Header(..., pattern=r'^[a-fA-F0-9]{64}$'), _: None = auth) -> dict:
+        async with upload_lock(upload_id):
+            row = await run_in_threadpool(store.get, upload_id)
+            if row['job_id']:
+                raise HTTPException(409, 'Upload already submitted')
+            expected = min(config.video_upload_chunk_bytes, row['size_bytes'] - upload_offset)
+            if upload_offset != row['offset']:
+                previous = await run_in_threadpool(store.public, row, config)
+                if any(c['offset'] == upload_offset and c['sha256'] == upload_checksum.lower() for c in previous['chunks']):
+                    return previous
+                raise HTTPException(409, 'Upload offset mismatch', headers={'Upload-Offset': str(row['offset'])})
+            if expected <= 0:
+                raise HTTPException(409, 'Upload already complete')
+            length = request.headers.get('content-length')
+            if length is not None and (not length.isdigit() or int(length) != expected):
+                raise HTTPException(413, 'Chunk size does not match the expected size')
+            async with app.state.admission._lock:
+                if app.state.admission._active >= app.state.admission.max_concurrent:
+                    raise HTTPException(429, 'Too many active uploads', headers={'Retry-After': '1'})
+                app.state.admission._active += 1
+            output = None
+            acknowledged = False
+            try:
+                output = await run_in_threadpool(store.prepare_file, config, row)
+                digest = hashlib.sha256()
+                size = 0
+                async for block in request.stream():
+                    size += len(block)
+                    if size > expected:
+                        raise HTTPException(413, 'Chunk exceeds expected size')
+                    digest.update(block)
+                    await run_in_threadpool(output.write, block)
+                if size != expected or digest.hexdigest() != upload_checksum.lower():
+                    raise HTTPException(422, 'Chunk length or checksum mismatch / 分片大小或校验值不匹配')
+                await run_in_threadpool(output.flush)
+                await run_in_threadpool(os.fsync, output.fileno())
+                store.acknowledge(config, row, size, digest.hexdigest())
+                acknowledged = True
+            finally:
+                if output is not None:
+                    # Synchronous finalization also runs when the client cancels.
+                    if not acknowledged:
+                        output.truncate(row['offset'])
+                    output.close()
+                async with app.state.admission._lock:
+                    app.state.admission._active -= 1
+            return await run_in_threadpool(store.public, await run_in_threadpool(store.get, upload_id), config)
+
+    @app.delete('/api/v1/asr/video-uploads/{upload_id}', tags=tags, status_code=204, responses=errors,
+                description='立即清理上传文件并释放预留空间。已提交的上传须通过任务删除接口清理。\n\n**English:** Immediately remove unsubmitted bytes and release their reservation. Submitted uploads belong to tasks and require task deletion.',
+              summary='取消并清理未提交上传 / Discard an unsubmitted upload')
+    async def discard_upload(upload_id: str, _: None = auth) -> Response:
+        async with upload_lock(upload_id):
+            await run_in_threadpool(store.discard, config, upload_id)
+        return Response(status_code=204)
+
+    @app.post('/api/v1/asr/video-jobs', tags=tags, status_code=202, response_model=JobResponse, responses={**errors, 200: {'model': JobResponse, 'description': '幂等重放 / Idempotent replay'}},
+              description='上传完整后加入共享 ASR 队列。首次 202，同 key 同请求 200，冲突 409，队列或磁盘限制 429。ROI 为 0–1 归一化区域。\n\n**English:** Enqueue a complete upload in the shared ASR queue. Requires Idempotency-Key: first accept 202, identical replay 200, conflict 409, admission limit 429. ROI uses normalized 0–1 coordinates.',
+              summary='提交视频转写与画面分析 / Submit video transcription and frame analysis')
+    async def submit_video(body: VideoJobRequest, response: Response, idempotency_key: str = Header(..., alias='Idempotency-Key'), _: None = auth) -> dict:
+        api.ensure_service('asr')
+        key = api.validate_idempotency_key(idempotency_key)
+        caller = body.model_dump(mode='json')
+        fingerprint = api.request_fingerprint(caller)
+        async with upload_lock(body.upload_id):
+            old = await run_in_threadpool(db.find_idempotent_job, 'submit_video', api.idempotency_key_hash(key))
+            if old:
+                if old['request'].get('video_caller') != caller:
+                    raise HTTPException(409, 'Idempotency-Key conflict')
+                response.status_code = 200
+                response.headers['Idempotency-Replayed'] = 'true'
+                return api.public_job(old)
+            row = await run_in_threadpool(store.get, body.upload_id)
+            if row['job_id'] or row['offset'] != row['size_bytes']:
+                raise HTTPException(409, 'Upload is incomplete or already submitted')
+            selected, device, device_name = await run_in_threadpool(api.validate_asr_model_device, body.model, body.compute_device or config.default_compute_device)
+            language = api.validate_asr_language(body.language)
+            hotwords = await run_in_threadpool(api.hotword_request_data, body.context, ','.join(body.hotword_list_ids), None)
+            from .video_frames import probe
+            partial, target = store.paths(config, row)
+            try:
+                await run_in_threadpool(probe, partial if partial.exists() else target)
+            except Exception as exc:
+                raise HTTPException(422, 'Video needs decodable audio and picture / 视频需包含可解码的音轨和画面') from exc
+            decision = await app.state.admission.reserve('asr', 0)
+            if not decision.accepted:
+                raise api.admission_problem(decision, 'asr')
+            try:
+                payload = {**caller, **hotwords, 'video_caller': caller, 'purpose': 'video_transcription',
+                           'model': selected['public_id'], 'language': language, 'compute_device': device,
+                           'compute_device_name': device_name, 'export_formats': []}
+                job, replayed = await run_in_threadpool(store.complete, config, row, payload, api.idempotency_key_hash(key), fingerprint)
+                if replayed:
+                    response.status_code = 200
+                return api.public_job(job)
+            finally:
+                await app.state.admission.release('asr', decision.reserved_bytes)
+
+    def completed(job_id: str, video: bool = False) -> dict:
+        job = db.get_job(job_id)
+        if job is None:
+            raise HTTPException(404, 'Task not found')
+        if job['kind'] != 'asr' or job['state'] != 'succeeded' or not job.get('result'):
+            raise HTTPException(409, 'A completed transcription is required')
+        if video and not job['result'].get('video'):
+            raise HTTPException(409, 'This task has no presentation analysis')
+        return job
+
+    @app.head('/api/v1/jobs/{job_id}/transcript.pdf', tags=tags, responses=errors)
+    @app.get('/api/v1/jobs/{job_id}/transcript.pdf', tags=tags, responses={**errors, 200: {'content': {'application/pdf': {'schema': {'type': 'string', 'format': 'binary'}}}}},
+             description='合并连续同说话人发言及时间范围，保留原文；视频按画面组织图文。仅已完成 ASR，内存缓存，繁忙时 429。\n\n**English:** Merge adjacent speech from the same speaker and its time range, preserving words. Videos include images and matching discussion. Completed ASR only; memory cached, 429 when busy.',
+              summary='下载简洁转写 PDF / Download concise transcript PDF')
+    def pdf(job_id: str, _: None = auth) -> Response:
+        from .transcript_pdf import download
+        try:
+            with speaker_update_lock(job_id), task_reader(job_id):
+                job = completed(job_id)
+                payload = download(job['display_name'], job['result'], config.jobs_dir / job_id / 'output')
+        except ValueError as exc:
+            raise HTTPException(413, str(exc)) from exc
+        except (BlockingIOError, RuntimeError) as exc:
+            raise HTTPException(429, str(exc), headers={'Retry-After': '2'}) from exc
+        filename = quote(Path(job['display_name']).stem + '-transcript.pdf')
+        return Response(payload, media_type='application/pdf', headers={'Content-Disposition': f"attachment; filename*=UTF-8''{filename}", 'Cache-Control': 'no-store'})
+
+    @app.get('/api/v1/jobs/{job_id}/video-scenes', tags=tags, response_model=VideoScenesResponse, responses=errors,
+             description='按画面返回可阅读段落及当前修订号，完整原始分段仍在任务结果中。\n\n**English:** Read illustrated paragraphs and the current revision; original detailed segments remain in job results.',
+              summary='读取画面与合并发言 / Read presentation sections and paragraphs')
+    def scenes(job_id: str, _: None = auth) -> dict:
+        job = completed(job_id, True)
+        return {'revision': job['result']['video']['revision'], 'scenes': scene_transcripts(job['result'])}
+
+    @app.get('/api/v1/jobs/{job_id}/video-frames/{name}', tags=tags, responses=errors,
+             description='只允许读取当前或自动分段中引用的 JPEG。\n\n**English:** Return a JPEG referenced by current or original automatic sections only.',
+              summary='读取已保存关键帧 / Read a saved presentation frame')
+    def frame_image(job_id: str, name: str, _: None = auth) -> Response:
+        with speaker_update_lock(job_id), task_reader(job_id):
+            job = completed(job_id, True)
+            video = job['result']['video']
+            allowed = {s['image'] for s in video['scenes'] + video['original_scenes']}
+            if name not in allowed or Path(name).name != name:
+                raise HTTPException(404, 'Frame not found')
+            path = config.jobs_dir / job_id / 'output/frames' / name
+            return Response(path.read_bytes(), media_type='image/jpeg', headers={'Cache-Control': 'private, max-age=300'})
+
+    @app.get('/api/v1/jobs/{job_id}/video-preview', tags=tags, responses=errors,
+             description='按时间解码画面到内存，不写入磁盘。解码并发受限，繁忙时返回 429。\n\n**English:** Decode a timestamp to an in-memory image without disk writes. Bounded decoder concurrency returns 429 when busy.',
+              summary='预览指定时刻的画面 / Preview a frame at a timestamp')
+    def preview(job_id: str, time: float = Query(..., ge=0, allow_inf_nan=False), _: None = auth) -> Response:
+        from .video_frames import picture_at
+        with picture_slot(), speaker_update_lock(job_id), task_reader(job_id):
+            job = completed(job_id, True)
+            video = job['result']['video']
+            if time >= video['duration']:
+                raise HTTPException(422, 'Timestamp is outside the video')
+            picture = picture_at(Path(job['request']['input_path']), time, video.get('roi'), video.get('time_origin', 0))
+            buffer = io.BytesIO()
+            picture.save(buffer, format='JPEG', quality=85)
+            return Response(buffer.getvalue(), media_type='image/jpeg', headers={'Cache-Control': 'no-store'})
+
+    @app.patch('/api/v1/jobs/{job_id}/video-scenes', tags=tags, response_model=JobResultResponse, responses=errors,
+               description='携带 revision 修订号进行合并、拆分、边界/截图调整或恢复。冲突返回 409，请重新读取。\n\n**English:** Submit revision with merge_next, split, boundary, frame or restore. Stale revision returns 409; reload before retrying.',
+              summary='修正视频分段 / Edit presentation sections')
+    def edit(job_id: str, body: SceneEdit, _: None = auth) -> dict:
+        from .video_frames import picture_at, save_picture
+        with picture_slot(), speaker_update_lock(job_id), task_reader(job_id):
+            job = completed(job_id, True)
+            result = copy.deepcopy(job['result'])
+            video = result['video']
+            if video['revision'] != body.revision:
+                raise HTTPException(409, 'Sections changed; reload before editing / 分段已更新，请重新加载')
+            values = video['scenes']
+            index = next((i for i, s in enumerate(values) if s['id'] == body.scene_id), -1)
+            if body.action != 'restore' and index < 0:
+                raise HTTPException(404, 'Scene not found')
+            if body.action == 'restore':
+                video['scenes'] = copy.deepcopy(video['original_scenes'])
+                values = video['scenes']
+            elif body.action == 'merge_next':
+                if index + 1 >= len(values):
+                    raise HTTPException(422, 'No next section')
+                values[index]['end'] = values[index + 1]['end']
+                del values[index + 1]
+            elif body.action in {'split', 'boundary', 'frame'}:
+                moment = body.time
+                scene = values[index]
+                lower = scene['start']
+                upper = values[index + 1]['end'] if body.action == 'boundary' and index + 1 < len(values) else scene['end']
+                if moment is None or not (lower <= moment < upper if body.action == 'frame' else lower < moment < upper):
+                    raise HTTPException(422, 'Timestamp must be inside the section(s)')
+                if body.action == 'split':
+                    if len(values) >= 2000:
+                        raise HTTPException(422, 'Maximum 2000 sections')
+                    other = {**scene, 'id': 'scene_' + uuid.uuid4().hex, 'start': moment, 'frame_time': -1}
+                    scene['end'] = moment
+                    values.insert(index + 1, other)
+                elif body.action == 'boundary':
+                    if index + 1 >= len(values):
+                        raise HTTPException(422, 'The final boundary cannot be moved')
+                    scene['end'] = moment
+                    values[index + 1]['start'] = moment
+                else:
+                    scene['frame_time'] = moment
+            folder = config.jobs_dir / job_id / 'output/frames'
+            before = {p.name for p in folder.glob('*.jpg')}
+            try:
+                for i, scene in enumerate(values):
+                    replace = not scene['start'] <= scene['frame_time'] < scene['end'] or body.action == 'frame' and i == index
+                    if replace:
+                        moment = body.time if body.action == 'frame' and i == index else (scene['start'] + scene['end']) / 2
+                        picture = picture_at(Path(job['request']['input_path']), moment, video.get('roi'), video.get('time_origin', 0))
+                        scene.update(image=save_picture(picture, folder), frame_time=moment)
+                video['revision'] += 1
+                with db.connect() as connection:
+                    changed = connection.execute("UPDATE jobs SET result_json=?,updated_at=? WHERE id=? AND state='succeeded' AND updated_at=?",
+                        (json.dumps(result, ensure_ascii=False), db.utcnow(), job_id, job['updated_at']))
+                    if changed.rowcount != 1:
+                        raise HTTPException(409, 'Task changed; reload before editing')
+            except BaseException:
+                for path in folder.glob('*.jpg'):
+                    if path.name not in before:
+                        path.unlink(missing_ok=True)
+                raise
+            retained = {s['image'] for s in values + video['original_scenes']}
+            for path in folder.glob('*.jpg'):
+                if path.name not in retained:
+                    path.unlink(missing_ok=True)
+            return result

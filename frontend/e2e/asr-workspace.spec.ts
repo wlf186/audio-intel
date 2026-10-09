@@ -25,7 +25,7 @@ async function fixture(page:Page){
   if(route.request().method()!=='GET')throw new Error(`Unexpected mutation: ${path}`)
   return route.continue()
  })
- await page.goto('/#asr');await expect(page.getByRole('tab',{name:'新建转写',exact:true})).toHaveAttribute('aria-selected','true')
+ await page.goto('/#asr');await expect(page.getByRole('tab',{name:'新建音频转写',exact:true})).toHaveAttribute('aria-selected','true')
  return {state,errors}
 }
 for(const width of [1440,1280,1024,390,720])test(`ASR fixed workspace navigation and reading at ${width}px`,async({page})=>{
@@ -43,17 +43,17 @@ for(const width of [1440,1280,1024,390,720])test(`ASR fixed workspace navigation
  const after=await tabs.boundingBox();expect(Math.abs(after!.x-before!.x)).toBeLessThanOrEqual(1);expect(Math.abs(after!.y-before!.y)).toBeLessThanOrEqual(1)
  await page.getByRole('button',{name:'播放',exact:true}).click()
  await expect.poll(()=>page.locator('.result-panel audio').evaluate((e:HTMLAudioElement)=>e.currentTime)).toBeGreaterThan(.1)
- await page.getByRole('tab',{name:'新建转写',exact:true}).click()
+ await page.getByRole('tab',{name:'新建音频转写',exact:true}).click()
  await expect.poll(()=>page.locator('.result-panel audio').evaluate((e:HTMLAudioElement)=>e.paused)).toBe(true)
  await expect(page.locator('.asr-file-info')).toContainText('草稿.wav')
  if(width===1440||width===390)await page.screenshot({path:`/tmp/asr-create-${width}.png`})
  await showAsrResults(page)
  await page.locator('.segments').evaluate(e=>e.scrollTop=180)
- await page.getByRole('tab',{name:'新建转写',exact:true}).click();await showAsrResults(page)
+ await page.getByRole('tab',{name:'新建音频转写',exact:true}).click();await showAsrResults(page)
  await expect.poll(()=>page.locator('.segments').evaluate(e=>e.scrollTop)).toBeGreaterThanOrEqual(179)
  await page.locator('.transcript-tools input').fill('第 220 条')
  await expect(page.locator('.segments article')).toHaveCount(1)
- await page.getByRole('tab',{name:'新建转写',exact:true}).click();await showAsrResults(page)
+ await page.getByRole('tab',{name:'新建音频转写',exact:true}).click();await showAsrResults(page)
  await expect(page.locator('.transcript-tools input')).toHaveValue('第 220 条')
  await page.locator('.transcript-tools input').fill('');await expect(page.locator('.segments article')).toHaveCount(40)
  const seek=page.locator('.wave-area canvas');await seek.focus();await page.keyboard.press('End')
@@ -62,7 +62,7 @@ for(const width of [1440,1280,1024,390,720])test(`ASR fixed workspace navigation
  if(width===1440||width===390){await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`/tmp/asr-results-${width}.png`})}
  await page.locator('.language-switcher select:visible').first().selectOption('en-US')
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
- await page.getByRole('tab',{name:'Tasks & results',exact:true}).focus();await page.keyboard.press('Home');await expect(page.getByRole('tab',{name:'New transcription',exact:true})).toHaveAttribute('aria-selected','true')
+ await page.getByRole('tab',{name:'Tasks & results',exact:true}).focus();await page.keyboard.press('Home');await expect(page.getByRole('tab',{name:'New audio transcription',exact:true})).toHaveAttribute('aria-selected','true')
  expect(errors).toEqual([])
 })
 test('ASR submitted task stays selected through status updates and another completion',async({page})=>{
@@ -70,7 +70,7 @@ test('ASR submitted task stays selected through status updates and another compl
  const {state,errors}=await fixture(page)
  await page.locator('input[type=file]').setInputFiles({name:'本次.wav',mimeType:'audio/wav',buffer:wave()})
  await page.getByRole('button',{name:'开始转写',exact:true}).click()
- await expect(page.getByRole('tab',{name:'新建转写'})).toHaveAttribute('aria-selected','true')
+ await expect(page.getByRole('tab',{name:'新建音频转写'})).toHaveAttribute('aria-selected','true')
  await page.getByRole('button',{name:'查看本次任务'}).click();await expect(page.locator('.asr-task-status')).toContainText('本次转写.wav')
  state.submitted!.state='running';state.submitted!.stage='transcription';state.submitted!.progress=.5;state.submitted!.updated_at=new Date(Date.now()+1000).toISOString()
  await expect(page.locator('.asr-task-status')).toContainText('50%',{timeout:10000})

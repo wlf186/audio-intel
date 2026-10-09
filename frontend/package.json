@@ -13,6 +13,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@noble/hashes": "2.0.1",
     "i18next": "26.4.0",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",

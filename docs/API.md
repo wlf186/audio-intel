@@ -469,3 +469,17 @@ curl --fail-with-body -sS "${AUTH[@]}" "$BASE_URL/api/v1/jobs/$JOB_ID/result" \
 ```
 
 对需要裁剪的参考音频，默认和手动选择均校验对齐时间及文本映射；无效对齐只重新计算一次，仍无效则明确失败。默认最多 15 秒、手动 3–30 秒不变；默认短样本不受手动区间的 3 秒下限影响。不会自动修改历史音频或参考转写。
+
+## Video transcription and concise PDF
+
+See [the bilingual video guide](VIDEO_TRANSCRIPTION.md) for formats, limits, expiry, browser storage and detector tradeoffs. The original ASR endpoint remains compatible. New video tasks use the same ASR queue with `purpose=video_transcription`; global lists/SSE remain summary-only.
+
+1. `POST /api/v1/asr/video-uploads` with `Idempotency-Key` and JSON `{ "name": "lecture.mp4", "size_bytes": 123456 }` returns an upload ID, `chunk_bytes` and durable `offset` (`201`). Reuse the key after a lost response.
+2. `PATCH /api/v1/asr/video-uploads/{upload_id}` sends a binary chunk with `Upload-Offset` and hexadecimal SHA-256 `Upload-Checksum`. Nonfinal chunks must be exactly `chunk_bytes`. GET returns the ordered checksum manifest; HEAD returns offset/length/expiry headers. Verify local confirmed bytes before resuming.
+3. `POST /api/v1/asr/video-jobs` with its own `Idempotency-Key` and JSON `{ "upload_id": "…", "language": "Auto", "compute_device": "gpu" }` creates a task (`202`), or replays the same task (`200`). Explicit CPU is supported. Optional `video_roi` has normalized `x`, `y`, `width`, `height`. Submission snapshots settings/hotwords; editing a completed task never rewrites the submission. Queue/disk admission uses `429` plus `Retry-After`; conflicts use `409`.
+4. Read `GET /api/v1/jobs/{job_id}/video-scenes` for current `revision` and illustrated paragraphs. Each scene includes `id`, `start`, `end`, `frame_time`, `image`, `paragraphs`. Get JPEGs at `/video-frames/{name}` or preview a moment at `/video-preview?time=12.5`.
+5. `PATCH /api/v1/jobs/{job_id}/video-scenes` accepts `{ "revision": 1, "action": "split", "scene_id": "scene_1", "time": 12.5 }`. Actions: `merge_next`, `split`, `boundary`, `frame`, `restore`; `time` is needed for split/boundary/frame. Restore needs no scene ID. Stale revision returns `409`; reload and reconcile. Original automatic sections remain in `result.video.original_scenes`.
+6. `GET /api/v1/jobs/{job_id}/transcript.pdf` downloads a concise PDF for any completed ASR job, including historical audio jobs. Video adds images. HEAD prepares/validates the same cached export. A busy renderer returns `429`. PDF bytes are not persisted as an artifact. Existing audio JSON/TXT/SRT/VTT exports remain available.
+7. `DELETE /api/v1/asr/video-uploads/{upload_id}` immediately discards an unsubmitted upload (`204`). Submitted uploads follow normal task deletion. Expired uploads return `410` until swept, then `404`.
+
+All routes require the normal Bearer/session authentication and same-origin write rules. Strict JSON bodies reject undeclared fields. Upload SHA-256 confirms transfer integrity, not trust in media contents. The executable [Python example](../scripts/submit_video.py) preserves resumable state across client restarts.

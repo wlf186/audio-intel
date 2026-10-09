@@ -1,8 +1,12 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Download, FileAudio, Pause, Pencil, Play, RotateCcw, Search, UploadCloud, UserPlus, X } from 'lucide-react'
-import { api, HttpError, artifactUrl, formatTime, isUploadCancelled, sourceUrl, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
+import { api, HttpError, size, formatTime, isUploadCancelled, sourceUrl, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
 import type { AsrModelCapability, ComputeDevice, HotwordLibraryCapability, HotwordList, Job, JobDetailResource, JobResult, JobSummary, ResourceState, ResultRevealRequest, Segment, Speaker, VoiceprintPerson } from '../lib/types'
 import './asr.css'
+import {TranscriptExport} from '../components/TranscriptExport'
+import {VideoTranscript} from '../components/VideoTranscript'
+import {VideoRegionPicker} from '../components/VideoRegionPicker'
+import {submitVideo,loadVideoResume,discardVideoUpload,type VideoCapability,type VideoRegion} from '../lib/videoUpload'
 import { ResourceStatePanel } from '../components/ResourceStatePanel'
 import { Waveform } from '../components/Waveform'
 import { JobMini } from '../components/JobMini'
@@ -112,6 +116,8 @@ type Props = {
   defaultComputeDevice: ComputeDevice
   maxSpeakers: number
   maxUploadBytes?: number
+  videoCapability?: VideoCapability
+  audioFormats?: string[]
   asrLanguages?: string[]
   alignerLanguages?: string[]
   asrModels: AsrModelCapability[]
@@ -126,9 +132,9 @@ type Props = {
   onRevealHandled: (token: number) => void
 }
 
-export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
+export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, videoCapability, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const { t, i18n } = useTranslation()
-  const [view, setView] = useState<'create'|'results'>('create')
+  const [view, setView] = useState<'create'|'video'|'results'>('create')
   const [compact, setCompact] = useState(()=>matchMedia('(max-width: 1199px)').matches)
   useEffect(()=>{const media=matchMedia('(max-width: 1199px)');const change=()=>setCompact(media.matches);media.addEventListener('change',change);return()=>media.removeEventListener('change',change)},[])
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -140,7 +146,19 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const [renameError, setRenameError] = useState('')
   const [resultNotice, setResultNotice] = useState('')
   const [resultError, setResultError] = useState('')
-  const [file, setFile] = useState<File>()
+  const [audioFile, setAudioFile] = useState<File>()
+  const [videoFile, setVideoFile] = useState<File>()
+  const [videoRoi,setVideoRoi]=useState<VideoRegion>()
+  const [resume,setResume]=useState(loadVideoResume)
+  const [discardOpen,setDiscardOpen]=useState(false)
+  const [videoReading,setVideoReading]=useState(true)
+  const [videoEditing,setVideoEditing]=useState(false)
+  useEffect(()=>setVideoEditing(false),[selectedJobId])
+  const isVideoTab=view==='video'
+  const file=isVideoTab?videoFile:audioFile
+  const setFile=(next:File|undefined)=>{if(isVideoTab){setVideoFile(next);if(!resume)setVideoRoi(undefined)}else setAudioFile(next)}
+  const formats=isVideoTab?videoCapability?.formats:audioFormats
+  const uploadLimit=isVideoTab?videoCapability?.max_upload_bytes:maxUploadBytes
   const [preferences, setPreferences] = useState<AsrPreferences>(() => loadAsrPreferences(maxSpeakers,defaultComputeDevice))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -178,7 +196,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const resultPanel = useRef<HTMLElement>(null)
   const segmentList = useRef<HTMLDivElement>(null)
   const readingPosition = useRef(0)
-  const selectWorkspace = (next: 'create'|'results') => {
+  const selectWorkspace = (next: 'create'|'video'|'results') => {
     if (view === 'results' && next !== 'results') readingPosition.current = segmentList.current?.scrollTop || 0
     setView(next)
   }
@@ -242,7 +260,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const matchingHotwords = hotwordLists.filter(item=>hotwordListDisplayName(item,t).toLocaleLowerCase().includes(hotwordQuery.trim().toLocaleLowerCase()))
   const selectedHotwordStats = useMemo(() => hotwordStats(hotwordLists, selectedHotwordIds), [hotwordLists, selectedHotwordIds])
   const selectedHotwordIssue = hotwordLimitIssue(selectedHotwordIds.size, selectedHotwordStats, hotwordLimits, t('asr.hotwords.currentSelection'), t)
-  const fileLimitError=file?uploadLimitMessage(file,maxUploadBytes,t,i18n.resolvedLanguage||'zh-CN'):''
+  const fileLimitError=file?uploadLimitMessage(file,uploadLimit,t,i18n.resolvedLanguage||'zh-CN'):''
   const submitLabel=uploadProgress?.phase==='creating'?t('asr.submit.creating'):uploadProgress?.phase==='uploading'&&uploadProgress.percent!==undefined?t('asr.submit.uploading',{percent:uploadProgress.percent}):uploadProgress?t('asr.submit.preparing'):busy?t('common.states.processing'):t('asr.submit.start')
   const hotwordSelectionIssue = (item: HotwordList) => {
     if (selectedHotwordIds.has(item.id)) return ''
@@ -279,6 +297,15 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     if (view === 'results' && jobsReady && !selectedJobId && asrJobs[0]) onSelect(asrJobs[0])
   }, [view, jobsReady, selectedJobId, asrJobs, onSelect])
   useEffect(() => { if (view !== 'results') audio.current?.pause() }, [view])
+  useEffect(()=>()=>uploadController.current?.abort(),[])
+  useEffect(()=>{
+    if(!isVideoTab)return
+    const saved=loadVideoResume();setResume(saved)
+    if(!saved)return
+    const p=saved.params
+    setPreferences(current=>({...current,model:String(p.model||current.model),language:String(p.language||'Auto'),speakerCount:p.speaker_count?String(p.speaker_count):'auto',align:p.align!==false,useVoiceprints:p.use_voiceprint_library!==false,computeDevice:p.compute_device==='cpu'?'cpu':'gpu',accelerateSingleTask:p.accelerate_single_task!==false,hotwordListIds:Array.isArray(p.hotword_list_ids)?p.hotword_list_ids as string[]:[]}))
+    setVideoRoi(p.video_roi as VideoRegion|undefined)
+  },[isVideoTab])
   useLayoutEffect(() => {
     if (view === 'results' && segmentList.current) segmentList.current.scrollTop = readingPosition.current
   }, [view, selected?.id])
@@ -358,7 +385,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       data.set('compute_device', effectiveComputeDevice)
       data.set('accelerate_single_task', String(accelerateSingleTask))
       if (selectedHotwordIds.size) data.set('hotword_list_ids', [...selectedHotwordIds].join(','))
-      const job = await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
+      const job = isVideoTab?await submitVideo(file,{model,language,speaker_count:speakers==='auto'?null:Number(speakers),diarize:true,align,use_voiceprint_library:useVoiceprints,compute_device:effectiveComputeDevice,accelerate_single_task:accelerateSingleTask,hotword_list_ids:[...selectedHotwordIds],video_roi:videoRoi||null},{signal:controller.signal,onProgress:setUploadProgress}):await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
       onJobSubmitted(job)
       setLastSubmitted(job)
       onSelect(job)
@@ -366,9 +393,10 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       setNotice(t('asr.notices.submitted'))
       if (input.current) input.current.value = ''
     } catch (cause) {
-      if(isUploadCancelled(cause))setNotice(t('asr.notices.uploadCancelled'))
+      if(isUploadCancelled(cause))setNotice(t(isVideoTab?'video.paused':'asr.notices.uploadCancelled'))
       else setError((cause as Error).message)
     } finally {
+      setResume(loadVideoResume())
       uploadController.current=undefined
       setUploadProgress(undefined)
       setBusy(false)
@@ -413,7 +441,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     player.currentTime = Math.max(0, Math.min(duration, ratio * duration))
     setCurrentTime(player.currentTime)
   }, [duration])
-  const chooseFile=(next?:File)=>{if(!next)return;setFile(next);setError('');setNotice('')}
+  const chooseFile=(next?:File)=>{if(!next)return;const extension=next.name.split('.').pop()?.toLowerCase();if(formats&&!formats.includes(extension||'')){setError(t('video.unsupportedFormat'));return}setFile(next);setError('');setNotice('')}
   const chooseDropped = (event: React.DragEvent<HTMLButtonElement>) => {
     event.preventDefault()
     const next = event.dataTransfer.files[0]
@@ -519,35 +547,39 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   }
 
   return (
-    <div className="workbench hud-page asr-workspace">
+    <div className={`workbench hud-page asr-workspace${view==='results'?' view-results':''}`}>
       <header className="asr-heading"><h1>{t('asr.title')}</h1></header>
       <div className="asr-tabs" role="tablist" aria-label={t('asr.title')} onKeyDown={event=>{
+        if(busy)return
         const tabs=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role=tab]'))
         const index=tabs.indexOf(document.activeElement as HTMLButtonElement)
-        const next=event.key==='Home'?0:event.key==='End'?1:event.key==='ArrowRight'||event.key==='ArrowLeft'?1-index:-1
+        const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:event.key==='ArrowRight'?(index+1)%tabs.length:event.key==='ArrowLeft'?(index+tabs.length-1)%tabs.length:-1
         if(next<0)return
-        event.preventDefault();tabs[next]?.focus();selectWorkspace(next===0?'create':'results')
+        event.preventDefault();tabs[next]?.focus();selectWorkspace((tabs[next]?.dataset.view||'create') as 'create'|'video'|'results')
       }}>
-        {(['create','results'] as const).map(item=><button key={item} id={`asr-tab-${item}`} role="tab" aria-selected={view===item} aria-controls={`asr-${item}`} tabIndex={view===item?0:-1} onClick={()=>selectWorkspace(item)}>{t(`asr.workspace.${item}`)}</button>)}
+        {(['create',...(videoCapability?.supported?['video' as const]:[]),'results'] as const).map(item=><button key={item} data-view={item} disabled={busy} id={`asr-tab-${item}`} role="tab" aria-selected={view===item} aria-controls={item==='results'?'asr-results':'asr-create'} tabIndex={view===item?0:-1} onClick={()=>selectWorkspace(item)}>{t(`asr.workspace.${item}`)}</button>)}
       </div>
-      <aside className="control-panel asr-create" id="asr-create" role="tabpanel" aria-labelledby="asr-tab-create" hidden={view!=='create'} data-module="AUDIO_INPUT / UP_01">
+      <aside className="control-panel asr-create" id="asr-create" role="tabpanel" aria-labelledby={isVideoTab?'asr-tab-video':'asr-tab-create'} hidden={view==='results'} data-module="AUDIO_INPUT / UP_01">
       <div className="asr-upload">
 
-        <input ref={input} hidden type="file" accept="audio/*,video/*" disabled={busy} onChange={(event) => chooseFile(event.target.files?.[0])} />
+        <input ref={input} hidden type="file" accept={formats?formats.map(item=>'.'+item).join(','):isVideoTab?'video/*':'audio/*'} disabled={busy} onChange={(event) => chooseFile(event.target.files?.[0])} />
         <button className="dropzone" disabled={busy} onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={chooseDropped}>
           <UploadCloud size={44} />
-          <b>{file?.name || t('asr.dropzone.title')}</b>
-          <span>{file ? t('asr.dropzone.reselect') : t('asr.dropzone.formats')}</span>
+          <b>{file?.name || t(isVideoTab?'video.dropzone':'asr.dropzone.title')}</b>
+          <span>{file ? t('asr.dropzone.reselect') : formats?.map(item=>item.toUpperCase()).join(' / ')||t('asr.dropzone.formats')}</span>
         </button>
-        {file?<div className="asr-file-info"><span>{file.name} · {(file.size/1024/1024).toFixed(2)} MB</span><button className="button" disabled={busy} onClick={()=>{setFile(undefined);if(input.current)input.current.value='';setError('')}}>{t('asr.workspace.removeFile')}</button></div>:null}
-        <p>{t('asr.subtitle')}</p>
+        {file?<div className="asr-file-info"><span>{file.name} · {size(file.size,i18n.resolvedLanguage)}</span><button className="button" disabled={busy} onClick={()=>{setFile(undefined);if(input.current)input.current.value='';setError('')}}>{t('asr.workspace.removeFile')}</button></div>:null}
+        <p>{t('video.uploadLimit',{limit:size(uploadLimit||0,i18n.resolvedLanguage)})}</p>
+        <p>{t(isVideoTab?'video.uploadHelp':'asr.subtitle')}</p>
+        {isVideoTab&&resume?<div className="video-resume"><p>{t('video.resumeNotice',{name:resume.name})}</p><button className="button" disabled={busy} onClick={()=>setDiscardOpen(true)}>{t('video.discard')}</button></div>:null}
+        {isVideoTab&&file?<VideoRegionPicker file={file} value={videoRoi} onChange={setVideoRoi} disabled={busy||Boolean(resume)}/>:null}
       </div>
       <section className={`asr-settings${settingsOpen?' expanded':''}`}>
         <button className="asr-settings-toggle" aria-expanded={!compact||settingsOpen} aria-controls="asr-settings-body" onClick={()=>{if(compact)setSettingsOpen(value=>!value)}}>{t('asr.workspace.settings')} · {language==='Auto'?t('common.languages.Auto'):language} · {effectiveComputeDevice.toUpperCase()}</button>
         {computeDevice==='gpu'&&effectiveComputeDevice==='cpu'?<p className="notice">{computeUnavailableReason(gpuCapability,t)}</p>:null}
         {selectedHotwordIds.size>0&&hotwordsState!=='ready'?<ResourceStatePanel state={hotwordsState} loadingLabel={t('asr.workspace.loadingHotwords')} errorLabel={t('asr.workspace.hotwordsUnavailable')} retry={()=>void refreshHotwords().catch(()=>undefined)}/>:null}
         {selectedHotwordIssue?<p id="asr-hotword-submit-error" className="error" role="alert">{selectedHotwordIssue}</p>:null}
-        <div id="asr-settings-body" className="asr-settings-body">
+        <fieldset id="asr-settings-body" className="asr-settings-body" disabled={busy||(isVideoTab&&Boolean(resume))}>
           <button className="reset-settings" onClick={resetPreferences}><RotateCcw size={14}/>{t('asr.restoreDefaults')}</button>
         <label>
           {t('asr.language')}
@@ -617,8 +649,8 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           <InfoTooltip id="asr-acceleration-help" text={t('asr.accelerationHelp')} />
         </div>
         </details>
-        </div>
-        <p className="asr-export-note">{t('asr.exportFormat')} · JSON / SRT / VTT / TXT</p>
+        </fieldset>
+        <p className="asr-export-note">{isVideoTab?t('video.pdfVideoHelp'):t('video.exportNote')}</p>
         <div className="submission-actions">
           {error||fileLimitError ? (
             <p className="error" role="alert">
@@ -631,7 +663,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
             </p>
           ) : null}
           {lastSubmitted?<div className="asr-submitted"><span>{lastSubmitted.display_name}</span><button className="button" onClick={()=>{onSelect(lastSubmitted);setView('results')}}>{t('asr.workspace.viewSubmitted')}</button></div>:null}
-          {uploadProgress?<SubmissionProgress label={t('asr.uploadLabel')} progress={uploadProgress} onCancel={()=>uploadController.current?.abort()}/>:null}
+          {uploadProgress?<SubmissionProgress label={t('asr.uploadLabel')} progress={uploadProgress} onCancel={()=>uploadController.current?.abort()} cancelLabel={isVideoTab?t('video.pause'):undefined}/>:null}
           <button className="primary" disabled={busy || !chosenModel.installed || Boolean(selectedHotwordIssue) || Boolean(fileLimitError) || (selectedHotwordIds.size>0&&hotwordsState!=='ready')} aria-describedby={selectedHotwordIssue ? 'asr-hotword-submit-error' : undefined} onClick={submit}>
             <Play size={18} />
             {submitLabel}
@@ -652,7 +684,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           </>:jobsReady&&!jobsError?<p>{t('asr.results.empty')}</p>:null}
           <button className="button asr-manage" onClick={onManageJobs}>{t('asr.workspace.manage')}</button>
         </aside>
-      <section ref={resultPanel} tabIndex={-1} hidden={!jobsReady&&!selectedSummary} className="result-panel" data-module="TRANSCRIPT_CORE / TRN_01">
+      <section ref={resultPanel} tabIndex={-1} hidden={!jobsReady&&!selectedSummary} className={`result-panel${result?.video?' video-result':''}`} data-module="TRANSCRIPT_CORE / TRN_01">
         {resultNotice?<p className="notice" role="status">{resultNotice}</p>:null}
         {resultError?<div className="error" role="alert"><p>{resultError}</p><button className="button" onClick={()=>void refreshPeopleAndHotwords().then(()=>setResultError('')).catch(cause=>setResultError((cause as Error).message))}>{t('common.actions.retry')}</button></div>:null}
         {selectedSummary&&selectedSummary.state!=='succeeded'?<div className="asr-task-status" role="status">
@@ -660,7 +692,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           {selectedSummary.error_message?<p className="error">{selectedSummary.error_message}</p>:null}
           <p>{t('asr.workspace.pending')}</p>
         </div>:selectedJobId&&!selectedSummary&&jobsReady?<p role="status">{t('asr.workspace.unavailable')}</p>:!selectedSummary&&!jobsReady?<ResourceStatePanel state={jobsError?'error':'loading'} loadingLabel={t('asr.workspace.loadingJobs')} errorLabel={jobsError} retry={()=>void refreshJobs()}/>:
-        selectedSummary && (!detail || detail.state === 'loading') ? (
+        selectedSummary && (!detail || (detail.state === 'loading'&&!detail.job)) ? (
           <div className="empty" role="status">
             <FileAudio size={52} />
             <h2>{t('asr.results.loading')}</h2>
@@ -676,6 +708,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
         ) : selected && result ? (
           <>
             <div className="result-head">
+              {detail?.state==='loading'?<small role="status">{t('asr.results.loading')}</small>:null}
               <span>
                 <FileAudio size={20} />
                 {selected.display_name}
@@ -683,14 +716,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               <span>
                 {String(result.model_name || selected.request.model || 'Qwen3-ASR')} · {formatTime(duration)} · {(result.compute_device || selected.request.compute_device || 'gpu').toString().toUpperCase()} {result.precision || ''}
               </span>
-              <div className="artifact-links">
-                {result.artifacts?.map((item) => (
-                  <a key={item.name} className="button" href={artifactUrl(selected.id, item.name)} title={t('asr.results.downloadNamed',{name:item.name})}>
-                    <Download size={15} />
-                    {item.name.split('.').pop()?.toUpperCase()}
-                  </a>
-                ))}
-              </div>
+              <TranscriptExport job={selected}/>
             </div>
             <audio
               ref={audio}
@@ -750,6 +776,8 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
                 }}>{t('asr.results.retryPlayback')}</button>
               </p>
             ) : null}
+            {result.video?<div className="video-view-tabs" role="group" aria-label={t('video.readingMode')}><button aria-pressed={videoReading} onClick={()=>setVideoReading(true)}>{t('video.reading')}</button><button aria-pressed={!videoReading} onClick={()=>setVideoReading(false)}>{t('video.details')}</button></div>:null}
+            {result.video&&videoReading?<VideoTranscript job={selected} editing={videoEditing} onEditingChange={setVideoEditing} onUpdated={onJobResultUpdated} onSeek={seek} onRename={id=>{const segment=result.segments?.find(item=>item.speaker===id);if(segment)openRename(segment)}}/>:<>
             <div className="transcript-tools">
               <Search size={18} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('asr.results.search')} />
@@ -790,6 +818,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
                 </div>
               )}
             </div>
+            </>}
           </>
         ) : (
           <div className="empty">
@@ -800,6 +829,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
         )}
       </section>
       </section>
+      {discardOpen?<Modal title={t('video.discard')} closeLabel={t('common.actions.close')} onClose={()=>setDiscardOpen(false)}><p>{t('video.discardHelp')}</p><div className="modal-actions"><button className="button" onClick={()=>setDiscardOpen(false)}>{t('common.actions.cancel')}</button><button className="primary" onClick={()=>void discardVideoUpload().then(()=>{setResume(undefined);setDiscardOpen(false);setError('')}).catch(cause=>{setError(cause.message);setDiscardOpen(false)})}>{t('video.discard')}</button></div></Modal>:null}
       {hotwordsOpen?<Modal title={t('asr.hotwords.label')} closeLabel={t('common.actions.close')} onClose={()=>setHotwordsOpen(false)}>
         <ResourceStatePanel state={hotwordsState} loadingLabel={t('asr.workspace.loadingHotwords')} errorLabel={t('asr.workspace.hotwordsUnavailable')} retry={()=>void refreshHotwords().catch(()=>undefined)}/>
         {selectedHotwordIds.size?<button className="button" onClick={()=>updatePreference('hotwordListIds',[])}>{t('asr.workspace.clearHotwords')}</button>:null}

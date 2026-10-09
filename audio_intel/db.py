@@ -435,6 +435,8 @@ def init_db() -> None:
         _migrate_voiceprint_names(db)
         from .document_store import migrate
         migrate(db)
+        from .video_uploads import migrate as migrate_video_uploads
+        migrate_video_uploads(db)
         db.execute(
             """CREATE TABLE IF NOT EXISTS queue_sequence (
                singleton INTEGER PRIMARY KEY CHECK(singleton=1),value INTEGER NOT NULL)"""

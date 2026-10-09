@@ -37,6 +37,8 @@
 > [!IMPORTANT]
 > This is an independent, unofficial open-source project maintained on a non-commercial basis. It has not been authorized, sponsored, approved, or endorsed by CD PROJEKT RED, R. Talsorian Games, or any related rights holder. See the [brand and project status notice](BRAND_NOTICE.md).
 
+Separate audio/video creation tabs share the ASR queue. Audio keeps its 4 GiB limit; video supports resumable uploads up to 25 GiB, editable presentation images with matching discussion, and illustrated PDF. Audio adds concise PDF while retaining detailed exports. See the [video transcription guide](docs/VIDEO_TRANSCRIPTION.md).
+
 ## Interface preview
 
 ![Sandevistan Audio local ASR workspace showing a speaker-separated transcript and export controls](docs/assets/readme/en-US/asr-workspace.webp)

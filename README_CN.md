@@ -37,6 +37,8 @@
 > [!IMPORTANT]
 > 本项目是独立、非官方、以非商业方式维护的开源项目，未获得 CD PROJEKT RED、R. Talsorian Games 或任何相关权利方的授权、赞助、认可或背书。详见[品牌与项目身份声明](BRAND_NOTICE.md)。
 
+音频与视频使用独立新建页签、共用 ASR 队列。音频保持 4 GiB 上限；视频支持最大 25 GiB 续传、可编辑 PPT 关键帧与对应讨论、图文 PDF。音频新增简洁 PDF，同时保留明细导出。详见[音视频转写指南](docs/VIDEO_TRANSCRIPTION.md)。
+
 ## 界面预览
 
 ![Sandevistan Audio 本地 ASR 工作区，展示说话人分离结果与导出控件](docs/assets/readme/zh-CN/asr-workspace.webp)

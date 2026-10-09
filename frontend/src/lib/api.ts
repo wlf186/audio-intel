@@ -30,7 +30,7 @@ function detailMessage(detail:unknown,status:number){
 export async function request<T>(path:string,init:RequestInit={}):Promise<T>{
   const headers=new Headers(init.headers)
   let response:Response
-  try{response=await fetch(path,{...init,headers,credentials:'same-origin'})}catch(cause){throw new Error(cause instanceof TypeError?i18n.t('errors.network'):(cause as Error).message)}
+  try{response=await fetch(path,{...init,headers,credentials:'same-origin'})}catch(cause){if(cause instanceof DOMException&&cause.name==='AbortError')throw cause;throw new Error(cause instanceof TypeError?i18n.t('errors.network'):(cause as Error).message)}
   if(!response.ok){const body=await response.json().catch(()=>({detail:response.statusText,retry_after_seconds:undefined}));if(response.status===401)window.dispatchEvent(new Event('audio-intel:unauthorized'));const retryAfter=Number(response.headers.get('Retry-After')||body.retry_after_seconds)||undefined;const detail=detailMessage(body.detail||body.title,response.status);throw new HttpError(response.status,retryAfter?i18n.t('errors.retryAfter',{detail,seconds:retryAfter}):detail,retryAfter)}
   if(response.status===204)return undefined as T; return response.json()
 }
@@ -79,7 +79,7 @@ function requestForm<T>(path:string,data:FormData,key:string,{onProgress,signal}
 }
 function queryString(values:JobListQuery){const params=new URLSearchParams();for(const [key,value] of Object.entries(values)){if(value!==undefined&&value!=='')params.set(key,String(value))}const encoded=params.toString();return encoded?`?${encoded}`:''}
 const pendingSubmissionKeys=new Map<string,string>()
-function createIdempotencyKey(){
+export function createIdempotencyKey(){
   const cryptoApi=globalThis.crypto
   if(!cryptoApi||typeof cryptoApi.getRandomValues!=='function')throw new Error(i18n.t('errors.secureId'))
   if(typeof cryptoApi.randomUUID==='function')return cryptoApi.randomUUID()
@@ -145,5 +145,5 @@ export const api={
 export function artifactUrl(jobId:string,name:string){return `/api/v1/jobs/${jobId}/artifacts/${encodeURIComponent(name)}`}
 export function sourceUrl(jobId:string,download=false){return `/api/v1/jobs/${jobId}/source${download?'?download=true':''}`}
 export function formatTime(value=0,decimal=true){const ms=Math.max(0,Math.round(value*1000));const h=Math.floor(ms/3600000);const m=Math.floor(ms%3600000/60000);const s=Math.floor(ms%60000/1000);return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}${decimal?'.'+String(ms%1000).padStart(3,'0'):''}`}
-export function size(value=0,locale='zh-CN'){const format=(amount:number,digits=0)=>new Intl.NumberFormat(locale,{minimumFractionDigits:digits,maximumFractionDigits:digits}).format(amount);if(value<1024)return `${format(value)} B`;if(value<1048576)return `${format(value/1024,1)} KB`;return `${format(value/1048576,1)} MB`}
+export function size(value=0,locale='zh-CN'){const format=(amount:number,digits=0)=>new Intl.NumberFormat(locale,{minimumFractionDigits:digits,maximumFractionDigits:digits}).format(amount);if(value>=1073741824)return `${format(value/1073741824,1)} GiB`;if(value<1024)return `${format(value)} B`;if(value<1048576)return `${format(value/1024,1)} KB`;return `${format(value/1048576,1)} MB`}
 export function uploadLimitMessage(file:File,maxBytes:number|undefined,t:TFunction,locale:string){return maxBytes&&file.size>maxBytes?t('errors.fileTooLarge',{size:size(file.size,locale),limit:size(maxBytes,locale)}):''}

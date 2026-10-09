@@ -3,9 +3,9 @@ import {size,type SubmissionProgress as Progress} from '../lib/api'
 import {useTranslation} from 'react-i18next'
 import {resolvedLocale} from '../i18n'
 
-type Props={label:string;progress:Progress;onCancel?:()=>void}
+type Props={label:string;progress:Progress;onCancel?:()=>void;cancelLabel?:string}
 
-export function SubmissionProgress({label,progress,onCancel}:Props){
+export function SubmissionProgress({label,progress,onCancel,cancelLabel}:Props){
  const {t}=useTranslation()
  const locale=resolvedLocale()
  const uploading=progress.phase==='uploading'
@@ -16,6 +16,6 @@ export function SubmissionProgress({label,progress,onCancel}:Props){
   <div><b aria-live="polite">{title}</b>{value!==undefined?<strong>{value}%</strong>:null}</div>
   <progress max={100} value={value} aria-label={t('submission.progress',{label})} aria-valuetext={progress.phase==='creating'?t('submission.serverCreating'):value!==undefined?`${value}%`:t('submission.preparingGeneric')}/>
   <small>{progress.phase==='creating'?t('submission.keepOpen'):transferred||t('submission.connecting')}</small>
-  {onCancel&&progress.phase!=='creating'?<button type="button" className="cancel-upload" onClick={onCancel}><XCircle size={16}/>{t('submission.cancel')}</button>:null}
+  {onCancel&&progress.phase!=='creating'?<button type="button" className="cancel-upload" onClick={onCancel}><XCircle size={16}/>{cancelLabel||t('submission.cancel')}</button>:null}
  </div>
 }

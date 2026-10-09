@@ -122,6 +122,16 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## 未发布：视频转写与简洁 PDF / Unreleased: video transcription and concise PDF
+
+数据库从 v11 增量升级至 **v12**，只新增续传上传和分片校验记录，不重写历史任务或文件。首次启动新代码前按备份规则停止服务并创建 SQLite 快照。回退须使用该快照，不应由旧代码写入 v12 数据库。已完成音频任务可直接导出简洁 PDF，旧视频任务不会自动补做画面分析。
+
+Schema **v12** adds upload/checksum tables without rewriting history or files. Stop the service and take a SQLite snapshot before first startup. Rollback requires the matching backup. Completed historical audio tasks can export concise PDF immediately; old video inputs do not receive automatic presentation backfills.
+
+同步 API/ASR 依赖锁并重建前端；新增 ReportLab 与本地字体、显式 Pillow 依赖，模型及推理参数不变。视频上限由独立的 `AUDIO_INTEL_MAX_VIDEO_UPLOAD_BYTES` 控制，默认 25 GiB，不影响原音频 4 GiB。续传元数据使用 sessionStorage，刷新保留、关闭页签/退出登录清除；服务器未完成文件按 24 小时闲置/7 天总寿命清理。见[视频指南](VIDEO_TRANSCRIPTION.md)。按本地部署流程刷新全部原有服务进程。
+
+Sync API/ASR locks and rebuild the UI, then refresh all original service processes. Video has an independent 25 GiB default; audio keeps 4 GiB. Browser resume metadata is session-scoped; server upload expiry is independent. See the [video guide](VIDEO_TRANSCRIPTION.md).
+
 ## v0.1.23 转写人员备注、合并与声纹库选择
 
 从 v0.1.21 升级：**数据迁移：无**，无需额外升级备份。更早版本须合并阅读中间版本的升级要求。本版不在启动或读取时批量改写历史任务。
@@ -225,7 +235,7 @@ ASR 改为固定的“新建转写 / 任务与结果”页签，TTS 改为“文
 - 从 schema v9 升级到 v10 前先停止服务并创建 SQLite 快照；该迁移仅涉及数据库，历史文件无需复制。从更旧版本升级需合并中间迁移的[备份要求](#upgrade-backup-scope)。v10 事务内重建人员组合唯一约束（规范化姓名＋备注），为样本增加人员内唯一的持久化名称，并校验外键；失败整体回滚。既有样本按升级前声纹库列表编号保存为“样本 N”，后续增删不会重新编号。任务、别名、音频路径与历史快照保持不变；回退须使用升级前备份，不能让旧版直接操作 v10 数据库。
 - 样本上传新增可选 `name` 基名、样本响应新增 `name`，重命名使用样本 PATCH；所有状态均可改名。新建时名称冲突自动追加序号，手动改名冲突返回 `409`。人员组合重复同样返回 `409`，旧声音档案创建遇到同名多人时返回 `409`。TTS 新请求增加人员备注和样本名称快照，兼容旧请求、幂等记录及序列契约 v1。
 - 人员和样本编辑错误现在显示在对应弹窗内；编辑草稿仅留在当前弹窗状态，关闭或刷新即丢弃。现有浏览器偏好和 ASR/TTS 内容草稿的保存周期不变。
-- API 启动时自动将 SQLite 迁移到当前 schema v11。v8 新增的声纹人名系统词表在 v9 更名为“声纹库人名（全名）”，稳定 ID 不变；同时新增“声纹库人名（去姓）”，为已开启热词同步的既有人员回填可靠提取的两字中文名或英文首名。若升级前已有词表占用新系统名称，会保留内容并追加“原自定义”后缀；历史任务仍保留提交时的词表名称和内容。上述数据迁移仅涉及数据库，需在启动新版本前创建 SQLite 快照；已经使用当前 schema 且明确无其他数据迁移的更新无需额外备份。完整范围按[升级备份规则](#upgrade-backup-scope)判断。
+- API 启动时自动将 SQLite 迁移到当前 schema v12。v8 新增的声纹人名系统词表在 v9 更名为“声纹库人名（全名）”，稳定 ID 不变；同时新增“声纹库人名（去姓）”，为已开启热词同步的既有人员回填可靠提取的两字中文名或英文首名。若升级前已有词表占用新系统名称，会保留内容并追加“原自定义”后缀；历史任务仍保留提交时的词表名称和内容。上述数据迁移仅涉及数据库，需在启动新版本前创建 SQLite 快照；已经使用当前 schema 且明确无其他数据迁移的更新无需额外备份。完整范围按[升级备份规则](#upgrade-backup-scope)判断。
 - 历史 ASR/TTS 任务、旧声音档案和既有声纹样本保持可读；人员名字、备注及开关变化不会回写历史任务或已提交热词快照。
 - 浏览器鉴权改用进程内会话 Cookie，升级或重启后需要重新输入 API Key。
 - `/api/v1/health` 现在是公开最小探针；原详细结构迁移到受保护的 `/api/v1/system`。监控脚本如依赖硬件、worker、模型或路径字段必须切换端点并增加 Bearer Header。

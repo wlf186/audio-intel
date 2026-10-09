@@ -853,7 +853,13 @@ def process_job(context: JobContext) -> dict[str, Any]:
     source = Path(request["input_path"])
     normalized = context.work_dir / "normalized.wav"
     context.progress(0.04, "decoding_audio")
-    audio, rate = _mock_audio(source, normalized) if settings.mock_mode else decode_audio(source, normalized)
+    video_result = None
+    if request.get("purpose") == "video_transcription":
+        from audio_intel.video_frames import decode as decode_video
+        normalized = context.work_dir / "normalized.wav"
+        audio, rate, video_result = decode_video(source, normalized, context.work_dir / "frames", request.get("video_roi"), context)
+    else:
+        audio, rate = _mock_audio(source, normalized) if settings.mock_mode else decode_audio(source, normalized)
     duration = len(audio) / rate
     context.set_input_duration(duration)
     context.progress(0.10, "voice_activity_detection")
@@ -1053,7 +1059,14 @@ def process_job(context: JobContext) -> dict[str, Any]:
     except Exception:
         result["waveform"] = []
     context.progress(0.96, "writing_exports")
-    result["playback_url"] = save_playback_audio(context.job_id, normalized)
+    if video_result is not None:
+        result["video"] = video_result
+        shutil.move(str(normalized), str(context.output_dir / "playback.wav"))
+        shutil.rmtree(context.output_dir / "frames", ignore_errors=True)
+        shutil.move(str(context.work_dir / "frames"), str(context.output_dir / "frames"))
+        result["playback_url"] = f"/api/v1/jobs/{context.job_id}/playback"
+    else:
+        result["playback_url"] = save_playback_audio(context.job_id, normalized)
     result = write_asr_exports(context.job_id, result, request.get("export_formats", ["json", "srt", "vtt", "txt"]))
     if request.get("purpose") == "voiceprint_import":
         _finalize_voiceprint_import(request, normalized, result)

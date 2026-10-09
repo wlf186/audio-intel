@@ -53,3 +53,6 @@ API 锁和前端锁要求审计无已知漏洞。Qwen/Torch 当前精确约束�
 本项目不使用 `torch.jit.script`、Trainer、LightGlue 或 X-CLIP，不接收用户提供的模型、checkpoint、配置或 Python 脚本；模型由受版本控制的 manifest 固定仓库和 revision，生产推理设置 Hugging Face/Transformers 离线模式并只加载项目本地目录。这是有边界的风险接受，不等于公告已修复。
 
 每周 CI 使用上述精确 allowlist；任何新增公告都必须先让流水线失败，再选择升级或新增带依据的 VEX。每次 Qwen 包发布时重新检查是否可解除 Transformers 固定版本与对应豁免。
+
+
+视频转写沿用 API/ASR 已固定的 PyAV 和 NumPy；显式依赖 Pillow 12.3.0。简洁 PDF 在 API 环境使用 ReportLab 4.5.1 与仓库内 Noto Sans SC 字体，不依赖系统字体或在线服务。浏览器分片 SHA-256 使用 @noble/hashes 2.0.1，在 Web Worker 运行。字体来源与许可证见 [第三方说明](../THIRD_PARTY_NOTICES.md)。模型、Transformers、精度和既有推理批次保持不变。
