@@ -96,7 +96,7 @@ test('ASR hotword and detail failures retry locally and rename errors stay in th
  state.failHotwords=false;await page.getByRole('dialog').getByRole('button',{name:'重试',exact:true}).click();await expect(page.getByRole('checkbox',{name:/医学术语/})).toBeChecked();await page.getByRole('dialog').getByRole('button',{name:'完成',exact:true}).click()
  await showAsrResults(page);await expect(page.getByRole('heading',{name:'转写结果加载失败'})).toBeVisible()
  state.failDetail=false;await page.getByRole('button',{name:'重新加载'}).click();await expect(page.locator('.result-head')).toContainText('会议转写.wav')
- state.failRename=true;await page.getByRole('button',{name:'重命名说话人 张三'}).first().click();await page.getByRole('dialog').locator('input').fill('李四');await page.getByRole('dialog').getByRole('button',{name:'保存名称'}).click()
+ state.failRename=true;await page.getByRole('button',{name:'重命名说话人 张三'}).first().click();await page.getByRole('dialog').getByLabel('新名称').fill('李四');await page.getByRole('dialog').getByRole('button',{name:'保存名称'}).click()
  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('重命名暂不可用')
  expect(errors.filter(e=>!e.includes('503'))).toEqual([])
 })

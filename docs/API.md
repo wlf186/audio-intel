@@ -241,6 +241,42 @@ curl --fail-with-body \
   "$AUDIO_INTEL_URL/api/v1/jobs/$JOB_ID/playback" -o playback-header.bin
 ```
 
+## ASR speaker names and notes
+
+`PATCH /api/v1/jobs/{job_id}/speakers/{speaker_id}` edits a successful ASR result. Its JSON body requires `name` and accepts optional `note`. Names must be nonempty after trimming and are retained in full, including library names longer than 80 characters. Notes follow the library's 20-character normalized limit: omission preserves the current note, while `null`, empty or whitespace-only input clears it. Results expose optional active `speakers[].name` and `note` alongside `label`; historical results may lack these fields.
+
+Automatic voiceprint recognition lets each detected speaker select its best match above the existing threshold, so several clusters can match one person. Automatic results and manual saves merge named speakers within a task by normalized **name + note** (NFKC, whitespace folding, case folding). Different notes and unnamed default speakers remain separate. Each merged group retains the first ID in the result's speaker list; segment and word speaker references use that ID. Segment IDs, order, text and timestamps are preserved. Later edits apply to the entire merged person. Match scores retain the representative record's original snapshot; `voiceprint_library.matched_speakers` counts matches before merging.
+
+The response is the complete updated result (`200`). Refresh local speaker IDs from it: a merged-away ID returns `404`. Invalid names or notes return `422`; non-ASR, unfinished or conflicting/deleting tasks return `409`. File/database save failures return `503` and may be retried. Saving refreshes the task's JSON/TXT/SRT/VTT exports; playback audio, library people, existing samples and other historical jobs keep their snapshots. Existing tasks are merged only on explicit save, with no startup or read-time bulk rewrite.
+
+The browser dialog can copy an existing library person's name and note into editable fields, including people without samples. Choosing someone without a note clears the prior note. Manual entry remains available during library loading or errors, and loading errors offer retry. Selection is dialog-local and does not add a persistent person-ID binding or change browser-storage lifetimes.
+
+Choose one example below, using a speaker ID from the latest result of the intended completed task. Editing changes that task and its exports.
+
+```bash
+set -euo pipefail
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
+JOB_ID=${JOB_ID:?export the completed ASR job ID first}
+SPEAKER_ID=${SPEAKER_ID:?export a current speaker ID from its result first}
+AUTH=(); if [[ -n "${AUDIO_INTEL_API_KEY:-}" ]]; then AUTH=(-H "Authorization: Bearer $AUDIO_INTEL_API_KEY"); fi
+
+curl --fail-with-body -sS "${AUTH[@]}" -X PATCH \
+  "$BASE_URL/api/v1/jobs/$JOB_ID/speakers/$SPEAKER_ID" \
+  --json '{"name":"张三","note":"研发一部"}'
+```
+
+API clients can select a person from `GET /api/v1/voiceprints/people` and copy just its `name` and `note`. The saved values are task-local snapshots; later library edits do not rewrite them. Using the same environment and `AUTH` setup above:
+
+```bash
+PERSON_ID=${PERSON_ID:?export the existing library person ID first}
+PERSON=$(curl --fail-with-body -sS "${AUTH[@]}" \
+  "$BASE_URL/api/v1/voiceprints/people" \
+  | jq -ce --arg person_id "$PERSON_ID" \
+    '.items[] | select(.id == $person_id) | {name, note: (.note // null)}')
+curl --fail-with-body -sS "${AUTH[@]}" -X PATCH \
+  "$BASE_URL/api/v1/jobs/$JOB_ID/speakers/$SPEAKER_ID" --json "$PERSON"
+```
+
 ## Job operations
 
 Important job endpoints include:

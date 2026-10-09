@@ -24,11 +24,12 @@ from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from . import __version__, reference_ranges
 from .document_api import capabilities as document_capabilities
 from .config import settings
+from .asr_speakers import merge_speakers, persist_speaker_result, speaker_identity, speaker_update_lock
 from .deployment import deployment_metadata
 from .gpu import COMPUTE_DEVICES, cached_gpu_snapshot, gpu_snapshot
 from .db import (
@@ -64,6 +65,7 @@ from .db import (
     list_voiceprint_samples,
     list_workers,
     person_name_key,
+    normalize_person_note,
     normalize_sample_name,
     sample_source_name,
     sample_name_base,
@@ -232,7 +234,16 @@ class HotwordListUpdateRequest(BaseModel):
 
 
 class SpeakerNameRequest(BaseModel):
-    name: str = Field(description="任务历史中的说话人显示名称 / Speaker display name in this historical job")
+    name: str = Field(description="任务历史中的说话人显示名称；去首尾空白、非空且完整保留 / Speaker display name in this historical job; trimmed, nonempty and retained in full")
+    note: str | None = Field(
+        None, description="可选备注，规范化后最多 20 字；省略保留，null 或空白清除 / Optional note, at most 20 normalized characters; omission preserves it, null or blank clears it",
+        json_schema_extra={"maxLength": MAX_VOICEPRINT_NOTE_CHARS},
+    )
+
+    @field_validator("note")
+    @classmethod
+    def normalize_note(cls, value: str | None) -> str | None:
+        return normalize_person_note(value)
 
 
 SESSION_COOKIE = "audio_intel_session"
@@ -2649,36 +2660,45 @@ def create_app() -> FastAPI:
         "/api/v1/jobs/{job_id}/speakers/{speaker_id}", response_model=JobResultResponse,
         response_model_exclude_unset=True, tags=[JOB_TAG],
         summary="重命名 ASR 说话人 / Rename ASR speaker",
-        description=bilingual("只修改已成功 ASR 任务的历史结果和导出文件，不修改声纹库。请求 JSON 为 `{\"name\": \"显示名称\"}`。", "Update a completed ASR result and its exports only; the voiceprint library is unchanged. JSON body: `{\"name\": \"Display name\"}`."),
+        description=bilingual(
+            "修改已成功 ASR 任务的姓名、可选备注及导出文件。姓名去首尾空白、非空且完整保留。备注省略保留，null 或空白清除，规范化后最多 20 字。同一任务中规范化姓名＋备注相同的已命名说话人合并，返回保留的 ID；段落 ID、字词、文字、时间戳不变。声纹库不修改。",
+            "Update a completed ASR speaker's name, optional note, and exports. Names are trimmed, nonempty and retained in full. Omitted notes are preserved; null or blank clears them; at most 20 normalized characters. Named speakers with the same normalized name and note merge within this job; use the surviving IDs in the response. Segment IDs, text and timestamps are preserved. The voiceprint library is unchanged.",
+        ),
         operation_id="updateJobSpeaker",
-        responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
+        responses={
+            **AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE,
+            503: problem_response("保存说话人资料失败，可重试 / Speaker changes could not be saved; retry", 503),
+        },
     )
     def rename_speaker(
         job_id: str, speaker_id: str, payload: SpeakerNameRequest, _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
-        job = job_or_404(job_id)
-        if job["kind"] != "asr" or job["state"] != "succeeded":
-            raise HTTPException(status_code=409, detail="Only completed ASR speakers can be renamed")
-        name = payload.name.strip()[:80]
+        name = payload.name.strip()
         if not name:
             raise HTTPException(status_code=422, detail="Speaker name is required")
-        result = job.get("result") or {}
-        found = False
-        for speaker in result.get("speakers", []):
-            if speaker.get("id") == speaker_id:
-                speaker["label"] = name
-                speaker["label_source"] = "manual"
-                found = True
-        if not found:
-            raise HTTPException(status_code=404, detail="Speaker not found")
-        labels = {item["id"]: item["label"] for item in result.get("speakers", [])}
-        for segment in result.get("segments", []):
-            if segment.get("speaker") in labels:
-                segment["speaker_label"] = labels[segment["speaker"]]
-        from asr.pipeline import write_asr_exports
-        result = write_asr_exports(job_id, result, job["request"].get("export_formats", ["json", "srt", "vtt", "txt"]))
-        update_job(job_id, result_json=result)
-        return result
+        from .document_download import reader_lease
+        try:
+            with speaker_update_lock(job_id), reader_lease(job_id):
+                job = job_or_404(job_id)
+                if job["kind"] != "asr" or job["state"] != "succeeded":
+                    raise HTTPException(status_code=409, detail="Only completed ASR speakers can be renamed")
+                result = job.get("result") or {}
+                speaker = next((item for item in result.get("speakers", []) if item.get("id") == speaker_id), None)
+                if speaker is None:
+                    raise HTTPException(status_code=404, detail="Speaker not found")
+                note = payload.note if "note" in payload.model_fields_set else speaker_identity(speaker)[1]
+                speaker.update(name=name, note=note, label_source="manual")
+                result, _mapping = merge_speakers(result, preferred_id=speaker_id)
+                return persist_speaker_result(
+                    job_id, result, job["request"].get("export_formats", ["json", "srt", "vtt", "txt"]),
+                    settings.jobs_dir / job_id / "output",
+                )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=409, detail="Task is being deleted or its exports are unavailable; retry") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (OSError, sqlite3.Error) as exc:
+            raise HTTPException(status_code=503, detail="Speaker changes could not be saved; retry") from exc
 
     @app.get(
         "/api/v1/events", response_class=StreamingResponse, tags=[JOB_TAG],

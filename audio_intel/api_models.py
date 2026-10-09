@@ -478,6 +478,8 @@ class VoiceprintMatch(PublicModel):
 class SpeakerResponse(PublicModel):
     id: str
     label: str
+    name: str | None = Field(None, description="任务内当前姓名；历史结果可能缺失 / Active task-local name; may be absent in historical results")
+    note: str | None = Field(None, description="任务内当前可选备注 / Active optional task-local note")
     label_source: str | None = None
     voiceprint_match: VoiceprintMatch | None = None
 

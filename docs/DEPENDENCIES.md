@@ -4,7 +4,7 @@
 
 | 环境 | 关键版本 | 用途 |
 |---|---|---|
-| api | Python 3.12、FastAPI 0.141.1、Uvicorn 0.52.4 | API、队列管理、测试与前端托管 |
+| api | Python 3.12、FastAPI 0.141.1、Uvicorn 0.52.4、pypdf 6.19.0 | API、队列管理、文档解析、测试与前端托管 |
 | asr | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-asr 0.0.6、Transformers 4.57.6 | ASR、ForcedAligner、VAD、说话人分离 |
 | tts | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-tts 0.1.1、Transformers 4.57.3 | 0.6B/1.7B Base、CustomVoice 与 VoiceDesign 推理 |
 | aligner | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-asr 0.0.6、Transformers 4.57.6 | TTS 默认参考截取及手动声纹区间的按需对齐 |

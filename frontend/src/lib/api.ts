@@ -132,7 +132,7 @@ export const api={
   removeMany:(jobIds:string[])=>request<BatchDeleteResult>('/api/v1/jobs/batch-delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_ids:jobIds,purge:true})}),
   voices:()=>request<{items:Array<{id:string;name:string;language:string}>;preset_speakers:string[]}>('/api/v1/tts/voices'),
   addVoice:(data:FormData)=>request<{id:string}>('/api/v1/tts/voices',{method:'POST',body:data}),
-  renameSpeaker:(jobId:string,speakerId:string,name:string)=>request<JobResult>(`/api/v1/jobs/${jobId}/speakers/${encodeURIComponent(speakerId)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}),
+  renameSpeaker:(jobId:string,speakerId:string,name:string,note?:string|null)=>request<JobResult>(`/api/v1/jobs/${jobId}/speakers/${encodeURIComponent(speakerId)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,note})}),
   voiceprints:()=>request<{items:VoiceprintPerson[]}>('/api/v1/voiceprints/people'),
   addVoiceprintPerson:(name:string,note:string|null=null,includeInHotwordLibrary=true)=>request<VoiceprintPerson>('/api/v1/voiceprints/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,note,include_in_hotword_library:includeInHotwordLibrary})}),
   updateVoiceprintPerson:(id:string,name:string,note:string|null,includeInHotwordLibrary:boolean)=>request<VoiceprintPerson>(`/api/v1/voiceprints/people/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,note,include_in_hotword_library:includeInHotwordLibrary})}),

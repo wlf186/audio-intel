@@ -53,6 +53,8 @@
 
 ASR separates New transcription from Tasks & results; TTS provides fixed Text, Document, and Tasks & results tabs. Inputs and settings have their own workspace, with direct access to the submitted task. Single audio, ordered sequences, and document sections share waveform playback and downloads.
 
+Transcription results support entering speaker names and optional notes manually or choosing an existing voiceprint-library person to fill in both editable fields. Names are retained in full; notes allow up to 20 characters. Automatic voiceprint recognition and manual saves merge people with the same name and note within a task. Different notes stay separate, while segments, text and timestamps are preserved and exports are refreshed. Later voiceprint-library edits do not rewrite task snapshots. See the [speaker editing contract and examples](docs/API.md#asr-speaker-names-and-notes).
+
 ## What it does
 
 | Area | Capabilities |

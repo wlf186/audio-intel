@@ -1,4 +1,4 @@
-import type {ComputeCapability,HotwordList,JobSummary,VoiceprintPerson,VoiceprintSample} from './types'
+import type {ComputeCapability,HotwordList,JobSummary,Speaker,VoiceprintPerson,VoiceprintSample} from './types'
 import type {TFunction} from 'i18next'
 
 export function formatLocalDateTime(value:string|undefined,locale:string,t:TFunction){
@@ -42,6 +42,12 @@ export function jobFailurePresentation(job:Pick<JobSummary,'error_code'|'error_m
 
 export function voiceprintPersonLabel(person:Pick<VoiceprintPerson,'name'|'note'>){
  return person.note?`${person.name}（${person.note}）`:person.name
+}
+
+export function speakerIdentity(speaker:Speaker|undefined,label:string){
+ if(speaker?.name!==undefined)return{name:speaker.name,note:speaker.note||''}
+ const match=speaker?.label_source==='voiceprint'?speaker.voiceprint_match:undefined
+ return{name:match?.name||speaker?.label||label,note:match?.note||speaker?.note||''}
 }
 
 export function voiceprintSampleName(sample:VoiceprintSample,samples:VoiceprintSample[],t:TFunction){

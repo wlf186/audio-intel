@@ -13,7 +13,7 @@ export function Modal({title,closeLabel,onClose,children,className}:Props){
   const previousOverflow=document.body.style.overflow
   document.body.style.overflow='hidden'
   dialog.showModal()
-  const initial=dialog.querySelector<HTMLElement>('input:not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]):not(.modal-close)')
+  const initial=dialog.querySelector<HTMLElement>('[data-initial-focus]:not([disabled])')||dialog.querySelector<HTMLElement>('input:not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]):not(.modal-close)')
   initial?.focus()
   return()=>{document.body.style.overflow=previousOverflow;if(dialog.open)dialog.close();returnFocus?.focus()}
  },[])

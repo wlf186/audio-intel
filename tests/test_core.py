@@ -395,7 +395,7 @@ def test_asr_voiceprint_match_changes_labels_without_changing_speaker_ids() -> N
     assert result["segments"][0]["speaker"] == "Speaker_0"
     assert result["segments"][0]["speaker_label"] == "尼克杨（产品部）"
     assert result["speakers"] == [{
-        "id": "Speaker_0", "label": "尼克杨（产品部）", "label_source": "voiceprint",
+        "id": "Speaker_0", "label": "尼克杨（产品部）", "name": "尼克杨", "note": "产品部", "label_source": "voiceprint",
         "voiceprint_match": {"person_id": "voice_nick", "name": "尼克杨", "note": "产品部", "score": .72},
     }]
 

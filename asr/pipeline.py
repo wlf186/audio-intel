@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from audio_intel.config import settings
+from audio_intel.asr_speakers import merge_speakers
 from audio_intel.db import (
     get_voiceprint_sample,
     list_voiceprint_people,
@@ -217,7 +218,6 @@ def _match_voiceprints(
     people: list[dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     import numpy as np
-    from scipy.optimize import linear_sum_assignment
 
     person_ids: list[str] = []
     person_names: list[str] = []
@@ -265,9 +265,8 @@ def _match_voiceprints(
     current = np.asarray(speaker_centers, dtype=np.float32)
     current /= np.maximum(np.linalg.norm(current, axis=1, keepdims=True), np.finfo(np.float32).eps)
     scores = current @ np.stack(person_vectors).T
-    rows, columns = linear_sum_assignment(-scores)
     matches = {}
-    for row, column in zip(rows, columns):
+    for row, column in enumerate(np.argmax(scores, axis=1)):
         score = float(scores[row, column])
         if score >= VOICEPRINT_COSINE_THRESHOLD:
             match = {
@@ -779,12 +778,13 @@ def assemble(
     for segment in segments:
         segment["speaker_label"] = labels.get(segment["speaker"], segment["speaker_label"])
     language = Counter(chunk.get("language", "Unknown") for chunk in chunks).most_common(1)[0][0] if chunks else "Unknown"
-    return {
+    result = {
         "text": "".join(chunk.get("text", "") for chunk in chunks), "language": language,
         "duration": round(duration, 3), "timestamp_precision": "word_or_character" if expose_words else "segment",
         "diarization_mode": "single_active_speaker", "speakers": speakers,
         "segments": segments,
     }
+    return merge_speakers(result)[0]
 
 
 def save_playback_audio(job_id: str, normalized: Path) -> str:
@@ -801,8 +801,10 @@ def save_playback_audio(job_id: str, normalized: Path) -> str:
     return f"/api/v1/jobs/{job_id}/playback"
 
 
-def write_asr_exports(job_id: str, result: dict[str, Any], formats: list[str]) -> dict[str, Any]:
-    output = settings.jobs_dir / job_id / "output"
+def write_asr_exports(
+    job_id: str, result: dict[str, Any], formats: list[str], *, output_dir: Path | None = None,
+) -> dict[str, Any]:
+    output = output_dir if output_dir is not None else settings.jobs_dir / job_id / "output"
     output.mkdir(parents=True, exist_ok=True)
     artifacts = []
     def add(name: str, content: str, mime: str) -> None:

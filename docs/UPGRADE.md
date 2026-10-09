@@ -122,6 +122,27 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## v0.1.23 转写人员备注、合并与声纹库选择
+
+从 v0.1.21 升级：**数据迁移：无**，无需额外升级备份。更早版本须合并阅读中间版本的升级要求。本版不在启动或读取时批量改写历史任务。
+
+转写结果重命名支持可选备注，以及从声纹库选择人员后继续编辑姓名、备注。姓名完整保留，备注规范化后最多 20 字；API 省略备注保留原值，null 或空白清除。自动声纹匹配允许多个簇命中同一人员；新结果和手动保存按规范化姓名＋备注合并，同名不同备注保持独立。选择声纹人员仅复制任务快照，不建立随库更新的绑定。
+
+手动保存会更新所选任务的结果及实际数据目录下 `jobs/<job_id>/output/transcript.{json,txt,srt,vtt}` 中已选格式的导出文件；其他任务、既有声纹样本、播放音频和段落文字／时间戳不改写。每组合并保留结果列表的第一个说话人 ID，客户端应使用返回结果中的 ID；旧结果兼容缺少 `name`、`note`。浏览器选择仅在弹窗内存保留，不改变现有存储或草稿期限。详见 [API 契约与示例](API.md#asr-speaker-names-and-notes)。
+
+界面示例使用合成资料，展示桌面和 390 px 重命名弹窗：
+
+| 视口 | v0.1.21 | v0.1.23 |
+| --- | --- | --- |
+| 桌面 | [更新前](assets/releases/v0.1.23/speaker-rename-before-1440.png) | [更新后](assets/releases/v0.1.23/speaker-rename-after-1440.png) |
+| 390 px | [更新前](assets/releases/v0.1.23/speaker-rename-before-390.png) | [更新后](assets/releases/v0.1.23/speaker-rename-after-390.png) |
+
+PDF 解析依赖由 pypdf 6.18.0 更新到 6.19.0，前端间接依赖 source-map-js 由 1.2.1 更新到 1.2.2，以修复依赖审计报告的安全公告；模型、推理运行时依赖、默认精度和 SQLite schema v11 保持不变。运行 `./service.sh setup api`（Windows：`service.cmd setup api`）同步 API 依赖并重建前端，再按本地部署流程刷新 API、ASR/TTS supervisor 和 executor。
+
+v0.1.22 标签指向仍内置 0.1.21 版本的旧提交，Linux 和 Windows 标签检查均失败，未创建 GitHub Release；原标签保留作为审计记录。本版在新提交中统一前后端 0.1.23 版本，并重新通过完整发布门槛。
+
+English: Upgrading from v0.1.21 requires **no data migration or additional upgrade backup**. Earlier upgrades must account for intervening versions. Speaker renaming adds optional notes and editable library-person selection. Automatic matches and manual saves merge task-local identities by normalized name plus note; different notes remain distinct. Manual saves update only the selected task and its transcript exports, retaining segment IDs, text, timing and playback audio. Use the surviving speaker IDs returned by the API. Historical jobs are not automatically rewritten, and library selections remain snapshots. Browser-storage lifetimes are unchanged. Update the API environment and rebuild the UI with `setup api`, then refresh all service processes. pypdf is pinned to 6.19.0 and the frontend's transitive source-map-js to 1.2.2 for dependency-audit fixes; model/runtime pins and schema v11 remain unchanged. The failed v0.1.22 tag is retained without a Release because its embedded version was still 0.1.21.
+
 ## v0.1.21 ASR 播放修复与跨平台验证
 
 从 v0.1.19 或已部署的 v0.1.20 源码升级：**数据迁移：无**，无需额外升级备份，不改写历史任务或音频。更早版本仍须检查中间版本的升级要求。

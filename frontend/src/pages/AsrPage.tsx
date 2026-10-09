@@ -10,7 +10,7 @@ import { Modal } from '../components/Modal'
 import { InfoTooltip } from '../components/InfoTooltip'
 import { clearAsrPreferences, defaultAsrPreferences, loadAsrPreferences, publicAlignerLanguages, publicAsrLanguages, saveAsrPreferences, type AsrPreferences } from '../lib/preferences'
 import { visibleWorkspaceJobs } from '../lib/jobs'
-import { computeUnavailableReason, voiceprintPersonLabel, hotwordListDisplayName } from '../lib/presentation'
+import { computeUnavailableReason, voiceprintPersonLabel, speakerIdentity, hotwordListDisplayName } from '../lib/presentation'
 import { SubmissionProgress } from '../components/SubmissionProgress'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -50,7 +50,7 @@ const SegmentRow = memo(function SegmentRow({ segment, speaker, active, currentT
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const disabled = Boolean(selectionSpeaker && selectionSpeaker !== segment.speaker)
-  const match = speaker?.label_source === 'voiceprint' ? speaker.voiceprint_match : undefined
+  const identity = speakerIdentity(speaker, segment.speaker_label)
   return (
     <article className={`${active ? 'active ' : ''}${selected ? 'selected-segment' : ''}`}>
       <label className="segment-select">
@@ -64,8 +64,8 @@ const SegmentRow = memo(function SegmentRow({ segment, speaker, active, currentT
       <button className={`speaker s${Number(segment.speaker.split('_')[1]) % 4}`} aria-label={t('asr.segment.renameNamed', { name: segment.speaker_label })} title={t('asr.segment.renameHelp')} onClick={() => onRename(segment)}>
         <i />
         <span className="speaker-identity">
-          <b>{match?.name || segment.speaker_label}</b>
-          {match?.note ? <small>（{match.note}）</small> : null}
+          <b>{identity.name}</b>
+          {identity.note ? <small>（{identity.note}）</small> : null}
         </span>
         <Pencil size={12} />
       </button>
@@ -119,13 +119,14 @@ type Props = {
   hotwordsState: ResourceState
   hotwordLimits?: HotwordLibraryCapability
   voiceprints: VoiceprintPerson[]
+  voiceprintsState: ResourceState
   refreshVoiceprints: () => Promise<void>
   refreshPeopleAndHotwords: () => Promise<void>
   revealRequest?: ResultRevealRequest
   onRevealHandled: (token: number) => void
 }
 
-export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
+export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const { t, i18n } = useTranslation()
   const [view, setView] = useState<'create'|'results'>('create')
   const [compact, setCompact] = useState(()=>matchMedia('(max-width: 1199px)').matches)
@@ -157,6 +158,11 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     label: string
   }>()
   const [renameValue, setRenameValue] = useState('')
+  const [renameNote, setRenameNote] = useState('')
+  const [renamePersonId, setRenamePersonId] = useState('')
+  const renamePersonValue = useMemo(() => voiceprintsState === 'ready' ? voiceprints.find(person =>
+    person.id === renamePersonId && person.name === renameValue && (person.note || '') === renameNote,
+  )?.id || '' : '', [voiceprints, voiceprintsState, renamePersonId, renameValue, renameNote])
   const [libraryOpen, setLibraryOpen] = useState(false)
   const libraryNameRef=useRef<HTMLInputElement>(null)
   const [libraryError,setLibraryError]=useState('')
@@ -429,18 +435,29 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   }
   const openRename = useCallback((segment: Segment) => {
     setRenameError('')
+    setRenamePersonId('')
     setRenameSpeaker({ id: segment.speaker, label: segment.speaker_label })
-    setRenameValue(segment.speaker_label)
-  }, [])
+    const identity = speakerIdentity(speakerById.get(segment.speaker), segment.speaker_label)
+    setRenameValue(identity.name)
+    setRenameNote(identity.note)
+  }, [speakerById])
   const saveRename = async () => {
     if (!selected || !renameSpeaker || !renameValue.trim()) return
     setRenameBusy(true)
     setRenameError('')
     try {
-      const next = await api.renameSpeaker(selected.id, renameSpeaker.id, renameValue.trim())
+      const next = await api.renameSpeaker(selected.id, renameSpeaker.id, renameValue.trim(), renameNote.trim() || null)
+      setSpeakerFilter(current => {
+        if (current === 'all' || next.speakers?.some(speaker => speaker.id === current)) return current
+        const anchor = result?.segments?.find(segment => segment.speaker === current)
+        return next.segments?.find(segment => segment.id === anchor?.id)?.speaker || 'all'
+      })
+      const anchor = result?.segments?.find(segment => segment.speaker === renameSpeaker.id)
+      const updatedId = next.segments?.find(segment => segment.id === anchor?.id)?.speaker || renameSpeaker.id
+      const updatedLabel = next.speakers?.find(speaker => speaker.id === updatedId)?.label || renameValue.trim()
       onJobResultUpdated(selected.id, next)
       setRenameSpeaker(undefined)
-      setResultNotice(t('asr.notices.renamed',{from:renameSpeaker.label,to:renameValue.trim()}))
+      setResultNotice(t('asr.notices.renamed',{from:renameSpeaker.label,to:updatedLabel}))
     } catch (cause) {
       setRenameError((cause as Error).message)
     } finally {
@@ -449,15 +466,17 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   }
   const openLibrary = () => {
     const speaker = selectionSpeaker ? speakerById.get(selectionSpeaker) : undefined
+    const identity = speakerIdentity(speaker, selectionLabel)
     const matchedId = speaker?.label_source === 'voiceprint' ? speaker.voiceprint_match?.person_id : undefined
-    const candidates=voiceprints.filter(person=>nameKey(person.name)===nameKey(speaker?.voiceprint_match?.name||selectionLabel))
-    const match = voiceprints.find((person) => person.id === matchedId) || (candidates.length===1?candidates[0]:undefined)
+    const candidates=voiceprints.filter(person=>nameKey(person.name)===nameKey(identity.name))
+    const exactMatch=candidates.find(person=>nameKey(person.note||'')===nameKey(identity.note))
+    const match = voiceprints.find((person) => person.id === matchedId) || exactMatch
     const ambiguous=!match&&candidates.length>1
     setLibraryError('')
     setLibraryAmbiguous(ambiguous)
     setTargetPersonId(match?.id || (ambiguous?'__choose__':''))
-    setNewPersonName(match ? '' : /^Speaker[ _]\d+$/i.test(selectionLabel) ? '' : selectionLabel)
-    setNewPersonNote('')
+    setNewPersonName(/^Speaker[ _]\d+$/i.test(identity.name) ? '' : identity.name)
+    setNewPersonNote(identity.note)
     setNewPersonHotword(true)
     setLibraryOpen(true)
   }
@@ -842,9 +861,37 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
         <Modal title={t('asr.rename.title')} closeLabel={t('asr.rename.close')} onClose={() => {if(!renameBusy)setRenameSpeaker(undefined)}}>
           {renameError?<p className="error" role="alert">{renameError}</p>:null}
           <p>{t('asr.rename.help',{name:renameSpeaker.label})}</p>
+          <p>{t('asr.rename.mergeHelp')}</p>
+          <ResourceStatePanel state={voiceprintsState} loadingLabel={t('voiceprints.loadingPeople')} errorLabel={t('voiceprints.loadFailed')} retry={() => void refreshVoiceprints().catch(() => {})} />
+          <label>
+            {t('asr.rename.libraryPerson')}
+            <select value={renamePersonValue} disabled={renameBusy || voiceprintsState !== 'ready' || !voiceprints.length} onChange={event => {
+              const person = voiceprints.find(item => item.id === event.target.value)
+              setRenamePersonId(person?.id || '')
+              if (person) {
+                setRenameValue(person.name)
+                setRenameNote(person.note || '')
+              }
+            }}>
+              <option value="">{voiceprintsState === 'ready' ? t(voiceprints.length ? 'asr.rename.manual' : 'asr.rename.emptyPeople') : t(voiceprintsState === 'loading' ? 'voiceprints.loadingPeople' : 'voiceprints.loadFailed')}</option>
+              {voiceprintsState === 'ready' ? voiceprints.map(person => <option key={person.id} value={person.id}>{voiceprintPersonLabel(person)}</option>) : null}
+            </select>
+            <small>{t('asr.rename.libraryHelp')}</small>
+          </label>
           <label>
             {t('asr.rename.newName')}
-            <input value={renameValue} maxLength={80} onChange={(event) => setRenameValue(event.target.value)} />
+            <input data-initial-focus value={renameValue} disabled={renameBusy} onChange={(event) => {
+              setRenamePersonId('')
+              setRenameValue(event.target.value)
+            }} />
+          </label>
+          <label>
+            {t('voiceprints.noteOptional')}
+            <input value={renameNote} maxLength={20} disabled={renameBusy} placeholder={t('voiceprints.notePlaceholder')} onChange={(event) => {
+              setRenamePersonId('')
+              setRenameNote(event.target.value)
+            }} />
+            <small>{t('voiceprints.noteCount',{current:renameNote.trim().length})}</small>
           </label>
           <button className="primary" disabled={renameBusy || !renameValue.trim()} onClick={saveRename}>
             {t('asr.rename.save')}

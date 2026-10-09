@@ -420,6 +420,30 @@ The stream immediately emits `event: job`, continues on changes, and closes at a
 
 ## 声纹人员与样本名称 / Voiceprint identities and sample names
 
+### 转写任务中的说话人 / Speakers within transcription jobs
+
+`PATCH /api/v1/jobs/{job_id}/speakers/{speaker_id}` 接受必填 `name` 和可选 `note`。姓名去首尾空白后必须非空，完整保留，不按 80 字截断。备注规范化后最多 20 字；省略保留已有备注，null、空字符串或纯空白清除备注。结果的 `speakers[]` 新增当前 `name`、`note`，`label` 显示为“姓名（备注）”；旧结果可能没有新字段。
+
+网页重命名弹窗支持从声纹库选择已有人员，自动填入姓名和备注，并允许继续手动修改。选择没有备注的人员会清空原备注。保存使用当前输入的姓名、备注快照；人员列表加载或失败时仍可手动填写，加载失败支持重试。API 客户端同样可从 `GET /api/v1/voiceprints/people` 取得人员资料，将其 `name` 和 `note` 作为 PATCH 请求提交。
+
+自动声纹识别让每个 Speaker 独立选择达到现有相似度阈值的最佳人员，允许多个 Speaker 匹配同一人员。自动识别和手动保存均按规范化姓名＋备注合并任务内已命名说话人；同名不同备注保持独立，默认未命名 Speaker 不合并。每组保留结果列表中第一个 ID，段落和字词的说话人引用统一到该 ID，文字、段落 ID、顺序和时间戳保留。手动提交的姓名与备注用于整组显示；再次编辑作用于其全部段落。匹配分数保留代表记录的原始快照，`voiceprint_library.matched_speakers` 仍统计合并前命中的 Speaker 数。
+
+保存返回完整更新结果，并同步 JSON、TXT、SRT、VTT 导出。客户端应使用返回的说话人 ID；已合并移除的 ID 返回 404。保存失败返回 503，可重试。声纹库和既有入库样本不随任务编辑改变。其他历史任务只在显式保存时合并，不在读取或启动时批量改写。
+
+PATCH accepts required `name` and optional `note` (at most 20 normalized characters). Names must be nonempty after trimming and are retained in full without 80-character truncation. Omission preserves the note; null or blank clears it. Speaker results add active `name` and `note` while retaining `label`; historical results may lack these fields. The browser rename dialog can copy a library person's name and note into editable fields; a person without a note clears the previous note. Manual entry remains available while the library loads or fails, with retry on failure. API clients can copy `name` and `note` from `GET /api/v1/voiceprints/people` into the PATCH body. Saves snapshot the current inputs. Each detected Speaker independently selects its best voiceprint match above the existing threshold. Automatic results and manual saves merge named speakers with the same normalized name and note, preserving the first ID in the result list. Different notes and unnamed defaults stay separate. Segment IDs, order, text and timestamps remain intact; later edits update the whole merged person. Match scores remain representative snapshots and `matched_speakers` counts matches before merging. Use the returned IDs; removed IDs return 404. Exports are refreshed, while voiceprint-library data and other historical jobs retain their snapshots. A save failure returns 503 and can be retried.
+
+```bash
+set -euo pipefail
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
+JOB_ID=${JOB_ID:?export the completed ASR job ID first}
+SPEAKER_ID=${SPEAKER_ID:?export a speaker ID from the job result first}
+AUTH=(); if [[ -n "${AUDIO_INTEL_API_KEY:-}" ]]; then AUTH=(-H "Authorization: Bearer $AUDIO_INTEL_API_KEY"); fi
+# Copy a library person's name and note, or enter custom values; names are retained in full.
+curl --fail-with-body "${AUTH[@]}" -X PATCH \
+  "$BASE_URL/api/v1/jobs/$JOB_ID/speakers/$SPEAKER_ID" \
+  --json '{"name":"张三","note":"研发一部"}'
+```
+
 人员按规范化的“姓名＋备注”组合判重，ID 保持稳定。规范化采用 NFKC、空白折叠和大小写折叠；备注选填、最多 20 字，null、空字符串和纯空白等价。同名且备注不同可以共存，组合重复返回 409。系统全名与去姓热词表按词去重，备注不进入热词；只要仍有同名人员开启同步，对应姓名就保留。自定义词表名称仍唯一。
 
 People are unique by normalized name plus note, while IDs remain stable. Normalization uses NFKC, whitespace folding, and case folding. Notes are optional, limited to 20 characters, and null equals blank. Duplicate combinations return 409. System name hotwords are deduplicated; notes never become hotwords, and a name remains while any matching person opts in. Custom hotword-list names remain unique.
@@ -900,6 +924,12 @@ DATETIME_FIELDS = {
 }
 
 REQUEST_EXAMPLES: dict[tuple[str, str], dict[str, dict[str, Any]]] = {
+    ("/api/v1/jobs/{job_id}/speakers/{speaker_id}", "patch"): {
+        "name_and_note": {"summary": "更新姓名与备注，合并相同人员 / Update name and note, merging matching identities", "value": {"name": "张三", "note": "研发一部"}},
+        "preserve_note": {"summary": "只修改姓名，保留备注 / Rename while preserving the note", "value": {"name": "李四"}},
+        "clear_note": {"summary": "清除备注 / Clear the note", "value": {"name": "张三", "note": None}},
+        "long_name": {"summary": "完整保留较长人员姓名 / Retain a longer person name in full", "value": {"name": "会议人员" * 24, "note": "研发一部"}},
+    },
     ("/api/v1/asr/jobs", "post"): {
         "meeting": {"summary": "默认模型会议转写 / Meeting transcription with the default model", "value": {"file": "meeting.wav", "model": "qwen3-asr-0.6b", "language": "Auto", "speaker_count": "auto", "diarize": True, "align": True, "compute_device": "gpu", "accelerate_single_task": True}},
         "large_model_hotwords": {"summary": "1.7B CPU 与场景热词 / 1.7B CPU with scenario hotwords", "value": {"file": "meeting.wav", "model": "qwen3-asr-1.7b", "language": "Chinese", "context": "项目会议", "hotword_list_ids": "hotwords_0123456789abcdef", "speaker_count": "auto", "compute_device": "cpu", "accelerate_single_task": True}},
@@ -966,7 +996,7 @@ JOB_EXAMPLES = {
 }
 
 RESULT_EXAMPLES = {
-    "asr": {"summary": "ASR 结果 / ASR result", "value": {"text": "欢迎使用本地转写。", "language": "Chinese", "duration": 3.2, "timestamp_precision": "word_or_character", "model": "qwen3-asr-1.7b", "model_name": "Qwen3-ASR-1.7B", "model_revision": "7278e1e70fe206f11671096ffdd38061171dd6e5", "hotword_context": {"enabled": True, "list_ids": ["hotwords_voiceprint_people", "hotwords_voiceprint_people_short"], "list_names": ["声纹库人名（全名）", "声纹库人名（去姓）"], "term_count": 2}, "segments": [{"id": 0, "start": 0, "end": 3.2, "speaker": "Speaker_0", "speaker_label": "张三（研发一部）", "text": "欢迎使用本地转写。", "words": []}], "speakers": [{"id": "Speaker_0", "label": "张三（研发一部）", "label_source": "voiceprint", "voiceprint_match": {"person_id": "voice_0123456789abcdef", "name": "张三", "note": "研发一部", "score": 0.82}}], "artifacts": []}},
+    "asr": {"summary": "ASR 结果 / ASR result", "value": {"text": "欢迎使用本地转写。", "language": "Chinese", "duration": 3.2, "timestamp_precision": "word_or_character", "model": "qwen3-asr-1.7b", "model_name": "Qwen3-ASR-1.7B", "model_revision": "7278e1e70fe206f11671096ffdd38061171dd6e5", "hotword_context": {"enabled": True, "list_ids": ["hotwords_voiceprint_people", "hotwords_voiceprint_people_short"], "list_names": ["声纹库人名（全名）", "声纹库人名（去姓）"], "term_count": 2}, "segments": [{"id": 0, "start": 0, "end": 3.2, "speaker": "Speaker_0", "speaker_label": "张三（研发一部）", "text": "欢迎使用本地转写。", "words": []}], "speakers": [{"id": "Speaker_0", "label": "张三（研发一部）", "name": "张三", "note": "研发一部", "label_source": "voiceprint", "voiceprint_match": {"person_id": "voice_0123456789abcdef", "name": "张三", "note": "研发一部", "score": 0.82}}], "artifacts": []}},
     "tts": {"summary": "TTS 结果 / TTS result", "value": {"duration": 1.8, "format": "wav", "sample_rate": 24000, "voice_mode": "preset", "speaker": "Vivian", "model": "qwen3-tts-1.7b", "model_name": "Qwen3-TTS-12Hz-1.7B-CustomVoice", "model_revision": "0c0e3051f131929182e2c023b9537f8b1c68adfe", "instruct": "温柔、安心地说，语速稍慢。", "compute_device": "gpu", "precision": "BF16", "quantized": False, "artifacts": []}},
 }
 
