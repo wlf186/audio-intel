@@ -243,17 +243,19 @@ def test_supervised_worker_cancels_running_job_and_continues(tmp_path, monkeypat
         })
 
         cancelled = _wait_for_job(first["id"], lambda job: job["state"] == "cancelled", timeout=3)
-        completed = _wait_for_job(second["id"], lambda job: job["state"] == "succeeded")
-
+        # Measure cancellation before waiting for a replacement executor and the
+        # next task; their startup/inference time is a separate queue check.
         assert time.monotonic() - started < 3
         assert cancelled["stage"] == "cancelled"
+        assert not psutil.pid_exists(initial_executor_pid)
+        assert not (local.temp_dir / first["id"]).exists()
+
+        completed = _wait_for_job(second["id"], lambda job: job["state"] == "succeeded")
         assert completed["result"]["duration"] > 0
         assert supervisor.poll() is None
-        assert not psutil.pid_exists(initial_executor_pid)
         assert _wait_for_executor_pid(
             metadata, lambda pid: pid != initial_executor_pid,
         ) != initial_executor_pid
-        assert not (local.temp_dir / first["id"]).exists()
     finally:
         supervisor.terminate()
         try:
