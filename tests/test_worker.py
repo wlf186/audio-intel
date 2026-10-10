@@ -39,6 +39,38 @@ def _wait_for_executor_pid(path, predicate=lambda _pid: True, timeout: float = 8
     raise AssertionError(f"Timed out waiting for executor PID at {path}")
 
 
+def _stop_test_supervisor(supervisor) -> None:
+    # The worker's bounded termination primitive can return survivors; its own
+    # shutdown drains them before declaring success. Test teardown must do the
+    # same, while retaining a deadline and a strict no-survivors assertion.
+    deadline = time.monotonic() + 5
+    remaining = worker_module._terminate_process_tree(supervisor.pid)
+    while remaining and time.monotonic() < deadline:
+        remaining = worker_module._terminate_remaining(remaining)
+    assert remaining == [], f"Test supervisor cleanup left processes: {remaining}"
+    supervisor.wait(timeout=5)
+
+
+@pytest.mark.parametrize("exits", [True, False])
+def test_supervisor_teardown_drains_survivors_or_fails(monkeypatch, exits) -> None:
+    from unittest.mock import Mock
+
+    supervisor = Mock(pid=123)
+    monkeypatch.setattr(worker_module, "_terminate_process_tree", Mock(return_value=[456]))
+    drain = Mock(return_value=[] if exits else [456])
+    monkeypatch.setattr(worker_module, "_terminate_remaining", drain)
+    ticks = iter([0, 1, 6])
+    monkeypatch.setattr(time, "monotonic", lambda: next(ticks))
+    if exits:
+        _stop_test_supervisor(supervisor)
+        supervisor.wait.assert_called_once_with(timeout=5)
+    else:
+        with pytest.raises(AssertionError, match="456"):
+            _stop_test_supervisor(supervisor)
+        supervisor.wait.assert_not_called()
+    drain.assert_called_once_with([456])
+
+
 def test_process_tree_termination_removes_descendants() -> None:
     parent = subprocess.Popen(
         [
@@ -323,8 +355,7 @@ def test_worker_reuses_executor_for_queue_then_recycles_once_when_idle(
     finally:
         # Popen.terminate() is a hard kill on Windows: it cannot ask the worker
         # to reap its executor, especially when an earlier assertion failed.
-        assert worker_module._terminate_process_tree(supervisor.pid) == []
-        supervisor.wait(timeout=5)
+        _stop_test_supervisor(supervisor)
         for pid in tracked:
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline and psutil.pid_exists(pid):
