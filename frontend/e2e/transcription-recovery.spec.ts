@@ -1,4 +1,4 @@
-import {expect,test,type Page} from '@playwright/test'
+import {capabilitiesFor,expect,test,type Page} from './fixtures'
 import {createHash} from 'node:crypto'
 
 type EventWindow=Window&{emitJobEvent:(name:string,data:unknown)=>void;holdHash:boolean;releaseHash:()=>void}
@@ -19,7 +19,7 @@ async function fixture(page:Page,locale='zh-CN'){
  const summary={id:'recovery-video',kind:'asr',purpose:'video_transcription',state:'succeeded',stage:'completed',progress:1,display_name:'Recovery fixture.mp4',created_at:'2026-10-10T00:00:00Z',updated_at:'2026-10-10T00:00:00Z',compute_device:'cpu'}
  const result=()=>({text:'Presentation discussion.',duration:20,language:'Chinese',timestamp_precision:'segment',speakers:[{id:'s0',label:'讲者'}],segments:[{id:0,start:0,end:8,speaker:'s0',text:'Presentation discussion.'}],artifacts:[],video:{contract_version:1,revision:state.revision,duration:20,time_origin:0,detector:'fixture',scenes:scenes(),original_scenes:scenes()}})
  await page.route('**/api/v1/auth/session',route=>route.fulfill({json:{required:true,authenticated:true}}))
- await page.route('**/api/v1/capabilities',async route=>{const response=await route.fetch();const body=await response.json();body.events={...body.events,sse:true};await route.fulfill({response,json:body})})
+ await page.route('**/api/v1/capabilities',async route=>{const body=await capabilitiesFor(page);body.events={...body.events,sse:true};await route.fulfill({json:body})})
  await page.route(url=>url.pathname==='/api/v1/jobs',route=>route.fulfill({json:{items:[summary,{...summary,id:'other-video',display_name:'Other fixture.mp4'}],count:2,total:2,limit:100,offset:0,has_more:false}}))
  await page.route(/\/api\/v1\/jobs\/(recovery-video|other-video)$/,route=>route.fulfill({json:{...summary,id:new URL(route.request().url()).pathname.split('/').pop(),request:{compute_device:'cpu',language:'Chinese'},result:result()}}))
  await page.route('**/video-scenes',route=>{

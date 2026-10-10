@@ -1,4 +1,4 @@
-import {test,expect} from '@playwright/test'
+import {capabilitiesFor,test,expect} from './fixtures'
 
 if(process.env.DOCUMENT_TEST_URL)test.use({baseURL:process.env.DOCUMENT_TEST_URL})
 
@@ -194,10 +194,10 @@ test('document mode shows CPU when GPU is unavailable and submits the displayed 
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  await page.route('**/api/v1/capabilities',async route=>{
-  const response=await route.fetch();const body=await response.json()
+  const body=await capabilitiesFor(page)
   body.deployment.default_compute_device='gpu'
   for(const model of body.tts.model_capabilities)for(const device of model.compute_devices)if(device.id==='gpu')Object.assign(device,{available:false,unavailable_reason:'No GPU available'})
-  await route.fulfill({response,json:body})
+  await route.fulfill({json:body})
  })
  await page.goto('/#tts')
  await page.getByRole('tab',{name:'文档合成',exact:true}).click()

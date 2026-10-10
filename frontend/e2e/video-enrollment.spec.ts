@@ -1,4 +1,4 @@
-import {expect,test,type Page} from '@playwright/test'
+import {capabilitiesFor,expect,test,type Page} from './fixtures'
 
 async function fixture(page:Page,locale='zh-CN'){
  await page.addInitScript(locale=>localStorage.setItem('audio-intel:ui-locale:v1',locale),locale)
@@ -8,7 +8,7 @@ async function fixture(page:Page,locale='zh-CN'){
  const job={id:'enrollment-video',kind:'asr',purpose:'video_transcription',state:'succeeded',stage:'completed',progress:1,display_name:'Enrollment.mp4',created_at:'2026-10-10T00:00:00Z',request:{purpose:'video_transcription'},result}
  const state={failPeople:false,failImport:0,imports:[] as Array<{job_id:string;segment_ids:number[]}>,created:0,people:[{id:'existing',name:'Presenter',note:'',sample_count:1,samples:[{id:'sample0',source_job_id:job.id,source_segment_id:0,state:'ready'}]}]}
  await page.route('**/api/v1/auth/session',route=>route.fulfill({json:{required:true,authenticated:true}}))
- await page.route('**/api/v1/capabilities',async route=>{const r=await route.fetch();const body=await r.json();body.events={...body.events,sse:false};await route.fulfill({response:r,json:body})})
+ await page.route('**/api/v1/capabilities',async route=>{const body=await capabilitiesFor(page);body.events={...body.events,sse:false};await route.fulfill({json:body})})
  await page.route(url=>url.pathname==='/api/v1/jobs',route=>route.fulfill({json:{items:[job,{...job,id:'other-job',display_name:'Other video'}],total:2,count:2,has_more:false}}))
  await page.route(/\/api\/v1\/jobs\/(enrollment-video|other-job)$/,route=>route.fulfill({json:{...job,id:new URL(route.request().url()).pathname.split('/').pop()}}))
  await page.route('**/video-scenes',route=>route.fulfill({json:{revision:1,scenes}}))

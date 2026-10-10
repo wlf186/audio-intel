@@ -1,4 +1,4 @@
-import {expect,test,type Page} from '@playwright/test'
+import {capabilitiesFor,expect,test,type Page} from './fixtures'
 
 async function documentWorkspace(page:Page,allModels=false){
  const now=new Date().toISOString()
@@ -13,8 +13,8 @@ async function documentWorkspace(page:Page,allModels=false){
   if(path.endsWith('/workbench/text'))return route.fulfill({json:{text:'可分页阅读的文档正文。\n'.repeat(100)}})
   if(path==='/api/v1/tts/document-imports')return route.fulfill({json:[record]})
   if(path==='/api/v1/capabilities'){
-   const response=await route.fetch();const body=await response.json();body.events={...body.events,sse:false};if(allModels)for(const model of body.tts.model_capabilities)model.installed=true
-   return route.fulfill({response,json:body})
+   const body=await capabilitiesFor(page);body.events={...body.events,sse:false};if(allModels)for(const model of body.tts.model_capabilities)model.installed=true
+   return route.fulfill({json:body})
   }
   return route.continue()
  })

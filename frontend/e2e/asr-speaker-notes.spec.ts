@@ -1,4 +1,4 @@
-import {expect,test,type Page} from '@playwright/test'
+import {capabilitiesFor,expect,test,type Page} from './fixtures'
 import type {Job,Speaker,VoiceprintPerson} from '../src/lib/types'
 import {showAsrResults} from './asr-helpers'
 
@@ -40,9 +40,9 @@ async function workspace(page:Page,options:{libraryDelay?:Promise<void>;failPeop
   const path=new URL(route.request().url()).pathname
   if(path==='/api/v1/auth/session')return route.fulfill({json:{required:false,authenticated:true}})
   if(path==='/api/v1/capabilities'){
-   const response=await route.fetch(),body=await response.json()
+   const body=await capabilitiesFor(page)
    body.events={...body.events,sse:false}
-   return route.fulfill({response,json:body})
+   return route.fulfill({json:body})
   }
   if(path==='/api/v1/jobs'){
    const {request:_,result:__,...summary}=job

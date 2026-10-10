@@ -122,6 +122,16 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## v0.1.28 浏览器测试快照与发布恢复
+
+从已部署的 v0.1.27 源码或正式发布的 v0.1.26 升级：**数据迁移：无**，无需额外升级备份，不改写数据库、历史任务、音频或声纹样本。模型、依赖、推理设置和浏览器存储生命周期不变。重建前端并按本地部署流程刷新 API、ASR/TTS supervisor 和 executor；更早版本仍须覆盖中间版本迁移要求。
+
+页面测试改用来自真实服务的 capabilities/system 共享快照，按 worker 缓存、按响应深拷贝，避免刷新时的测试夹具 HTTP 断连。保留真实浏览器接口检查，新增加载、503、断网和手动恢复回归，维持零整套测试重试及原有超时。证据与权限说明见[贡献指南](../CONTRIBUTING.md#browser-fixture-snapshots-and-github-permissions)。
+
+本版本同时正式交付下文 v0.1.27 的视频声纹入库、原始语句试听选择和画面自动加载。v0.1.27 标签保留为审计记录：其 Windows 浏览器检查失败，未创建 GitHub Release，标签不移动或复用。
+
+English: Upgrading from the deployed v0.1.27 source or released v0.1.26 requires **no data migration or additional upgrade backup**. Historical jobs, files and samples are not rewritten. Rebuild the frontend and refresh all previously running service components. Models, dependencies, inference settings and browser-storage lifetime are unchanged. Browser fixtures use deep copies of worker-scoped live snapshots, with real capability and controlled failure/recovery checks retained. This release also ships the video features below; the immutable v0.1.27 tag remains an unpublished audit record. Earlier upgrades must cover intervening migration requirements.
+
 ## v0.1.27 视频声纹入库与自动加载
 
 从 v0.1.26 升级：**数据迁移：无**，无需额外升级备份，不改写历史任务或样本。重建前端并刷新原运行组件；模型、依赖和识别参数未变。更早版本须覆盖中间版本升级要求。

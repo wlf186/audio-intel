@@ -1,6 +1,6 @@
 import {showAsrResults} from './asr-helpers'
 import {expandTtsSettings} from './tts-helpers'
-import {expect,test,type Page} from '@playwright/test'
+import {capabilitiesFor,expect,test,type Page} from './fixtures'
 
 // Drain async route callbacks before Playwright closes the page.
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:'wait'})})
@@ -29,12 +29,11 @@ async function workspace(page:Page){
  await page.route('**/api/v1/asr/hotword-lists',route=>route.fulfill({json:{items:[],count:0}}))
  await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Vivian']}}))
  await page.route('**/api/v1/capabilities',async route=>{
-  const response=await route.fetch()
-  const value=await response.json()
-  value.events={sse:false}
+  const value=await capabilitiesFor(page)
+  value.events={...value.events,sse:false}
   value.deployment={...value.deployment,default_compute_device:'cpu'}
   for(const model of [...value.asr.models,...value.tts.model_capabilities])model.installed=true
-  await route.fulfill({response,json:value})
+  await route.fulfill({json:value})
  })
  await page.route('**/api/v1/voiceprints/people',async route=>{
   if(route.request().method()==='POST'){

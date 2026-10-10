@@ -1,4 +1,4 @@
-import {expect,test,type Page} from '@playwright/test'
+import {capabilitiesFor,expect,test,type Page} from './fixtures'
 
 // Drain async route callbacks before Playwright closes the page.
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:'wait'})})
@@ -20,10 +20,9 @@ async function mockWorkspace(page:Page){
  await page.route('**/api/v1/asr/hotword-lists',route=>route.fulfill({json:{items:[],count:0}}))
  await page.route('**/api/v1/tts/voices',route=>route.fulfill({json:{items:[],preset_speakers:['Ryan','Aiden']}}))
  await page.route('**/api/v1/capabilities',async route=>{
-  const response=await route.fetch()
-  const body=await response.json()
+  const body=await capabilitiesFor(page)
   body.events={...body.events,sse:false}
-  await route.fulfill({response,json:body})
+  await route.fulfill({json:body})
  })
 }
 

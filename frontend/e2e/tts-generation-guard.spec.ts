@@ -1,4 +1,4 @@
-import {expect,test} from '@playwright/test'
+import {capabilitiesFor,expect,test} from './fixtures'
 import type {Job} from '../src/lib/types'
 
 for(const width of [1440,390]){
@@ -13,7 +13,7 @@ for(const width of [1440,390]){
    {...base,id:'historical',display_name:'历史语音'},
    {...base,id:'retrying',display_name:'重试中的语音',state:'running',stage:'tts_chunk_retry',progress:.6,result:undefined,progress_detail:{stage_code:'tts_chunk_retry',basis:'observed',current:1,total:3,unit:'attempt',activity:{sequence:3,current:42,unit:'codec_frame',basis:'observed',updated_at:'2026-09-14T00:00:01Z'}}},
   ]
-  await page.route('**/api/v1/capabilities',async route=>{const response=await route.fetch();const body=await response.json();body.events.sse=false;await route.fulfill({response,json:body})})
+  await page.route('**/api/v1/capabilities',async route=>{const body=await capabilitiesFor(page);body.events.sse=false;await route.fulfill({json:body})})
   await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[]}}))
   await page.route(/\/api\/v1\/jobs(?:\?.*)?$/,route=>route.fulfill({json:{items:jobs.map(({request,result,...summary})=>summary),count:3,total:3,has_more:false}}))
   await page.route(/\/api\/v1\/jobs\/(recovered|historical|retrying)(?:\?.*)?$/,route=>{

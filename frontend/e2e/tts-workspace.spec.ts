@@ -1,4 +1,4 @@
-import {expect,test,type Page} from '@playwright/test'
+import {capabilitiesFor,expect,test,type Page} from './fixtures'
 import type {Job,JobSummary} from '../src/lib/types'
 
 function wave(){
@@ -18,7 +18,7 @@ async function fixture(page:Page){
  await page.route('**/api/v1/**',async route=>{
   const path=new URL(route.request().url()).pathname
   if(path==='/api/v1/capabilities'){
-   const response=await route.fetch();const body=await response.json();body.events={...body.events,sse:false};return route.fulfill({response,json:body})
+   const body=await capabilitiesFor(page);body.events={...body.events,sse:false};return route.fulfill({json:body})
   }
   if(path==='/api/v1/jobs')return route.fulfill({json:{items:state.jobs.map(summary),count:state.jobs.length,total:state.jobs.length,has_more:false}})
   if(path==='/api/v1/tts/jobs'&&route.request().method()==='POST'){

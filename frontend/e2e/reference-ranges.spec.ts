@@ -1,4 +1,4 @@
-import {expect,test,type Page} from '@playwright/test'
+import {capabilitiesFor,expect,test,type Page} from './fixtures'
 import {expandTtsSettings} from './tts-helpers'
 import type {VoiceprintPerson} from '../src/lib/types'
 
@@ -15,7 +15,7 @@ async function setup(page:Page){
  page.on('console',message=>{if(message.type()==='error'&&!message.text().includes('status of 429'))errors.push(message.text())})
  const now=new Date().toISOString()
  const person:VoiceprintPerson={id:'person',name:'区间测试人员',sample_count:3,include_in_hotword_library:true,created_at:now,updated_at:now,samples:['a','b','tiny'].map(id=>({id,person_id:'person',name:`样本 ${id}`,state:'ready',language:'Chinese',duration:id==='tiny'?2:45,transcript:Array.from({length:45},(_,i)=>String(i)).join(' '),words:Array.from({length:45},(_,i)=>({text:String(i),start:i,end:i+1})),tts_eligible:true,embedding_status:'ready',created_at:now,updated_at:now,audio_url:`/api/v1/voiceprints/samples/${id}/audio`}))}
- await page.route('**/api/v1/capabilities',async route=>{const response=await route.fetch();const body=await response.json();body.events.sse=false;body.deployment.default_compute_device='cpu';return route.fulfill({response,json:body})})
+ await page.route('**/api/v1/capabilities',async route=>{const body=await capabilitiesFor(page);body.events.sse=false;body.deployment.default_compute_device='cpu';return route.fulfill({json:body})})
  await page.route('**/api/v1/voiceprints/people',route=>route.fulfill({json:{items:[person]}}))
  await page.route(/\/api\/v1\/jobs(?:\?.*)?$/,route=>route.fulfill({json:{items:[],count:0,total:0,has_more:false}}))
  await page.route('**/api/v1/voiceprints/samples/*/audio/waveform',route=>{

@@ -1,4 +1,4 @@
-import {expect,test,type Page} from '@playwright/test'
+import {capabilitiesFor,expect,test,type Page} from './fixtures'
 import type {Job,JobSummary} from '../src/lib/types'
 import {expandAsrSettings,showAsrResults} from './asr-helpers'
 function wave(){const b=Buffer.alloc(160044);b.write('RIFF');b.writeUInt32LE(b.length-8,4);b.write('WAVEfmt ',8);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(16000,24);b.writeUInt32LE(32000,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(b.length-44,40);for(let i=44;i<b.length;i+=2)b.writeInt16LE(Math.round(Math.sin(i/15)*8000),i);return b}
@@ -10,7 +10,7 @@ async function fixture(page:Page){
  const summary=(j:Job):JobSummary=>{const {request:_,result:__,...v}=j;return v}
  await page.route('**/api/v1/**',async route=>{
   const path=new URL(route.request().url()).pathname
-  if(path==='/api/v1/capabilities'){const response=await route.fetch();const body=await response.json();body.events={...body.events,sse:false};return route.fulfill({response,json:body})}
+  if(path==='/api/v1/capabilities'){const body=await capabilitiesFor(page);body.events={...body.events,sse:false};return route.fulfill({json:body})}
   if(path==='/api/v1/jobs'&&state.failJobs)return route.fulfill({status:503,json:{detail:'任务列表暂不可用'}})
   if(path==='/api/v1/jobs')return route.fulfill({json:{items:state.jobs.map(summary),count:state.jobs.length,total:state.jobs.length,has_more:false}})
   if(path==='/api/v1/asr/hotword-lists')return state.failHotwords?route.fulfill({status:503,json:{detail:'Hotwords offline'}}):route.fulfill({json:{items:[{id:'medical',name:'医学术语',kind:'custom',terms:['医学'],term_count:1,created_at:now,updated_at:now}],count:1}})

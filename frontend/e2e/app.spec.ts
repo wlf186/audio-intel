@@ -1,12 +1,12 @@
 import {expandAsrAdvanced,expandAsrSettings,showAsrResults} from './asr-helpers'
 import {expandTtsSettings} from './tts-helpers'
-import {expect,test} from '@playwright/test'
-import type {Page,Route} from '@playwright/test'
+import {capabilitiesFor,systemFor,expect,test} from './fixtures'
+import type {Page,Route} from './fixtures'
 
 function testWave(){const dataBytes=16000*2*5;const wav=Buffer.alloc(44+dataBytes);wav.write('RIFF',0);wav.writeUInt32LE(wav.length-8,4);wav.write('WAVE',8);wav.write('fmt ',12);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(dataBytes,40);for(let index=44;index<wav.length;index+=2)wav.writeInt16LE(Math.round(Math.sin(index/20)*1200),index);return wav}
 function routeJobList(page:Page,handler:(route:Route)=>Promise<unknown>|unknown){return page.route(url=>url.pathname==='/api/v1/jobs',handler)}
 
-test.beforeEach(async({page})=>{await page.route('**/api/v1/capabilities',async route=>{const response=await route.fetch();const body=await response.json();body.events={...body.events,sse:false};await route.fulfill({response,json:body})})})
+test.beforeEach(async({page})=>{await page.route('**/api/v1/capabilities',async route=>{const body=await capabilitiesFor(page);body.events={...body.events,sse:false};await route.fulfill({json:body})})})
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:'ignoreErrors'})})
 
 for(const width of [1440,390])for(const delayed of [false,true])test(`CPU-only deployment defaults to CPU and disables GPU controls at ${width}px (${delayed?'delayed':'normal'} capabilities)`,async({page},testInfo)=>{
@@ -18,16 +18,15 @@ for(const width of [1440,390])for(const delayed of [false,true])test(`CPU-only d
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  await page.addInitScript(()=>{localStorage.clear();sessionStorage.clear()})
  await page.route('**/api/v1/capabilities',async route=>{
-  const response=await route.fetch()
-  const body=await response.json()
+  const body=await capabilitiesFor(page)
   body.deployment={profile:'cpu',default_compute_device:'cpu',gpu_runtime_installed:false}
   for(const model of body.asr.models)for(const device of model.compute_devices)if(device.id==='gpu')Object.assign(device,{available:false,default:false,unavailable_reason_code:'gpu_runtime_not_installed',unavailable_reason:'GPU inference runtimes are not installed'})
   for(const model of body.tts.model_capabilities)for(const device of model.compute_devices)if(device.id==='gpu')Object.assign(device,{available:false,default:false,unavailable_reason_code:'gpu_runtime_not_installed',unavailable_reason:'GPU inference runtimes are not installed'})
   body.events={...body.events,sse:false}
   if(delayed)await capabilityGate
-  await route.fulfill({response,json:body})
+  await route.fulfill({json:body})
  })
- await page.route('**/api/v1/system',async route=>{const response=await route.fetch();const body=await response.json();body.deployment={profile:'cpu',default_compute_device:'cpu',gpu_runtime_installed:false};body.workers=[{id:'cpu-regression-worker',kind:'asr',state:'busy',current_job_id:'865f22d0c6234349b5493075320097bc',heartbeat_at:'2026-10-10T02:10:06Z'}];await route.fulfill({response,json:body})})
+ await page.route('**/api/v1/system',async route=>{const body=await systemFor(page);body.deployment={profile:'cpu',default_compute_device:'cpu',gpu_runtime_installed:false};body.workers=[{id:'cpu-regression-worker',kind:'asr',state:'busy',current_job_id:'865f22d0c6234349b5493075320097bc',heartbeat_at:'2026-10-10T02:10:06Z'}];await route.fulfill({json:body})})
  // Navigation completion does not imply authenticated capabilities are ready.
  const capabilitiesReady=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v1/capabilities')
  try{
@@ -893,14 +892,12 @@ test('ASR and TTS preferences persist independently and reset per page',async({p
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  await page.route('**/api/v1/system',async route=>{
-  const response=await route.fetch()
-  const body=await response.json()
+  const body=await systemFor(page)
   body.hardware={...body.hardware,gpu:{...body.hardware?.gpu,available:true}}
-  await route.fulfill({response,json:body})
+  await route.fulfill({json:body})
  })
  await page.route('**/api/v1/capabilities',async route=>{
-  const response=await route.fetch()
-  const body=await response.json()
+  const body=await capabilitiesFor(page)
   const useGpuByDefault=(devices:Array<{id:string;available:boolean;default:boolean}>)=>{
    for(const device of devices){device.available=true;device.default=device.id==='gpu'}
   }
@@ -908,7 +905,7 @@ test('ASR and TTS preferences persist independently and reset per page',async({p
   useGpuByDefault(body.asr.models.find((model:{default:boolean})=>model.default).compute_devices)
   useGpuByDefault(body.tts.compute_devices)
   useGpuByDefault(body.tts.model_capabilities.find((model:{default:boolean})=>model.default).compute_devices)
-  await route.fulfill({response,json:body})
+  await route.fulfill({json:body})
  })
  await page.goto('/#asr')
  await page.evaluate(()=>{localStorage.clear();sessionStorage.clear();localStorage.setItem('audio-intel:asr-preferences:v2',JSON.stringify({model:'qwen3-asr-0.6b',language:'French',speakerCount:'2',align:false,useVoiceprints:false,computeDevice:'cpu',accelerateSingleTask:false}));localStorage.setItem('audio-intel:asr-preferences:v1','{broken');localStorage.setItem('audio-intel:tts-preferences:v1','{broken')})
