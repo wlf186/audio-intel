@@ -14,26 +14,57 @@ async function fixture(page:Page,locale='zh-CN'){
   window.EventSource=MockEventSource as unknown as typeof EventSource
   ;(window as EventWindow).emitJobEvent=(name,data)=>{for(const source of MockEventSource.instances)source.dispatchEvent(new MessageEvent(name,{data:JSON.stringify(data)}))}
  },locale)
- const state={revision:1,conflict:false,patches:[] as Array<{revision:number;action:string;scene_id?:string;time?:number}>,sceneReads:0}
- const scenes=()=>[{id:'scene_1',start:0,end:10,frame_time:2,image:`frame-${state.revision}.jpg`,paragraphs:[{speaker:'s0',speaker_label:'讲者',start:0,end:8,text:'Presentation discussion.',segment_ids:[0]}]},{id:'scene_2',start:10,end:20,frame_time:12,image:'frame2.jpg',paragraphs:[]}]
+ const state={revision:1,conflict:false,patches:[] as Array<{revision:number;action:string;scene_id?:string;time?:number}>,sceneReads:0,sceneDelay:undefined as Promise<void>|undefined,frameTime:2,advanceSceneOnSave:false}
+ const scenes=()=>[{id:'scene_1',start:0,end:10,frame_time:state.frameTime,image:`frame-${state.revision}.jpg`,paragraphs:[{speaker:'s0',speaker_label:'讲者',start:0,end:8,text:'Presentation discussion.',segment_ids:[0]}]},{id:'scene_2',start:10,end:20,frame_time:12,image:'frame2.jpg',paragraphs:[]}]
  const summary={id:'recovery-video',kind:'asr',purpose:'video_transcription',state:'succeeded',stage:'completed',progress:1,display_name:'Recovery fixture.mp4',created_at:'2026-10-10T00:00:00Z',updated_at:'2026-10-10T00:00:00Z',compute_device:'cpu'}
  const result=()=>({text:'Presentation discussion.',duration:20,language:'Chinese',timestamp_precision:'segment',speakers:[{id:'s0',label:'讲者'}],segments:[{id:0,start:0,end:8,speaker:'s0',text:'Presentation discussion.'}],artifacts:[],video:{contract_version:1,revision:state.revision,duration:20,time_origin:0,detector:'fixture',scenes:scenes(),original_scenes:scenes()}})
  await page.route('**/api/v1/auth/session',route=>route.fulfill({json:{required:true,authenticated:true}}))
  await page.route('**/api/v1/capabilities',async route=>{const body=await capabilitiesFor(page);body.events={...body.events,sse:true};await route.fulfill({json:body})})
  await page.route(url=>url.pathname==='/api/v1/jobs',route=>route.fulfill({json:{items:[summary,{...summary,id:'other-video',display_name:'Other fixture.mp4'}],count:2,total:2,limit:100,offset:0,has_more:false}}))
  await page.route(/\/api\/v1\/jobs\/(recovery-video|other-video)$/,route=>route.fulfill({json:{...summary,id:new URL(route.request().url()).pathname.split('/').pop(),request:{compute_device:'cpu',language:'Chinese'},result:result()}}))
- await page.route('**/video-scenes',route=>{
+ await page.route('**/video-scenes',async route=>{
   if(route.request().method()==='PATCH'){
    state.patches.push(route.request().postDataJSON())
    if(state.conflict)return route.fulfill({status:409,json:{detail:'Sections changed'}})
+   if(state.advanceSceneOnSave){state.revision++;const patch=state.patches.at(-1)!;if(patch.action==='frame')state.frameTime=patch.time!}
    return route.fulfill({json:result()})
   }
-  state.sceneReads++;return route.fulfill({json:{revision:state.revision,scenes:scenes()}})
+  state.sceneReads++;await state.sceneDelay;return route.fulfill({json:{revision:state.revision,scenes:scenes()}})
  })
  await page.route('**/video-frames/*',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540"><rect width="960" height="540" fill="white"/><text x="70" y="130" font-size="48">Presentation fixture</text></svg>'}))
  await page.route(/\/api\/v1\/jobs\/(recovery-video|other-video)\/source$/,route=>route.fulfill({contentType:'audio/wav',body:Buffer.from('UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=','base64')}))
  return {state,summary,async open(){await page.goto('/#asr');await page.getByRole('tab',{name:locale==='zh-CN'?'任务与结果':'Tasks & results',exact:true}).click();await expect(page.locator('.video-section')).toHaveCount(2)}}
 }
+
+for(const width of [1440,390])test(`frame save waits for refreshed scenes before restore at ${width}px`,async({page},info)=>{
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ await page.setViewportSize({width,height:960})
+ const f=await fixture(page);await f.open();f.state.advanceSceneOnSave=true
+ await page.getByRole('button',{name:'编辑分段',exact:true}).click()
+ await page.getByRole('button',{name:'更换截图',exact:true}).first().click()
+ await page.getByRole('dialog').getByRole('spinbutton').fill('4')
+ const held=Promise.withResolvers<void>();f.state.sceneDelay=held.promise
+ try{
+  await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect.poll(()=>f.state.sceneReads).toBeGreaterThanOrEqual(2)
+  const restore=page.getByRole('button',{name:'恢复自动分段',exact:true})
+  await expect(restore).toBeDisabled()
+  await expect(page.locator('.video-transcript [role=status]')).toContainText('正在读取图文分段')
+  held.resolve()
+  await expect(page.locator('.video-section').first().getByRole('img',{name:'00:00:04 的视频画面',exact:true})).toBeVisible()
+  await restore.click()
+  const dialog=page.getByRole('dialog',{name:'恢复自动分段',exact:true})
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button',{name:'保存',exact:true}).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.locator('.video-section')).toHaveCount(2)
+  expect(f.state.patches).toEqual([{revision:1,action:'frame',scene_id:'scene_1',time:4},{revision:2,action:'restore'}])
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+  await page.screenshot({path:info.outputPath('restored-after-refresh.png')})
+  expect(errors).toEqual([])
+ }finally{held.resolve()}
+})
 
 for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
  const zh=locale==='zh-CN'

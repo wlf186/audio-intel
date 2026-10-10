@@ -1,11 +1,13 @@
-import {expect,test} from '@playwright/test'
+import {capabilitiesFor,expect,test} from './fixtures'
 import path from 'node:path'
 import {execFileSync} from 'node:child_process'
 
 const root=path.resolve('..')
-test.beforeAll(()=>{
+let videoPath:string
+test.beforeAll(async({},workerInfo)=>{
+ videoPath=path.join(root,'tmp/video-e2e',`worker-${workerInfo.workerIndex}`,'lecture.webm')
  const python=path.join(root,process.platform==='win32'?'.runtime/api/Scripts/python.exe':'.runtime/api/bin/python')
- execFileSync(python,['-c',"from pathlib import Path; from tests.test_video_transcription import video_file; p=Path('tmp/video-e2e/lecture.webm'); p.parent.mkdir(parents=True,exist_ok=True); video_file(p)"],{cwd:root,env:{...process.env,AUDIO_INTEL_LOAD_ENV:'0',AUDIO_INTEL_DATA_DIR:'tmp/video-fixture/data'}})
+ execFileSync(python,['-c',"from pathlib import Path; from tests.test_video_transcription import video_file; import sys; p=Path(sys.argv[1]); p.parent.mkdir(parents=True,exist_ok=True); video_file(p)",videoPath],{cwd:root,env:{...process.env,AUDIO_INTEL_LOAD_ENV:'0',AUDIO_INTEL_DATA_DIR:'tmp/video-fixture/data'}})
 })
 import {expandAsrAdvanced} from './asr-helpers'
 
@@ -15,6 +17,10 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ // Drive mutable API integration directly; dedicated tests cover SSE/polling.
+ await page.clock.install({time:new Date('2026-10-10T00:00:00Z')})
+ await page.clock.pauseAt(new Date('2026-10-10T00:00:01Z'))
+ await page.route('**/api/v1/capabilities',async route=>{const body=await capabilitiesFor(page);body.events.sse=false;await route.fulfill({json:body})})
  await page.goto('/#asr')
  await page.getByRole('tab',{name:'新建视频转写',exact:true}).click()
  await expect(page.locator('.asr-upload')).toContainText('25.0 GiB')
@@ -24,14 +30,18 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  await expect(page.getByRole('status')).toContainText('浏览器无法预览此视频')
  await expect(page.getByRole('button',{name:'开始转写',exact:true})).toBeEnabled()
  await expect(page.getByRole('button',{name:'框选 PPT 区域',exact:true})).toHaveCount(0)
- await page.locator('input[type=file]').setInputFiles(path.resolve('../tmp/video-e2e/lecture.webm'))
+ await page.locator('input[type=file]').setInputFiles(videoPath)
  const preview=page.locator('.video-region-media video')
  await expect(preview).toBeVisible()
  await expect.poll(()=>preview.evaluate(element=>(element as HTMLVideoElement).videoWidth)).toBeGreaterThan(0)
  await page.getByRole('button',{name:'框选 PPT 区域',exact:true}).click()
  await page.getByRole('button',{name:'使用全画面',exact:true}).click()
  await expandAsrAdvanced(page)
+ const accepted=page.waitForResponse(response=>response.url().endsWith('/api/v1/asr/video-jobs')&&response.request().method()==='POST')
  await page.getByRole('button',{name:'开始转写',exact:true}).click()
+ const response=await accepted;expect(response.status()).toBe(202);const job=await response.json()
+ await expect.poll(async()=>{const result=await page.request.get(`/api/v1/jobs/${job.id}`);expect(result.ok()).toBe(true);return (await result.json()).state},{timeout:30000}).toBe('succeeded')
+ await page.clock.runFor(5000)
  await expect(page.getByRole('button',{name:'查看本次任务'})).toBeVisible({timeout:30000})
  await page.getByRole('button',{name:'查看本次任务'}).click()
  await expect(page.locator('.video-section')).toHaveCount(2,{timeout:30000})
@@ -39,18 +49,24 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  await page.getByRole('button',{name:'编辑分段',exact:true}).click()
  await page.getByRole('button',{name:'与下一段合并',exact:true}).click()
  await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click()
+ await expect(page.getByRole('dialog')).toHaveCount(0)
  await expect(page.locator('.video-section')).toHaveCount(1)
  await page.getByRole('button',{name:'拆分此段',exact:true}).click()
  await page.getByRole('dialog').getByRole('spinbutton').fill('3')
  await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click()
+ await expect(page.getByRole('dialog')).toHaveCount(0)
  await expect(page.locator('.video-section')).toHaveCount(2)
  await page.getByRole('button',{name:'更换截图',exact:true}).first().click()
  await page.getByRole('dialog').getByRole('spinbutton').fill('1')
  await page.getByRole('button',{name:'预览此时画面',exact:true}).click()
  await expect(page.locator('.video-edit-preview')).toBeVisible()
  await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click()
+ await expect(page.getByRole('dialog')).toHaveCount(0)
+ // A successful frame PATCH closes the dialog before scenes finish reloading.
+ await expect(page.locator('.video-section').first().getByRole('img',{name:'00:00:01 的视频画面',exact:true})).toBeVisible()
  await page.getByRole('button',{name:'恢复自动分段',exact:true}).click()
  await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click()
+ await expect(page.getByRole('dialog')).toHaveCount(0)
  await expect(page.locator('.video-section')).toHaveCount(2)
  const downloadPromise=page.waitForEvent('download')
  await page.getByRole('button',{name:'导出简洁 PDF',exact:true}).click()
@@ -79,7 +95,7 @@ test('video upload pauses, survives reload, resumes and explicitly discards',asy
  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message))
  await page.goto('/#asr')
  await page.getByRole('tab',{name:'新建视频转写',exact:true}).click()
- await page.locator('input[type=file]').setInputFiles(path.resolve('../tmp/video-e2e/lecture.webm'))
+ await page.locator('input[type=file]').setInputFiles(videoPath)
  let release:()=>void=()=>undefined
  const held=new Promise<void>(resolve=>{release=resolve})
  const handler=async(route:import('@playwright/test').Route)=>{if(route.request().method()==='PATCH'){await held;try{await route.abort()}catch(error){if(!(error instanceof Error)||!error.message.includes('already handled'))throw error}}else await route.continue()}
@@ -91,7 +107,7 @@ test('video upload pauses, survives reload, resumes and explicitly discards',asy
  await expect(page.locator('.video-resume')).toBeVisible()
  await page.reload();await page.getByRole('tab',{name:'新建视频转写',exact:true}).click()
  await expect(page.locator('.video-resume')).toContainText('lecture.webm')
- await page.locator('input[type=file]').setInputFiles(path.resolve('../tmp/video-e2e/lecture.webm'))
+ await page.locator('input[type=file]').setInputFiles(videoPath)
  await page.getByRole('button',{name:'开始转写',exact:true}).click()
  await expect(page.getByRole('button',{name:'查看本次任务'})).toBeVisible({timeout:30000})
  expect(await page.evaluate(()=>sessionStorage.getItem('audio-intel:video-upload:v1'))).toBeNull()

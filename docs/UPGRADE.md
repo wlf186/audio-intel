@@ -122,7 +122,17 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
-## v0.1.28 浏览器测试快照与发布恢复
+## v0.1.29 视频编辑就绪回归与发布恢复
+
+从已部署的 v0.1.28、v0.1.27 源码或正式发布的 v0.1.26 升级：**数据迁移：无**，无需额外升级备份，不改写数据库、历史任务、视频、音频或声纹样本。模型、依赖、推理设置和浏览器存储生命周期不变。重建前端并按本地部署流程刷新 API、ASR/TTS supervisor 和 executor；更早版本须覆盖中间版本迁移要求。
+
+修复视频编辑集成测试的就绪判断：保存截图后等待新画面实际显示，再恢复自动分段；每次保存均确认弹窗关闭。新增延迟画面响应的桌面/390 px 回归，确认加载期间恢复按钮禁用、读取完成后可以恢复。真实视频 API 测试使用各 worker 独立素材，等待任务完成并明确推进暂停的浏览器时钟；专门的 SSE/轮询测试继续覆盖实时更新。保留原有超时和断言，不增加整套测试重试。CI 证据与处理经验见[贡献指南](../CONTRIBUTING.md#transcription-ci-lessons)。
+
+本版本交付下文 v0.1.27 的视频声纹入库与自动加载，以及 v0.1.28 的浏览器快照、摘要列表和取消测试计时修复。v0.1.27、v0.1.28 的正式标签因 Windows 检查失败保留为未发布的审计记录，不移动或复用；对应说明应与本版本一并阅读。
+
+English: Upgrading from deployed v0.1.28/v0.1.27 source or released v0.1.26 requires **no data migration or additional upgrade backup**. No database records, historical media or voiceprint samples are rewritten. Rebuild the frontend and refresh all previously running API, supervisor and executor processes. Models, dependencies, inference settings and browser-storage lifetime are unchanged. Video editing tests wait for refreshed frames and closed dialogs; controlled delayed responses cover desktop/390 px readiness. Live API tests use worker-specific media and deliberately advanced browser clocks, with dedicated SSE/polling coverage retained. Original deadlines and zero whole-test retries remain. This release delivers the video features and CI fixes below; v0.1.27/v0.1.28 remain immutable unpublished audit tags. Earlier upgrades must cover intervening migration requirements.
+
+## v0.1.28 浏览器测试快照与发布恢复（未发布标签）
 
 从已部署的 v0.1.27 源码或正式发布的 v0.1.26 升级：**数据迁移：无**，无需额外升级备份，不改写数据库、历史任务、音频或声纹样本。模型、依赖、推理设置和浏览器存储生命周期不变。重建前端并按本地部署流程刷新 API、ASR/TTS supervisor 和 executor；更早版本仍须覆盖中间版本迁移要求。
 
@@ -130,9 +140,9 @@ English: A commit or GitHub Release does not refresh a running local process. St
 
 视频任务列表夹具同时遵循真实 API 的仅摘要契约，完整结果只从任务详情读取；受控轮询回归确认入库后不会因列表刷新重载画面或重置阅读位置。生产轮询和自动加载行为未改。
 
-本版本同时正式交付下文 v0.1.27 的视频声纹入库、原始语句试听选择和画面自动加载。v0.1.27 标签保留为审计记录：其 Windows 浏览器检查失败，未创建 GitHub Release，标签不移动或复用。
+本候选版本包含下文 v0.1.27 的视频声纹入库、原始语句试听选择和画面自动加载。v0.1.27、v0.1.28 标签保留为审计记录：其 Windows 浏览器检查失败，未创建 GitHub Release，标签不移动或复用；正式交付见 v0.1.29。
 
-English: Upgrading from the deployed v0.1.27 source or released v0.1.26 requires **no data migration or additional upgrade backup**. Historical jobs, files and samples are not rewritten. Rebuild the frontend and refresh all previously running service components. Models, dependencies, inference settings and browser-storage lifetime are unchanged. Browser fixtures use deep copies of worker-scoped live snapshots, with real capability and controlled failure/recovery checks retained. This release also ships the video features below; the immutable v0.1.27 tag remains an unpublished audit record. Earlier upgrades must cover intervening migration requirements.
+English: Upgrading from the deployed v0.1.27 source or released v0.1.26 requires **no data migration or additional upgrade backup**. Historical jobs, files and samples are not rewritten. Rebuild the frontend and refresh all previously running service components. Models, dependencies, inference settings and browser-storage lifetime are unchanged. Browser fixtures use deep copies of worker-scoped live snapshots, with real capability and controlled failure/recovery checks retained. This candidate includes the video features below; v0.1.27/v0.1.28 remain immutable unpublished audit tags, with delivery in v0.1.29. Earlier upgrades must cover intervening migration requirements.
 
 ## v0.1.27 视频声纹入库与自动加载
 
