@@ -122,6 +122,16 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## v0.1.25 视频转写正式发布与跨平台加载验证
+
+从 v0.1.23 升级：**数据迁移：仅数据库**，按下节说明备份 SQLite 后升级 schema v11 → v12；不重写历史文件。更早版本需合并阅读中间升级要求。已经运行 v0.1.24 源码且完成 v12 迁移的实例，本次**无新增数据迁移**，无需重复升级备份。
+
+本版发布下节的视频续传、画面识别及简洁 PDF 功能。v0.1.24 标签因 Windows CPU-only 浏览器测试在部署能力加载完成前查找设备控件而失败，保留标签但未发布 Release。本版按接口完成和界面就绪状态验证，增加正常／受控延迟加载的桌面与 390 px 回归，保留 CPU 默认值及 GPU 禁用断言。同时修复工作进程显示长任务 ID 时系统页的移动端横向溢出，使用固定繁忙进程数据验证。失败截图、trace 与页面错误上下文统一存放于 `logs/playwright/`，由现有 CI 失败日志上传步骤收集。
+
+模型、推理参数、API 和 schema v12 不变。从 v0.1.23 升级仍需同步 API/ASR 依赖；所有实例重建前端并按本地部署流程刷新原有服务进程。
+
+English: From v0.1.23, take a consistent SQLite backup for the **database-only** v11 → v12 migration described below; historical files are not rewritten. An instance already migrated by v0.1.24 needs **no additional data migration or upgrade backup**. The failed v0.1.24 tag remains without a Release. This version delivers its video/PDF features and fixes the CPU-only browser test to wait for capabilities and visible controls, with normal and controlled delayed-response coverage on desktop and mobile. System-page grid sections can now shrink around long active job IDs without mobile overflow, covered by fixed busy-worker data. CI retains failure screenshots, traces and error context under `logs/playwright/`. Models, inference settings, APIs and schema v12 stay unchanged; rebuild the frontend and refresh all original processes, synchronizing API/ASR dependencies when upgrading from v0.1.23.
+
 ## v0.1.24 视频转写与简洁 PDF / Video transcription and concise PDF
 
 从 v0.1.23 升级：**数据迁移：仅数据库**，需要 SQLite 一致快照；更早版本须合并阅读中间版本升级要求。数据库从 v11 增量升级至 **v12**，只新增续传上传和分片校验记录，不重写历史任务或文件。首次启动新代码前按备份规则停止服务并创建 SQLite 快照。回退须使用该快照，不应由旧代码写入 v12 数据库。已完成音频任务可直接导出简洁 PDF，旧视频任务不会自动补做画面分析。
