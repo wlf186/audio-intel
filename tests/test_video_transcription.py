@@ -242,13 +242,17 @@ def test_video_openapi_contract(client):
     body=schema['components']['schemas']['VideoJobRequest']
     assert body['additionalProperties'] is False
     assert body['properties']['accelerate_single_task']['default'] is True
+    enrollment=schema['paths']['/api/v1/voiceprints/people/{person_id}/samples/from-asr']['post']
+    assert 'playback.wav' in enrollment['description']
+    example=enrollment['requestBody']['content']['application/json']['examples']['video_sentences']['value']
+    assert example=={'job_id':'video_example','segment_ids':[0,2]}
     upload=schema['paths']['/api/v1/asr/video-uploads']['post']
     assert upload['security']==[{'BearerAuth':[]},{'SessionCookie':[]}]
     assert upload['responses']['201']['content']['application/json']['schema']['$ref'].endswith('VideoUploadResponse')
     assert client.get('/api/v1/capabilities').json()['asr']['video']['max_upload_bytes']==25*1024**3
 
 
-def test_variable_frame_pts_and_delayed_audio_share_origin(tmp_path):
+def test_variable_frame_pts_and_delayed_audio_share_origin(tmp_path, client, local):
     from audio_intel.video_frames import decode, picture_at
     source=tmp_path/'offsets.mkv'
     with av.open(str(source),'w') as output:
@@ -275,6 +279,31 @@ def test_variable_frame_pts_and_delayed_audio_share_origin(tmp_path):
     assert result['scenes'][1]['start']==pytest.approx(1.1)
     assert result['duration']==pytest.approx(2)
     assert picture_at(source,1.1,None,result['time_origin']).size==(320,180)
+
+    # Enrollment must use the same normalized timeline, not the original PTS.
+    job=db.create_job('asr','offsets.mkv',{'purpose':'video_transcription','input_path':str(source)})
+    output=local.jobs_dir/job['id']/'output'
+    output.mkdir(parents=True)
+    (tmp_path/'normalized.wav').replace(output/'playback.wav')
+    segments=[{'id':i,'start':1.1,'end':1.6,'speaker':'s0','speaker_label':'讲者','text':'测试',
+               'words':[{'text':'测试','start':1.2,'end':1.5}]} for i in range(2)]
+    db.update_job(job['id'],state='succeeded',result_json={'video':result,'segments':segments,'language':'Chinese'})
+    person=client.post('/api/v1/voiceprints/people',json={'name':'视频讲者'}).json()
+    url=f"/api/v1/voiceprints/people/{person['id']}/samples/from-asr"
+    response=client.post(url,json={'job_id':job['id'],'segment_ids':[0,0]})
+    assert response.status_code==201,response.text
+    sample=response.json()['items'][0]
+    assert len(response.json()['items'])==1
+    assert sample['duration']==pytest.approx(.5)
+    assert sample['words']==[{'text':'测试','start':.1,'end':.4}]
+    assert sample['transcript']=='测试'
+    import soundfile as sf
+    sound,rate=sf.read(io.BytesIO(client.get(sample['audio_url']).content))
+    assert rate==16000 and len(sound)==8000 and float(np.mean(sound))>.25
+    assert client.post(url,json={'job_id':job['id'],'segment_ids':[0]}).status_code==409
+    (output/'playback.wav').unlink()
+    missing=client.post(url,json={'job_id':job['id'],'segment_ids':[1]})
+    assert missing.status_code==404 and 'playback' in missing.json()['detail'].lower()
 
 
 def test_pdf_resource_budget(tmp_path,monkeypatch):

@@ -88,3 +88,19 @@ With CLI `--pdf`, the journal retains the accepted `job_id` until the download i
 ![桌面视频分段编辑 / Desktop section editing](assets/video-transcription/edit-1440.png)
 
 ![390px 视频分段编辑 / 390px section editing](assets/video-transcription/edit-390.png)
+
+## 从视频加入声纹库 / Add video speech to the voiceprint library
+
+在「图文阅读」中点击说话人旁的「加入声纹库」，即可试听并勾选该人在整个任务中的原始语句，然后选择已有人员或新建人员。默认不选中；每条语句单独保存为一个样本，跨画面重复显示的语句不会重复列出。已入库语句不可再次选择。声纹库加载失败可重试，提交失败保留输入。也可继续使用「逐句明细」中的勾选入库入口。
+
+样本使用与转写和播放相同时间轴的音频，包含视频起始偏移和延迟音轨处理；缺少任务保存的播放音频时明确报错，不自动重建历史文件。关闭弹窗会停止试听，选择仅在当前弹窗内保留。
+
+图文阅读每批展示 20 个画面，接近底部时自动追加；「加载更多」按钮仍可手动使用。逐句明细继续按每批 40 条加载。
+
+English: In **Illustrated reading**, choose **Add to voiceprint library** beside a speaker. Preview and select original sentences across the task, then choose an existing person or create one. Nothing is selected by default; each sentence becomes one sample, and repeated scene references appear only once. Previously imported sentences are disabled. Library loading and submission errors support retry. The existing selection flow in **Segment details** remains available. Video samples use the saved playback audio on the transcription timeline, including media offsets and delayed audio; missing playback is reported without rebuilding historical files. Closing the dialog stops preview and clears its temporary selection. Scenes load automatically in batches of 20 near the bottom, with a manual **Load more** fallback; segment details retain batches of 40.
+
+| 桌面语句选择 / Desktop selection | 390 px 语句选择 / Mobile selection |
+| --- | --- |
+| ![Desktop voiceprint enrollment](assets/video-transcription/enroll-1440.png) | ![Mobile voiceprint enrollment](assets/video-transcription/enroll-390.png) |
+
+截图使用合成测试数据 / Screenshots use synthetic test data.

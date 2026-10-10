@@ -5,6 +5,8 @@ import type { AsrModelCapability, ComputeDevice, HotwordLibraryCapability, Hotwo
 import './asr.css'
 import {TranscriptExport} from '../components/TranscriptExport'
 import {VideoTranscript} from '../components/VideoTranscript'
+import {VideoSpeakerEnrollment} from '../components/VideoSpeakerEnrollment'
+import {enrollmentPerson} from '../lib/voiceprintEnrollment'
 import {VideoRegionPicker} from '../components/VideoRegionPicker'
 import {submitVideo,loadVideoResume,discardVideoUpload,type VideoCapability,type VideoRegion} from '../lib/videoUpload'
 import { ResourceStatePanel } from '../components/ResourceStatePanel'
@@ -19,9 +21,6 @@ import { SubmissionProgress } from '../components/SubmissionProgress'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 const segmentBatchSize=40
-function nameKey(value: string) {
-  return value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase()
-}
 function hotwordStats(lists: HotwordList[], ids: Set<string>) {
   const unique = new Map<string, string>()
   lists
@@ -153,6 +152,8 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const [discardOpen,setDiscardOpen]=useState(false)
   const [videoReading,setVideoReading]=useState(true)
   const [videoEditing,setVideoEditing]=useState(false)
+  const [videoEnrollment,setVideoEnrollment]=useState<{jobId:string;speakerId:string}>()
+  useEffect(()=>setVideoEnrollment(undefined),[selectedJobId])
   useEffect(()=>setVideoEditing(false),[selectedJobId])
   const isVideoTab=view==='video'
   const file=isVideoTab?videoFile:audioFile
@@ -342,7 +343,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     const observer = new IntersectionObserver((entries) => {if(entries.some((entry) => entry.isIntersecting))loadMoreSegments()}, {root,rootMargin:'0px 0px 360px'})
     observer.observe(target)
     return () => observer.disconnect()
-  }, [loadMoreSegments, segments.length, visibleSegmentCount, view])
+  }, [loadMoreSegments, segments.length, visibleSegmentCount, view, videoReading])
   useEffect(() => {
     if (!revealRequest) return
     setView('results')
@@ -494,12 +495,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   }
   const openLibrary = () => {
     const speaker = selectionSpeaker ? speakerById.get(selectionSpeaker) : undefined
-    const identity = speakerIdentity(speaker, selectionLabel)
-    const matchedId = speaker?.label_source === 'voiceprint' ? speaker.voiceprint_match?.person_id : undefined
-    const candidates=voiceprints.filter(person=>nameKey(person.name)===nameKey(identity.name))
-    const exactMatch=candidates.find(person=>nameKey(person.note||'')===nameKey(identity.note))
-    const match = voiceprints.find((person) => person.id === matchedId) || exactMatch
-    const ambiguous=!match&&candidates.length>1
+    const {identity,match,ambiguous}=enrollmentPerson(speaker,selectionLabel,voiceprints)
     setLibraryError('')
     setLibraryAmbiguous(ambiguous)
     setTargetPersonId(match?.id || (ambiguous?'__choose__':''))
@@ -777,7 +773,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               </p>
             ) : null}
             {result.video?<div className="video-view-tabs" role="group" aria-label={t('video.readingMode')}><button aria-pressed={videoReading} onClick={()=>setVideoReading(true)}>{t('video.reading')}</button><button aria-pressed={!videoReading} onClick={()=>setVideoReading(false)}>{t('video.details')}</button></div>:null}
-            {result.video&&videoReading?<VideoTranscript job={selected} editing={videoEditing} onEditingChange={setVideoEditing} onUpdated={onJobResultUpdated} onSeek={seek} onRename={id=>{const segment=result.segments?.find(item=>item.speaker===id);if(segment)openRename(segment)}}/>:<>
+            {result.video&&videoReading?<VideoTranscript job={selected} editing={videoEditing} onEditingChange={setVideoEditing} onUpdated={onJobResultUpdated} onSeek={seconds=>{stopAt.current=undefined;seekWord(seconds)}} onEnroll={speakerId=>{audio.current?.pause();setVideoEnrollment({jobId:selected.id,speakerId})}} onRename={id=>{const segment=result.segments?.find(item=>item.speaker===id);if(segment)openRename(segment)}}/>:<>
             <div className="transcript-tools">
               <Search size={18} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('asr.results.search')} />
@@ -928,6 +924,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           </button>
         </Modal>
       ) : null}
+      {videoEnrollment&&selected&&videoEnrollment.jobId===selected.id?<VideoSpeakerEnrollment key={`${selected.id}:${videoEnrollment.speakerId}`} job={selected} speakerId={videoEnrollment.speakerId} people={voiceprints} peopleState={voiceprintsState} refreshPeople={refreshVoiceprints} refreshPeopleAndHotwords={refreshPeopleAndHotwords} onClose={()=>setVideoEnrollment(undefined)} onSuccess={count=>{setVideoEnrollment(undefined);setResultNotice(t('video.enrolledCount',{count}))}}/>:null}
       {libraryOpen ? (
         <Modal title={t('asr.library.title')} closeLabel={t('asr.library.close')} onClose={() => {if(!libraryBusy)setLibraryOpen(false)}}>
           <p>

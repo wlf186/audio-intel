@@ -1184,6 +1184,10 @@ VIDEO_SCENES_EXAMPLE = {"revision": 1, "scenes": [{**VIDEO_SCENE_EXAMPLE, "parag
      "text": "欢迎使用本地转写。", "segment_ids": [0]},
 ]}]}
 REQUEST_EXAMPLES.update({
+    ("/api/v1/voiceprints/people/{person_id}/samples/from-asr", "post"): {
+        "video_sentences": {"summary": "视频原始语句入库 / Import original video sentences",
+                            "value": {"job_id": "video_example", "segment_ids": [0, 2]}},
+    },
     ("/api/v1/asr/video-uploads", "post"): {"lecture": {"summary": "创建上传 / Create upload", "value": {"name": "lecture.mp4", "size_bytes": 33554432}}},
     ("/api/v1/asr/video-jobs", "post"): {"lecture": {"summary": "替换为已完成上传的 ID / Replace with a completed upload ID", "value": {
         "upload_id": VIDEO_UPLOAD_EXAMPLE["id"], "language": "Auto", "compute_device": "cpu", "hotword_list_ids": [],

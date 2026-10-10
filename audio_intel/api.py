@@ -2118,8 +2118,8 @@ def create_app() -> FastAPI:
         response_model=VoiceprintSamplesResponse, response_model_exclude_unset=True,
         tags=[VOICEPRINT_TAG], summary="从 ASR 段落创建声纹样本 / Create samples from ASR segments",
         description=bilingual(
-            "来源任务必须成功，所选段落必须属于同一说话人且未曾入库。每段独立保存为 WAV，以任务名＋段落号命名，重名追加序号。",
-            "The source job must have succeeded; selected segments must belong to one speaker and not already be imported. Each segment becomes a separate local WAV sample named from the task and segment number, with a suffix on name collisions.",
+            "来源音频或视频任务必须成功，所选原始语句必须属于同一说话人且未曾入库。每句独立保存为 WAV，以任务名＋段落号命名，重名追加序号。视频从与转写时间轴一致的 playback.wav 截取，缺失时返回 404。",
+            "The source audio or video job must have succeeded; selected original segments must belong to one speaker and not already be imported. Each segment becomes a separate local WAV sample named from the task and segment number, with a suffix on name collisions. Video samples use the saved playback.wav on the transcription timeline; missing playback returns 404.",
         ),
         operation_id="createVoiceprintSamplesFromAsr",
         responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
@@ -2150,10 +2150,11 @@ def create_app() -> FastAPI:
         }
         if any((job["id"], item["id"]) in existing_sources for item in segments):
             raise HTTPException(status_code=409, detail="One or more selected segments already exist in the voiceprint library")
-        source = Path((job.get("request") or {}).get("input_path", "")).resolve()
-        input_root = (settings.jobs_dir / job["id"] / "input").resolve()
+        is_video = (job.get("request") or {}).get("purpose") == "video_transcription" or bool((job.get("result") or {}).get("video"))
+        input_root = (settings.jobs_dir / job["id"] / ("output" if is_video else "input")).resolve()
+        source = (input_root / "playback.wav").resolve() if is_video else Path((job.get("request") or {}).get("input_path", "")).resolve()
         if input_root not in source.parents or not source.is_file():
-            raise HTTPException(status_code=404, detail="Source recording is unavailable")
+            raise HTTPException(status_code=404, detail="Video playback audio is unavailable" if is_video else "Source recording is unavailable")
         from .media import extract_audio_clip
 
         created: list[dict[str, Any]] = []

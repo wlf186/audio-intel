@@ -1,5 +1,16 @@
 {
   "video": {
+    "sceneCount": "已展示 {{visible}} / {{total}} 个画面",
+    "enrollHelp": "选择本任务中 {{speaker}} 的原始语句，每条分别保存为一个声纹样本。",
+    "alreadyImported": "已加入声纹库",
+    "noSpeakerSegments": "该说话人已无可用语句，请关闭后重新选择。",
+    "previewSample": "试听语句 {{number}}",
+    "stopSample": "停止试听语句 {{number}}",
+    "choosePerson": "下一步：选择人员",
+    "backToSamples": "返回选择语句",
+    "selectionUnavailable": "所选语句已入库或已变更，请返回重新选择。",
+    "enrolledCount": "已加入 {{count}} 个声纹样本。",
+
     "finishEditing": "完成编辑",
     "editConflict": "分段已更新，本次修改尚未保存。请重新加载后再编辑。",
     "discardEditReload": "放弃本次编辑并重新加载",

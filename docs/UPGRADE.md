@@ -122,6 +122,16 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## v0.1.27 视频声纹入库与自动加载
+
+从 v0.1.26 升级：**数据迁移：无**，无需额外升级备份，不改写历史任务或样本。重建前端并刷新原运行组件；模型、依赖和识别参数未变。更早版本须覆盖中间版本升级要求。
+
+图文阅读新增说话人入库入口，可试听并选择原始语句，随后选择已有或新建人员；每句独立成样本，已入库语句禁选。选择只在当前弹窗内保留，不写浏览器存储。图文列表每批 20 个画面自动加载，并保留手动按钮；逐句明细切换后仍支持自动加载。修正图文时间按钮的秒数定位。
+
+视频入库复用现有 from-asr 接口，从任务已保存的 playback.wav 截取，以保持视频起始偏移、延迟音轨与转写时间一致。缺失音频返回 404，不重建历史文件；旧样本不会自动修复或替换。如需重新采样，应由用户明确删除对应旧样本后再次选择入库。
+
+English: From v0.1.26, **no data migration or additional upgrade backup** is required. Rebuild the frontend and refresh the original service components; models, dependencies and inference settings are unchanged. Video reading now provides sentence preview/selection and voiceprint enrollment, with temporary dialog-only selection. Scenes automatically expand in batches of 20 with a manual fallback. Video enrollment uses the saved playback WAV on the transcription timeline and returns 404 if missing; historical tasks and samples are not rewritten. Earlier upgrades must cover intervening migration requirements.
+
 ## v0.1.26 转写恢复、编辑冲突与文档一致性
 
 从 v0.1.25 升级：**数据迁移：无**，无需额外升级备份；schema v12、历史任务和文件保持不变。更早版本须覆盖中间版本迁移要求。同步源码并重建前端，按本地部署流程刷新 API、ASR/TTS supervisor 和 executor，无需重新安装模型或同步未变化的依赖。

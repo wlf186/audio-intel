@@ -57,7 +57,7 @@ test('document upload, lossless preview, reselection and streaming result links'
  expect(errors).toEqual([])
  await page.route('**/document/download?mode=complete',route=>route.fulfill({status:429,contentType:'application/problem+json',json:{status:429,detail:'Download capacity reached',retry_after_seconds:5}}))
  await page.getByRole('link',{name:'下载完整 MP3'}).click()
- await expect(page.locator('.document-results [role=alert]')).toContainText('Download capacity reached')
+ await expect(page.locator('.document-results > [role=alert]')).toContainText('Download capacity reached')
  await expect(page).toHaveURL(/\/#tts$/)
  expect(await page.locator('.document-results audio').count()).toBe(1)
 })

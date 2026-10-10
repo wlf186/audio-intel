@@ -1,5 +1,16 @@
 {
   "video": {
+    "sceneCount": "Showing {{visible}} / {{total}} scenes",
+    "enrollHelp": "Select original sentences by {{speaker}} in this task. Each sentence becomes a separate voiceprint sample.",
+    "alreadyImported": "Already in voiceprint library",
+    "noSpeakerSegments": "This speaker has no available sentences. Close and select again.",
+    "previewSample": "Preview sentence {{number}}",
+    "stopSample": "Stop sentence {{number}} preview",
+    "choosePerson": "Next: choose person",
+    "backToSamples": "Back to sentences",
+    "selectionUnavailable": "Selected sentences were imported or changed. Go back and select again.",
+    "enrolledCount": "Added {{count}} voiceprint samples.",
+
     "finishEditing": "Finish editing",
     "editConflict": "Sections have changed. Your edits have not been saved. Reload before editing again.",
     "discardEditReload": "Discard this edit and reload",

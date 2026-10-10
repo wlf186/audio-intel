@@ -147,3 +147,15 @@
 .asr-workspace .video-result .wave-area{padding-top:6px}
 .asr-workspace .video-result .video-section>img{max-height:320px}
 @media(max-width:600px){.asr-workspace .video-result{height:auto;min-height:600px}.video-transcript{max-height:70dvh;min-height:300px}.asr-workspace .video-result .waveform{height:24px}.video-reading-tools{margin-bottom:12px}.video-section header{gap:4px}}
+
+.video-enrollment{width:min(720px,calc(100vw - 32px))}
+.video-enrollment-list{max-height:45dvh;overflow:auto;min-height:0}
+.video-enrollment-row{display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--line);padding:8px 0}
+.video-enrollment-row>label{display:flex;align-items:flex-start;gap:10px;flex:1;min-width:0;margin:0;min-height:44px;cursor:pointer}
+.video-enrollment-row input[type=checkbox]{width:24px;height:24px;margin:10px;flex-shrink:0}
+.video-enrollment-row label>span{min-width:0;overflow-wrap:anywhere}
+.video-enrollment-row label>span>span,.video-enrollment-row small{display:block;white-space:pre-wrap}
+.video-enrollment-row b,.video-enrollment-row small{color:var(--muted);font-size:12px}
+.video-enrollment button,.video-enrollment select,.video-enrollment input:not([type=checkbox]){min-height:44px}
+.video-enrollment .modal-actions{flex-wrap:wrap}
+.video-enrollment .modal-actions>span{overflow-wrap:anywhere;min-width:0}

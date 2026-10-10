@@ -316,6 +316,10 @@ Main library surfaces:
 - `GET|POST /api/v1/tts/voices`
 - `DELETE /api/v1/tts/voices/{voice_id}`
 
+`samples/from-asr` accepts completed audio and video ASR jobs with the existing JSON body `{"job_id":"...","segment_ids":[0,2]}`. IDs refer to original `result.segments`, not merged presentation paragraphs. All selected segments must belong to one speaker; each becomes one WAV sample. Duplicate imports return `409`. Video samples are cut from the saved `output/playback.wav` on the transcription timeline; missing playback returns `404` without falling back to container timestamps. Audio jobs retain their existing source-recording behavior.
+
+中文：视频入库复用同一接口和原始语句 ID，每句单独成样本，重复入库返回 `409`。视频按任务保存的播放音频截取，缺失返回 `404`，不会回退到原视频时间轴或自动补写历史文件。
+
 Completed jobs keep speaker-name, hotword, device, and model snapshots. Later library or hardware changes do not rewrite historical results.
 
 ## OpenAI-compatible audio

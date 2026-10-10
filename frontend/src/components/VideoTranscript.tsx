@@ -10,12 +10,14 @@ function Frame({jobId,scene}:{jobId:string;scene:VideoScene}){
  useEffect(()=>setError(false),[scene.image])
  return error?<p role="alert">{t('video.frameFailed')} <button className="button" onClick={()=>{setError(false);setRetry(value=>value+1)}}>{t('common.actions.reload')}</button></p>:<img loading="lazy" src={`/api/v1/jobs/${jobId}/video-frames/${scene.image}?retry=${retry}`} alt={t('video.frameAt',{time:formatTime(scene.frame_time,false)})} onError={()=>setError(true)}/>
 }
-export function VideoTranscript({job,editing,onEditingChange,onUpdated,onSeek,onRename}:{job:Job;editing:boolean;onEditingChange:(value:boolean)=>void;onUpdated:(id:string,result:JobResult)=>void;onSeek:(time:number)=>void;onRename:(id:string)=>void}){
+export function VideoTranscript({job,editing,onEditingChange,onUpdated,onSeek,onRename,onEnroll}:{job:Job;editing:boolean;onEditingChange:(value:boolean)=>void;onUpdated:(id:string,result:JobResult)=>void;onSeek:(time:number)=>void;onRename:(id:string)=>void;onEnroll:(id:string)=>void}){
  const {t}=useTranslation()
  const [data,setData]=useState<{revision:number;scenes:VideoScene[]}>()
  const [error,setError]=useState('')
  const [reload,setReload]=useState(0)
  const [visible,setVisible]=useState(20)
+ const scrollRoot=useRef<HTMLDivElement>(null)
+ const sentinel=useRef<HTMLDivElement>(null)
  const [dialog,setDialog]=useState<{action:Action;scene?:VideoScene;upper?:number;revision:number}>()
  const [conflict,setConflict]=useState(false)
  const saveController=useRef<AbortController|undefined>(undefined)
@@ -26,6 +28,14 @@ export function VideoTranscript({job,editing,onEditingChange,onUpdated,onSeek,on
  const [saveError,setSaveError]=useState('')
  useEffect(()=>{let active=true;setData(undefined);setError('');void request<{revision:number;scenes:VideoScene[]}>(`/api/v1/jobs/${job.id}/video-scenes`).then(value=>{if(active)setData(value)},cause=>{if(active)setError(cause.message)});return()=>{active=false}},[job.id,job.result,reload])
  useEffect(()=>{setVisible(20);setDialog(undefined);setSaving(false);return()=>saveController.current?.abort()},[job.id])
+ useEffect(()=>{
+  const root=scrollRoot.current,target=sentinel.current
+  if(!root||!target||!data||visible>=data.scenes.length)return
+  let active=true
+  const observer=new IntersectionObserver(entries=>{if(active&&entries.some(entry=>entry.isIntersecting))setVisible(value=>Math.min(data.scenes.length,value+20))},{root,rootMargin:'0px 0px 360px'})
+  observer.observe(target)
+  return()=>{active=false;observer.disconnect()}
+ },[data,visible])
  const stale=conflict||Boolean(dialog&&data&&dialog.revision!==data.revision)
  function open(action:Action,scene?:VideoScene,index=0){if(!data)return;setDialog({action,scene,upper:action==='boundary'?data.scenes[index+1]?.end:scene?.end,revision:data.revision});setConflict(false);setMoment(scene?(scene.start+scene.end)/2:0);setPreview(undefined);setPreviewError(false);setSaveError('')}
  async function save(){
@@ -34,16 +44,16 @@ export function VideoTranscript({job,editing,onEditingChange,onUpdated,onSeek,on
   setSaving(true);setSaveError('')
   try{const result=await request<JobResult>(`/api/v1/jobs/${job.id}/video-scenes`,{method:'PATCH',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:dialog.revision,action:dialog.action,scene_id:dialog.scene?.id,time:['split','boundary','frame'].includes(dialog.action)?moment:undefined})});if(!controller.signal.aborted){onUpdated(job.id,result);setDialog(undefined)}}catch(cause){if(!controller.signal.aborted){if(cause instanceof HttpError&&cause.status===409)setConflict(true);else setSaveError((cause as Error).message)}}finally{if(!controller.signal.aborted)setSaving(false)}
  }
- return <div className="video-transcript">
+ return <div className="video-transcript" ref={scrollRoot}>
   <div className="video-reading-tools"><button className="button" onClick={()=>onEditingChange(!editing)} aria-pressed={editing}>{t(editing?'video.finishEditing':'video.editSections')}</button>{editing?<button className="button" disabled={!data} onClick={()=>open('restore')}>{t('video.actions.restore')}</button>:null}</div>
   {error?<p className="error" role="alert">{error} <button className="button" onClick={()=>setReload(value=>value+1)}>{t('common.actions.reload')}</button></p>:!data?<p role="status">{t('video.loading')}</p>:<>
    {data.scenes.slice(0,visible).map((scene,index)=><section className="video-section" key={scene.id}>
     <header><h3>{t('video.scene',{number:index+1})}</h3><button className="video-scene-time" onClick={()=>onSeek(scene.start)}>{formatTime(scene.start,false)} – {formatTime(scene.end,false)}</button>{editing?<div className="video-scene-actions"><button className="button" onClick={()=>open('frame',scene,index)}>{t('video.actions.frame')}</button>{index+1<data.scenes.length?<button className="button" onClick={()=>{open('boundary',scene,index);setMoment(scene.end)}}>{t('video.actions.boundary')}</button>:null}</div>:null}</header>
     <Frame jobId={job.id} scene={scene}/>
-    {scene.paragraphs?.length?scene.paragraphs.map((paragraph,i)=><div className="video-paragraph" key={i}><div><button className="video-speaker" onClick={()=>onRename(paragraph.speaker)}>{paragraph.speaker_label}</button><button className="video-paragraph-time" onClick={()=>onSeek(paragraph.start)}>{formatTime(paragraph.start,false)} – {formatTime(paragraph.end,false)}</button></div><p>{paragraph.text}</p></div>):<p className="video-silent">{t('video.noSpeech')}</p>}
+    {scene.paragraphs?.length?scene.paragraphs.map((paragraph,i)=><div className="video-paragraph" key={i}><div><button className="video-speaker" onClick={()=>onRename(paragraph.speaker)}>{paragraph.speaker_label}</button><button className="video-paragraph-time" onClick={()=>onSeek(paragraph.start)}>{formatTime(paragraph.start,false)} – {formatTime(paragraph.end,false)}</button><button className="button" onClick={()=>onEnroll(paragraph.speaker)}>{t('asr.results.addToVoiceprints')}</button></div><p>{paragraph.text}</p></div>):<p className="video-silent">{t('video.noSpeech')}</p>}
     {editing?<div className="video-scene-actions"><button className="button" onClick={()=>open('split',scene,index)}>{t('video.actions.split')}</button>{index+1<data.scenes.length?<button className="button" onClick={()=>open('merge_next',scene,index)}>{t('video.actions.merge_next')}</button>:null}</div>:null}
    </section>)}
-   {visible<data.scenes.length?<button className="button" onClick={()=>setVisible(value=>value+20)}>{t('asr.results.loadMore')}</button>:null}
+   <div className="segment-load-more" ref={sentinel}><span>{t('video.sceneCount',{visible:Math.min(visible,data.scenes.length),total:data.scenes.length})}</span>{visible<data.scenes.length?<button className="button" onClick={()=>setVisible(value=>Math.min(data.scenes.length,value+20))}>{t('asr.results.loadMore')}</button>:null}</div>
   </>}
   {dialog?<Modal title={t(`video.actions.${dialog.action}`)} closeLabel={t('common.actions.close')} onClose={()=>{if(!saving)setDialog(undefined)}}>
    <p>{t(`video.editHelp.${dialog.action}`)}</p>
