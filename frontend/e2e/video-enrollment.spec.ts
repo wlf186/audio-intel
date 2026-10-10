@@ -6,12 +6,13 @@ async function fixture(page:Page,locale='zh-CN'){
  const scenes=Array.from({length:55},(_,i)=>({id:`scene_${i}`,start:i*2,end:i*2+2,frame_time:i*2,image:'frame.jpg',paragraphs:[{speaker:'s0',speaker_label:'Presenter',start:i*2,end:i*2+.8,text:`Paragraph ${i}`,segment_ids:[i*2,i*2]}]}))
  const result={text:'Video',duration:120,language:'Chinese',timestamp_precision:'segment',playback_url:'/api/v1/jobs/enrollment-video/playback',speakers:[{id:'s0',label:'Presenter'},{id:'s1',label:'Other'}],segments,artifacts:[],video:{contract_version:1,revision:1,duration:120,scenes,original_scenes:scenes}}
  const job={id:'enrollment-video',kind:'asr',purpose:'video_transcription',state:'succeeded',stage:'completed',progress:1,display_name:'Enrollment.mp4',created_at:'2026-10-10T00:00:00Z',request:{purpose:'video_transcription'},result}
- const state={failPeople:false,failImport:0,imports:[] as Array<{job_id:string;segment_ids:number[]}>,created:0,people:[{id:'existing',name:'Presenter',note:'',sample_count:1,samples:[{id:'sample0',source_job_id:job.id,source_segment_id:0,state:'ready'}]}]}
+ const state={failPeople:false,failImport:0,listReads:0,sceneReads:0,imports:[] as Array<{job_id:string;segment_ids:number[]}>,created:0,people:[{id:'existing',name:'Presenter',note:'',sample_count:1,samples:[{id:'sample0',source_job_id:job.id,source_segment_id:0,state:'ready'}]}]}
  await page.route('**/api/v1/auth/session',route=>route.fulfill({json:{required:true,authenticated:true}}))
  await page.route('**/api/v1/capabilities',async route=>{const body=await capabilitiesFor(page);body.events={...body.events,sse:false};await route.fulfill({json:body})})
- await page.route(url=>url.pathname==='/api/v1/jobs',route=>route.fulfill({json:{items:[job,{...job,id:'other-job',display_name:'Other video'}],total:2,count:2,has_more:false}}))
+ const {request:_,result:__,...summary}=job
+ await page.route(url=>url.pathname==='/api/v1/jobs',route=>{state.listReads++;return route.fulfill({json:{items:[summary,{...summary,id:'other-job',display_name:'Other video'}],total:2,count:2,has_more:false}})})
  await page.route(/\/api\/v1\/jobs\/(enrollment-video|other-job)$/,route=>route.fulfill({json:{...job,id:new URL(route.request().url()).pathname.split('/').pop()}}))
- await page.route('**/video-scenes',route=>route.fulfill({json:{revision:1,scenes}}))
+ await page.route('**/video-scenes',route=>{state.sceneReads++;return route.fulfill({json:{revision:1,scenes}})})
  await page.route('**/video-frames/*',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="white"/></svg>'}))
  const wav=Buffer.alloc(44+16000*120*2);wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(wav.length-44,40)
  await page.route('**/playback',route=>{
@@ -73,11 +74,50 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
   await page.getByRole('button',{name:zh?'逐句明细':'Segment details',exact:true}).click()
   await expect(page.locator('.segments article')).toHaveCount(40)
   await page.locator('.segments').evaluate(e=>e.scrollTop=e.scrollHeight)
-  await expect(page.locator('.segments article')).toHaveCount(80)
+  // Prefetch may render another batch before the assertion observes the DOM.
+  await expect.poll(()=>page.locator('.segments article').count()).toBeGreaterThanOrEqual(80)
+  const ids=await page.locator('.segments article input[type=checkbox]').evaluateAll(inputs=>inputs.map(input=>Number(input.getAttribute('aria-label')?.match(/\d+$/)?.[0])))
+  expect(ids.length).toBeGreaterThanOrEqual(80)
+  expect(ids.length).toBeLessThanOrEqual(110)
+  expect(ids).toEqual(Array.from({length:ids.length},(_,i)=>i+1))
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
   expect(errors).toEqual([])
  })
 }
+
+for(const width of [1440,390])test(`summary polling after enrollment preserves video reading at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:960})
+ const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text())})
+ await page.clock.install({time:new Date('2026-10-10T00:00:00Z')})
+ await page.clock.pauseAt(new Date('2026-10-10T00:00:01Z'))
+ const f=await fixture(page);await f.open()
+ await page.locator('.video-section').first().getByRole('button',{name:'加入声纹库'}).click()
+ const dialog=page.getByRole('dialog')
+ await dialog.getByRole('checkbox').nth(1).check()
+ await dialog.getByRole('button',{name:'下一步：选择人员'}).click()
+ await dialog.getByRole('button',{name:'确认加入',exact:true}).click()
+ await expect(dialog).toHaveCount(0)
+ const root=page.locator('.video-transcript')
+ await root.evaluate(e=>{e.scrollTop=200})
+ const position=await root.evaluate(e=>e.scrollTop)
+ expect(position).toBeGreaterThan(0)
+ const reads=f.state.listReads
+ const refreshed=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/v1/jobs')
+ await page.clock.runFor(5000)
+ const response=await refreshed
+ expect(await response.finished()).toBeNull()
+ for(const item of (await response.json()).items){expect(item).not.toHaveProperty('result');expect(item).not.toHaveProperty('request')}
+ // Drain the controlled response/render turn before checking the reader.
+ await page.clock.runFor(50)
+ expect(f.state.listReads).toBeGreaterThan(reads)
+ expect(f.state.sceneReads).toBe(1)
+ await expect(root).toHaveJSProperty('scrollTop',position)
+ await root.evaluate(e=>{e.scrollTop=e.scrollHeight})
+ await page.clock.runFor(50)
+ await expect(page.locator('.video-section')).toHaveCount(40)
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+ expect(errors).toEqual([])
+})
 
 test('video enrollment retains selection after failure and retries library loading',async({page})=>{
  const f=await fixture(page);f.state.failPeople=true;await f.open()

@@ -128,6 +128,8 @@ English: A commit or GitHub Release does not refresh a running local process. St
 
 页面测试改用来自真实服务的 capabilities/system 共享快照，按 worker 缓存、按响应深拷贝，避免刷新时的测试夹具 HTTP 断连。保留真实浏览器接口检查，新增加载、503、断网和手动恢复回归，维持零整套测试重试及原有超时。证据与权限说明见[贡献指南](../CONTRIBUTING.md#browser-fixture-snapshots-and-github-permissions)。
 
+视频任务列表夹具同时遵循真实 API 的仅摘要契约，完整结果只从任务详情读取；受控轮询回归确认入库后不会因列表刷新重载画面或重置阅读位置。生产轮询和自动加载行为未改。
+
 本版本同时正式交付下文 v0.1.27 的视频声纹入库、原始语句试听选择和画面自动加载。v0.1.27 标签保留为审计记录：其 Windows 浏览器检查失败，未创建 GitHub Release，标签不移动或复用。
 
 English: Upgrading from the deployed v0.1.27 source or released v0.1.26 requires **no data migration or additional upgrade backup**. Historical jobs, files and samples are not rewritten. Rebuild the frontend and refresh all previously running service components. Models, dependencies, inference settings and browser-storage lifetime are unchanged. Browser fixtures use deep copies of worker-scoped live snapshots, with real capability and controlled failure/recovery checks retained. This release also ships the video features below; the immutable v0.1.27 tag remains an unpublished audit record. Earlier upgrades must cover intervening migration requirements.
