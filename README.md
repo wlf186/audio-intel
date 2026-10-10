@@ -53,7 +53,7 @@ Separate audio/video creation tabs share the ASR queue. Audio keeps its 4 GiB li
 > [!NOTE]
 > The Web UI supports Simplified Chinese and English. Use the language selector in the header or sign-in dialog; the choice is stored locally in the browser. The local Swagger API guide is also bilingual.
 
-ASR separates New transcription from Tasks & results; TTS provides fixed Text, Document, and Tasks & results tabs. Inputs and settings have their own workspace, with direct access to the submitted task. Single audio, ordered sequences, and document sections share waveform playback and downloads.
+ASR provides New audio transcription, New video transcription, and Tasks & results tabs; TTS provides fixed Text, Document, and Tasks & results tabs. Inputs and settings have their own workspace, with direct access to the submitted task. Single audio, ordered sequences, and document sections share waveform playback and downloads.
 
 Transcription results support entering speaker names and optional notes manually or choosing an existing voiceprint-library person to fill in both editable fields. Names are retained in full; notes allow up to 20 characters. Automatic voiceprint recognition and manual saves merge people with the same name and note within a task. Different notes stay separate, while segments, text and timestamps are preserved and exports are refreshed. Later voiceprint-library edits do not rewrite task snapshots. See the [speaker editing contract and examples](docs/API.md#asr-speaker-names-and-notes).
 
@@ -61,7 +61,7 @@ Transcription results support entering speaker names and optional notes manually
 
 | Area | Capabilities |
 | --- | --- |
-| **Local speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, and JSON/SRT/VTT/TXT export |
+| **Local speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, concise PDF, and detailed JSON/SRT/VTT/TXT export |
 | **Speaker intelligence** | Voiceprints distinguish namesakes by notes and support named, renameable samples; custom and voiceprint-derived hotword lists improve domain vocabulary while completed tasks retain immutable snapshots |
 | **Local voice studio** | Qwen3-TTS 0.6B/1.7B, preset voices, one-off or library-based voice cloning with optional 3–30 second library reference ranges, 1.7B VoiceDesign, and WAV/FLAC/MP3 output |
 | **Document synthesis** | EPUB, TXT, Markdown, text PDF, DOCX, XLSX and PPTX; structural/length previews, reusable imports with bulk removal, checkpoint recovery, and album-tagged ZIP / complete MP3 downloads |
@@ -168,7 +168,7 @@ See the [Linux installation guide](docs/INSTALL.md) or [native Windows guide](do
         ├── SQLite WAL ASR queue ── ASR supervisor
         │       └── reusable task executor
         │           VAD → diarization → Qwen3-ASR → forced alignment
-        │           └── JSON / SRT / VTT / TXT
+        │           └── PDF / JSON / SRT / VTT / TXT
         │
         └── SQLite WAL TTS queue ── TTS supervisor
                 └── reusable task executor
@@ -188,7 +188,7 @@ TTS guards each internal text chunk against runaway generation and invalid wavef
 
 ## API and integrations
 
-The seven native asynchronous submission surfaces—ASR, single-item TTS, ordered TTS sequences, clone-reference analysis, voiceprint sample upload, document import, and document TTS—require an 8–128 character `Idempotency-Key`. First acceptance returns `202`; a same-request replay returns `200`; reusing a key with different input returns `409`. Sequence jobs load one model for up to 100 ordered items and return one WAV artifact per item; discover the exact limits at `tts.sequence_jobs`.
+The eight native asynchronous submission surfaces—ASR, video transcription, single-item TTS, ordered TTS sequences, clone-reference analysis, voiceprint sample upload, document import, and document TTS—require an 8–128 character `Idempotency-Key`. First acceptance returns `202`; a same-request replay returns `200`; reusing a key with different input returns `409`. Sequence jobs load one model for up to 100 ordered items and return one WAV artifact per item; discover the exact limits at `tts.sequence_jobs`.
 
 Service-side `.env` loading does not export settings back to your client shell. Before running examples, set `AUDIO_INTEL_BASE_URL` to the actual client-reachable URL (for example `http://127.0.0.1:20815`) and provide `AUDIO_INTEL_API_KEY` separately when authentication is enabled. The examples default to `http://127.0.0.1:20810`.
 

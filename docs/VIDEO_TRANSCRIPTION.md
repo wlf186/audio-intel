@@ -64,3 +64,27 @@ On Windows use `.runtime\api\Scripts\python.exe`. Optional `--device` overrides 
 ![桌面视频转写结果 / Desktop video transcript](assets/video-transcription/result-1440.png)
 
 ![390px 视频转写结果 / 390px video transcript](assets/video-transcription/result-390.png)
+
+## 恢复与编辑状态 / Recovery and editing state
+
+续传先显示“正在校验已上传内容”：分母是服务端已确认的字节数，分子是本次已校验的字节数；通过后切换到整份文件的上传进度，从确认偏移继续。两种百分比分别表示本地校验与网络传输，均不是推理进度；校验和传输均可暂停。
+
+Resume first verifies local bytes against the server manifest. Verification percentages use confirmed bytes as their total; upload percentages use the whole file and resume at the confirmed offset. Both stages can be paused and neither represents inference progress.
+
+图文阅读默认隐藏分段修改按钮，点击“编辑分段”后可修改，点击“完成编辑”回到阅读。弹窗固定打开时的 revision 与时间范围；后台修订变化或保存返回 409 时保留输入、禁用保存。点击“放弃本次编辑并重新加载”明确丢弃未保存输入，读取最新分段后再编辑，不自动覆盖其他客户端。
+
+Reading mode hides section edits. Choose Edit sections to modify them, then Finish editing to return. Dialogs retain their opening revision and time range. Background revision changes or HTTP 409 preserve the draft and disable saving; Discard this edit and reload explicitly drops the draft before loading current sections. No automatic replay overwrites another client's changes.
+
+PDF 下载通过一次 GET 接收完整内容后保存。429 按 Retry-After 等待后手动重试，413 表示超出导出上限，应拆分源文件重新转写；音频还可下载明细与字幕。401 重新登录后再导出，断网直接重试导出，无需重新转写。
+
+PDF uses a single GET and saves after the full response arrives. For 429, wait for Retry-After then export manually; for 413, split the source and transcribe smaller files, or use audio detail/subtitle exports. Sign in again after 401. Retry an interrupted download without submitting a new transcription.
+
+命令行 `--pdf` 期间续传文件还保存已接受的 `job_id`，直到 PDF 完整写入临时文件、关闭并原子替换目标文件后才清除。轮询中断、下载失败、任务失败或取消均保留记录，重跑只查询原任务；确需新任务时使用新的 `--state`。已有完整 PDF 不会被失败下载破坏。省略 `--pdf` 时，提交成功即清除记录。旧记录可继续使用；恢复时沿用记录中的转写设置。
+
+With CLI `--pdf`, the journal retains the accepted `job_id` until the download is fully written, closed and atomically replaces the destination. Interrupted polling/downloads and failed/cancelled jobs retain the journal; rerunning reads the same job. Use a new `--state` for an intentional new job. Failed downloads preserve existing complete PDFs. Without `--pdf`, successful submission clears the journal. Legacy journals remain readable and saved transcription parameters are retained on resume.
+
+编辑模式 / Editing mode:
+
+![桌面视频分段编辑 / Desktop section editing](assets/video-transcription/edit-1440.png)
+
+![390px 视频分段编辑 / 390px section editing](assets/video-transcription/edit-390.png)

@@ -13,7 +13,7 @@ import audio_intel.db as db_module
 from audio_intel.config import settings
 
 
-HTTP_METHODS = {"get", "post", "patch", "put", "delete"}
+HTTP_METHODS = {"get", "head", "post", "patch", "put", "delete"}
 
 
 def docs_settings(tmp_path):
@@ -80,7 +80,7 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         for method, operation in methods.items()
         if method in HTTP_METHODS
     ]
-    assert len(operations) == 68
+    assert len(operations) == 70
     assert len({operation["operationId"] for operation in operations}) == len(operations)
     assert all(operation.get("tags") for operation in operations)
     assert all("**English:**" in operation.get("description", "") for operation in operations)
@@ -388,6 +388,7 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         for methods in schema["paths"].values()
         for method, operation in methods.items() if method in HTTP_METHODS
         for media in operation.get("requestBody", {}).get("content", {}).values()
+        if media.get("schema", {}).get("format") != "binary"
     ]
     assert request_media and all(media.get("examples") for media in request_media)
     assert set(schema["paths"]["/api/v1/tts/jobs"]["post"]["requestBody"]["content"]["multipart/form-data"]["examples"]) >= {
@@ -507,3 +508,37 @@ def test_reference_range_docs_match_generated_contract(tmp_path, monkeypatch):
     download = schema["paths"]["/api/v1/jobs/{job_id}/document/download"]["get"]
     assert "UTC" in download["description"]
     assert "audio_metadata" in download["description"]
+
+
+def test_video_binary_contracts_and_examples(tmp_path, monkeypatch):
+    from audio_intel.video_api import VideoUploadRequest, VideoUploadResponse, VideoJobRequest, VideoScenesResponse, SceneEdit
+    from audio_intel.api_models import JobResultResponse, JobResponse
+    from audio_intel.api_docs import RESULT_EXAMPLES, JOB_EXAMPLES
+    local = docs_settings(tmp_path)
+    monkeypatch.setattr(api_module, 'settings', local)
+    monkeypatch.setattr(db_module, 'settings', local)
+    schema = api_module.create_app().openapi()
+    paths = schema['paths']
+    for suffix, media_type in [('transcript.pdf', 'application/pdf'), ('video-frames/{name}', 'image/jpeg'), ('video-preview', 'image/jpeg')]:
+        content = paths['/api/v1/jobs/{job_id}/' + suffix]['get']['responses']['200']['content']
+        assert set(content) == {media_type}
+        assert content[media_type]['schema'] == {'type': 'string', 'format': 'binary'}
+        assert 'example' not in content[media_type] and 'examples' not in content[media_type]
+    for path, headers in [('/api/v1/asr/video-uploads/{upload_id}', {'Upload-Offset', 'Upload-Length', 'Upload-Expires'}), ('/api/v1/jobs/{job_id}/transcript.pdf', {'Content-Type', 'Content-Length', 'Content-Disposition'})]:
+        response = paths[path]['head']['responses']['200']
+        assert 'content' not in response
+        assert headers <= response['headers'].keys()
+        assert '**English:**' in paths[path]['head']['description']
+    for path, method, model in [('/api/v1/asr/video-uploads', 'post', VideoUploadRequest), ('/api/v1/asr/video-jobs', 'post', VideoJobRequest), ('/api/v1/jobs/{job_id}/video-scenes', 'patch', SceneEdit)]:
+        examples = paths[path][method]['requestBody']['content']['application/json']['examples']
+        for example in examples.values():
+            model.model_validate(example['value'])
+        if model is SceneEdit:
+            assert set(examples) == {'merge_next', 'split', 'boundary', 'frame', 'restore'}
+    for name, model in [('VideoUploadResponse', VideoUploadResponse), ('VideoScenesResponse', VideoScenesResponse)]:
+        model.model_validate(schema['components']['schemas'][name]['example'])
+    JobResultResponse.model_validate(RESULT_EXAMPLES['asr_video']['value'])
+    JobResponse.model_validate(JOB_EXAMPLES['video_queued']['value'])
+    media = paths['/api/v1/asr/video-uploads/{upload_id}']['patch']['requestBody']['content']['application/octet-stream']
+    assert media['schema']['format'] == 'binary'
+    assert 'example' not in media and 'examples' not in media

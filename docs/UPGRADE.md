@@ -122,6 +122,16 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## v0.1.26 转写恢复、编辑冲突与文档一致性
+
+从 v0.1.25 升级：**数据迁移：无**，无需额外升级备份；schema v12、历史任务和文件保持不变。更早版本须覆盖中间版本迁移要求。同步源码并重建前端，按本地部署流程刷新 API、ASR/TTS supervisor 和 executor，无需重新安装模型或同步未变化的依赖。
+
+分段编辑固定使用打开弹窗时的修订号，后台更新或 409 会保留输入并要求放弃本次编辑后重新加载。所有分段修改按钮统一进入编辑模式后显示。视频续传新增独立的本地校验进度，sessionStorage 生命周期不变。PDF 使用单次 GET 下载，区分繁忙、超限、登录失效和断网，并遵循 Retry-After 手动重试。
+
+视频命令行示例兼容旧续传记录，新增已接受任务 ID；使用 --pdf 时，仅在完整下载并原子替换目标文件后清除记录，中断重跑继续原任务。未指定 --pdf 时仍以成功提交任务结束。OpenAPI 修正 PDF/JPEG 和 HEAD 元数据、二进制示例及视频请求示例，实际 API 字段和状态码契约保持兼容。CI 经验见 [贡献指南](../CONTRIBUTING.md#transcription-ci-lessons)。
+
+English: Upgrading from v0.1.25 requires **no data migration or additional upgrade backup**. Earlier upgrades must cover intervening requirements. Schema v12 and historical files remain unchanged. Rebuild the frontend and refresh all original API/supervisor/executor processes; model and dependency installation is unchanged. Scene dialogs retain their starting revision and require explicit reload on conflict. Resume verification has a separate progress phase. PDF export uses a single GET with actionable retry/auth/size feedback. The CLI retains accepted job IDs until requested PDFs are atomically saved and reads legacy journals. Browser storage lifetime and wire contracts remain compatible; OpenAPI now documents binary responses, HEAD headers and valid video examples correctly.
+
 ## v0.1.25 视频转写正式发布与跨平台加载验证
 
 从 v0.1.23 升级：**数据迁移：仅数据库**，按下节说明备份 SQLite 后升级 schema v11 → v12；不重写历史文件。更早版本需合并阅读中间升级要求。已经运行 v0.1.24 源码且完成 v12 迁移的实例，本次**无新增数据迁移**，无需重复升级备份。

@@ -196,6 +196,8 @@ git pull --ff-only
 .\.runtime\api\Scripts\python.exe scripts\smoke_test.py
 ```
 
-需要备份时必须在新版本首次启动前完成，示例支持现有 Windows API Python。API 启动时会把旧数据库自动迁移到 schema v11；完整的不兼容 API 变更和迁移说明见 [升级指南](UPGRADE.md)。不要从其他机器复制 `.runtime\`；在目标机器重新 setup。模型目录可以复制，但每个模型的 `.complete` 内容必须与项目固定的 revision 一致。
+需要备份时必须在新版本首次启动前完成，示例支持现有 Windows API Python。API 启动时会把旧数据库自动迁移到 schema v12；完整的不兼容 API 变更和迁移说明见 [升级指南](UPGRADE.md)。不要从其他机器复制 `.runtime\`；在目标机器重新 setup。模型目录可以复制，但每个模型的 `.complete` 内容必须与项目固定的 revision 一致。
 
 `setup tts` 同时维护独立的 `.runtime\aligner`，这是默认参考截取与手动声纹区间按需对齐所需的内部运行时，不是额外服务。更多版本与锁文件说明见 [依赖维护](DEPENDENCIES.md)。
+
+音频默认 4 GiB，视频默认 25 GiB，分别由 `AUDIO_INTEL_MAX_UPLOAD_BYTES` 和 `AUDIO_INTEL_MAX_VIDEO_UPLOAD_BYTES` 控制。Windows 视频客户端使用 `.runtime\api\Scripts\python.exe scripts\submit_video.py`，其 UTF-8 续传记录兼容跨次运行，PDF 临时文件关闭后才原子替换。完整格式、命令和恢复说明见 [音视频转写指南](VIDEO_TRANSCRIPTION.md)。

@@ -261,7 +261,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const selectedHotwordStats = useMemo(() => hotwordStats(hotwordLists, selectedHotwordIds), [hotwordLists, selectedHotwordIds])
   const selectedHotwordIssue = hotwordLimitIssue(selectedHotwordIds.size, selectedHotwordStats, hotwordLimits, t('asr.hotwords.currentSelection'), t)
   const fileLimitError=file?uploadLimitMessage(file,uploadLimit,t,i18n.resolvedLanguage||'zh-CN'):''
-  const submitLabel=uploadProgress?.phase==='creating'?t('asr.submit.creating'):uploadProgress?.phase==='uploading'&&uploadProgress.percent!==undefined?t('asr.submit.uploading',{percent:uploadProgress.percent}):uploadProgress?t('asr.submit.preparing'):busy?t('common.states.processing'):t('asr.submit.start')
+  const submitLabel=uploadProgress?.phase==='verifying'?t('video.verifying'):uploadProgress?.phase==='creating'?t('asr.submit.creating'):uploadProgress?.phase==='uploading'&&uploadProgress.percent!==undefined?t('asr.submit.uploading',{percent:uploadProgress.percent}):uploadProgress?t('asr.submit.preparing'):busy?t('common.states.processing'):t('asr.submit.start')
   const hotwordSelectionIssue = (item: HotwordList) => {
     if (selectedHotwordIds.has(item.id)) return ''
     if (!item.term_count) return t('asr.hotwords.emptySystemList')
@@ -716,7 +716,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               <span>
                 {String(result.model_name || selected.request.model || 'Qwen3-ASR')} · {formatTime(duration)} · {(result.compute_device || selected.request.compute_device || 'gpu').toString().toUpperCase()} {result.precision || ''}
               </span>
-              <TranscriptExport job={selected}/>
+              <TranscriptExport key={selected.id} job={selected}/>
             </div>
             <audio
               ref={audio}

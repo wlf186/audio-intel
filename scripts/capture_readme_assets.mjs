@@ -1,5 +1,6 @@
 import {mkdir,readFile,writeFile} from 'node:fs/promises'
 import {resolve} from 'node:path'
+import {existsSync} from 'node:fs'
 import {chromium} from '../frontend/node_modules/@playwright/test/index.mjs'
 
 const baseUrl=process.env.AUDIO_INTEL_CAPTURE_BASE_URL||'http://127.0.0.1:20910'
@@ -12,7 +13,7 @@ const captureLocales=[
   ttsLanguage:'Chinese',ttsName:'本地语音工作站演示',
   ttsText:'欢迎使用 Sandevistan Audio。这是一套完全本地运行的语音智能服务。',
   resultsTab:'任务与结果',
-  headings:{asr:'音频转写',tts:'语音合成',jobs:'任务记录'},
+  headings:{asr:'音视频转写',tts:'语音合成',jobs:'任务记录'},
  },
  {
   locale:'en-US',directory:'en-US',asrLanguage:'English',asrFile:'meeting-en.wav',
@@ -20,7 +21,7 @@ const captureLocales=[
   ttsLanguage:'English',ttsName:'Local speech workstation demo',
   ttsText:'Welcome to Sandevistan Audio, a private speech intelligence service running entirely on your machine.',
   resultsTab:'Tasks & results',
-  headings:{asr:'Transcription',tts:'Speech synthesis',jobs:'Task history'},
+  headings:{asr:'Audio & video transcription',tts:'Speech synthesis',jobs:'Task history'},
  },
 ]
 
@@ -210,7 +211,7 @@ async function captureSocialPreview(browser,hero){
 }
 
 await mkdir(outputDir,{recursive:true})
-const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium',args:['--no-sandbox']})
+const browser=await chromium.launch({headless:true,executablePath:existsSync('/usr/bin/chromium')?'/usr/bin/chromium':undefined,args:['--no-sandbox']})
 try{
  let englishHero
  for(const config of captureLocales){

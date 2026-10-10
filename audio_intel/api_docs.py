@@ -1173,6 +1173,41 @@ def _capabilities_example() -> dict[str, Any]:
 CAPABILITIES_EXAMPLE = _capabilities_example()
 
 
+VIDEO_UPLOAD_EXAMPLE = {
+    "id": "0123456789abcdef0123456789abcdef", "name": "lecture.mp4",
+    "size_bytes": 33554432, "offset": 0, "expires_at": 1791676800.0,
+    "job_id": None, "chunk_bytes": 33554432, "chunks": [],
+}
+VIDEO_SCENE_EXAMPLE = {"id": "scene_1", "start": 0.0, "end": 3.2, "frame_time": 1.0, "image": "scene_1.jpg"}
+VIDEO_SCENES_EXAMPLE = {"revision": 1, "scenes": [{**VIDEO_SCENE_EXAMPLE, "paragraphs": [
+    {"speaker": "Speaker 0", "speaker_label": "讲者", "start": 0.0, "end": 3.2,
+     "text": "欢迎使用本地转写。", "segment_ids": [0]},
+]}]}
+REQUEST_EXAMPLES.update({
+    ("/api/v1/asr/video-uploads", "post"): {"lecture": {"summary": "创建上传 / Create upload", "value": {"name": "lecture.mp4", "size_bytes": 33554432}}},
+    ("/api/v1/asr/video-jobs", "post"): {"lecture": {"summary": "替换为已完成上传的 ID / Replace with a completed upload ID", "value": {
+        "upload_id": VIDEO_UPLOAD_EXAMPLE["id"], "language": "Auto", "compute_device": "cpu", "hotword_list_ids": [],
+        "video_roi": {"x": 0.0, "y": 0.0, "width": 0.8, "height": 1.0},
+    }}},
+    ("/api/v1/jobs/{job_id}/video-scenes", "patch"): {
+        action: {"summary": label, "value": {"revision": 1, **({"scene_id": "scene_1"} if action != "restore" else {}),
+            "action": action, **({"time": 1.5} if action in {"split", "boundary", "frame"} else {})}}
+        for action, label in [("merge_next", "合并下一段 / Merge next"), ("split", "拆分 / Split"),
+                              ("boundary", "调整结束时间 / Move boundary"), ("frame", "更换截图 / Replace frame"), ("restore", "恢复自动分段 / Restore automatic sections")]
+    },
+})
+RESULT_EXAMPLES["asr_video"] = {"summary": "视频图文转写 / Illustrated video transcript", "value": {
+    **RESULT_EXAMPLES["asr"]["value"], "video": {"contract_version": 1, "revision": 1, "duration": 3.2,
+        "time_origin": 0.0, "roi": None, "detector": "ffmpeg_scdet_phash_stability",
+        "scenes": [VIDEO_SCENE_EXAMPLE], "original_scenes": [VIDEO_SCENE_EXAMPLE]},
+}}
+JOB_EXAMPLES["video_queued"] = {"summary": "视频任务排队 / Queued video task", "value": {
+    **JOB_EXAMPLES["queued"]["value"], "kind": "asr", "purpose": "video_transcription", "display_name": "lecture.mp4",
+    "request": REQUEST_EXAMPLES[("/api/v1/asr/video-jobs", "post")]["lecture"]["value"],
+    "compute_device": "cpu", "compute_device_name": "CPU", "queue": {"scope": "asr", "position": 1, "depth": 1, "capacity": 5, "waiting_for": "worker"},
+}}
+
+
 def _example_for_schema(value: dict[str, Any], schemas: dict[str, Any], seen: set[str] | None = None) -> Any:
     seen = set() if seen is None else seen
     if "example" in value:
@@ -1215,6 +1250,9 @@ def _example_for_schema(value: dict[str, Any], schemas: dict[str, Any], seen: se
 def enrich_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Add documentation-only descriptions and examples without changing wire models."""
     schemas = schema.setdefault("components", {}).setdefault("schemas", {})
+    for name, example in {"VideoUploadResponse": VIDEO_UPLOAD_EXAMPLE, "VideoScenesResponse": VIDEO_SCENES_EXAMPLE}.items():
+        if name in schemas:
+            schemas[name]["example"] = example
     for schema_name, definition in schemas.items():
         if schema_name in {"HTTPValidationError", "ValidationError"}:
             continue
@@ -1239,10 +1277,12 @@ def enrich_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
     for path, methods in schema.get("paths", {}).items():
         for method, operation in methods.items():
-            if method not in {"get", "post", "put", "patch", "delete"}:
+            if method not in {"get", "head", "post", "put", "patch", "delete"}:
                 continue
             request_body = operation.get("requestBody", {})
             for media in request_body.get("content", {}).values():
+                if media.get("schema", {}).get("format") == "binary":
+                    continue
                 if "examples" not in media:
                     custom = REQUEST_EXAMPLES.get((path, method))
                     media["examples"] = custom or {
@@ -1255,7 +1295,7 @@ def enrich_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
                 if not str(status).startswith("2"):
                     continue
                 for content_type, media in response.get("content", {}).items():
-                    if content_type in {"text/event-stream", "application/octet-stream"} or content_type.startswith(("audio/", "video/")):
+                    if content_type in {"text/event-stream", "application/octet-stream", "application/pdf"} or content_type.startswith(("audio/", "video/", "image/")):
                         continue
                     response_schema = media.get("schema", {})
                     ref_name = response_schema.get("$ref", "").rsplit("/", 1)[-1]

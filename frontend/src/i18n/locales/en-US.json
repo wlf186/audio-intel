@@ -1,5 +1,16 @@
 {
   "video": {
+    "finishEditing": "Finish editing",
+    "editConflict": "Sections have changed. Your edits have not been saved. Reload before editing again.",
+    "discardEditReload": "Discard this edit and reload",
+    "verifying": "Verifying previously uploaded content",
+    "verifiedBytes": "Verified {{bytes}}. Confirmed data will not be uploaded again.",
+    "pdfBusy": "PDF generation is busy. Wait, then select export again.",
+    "pdfTooLarge": "This task exceeds the PDF export limit. Split the source into smaller files and transcribe them again. Audio tasks can also use the details and subtitles exports.",
+    "pdfLogin": "Your session has expired. Sign in again to export.",
+    "pdfNetwork": "The PDF download was interrupted. Check your connection and export again; no new transcription is needed.",
+    "pdfRetryIn": "Retry in {{seconds}} s",
+
     "pdf": "Export concise PDF",
     "pdfPreparing": "Preparing PDF…",
     "pdfFailed": "PDF unavailable ({{status}}). Please retry.",

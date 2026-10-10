@@ -1,5 +1,16 @@
 {
   "video": {
+    "finishEditing": "完成编辑",
+    "editConflict": "分段已更新，本次修改尚未保存。请重新加载后再编辑。",
+    "discardEditReload": "放弃本次编辑并重新加载",
+    "verifying": "正在校验已上传内容",
+    "verifiedBytes": "已校验 {{bytes}}，此过程不会重新上传已确认的数据。",
+    "pdfBusy": "PDF 生成繁忙，请等待后重新点击导出。",
+    "pdfTooLarge": "此任务超过 PDF 导出上限。请将源音视频拆分为较小文件后重新转写；音频任务也可使用明细与字幕导出。",
+    "pdfLogin": "登录已失效，请重新登录后导出。",
+    "pdfNetwork": "PDF 下载中断，请检查网络后重新点击导出，无需重新转写。",
+    "pdfRetryIn": "{{seconds}} 秒后可重试",
+
     "pdf": "导出简洁 PDF",
     "pdfPreparing": "正在生成 PDF…",
     "pdfFailed": "PDF 暂不可用（{{status}}），请重试。",

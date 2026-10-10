@@ -136,6 +136,30 @@ Record the workflow URL, commit SHA, failing step and relevant error or test bef
 
 For code or test defects, reproduce the failure where practical, correct the cause and run focused regression checks before submitting the corrected candidate to the full workflows. Rerun the same SHA when evidence points to a transient infrastructure failure; repeated runs alone do not resolve a known defect. Preserve assertions and required checks instead of skipping failures or increasing timeouts without a diagnosed need. Any changed SHA must pass its own release gates. A failed official tag remains subject to the immutable-tag rules above.
 
+### Transcription CI lessons
+
+| Failure and evidence | Diagnosis and regression |
+| --- | --- |
+| [Linux video preview failure](https://github.com/wlf186/audio-intel/actions/runs/38012743915), fixed by `1199cbc` | A browser container extension is not a decoder guarantee. Generate WebM VP8/Opus browser fixtures while retaining backend MP4 coverage; wait for `videoWidth > 0` before crop interaction. Test unsupported-preview fallback and selecting another file. |
+| [Windows CPU readiness failure](https://github.com/wlf186/audio-intel/actions/runs/38014197054), addressed by `699bfa0` | Navigation completion does not prove capabilities have loaded or responsive controls are expanded. A controlled delayed capabilities response reproduces the timing assumption. Register response waits before navigation, wait for completion and visible controls, and cover both normal and held responses at desktop/390 px. The original run lacked browser trace evidence, so distinguish the observed failure from the controlled reproduction. |
+| Long busy-worker IDs overflowed the 390 px system grid, fixed by `699bfa0` | Idle workers hid the defect. Supply deterministic busy-worker IDs, scroll to the worker panel and assert document width. Allow grid children to shrink with `min-width: 0`; retain the long input in the regression fixture. |
+| Browser artifacts previously escaped the CI upload directory, fixed by `699bfa0` | `frontend/playwright.config.ts` now resolves output to repository `logs/playwright/`; both workflows upload `logs/` on failure. Keep failure screenshots, traces and error contexts there, using `testInfo.outputPath()` for test evidence. |
+
+Record workflow URL, exact SHA, observed error, reproduction and correction together. Do not substitute a Linux emulation for native Windows feedback, or weaken assertions/increase timeouts to conceal an unobserved readiness dependency. Existing successful regression evidence: [v0.1.25 Linux](https://github.com/wlf186/audio-intel/actions/runs/38017263353), [v0.1.25 Windows](https://github.com/wlf186/audio-intel/actions/runs/38017263365). A failed official tag remains immutable and is not a published Release.
+
+From an authenticated GitHub CLI session, inspect a failing run and download its artifacts (replace the run ID with the run being diagnosed):
+
+```bash
+gh run view 38014197054 --repo wlf186/audio-intel --log-failed
+gh run download 38014197054 --repo wlf186/audio-intel --name windows-logs --dir tmp/ci-evidence
+# Linux workflow artifact name: linux-logs. Older runs may have no retained trace.
+corepack pnpm@10.15.1 --dir frontend exec playwright show-trace ../tmp/ci-evidence/playwright/TEST_DIRECTORY/trace.zip
+```
+
+Use the actual downloaded test directory in the last command. Native Windows PowerShell accepts these same `gh` and `corepack` commands. Artifact retention may expire, so preserve a concise diagnosis and regression reference in the committed documentation rather than depending only on an external trace.
+
+中文：浏览器媒体测试同时验证编码支持与解码就绪；能力接口需等待响应及控件展开；布局使用繁忙状态和长 ID 夹具；失败截图、trace、错误上下文统一进入 `logs/playwright/`。记录事实、受控复现及推断的边界，保留原生 Windows 验证和不可变标签门禁。
+
 ## Pull requests
 
 Use Conventional Commit subjects, for example:

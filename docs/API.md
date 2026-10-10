@@ -34,6 +34,7 @@ The `version` returned by health and system responses is also used as OpenAPI `i
 The following submission endpoints require an `Idempotency-Key` header containing 8–128 characters:
 
 - `POST /api/v1/asr/jobs`
+- `POST /api/v1/asr/video-jobs`
 - `POST /api/v1/tts/clone-references`
 - `POST /api/v1/tts/jobs`
 - `POST /api/v1/tts/sequence-jobs`
@@ -56,7 +57,7 @@ REQUEST_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
 
 Admission protects per-kind queue limits, concurrent uploads, and minimum free disk. Reservations are process-local, so the supported service runs one API process.
 
-`GET /api/v1/capabilities` and `GET /api/v1/system` expose `deployment.profile`, `deployment.default_compute_device`, and `deployment.gpu_runtime_installed`. Full deployments default omitted device fields to GPU. CPU-only deployments default them to CPU and mark every model-scoped GPU capability unavailable with `gpu_runtime_not_installed`; an explicit GPU submission returns that stable `503` problem code before a job or upload is accepted. Physical GPU telemetry may still appear under `system.hardware.gpu` and does not imply that a GPU inference runtime is installed.
+`GET /api/v1/capabilities` and `GET /api/v1/system` expose `deployment.profile`, `deployment.default_compute_device`, and `deployment.gpu_runtime_installed`. Full deployments default omitted device fields to GPU. CPU-only deployments default them to CPU and mark every model-scoped GPU capability unavailable with `gpu_runtime_not_installed`; an explicit GPU submission returns that stable `503` problem code before a job is accepted. Video uploads have no device setting: their device admission is checked later at `POST /api/v1/asr/video-jobs`, after uploading. Physical GPU telemetry may still appear under `system.hardware.gpu` and does not imply that a GPU inference runtime is installed.
 
 ### Submit ASR
 
@@ -482,4 +483,12 @@ See [the bilingual video guide](VIDEO_TRANSCRIPTION.md) for formats, limits, exp
 6. `GET /api/v1/jobs/{job_id}/transcript.pdf` downloads a concise PDF for any completed ASR job, including historical audio jobs. Video adds images. HEAD prepares/validates the same cached export. A busy renderer returns `429`. PDF bytes are not persisted as an artifact. Existing audio JSON/TXT/SRT/VTT exports remain available.
 7. `DELETE /api/v1/asr/video-uploads/{upload_id}` immediately discards an unsubmitted upload (`204`). Submitted uploads follow normal task deletion. Expired uploads return `410` until swept, then `404`.
 
-All routes require the normal Bearer/session authentication and same-origin write rules. Strict JSON bodies reject undeclared fields. Upload SHA-256 confirms transfer integrity, not trust in media contents. The executable [Python example](../scripts/submit_video.py) preserves resumable state across client restarts.
+All routes require the normal Bearer/session authentication and same-origin write rules. Strict JSON bodies reject undeclared fields. Upload SHA-256 confirms transfer integrity, not trust in media contents. The executable [Python example](../scripts/submit_video.py) preserves resumable state across client restarts, including the accepted job ID until a requested PDF is completely saved.
+
+### Video binary responses and revision handling
+
+Successful PDF GET responses use `application/pdf`; frame and preview GET responses use `image/jpeg`, all binary. PDF HEAD prepares the same export and returns `Content-Type`, `Content-Length` and UTF-8 `Content-Disposition` without a body. Upload HEAD returns `Upload-Offset`, `Upload-Length` and `Upload-Expires` (Unix seconds) without a body. Upload creation/replay returns `201`; it is separate from the eight asynchronous submission endpoints. Use the actual returned upload ID in the video-job example, not a literal placeholder.
+
+Scene times are seconds from the shared video origin. ROI coordinates are fractions of the complete picture, with `x + width <= 1` and `y + height <= 1`. `frame` permits the section start but excludes its end; `split` requires a time strictly inside that section; `boundary` requires a time strictly between the current section's start and the following section's end. Merge/boundary need a following section. Capture `revision` when editing begins and never replace it with a background refresh revision while retaining old inputs. A stale revision returns `409`; reload and reconcile before editing again. Swagger includes examples for all five actions.
+
+视频 PDF/JPEG 成功响应为二进制；HEAD 无响应体，上传到期时间单位为 Unix 秒。上传创建/重放的 201 与异步任务首次 202、重放 200 分开。时间均为视频相对秒，ROI 为画面比例。编辑时必须固定开始时的修订号，冲突后重新读取，不得保留旧输入却替换成后台的新 revision。PDF 429 按 Retry-After 重试，413 拆分源文件，401 重新鉴权；下载重试不应重新提交视频任务。

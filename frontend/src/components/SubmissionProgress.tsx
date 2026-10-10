@@ -9,13 +9,14 @@ export function SubmissionProgress({label,progress,onCancel,cancelLabel}:Props){
  const {t}=useTranslation()
  const locale=resolvedLocale()
  const uploading=progress.phase==='uploading'
- const title=progress.phase==='preparing'?t('submission.preparing',{label}):uploading?t('submission.uploading',{label}):t('submission.creating',{label})
+ const verifying=progress.phase==='verifying'
+ const title=verifying?t('video.verifying'):progress.phase==='preparing'?t('submission.preparing',{label}):uploading?t('submission.uploading',{label}):t('submission.creating',{label})
  const transferred=progress.totalBytes?`${size(progress.loadedBytes,locale)} / ${size(progress.totalBytes,locale)}`:progress.loadedBytes?t('submission.sent',{size:size(progress.loadedBytes,locale)}):''
- const value=uploading?progress.percent:undefined
+ const value=uploading||verifying?progress.percent:undefined
  return <div className={`submission-progress ${progress.phase}`} role="region" aria-label={t('submission.status',{label})}>
   <div><b aria-live="polite">{title}</b>{value!==undefined?<strong>{value}%</strong>:null}</div>
   <progress max={100} value={value} aria-label={t('submission.progress',{label})} aria-valuetext={progress.phase==='creating'?t('submission.serverCreating'):value!==undefined?`${value}%`:t('submission.preparingGeneric')}/>
-  <small>{progress.phase==='creating'?t('submission.keepOpen'):transferred||t('submission.connecting')}</small>
+  <small>{verifying?t('video.verifiedBytes',{bytes:transferred}):progress.phase==='creating'?t('submission.keepOpen'):transferred||t('submission.connecting')}</small>
   {onCancel&&progress.phase!=='creating'?<button type="button" className="cancel-upload" onClick={onCancel}><XCircle size={16}/>{cancelLabel||t('submission.cancel')}</button>:null}
  </div>
 }

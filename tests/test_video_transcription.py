@@ -143,11 +143,19 @@ def test_video_end_to_end_edit_pdf_and_idempotency(client,local,tmp_path):
     assert outcome['state']=='succeeded',result.get('error_message')
     video=result['result']['video'];assert len(video['scenes'])==2
     root='/api/v1/jobs/'+job['id']
-    assert client.get(root+'/transcript.pdf').content.startswith(b'%PDF')
+    pdf = client.get(root+'/transcript.pdf')
+    assert pdf.content.startswith(b'%PDF')
+    assert pdf.headers['content-type'] == 'application/pdf'
+    head = client.head(root+'/transcript.pdf')
+    assert head.content == b''
+    for header in ('content-type', 'content-length', 'content-disposition'):
+        assert head.headers[header] == pdf.headers[header]
     assert client.get(root+'/video-scenes').json()['revision']==1
     image=video['scenes'][0]['image']
-    assert client.get(root+'/video-frames/'+image).status_code==200
-    assert client.get(root+'/video-preview?time=1').status_code==200
+    frame = client.get(root+'/video-frames/'+image)
+    assert frame.status_code == 200 and frame.headers['content-type'] == 'image/jpeg'
+    preview = client.get(root+'/video-preview?time=1')
+    assert preview.status_code == 200 and preview.headers['content-type'] == 'image/jpeg'
     response=client.patch(root+'/video-scenes',json={'revision':1,'action':'merge_next','scene_id':video['scenes'][0]['id']})
     assert response.status_code==200,response.text
     assert len(response.json()['video']['scenes'])==1

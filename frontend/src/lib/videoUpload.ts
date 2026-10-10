@@ -50,9 +50,13 @@ export async function submitVideo(file:File,params:Record<string,unknown>,option
    saved={...saved,id:upload.id};saveResume(saved)
   }
   if(upload.job_id){const job=await request<Job>(`/api/v1/jobs/${upload.job_id}`);sessionStorage.removeItem(videoResumeKey);return job}
+  if(upload.chunks.length)options.onProgress?.({phase:'verifying',loadedBytes:0,totalBytes:upload.offset,percent:0})
   for(const chunk of upload.chunks){
    if(await hash(file.slice(chunk.offset,chunk.offset+chunk.size_bytes))!==chunk.sha256)throw new Error(i18n.t('video.resumeMismatch'))
+   const verified=chunk.offset+chunk.size_bytes
+   options.onProgress?.({phase:'verifying',loadedBytes:verified,totalBytes:upload.offset,percent:Math.floor(verified/upload.offset*100)})
   }
+  if(upload.offset<file.size)options.onProgress?.({phase:'uploading',loadedBytes:upload.offset,totalBytes:file.size,percent:Math.floor(upload.offset/file.size*100)})
   while(upload.offset<file.size){
    const offset=upload.offset
    const block=file.slice(offset,Math.min(file.size,offset+upload.chunk_bytes))

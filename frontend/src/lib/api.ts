@@ -3,7 +3,7 @@ import type {TFunction} from 'i18next'
 import i18n from '../i18n'
 
 export class HttpError extends Error{status:number;retryAfter?:number;constructor(status:number,message:string,retryAfter?:number){super(message);this.status=status;this.retryAfter=retryAfter}}
-export type SubmissionPhase='preparing'|'uploading'|'creating'
+export type SubmissionPhase='preparing'|'verifying'|'uploading'|'creating'
 export type SubmissionProgress={phase:SubmissionPhase;loadedBytes:number;totalBytes?:number;percent?:number}
 export type SubmissionOptions={idempotencyKey?:string;onProgress?:(progress:SubmissionProgress)=>void;signal?:AbortSignal}
 export function isUploadCancelled(cause:unknown){return cause instanceof DOMException&&cause.name==='AbortError'}
@@ -27,11 +27,15 @@ function detailMessage(detail:unknown,status:number){
   }
   return i18n.t('errors.requestFailed',{status})
 }
-export async function request<T>(path:string,init:RequestInit={}):Promise<T>{
+export async function requestResponse(path:string,init:RequestInit={}):Promise<Response>{
   const headers=new Headers(init.headers)
   let response:Response
   try{response=await fetch(path,{...init,headers,credentials:'same-origin'})}catch(cause){if(cause instanceof DOMException&&cause.name==='AbortError')throw cause;throw new Error(cause instanceof TypeError?i18n.t('errors.network'):(cause as Error).message)}
   if(!response.ok){const body=await response.json().catch(()=>({detail:response.statusText,retry_after_seconds:undefined}));if(response.status===401)window.dispatchEvent(new Event('audio-intel:unauthorized'));const retryAfter=Number(response.headers.get('Retry-After')||body.retry_after_seconds)||undefined;const detail=detailMessage(body.detail||body.title,response.status);throw new HttpError(response.status,retryAfter?i18n.t('errors.retryAfter',{detail,seconds:retryAfter}):detail,retryAfter)}
+  return response
+}
+export async function request<T>(path:string,init:RequestInit={}):Promise<T>{
+  const response=await requestResponse(path,init)
   if(response.status===204)return undefined as T; return response.json()
 }
 function requestForm<T>(path:string,data:FormData,key:string,{onProgress,signal}:SubmissionOptions={}):Promise<T>{

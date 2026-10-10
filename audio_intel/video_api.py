@@ -36,9 +36,9 @@ class VideoUploadRequest(StrictModel):
 
 
 class UploadChunk(BaseModel):
-    offset: int
-    size_bytes: int
-    sha256: str
+    offset: int = Field(description='分片起始字节偏移 / Starting byte offset')
+    size_bytes: int = Field(description='已确认的分片字节数 / Confirmed chunk bytes')
+    sha256: str = Field(description='64 位十六进制 SHA-256 / 64 hexadecimal SHA-256 characters')
 
 
 class VideoUploadResponse(BaseModel):
@@ -46,7 +46,7 @@ class VideoUploadResponse(BaseModel):
     name: str
     size_bytes: int
     offset: int
-    expires_at: float
+    expires_at: float = Field(description='到期时间，Unix 秒 / Expiry as Unix seconds')
     job_id: str | None
     chunk_bytes: int
     chunks: list[UploadChunk]
@@ -71,10 +71,10 @@ class VideoScenesResponse(BaseModel):
 
 
 class VideoRegion(StrictModel):
-    x: float = Field(ge=0, lt=1)
-    y: float = Field(ge=0, lt=1)
-    width: float = Field(gt=0, le=1)
-    height: float = Field(gt=0, le=1)
+    x: float = Field(ge=0, lt=1, description='左边界，占画面宽度的比例 / Left edge as a fraction of picture width')
+    y: float = Field(ge=0, lt=1, description='上边界，占画面高度的比例 / Top edge as a fraction of picture height')
+    width: float = Field(gt=0, le=1, description='区域宽度比例，x + width ≤ 1 / Width fraction; x + width ≤ 1')
+    height: float = Field(gt=0, le=1, description='区域高度比例，y + height ≤ 1 / Height fraction; y + height ≤ 1')
 
     @model_validator(mode='after')
     def bounds(self):
@@ -84,7 +84,7 @@ class VideoRegion(StrictModel):
 
 
 class VideoJobRequest(StrictModel):
-    upload_id: str = Field(pattern=r'^[a-f0-9]{32}$')
+    upload_id: str = Field(pattern=r'^[a-f0-9]{32}$', description='上传创建接口返回的 ID / ID returned by upload creation', json_schema_extra={'example': '0123456789abcdef0123456789abcdef'})
     model: str = 'qwen3-asr-0.6b'
     language: str = 'Auto'
     speaker_count: int | None = Field(None, ge=1, le=15)
@@ -99,10 +99,10 @@ class VideoJobRequest(StrictModel):
 
 
 class SceneEdit(StrictModel):
-    revision: int = Field(ge=1)
+    revision: int = Field(ge=1, description='开始编辑时读取的修订号；不能用后台新修订替换 / Revision read when editing began; never substitute a newer background revision')
     action: Literal['merge_next', 'split', 'boundary', 'frame', 'restore']
     scene_id: str | None = None
-    time: float | None = Field(None, ge=0)
+    time: float | None = Field(None, ge=0, description='视频起点后的秒数；拆分/边界严格位于区间内，截图允许左端点 / Seconds from video origin; split/boundary are strictly inside the interval, frame may use its left endpoint')
 
 
 def capabilities(config: Any) -> dict[str, Any]:
@@ -204,7 +204,11 @@ def register(app: Any, api: Any) -> None:
         async with upload_lock(upload_id):
             return await run_in_threadpool(store.public, await run_in_threadpool(store.get, upload_id), config)
 
-    @app.head('/api/v1/asr/video-uploads/{upload_id}', tags=tags, responses=errors,
+    @app.head('/api/v1/asr/video-uploads/{upload_id}', tags=tags, response_class=Response, responses={**errors, 200: {'description': '上传状态，无响应体 / Upload status, no body', 'headers': {
+        'Upload-Offset': {'description': '已确认字节数 / Confirmed bytes', 'schema': {'type': 'integer'}},
+        'Upload-Length': {'description': '总字节数 / Total bytes', 'schema': {'type': 'integer'}},
+        'Upload-Expires': {'description': 'Unix 秒 / Unix seconds', 'schema': {'type': 'number'}},
+    }}},
               description='通过 Upload-Offset、Upload-Length、Upload-Expires 响应头返回状态。\n\n**English:** Read Upload-Offset, Upload-Length and Upload-Expires response headers.',
               summary='读取已确认上传偏移 / Read confirmed upload offset')
     async def upload_head(upload_id: str, _: None = auth) -> Response:
@@ -324,11 +328,19 @@ def register(app: Any, api: Any) -> None:
             raise HTTPException(409, 'This task has no presentation analysis')
         return job
 
-    @app.head('/api/v1/jobs/{job_id}/transcript.pdf', tags=tags, responses=errors)
-    @app.get('/api/v1/jobs/{job_id}/transcript.pdf', tags=tags, responses={**errors, 200: {'content': {'application/pdf': {'schema': {'type': 'string', 'format': 'binary'}}}}},
+    pdf_headers = {
+        'Content-Type': {'schema': {'type': 'string', 'const': 'application/pdf'}},
+        'Content-Length': {'description': 'PDF 字节数 / PDF bytes', 'schema': {'type': 'integer'}},
+        'Content-Disposition': {'description': 'UTF-8 下载文件名 / UTF-8 download filename', 'schema': {'type': 'string'}},
+    }
+    @app.head('/api/v1/jobs/{job_id}/transcript.pdf', tags=tags, response_class=Response,
+              responses={**errors, 200: {'description': '导出响应头，无响应体 / Export headers, no body', 'headers': pdf_headers}},
+              summary='准备简洁 PDF / Prepare concise PDF',
+              description='准备同一缓存导出并返回下载头，无响应体。\n\n**English:** Prepare the same cached export and return download headers without a body.')
+    @app.get('/api/v1/jobs/{job_id}/transcript.pdf', tags=tags, response_class=Response, responses={**errors, 200: {'headers': pdf_headers, 'content': {'application/pdf': {'schema': {'type': 'string', 'format': 'binary'}}}}},
              description='合并连续同说话人发言及时间范围，保留原文；视频按画面组织图文。仅已完成 ASR，内存缓存，繁忙时 429。\n\n**English:** Merge adjacent speech from the same speaker and its time range, preserving words. Videos include images and matching discussion. Completed ASR only; memory cached, 429 when busy.',
               summary='下载简洁转写 PDF / Download concise transcript PDF')
-    def pdf(job_id: str, _: None = auth) -> Response:
+    def pdf(job_id: str, request: Request, _: None = auth) -> Response:
         from .transcript_pdf import download
         try:
             with speaker_update_lock(job_id), task_reader(job_id):
@@ -339,7 +351,7 @@ def register(app: Any, api: Any) -> None:
         except (BlockingIOError, RuntimeError) as exc:
             raise HTTPException(429, str(exc), headers={'Retry-After': '2'}) from exc
         filename = quote(Path(job['display_name']).stem + '-transcript.pdf')
-        return Response(payload, media_type='application/pdf', headers={'Content-Disposition': f"attachment; filename*=UTF-8''{filename}", 'Cache-Control': 'no-store'})
+        return Response(payload if request.method != 'HEAD' else None, media_type='application/pdf', headers={'Content-Length': str(len(payload)), 'Content-Disposition': f"attachment; filename*=UTF-8''{filename}", 'Cache-Control': 'no-store'})
 
     @app.get('/api/v1/jobs/{job_id}/video-scenes', tags=tags, response_model=VideoScenesResponse, responses=errors,
              description='按画面返回可阅读段落及当前修订号，完整原始分段仍在任务结果中。\n\n**English:** Read illustrated paragraphs and the current revision; original detailed segments remain in job results.',
@@ -348,7 +360,7 @@ def register(app: Any, api: Any) -> None:
         job = completed(job_id, True)
         return {'revision': job['result']['video']['revision'], 'scenes': scene_transcripts(job['result'])}
 
-    @app.get('/api/v1/jobs/{job_id}/video-frames/{name}', tags=tags, responses=errors,
+    @app.get('/api/v1/jobs/{job_id}/video-frames/{name}', tags=tags, response_class=Response, responses={**errors, 200: {'content': {'image/jpeg': {'schema': {'type': 'string', 'format': 'binary'}}}}},
              description='只允许读取当前或自动分段中引用的 JPEG。\n\n**English:** Return a JPEG referenced by current or original automatic sections only.',
               summary='读取已保存关键帧 / Read a saved presentation frame')
     def frame_image(job_id: str, name: str, _: None = auth) -> Response:
@@ -361,7 +373,7 @@ def register(app: Any, api: Any) -> None:
             path = config.jobs_dir / job_id / 'output/frames' / name
             return Response(path.read_bytes(), media_type='image/jpeg', headers={'Cache-Control': 'private, max-age=300'})
 
-    @app.get('/api/v1/jobs/{job_id}/video-preview', tags=tags, responses=errors,
+    @app.get('/api/v1/jobs/{job_id}/video-preview', tags=tags, response_class=Response, responses={**errors, 200: {'content': {'image/jpeg': {'schema': {'type': 'string', 'format': 'binary'}}}}},
              description='按时间解码画面到内存，不写入磁盘。解码并发受限，繁忙时返回 429。\n\n**English:** Decode a timestamp to an in-memory image without disk writes. Bounded decoder concurrency returns 429 when busy.',
               summary='预览指定时刻的画面 / Preview a frame at a timestamp')
     def preview(job_id: str, time: float = Query(..., ge=0, allow_inf_nan=False), _: None = auth) -> Response:

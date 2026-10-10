@@ -227,3 +227,25 @@ def test_document_guide_keeps_api_workflow_and_resource_configuration() -> None:
             line.startswith("| [") and "docs/DOCUMENT_TTS.md)" in line
             for line in (ROOT / name).read_text(encoding="utf-8").splitlines()
         )
+
+
+def test_current_transcription_documentation_matches_public_entrypoints():
+    from audio_intel import video_uploads
+    chinese = (ROOT / 'README_CN.md').read_text(encoding='utf-8')
+    english = (ROOT / 'README.md').read_text(encoding='utf-8')
+    assert '新建音频转写 / 新建视频转写 / 任务与结果' in chinese
+    assert '八个原生异步' in chinese and 'eight native asynchronous' in english
+    api = (ROOT / 'docs/API.md').read_text(encoding='utf-8')
+    lifecycle = api.split('## Native asynchronous lifecycle')[1].split('Generate one key')[0]
+    assert '/api/v1/asr/video-jobs' in lifecycle
+    assert lifecycle.count('- `POST ') == 8
+    for name in ('INSTALL.md', 'WINDOWS.md'):
+        text = (ROOT / 'docs' / name).read_text(encoding='utf-8')
+        assert '自动迁移到 schema v12' in text
+        assert '自动迁移到 schema v11' not in text
+    guide = (ROOT / 'docs/VIDEO_TRANSCRIPTION.md').read_text(encoding='utf-8')
+    for suffix in video_uploads.VIDEO_FORMATS:
+        assert suffix.upper() in guide
+    assert '25 GiB' in guide and '4 GiB' in guide
+    assert 'job_id' in guide and 'Retry-After' in guide
+    assert 'transcription-ci-lessons' in (ROOT / 'docs/TROUBLESHOOTING.md').read_text(encoding='utf-8')
