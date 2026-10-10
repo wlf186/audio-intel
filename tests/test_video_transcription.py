@@ -23,10 +23,14 @@ from asr import pipeline
 
 
 def video_file(path: Path) -> bytes:
+    # Browser fixtures use open codecs; MP4 remains covered by backend tests.
+    webm = path.suffix == '.webm'
+    sample_rate = 48000 if webm else 16000
+    samples_per_frame = sample_rate // 10
     with av.open(str(path), 'w') as output:
-        video = output.add_stream('libx264', rate=10)
+        video = output.add_stream('libvpx' if webm else 'libx264', rate=10)
         video.width, video.height, video.pix_fmt = 320, 180, 'yuv420p'
-        audio = output.add_stream('aac', rate=16000)
+        audio = output.add_stream('libopus' if webm else 'aac', rate=sample_rate)
         audio.layout = 'mono'
         for i in range(60):
             picture = np.full((180, 320, 3), 245, dtype=np.uint8)
@@ -39,8 +43,8 @@ def video_file(path: Path) -> bytes:
             frame = av.VideoFrame.from_ndarray(picture, format='rgb24')
             frame.pts, frame.time_base = i, Fraction(1, 10)
             for packet in video.encode(frame): output.mux(packet)
-            sound = av.AudioFrame.from_ndarray(np.zeros((1, 1600), dtype=np.float32), format='fltp', layout='mono')
-            sound.sample_rate, sound.pts, sound.time_base = 16000, i*1600, Fraction(1,16000)
+            sound = av.AudioFrame.from_ndarray(np.zeros((1, samples_per_frame), dtype=np.float32), format='flt' if webm else 'fltp', layout='mono')
+            sound.sample_rate, sound.pts, sound.time_base = sample_rate, i*samples_per_frame, Fraction(1,sample_rate)
             for packet in audio.encode(sound): output.mux(packet)
         for packet in video.encode(): output.mux(packet)
         for packet in audio.encode(): output.mux(packet)

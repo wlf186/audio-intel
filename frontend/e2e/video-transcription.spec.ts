@@ -5,7 +5,7 @@ import {execFileSync} from 'node:child_process'
 const root=path.resolve('..')
 test.beforeAll(()=>{
  const python=path.join(root,process.platform==='win32'?'.runtime/api/Scripts/python.exe':'.runtime/api/bin/python')
- execFileSync(python,['-c',"from pathlib import Path; from tests.test_video_transcription import video_file; p=Path('tmp/video-e2e/lecture.mp4'); p.parent.mkdir(parents=True,exist_ok=True); video_file(p)"],{cwd:root,env:{...process.env,AUDIO_INTEL_LOAD_ENV:'0',AUDIO_INTEL_DATA_DIR:'tmp/video-fixture/data'}})
+ execFileSync(python,['-c',"from pathlib import Path; from tests.test_video_transcription import video_file; p=Path('tmp/video-e2e/lecture.webm'); p.parent.mkdir(parents=True,exist_ok=True); video_file(p)"],{cwd:root,env:{...process.env,AUDIO_INTEL_LOAD_ENV:'0',AUDIO_INTEL_DATA_DIR:'tmp/video-fixture/data'}})
 })
 import {expandAsrAdvanced} from './asr-helpers'
 
@@ -19,8 +19,15 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  await page.getByRole('tab',{name:'新建视频转写',exact:true}).click()
  await expect(page.locator('.asr-upload')).toContainText('25.0 GiB')
  await expect(page.locator('.dropzone')).toContainText('MP4')
- await page.locator('input[type=file]').setInputFiles(path.resolve('../tmp/video-e2e/lecture.mp4'))
- await expect(page.locator('.video-region-media video')).toBeVisible()
+ // Unsupported local previews must still allow full-frame transcription.
+ await page.locator('input[type=file]').setInputFiles({name:'unsupported.mp4',mimeType:'video/mp4',buffer:Buffer.from('unsupported video codec fixture')})
+ await expect(page.getByRole('status')).toContainText('浏览器无法预览此视频')
+ await expect(page.getByRole('button',{name:'开始转写',exact:true})).toBeEnabled()
+ await expect(page.getByRole('button',{name:'框选 PPT 区域',exact:true})).toHaveCount(0)
+ await page.locator('input[type=file]').setInputFiles(path.resolve('../tmp/video-e2e/lecture.webm'))
+ const preview=page.locator('.video-region-media video')
+ await expect(preview).toBeVisible()
+ await expect.poll(()=>preview.evaluate(element=>(element as HTMLVideoElement).videoWidth)).toBeGreaterThan(0)
  await page.getByRole('button',{name:'框选 PPT 区域',exact:true}).click()
  await page.getByRole('button',{name:'使用全画面',exact:true}).click()
  await expandAsrAdvanced(page)
@@ -69,7 +76,7 @@ test('video upload pauses, survives reload, resumes and explicitly discards',asy
  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message))
  await page.goto('/#asr')
  await page.getByRole('tab',{name:'新建视频转写',exact:true}).click()
- await page.locator('input[type=file]').setInputFiles(path.resolve('../tmp/video-e2e/lecture.mp4'))
+ await page.locator('input[type=file]').setInputFiles(path.resolve('../tmp/video-e2e/lecture.webm'))
  let release:()=>void=()=>undefined
  const held=new Promise<void>(resolve=>{release=resolve})
  const handler=async(route:import('@playwright/test').Route)=>{if(route.request().method()==='PATCH'){await held;try{await route.abort()}catch(error){if(!(error instanceof Error)||!error.message.includes('already handled'))throw error}}else await route.continue()}
@@ -80,8 +87,8 @@ test('video upload pauses, survives reload, resumes and explicitly discards',asy
  release();await page.unroute('**/api/v1/asr/video-uploads/*',handler)
  await expect(page.locator('.video-resume')).toBeVisible()
  await page.reload();await page.getByRole('tab',{name:'新建视频转写',exact:true}).click()
- await expect(page.locator('.video-resume')).toContainText('lecture.mp4')
- await page.locator('input[type=file]').setInputFiles(path.resolve('../tmp/video-e2e/lecture.mp4'))
+ await expect(page.locator('.video-resume')).toContainText('lecture.webm')
+ await page.locator('input[type=file]').setInputFiles(path.resolve('../tmp/video-e2e/lecture.webm'))
  await page.getByRole('button',{name:'开始转写',exact:true}).click()
  await expect(page.getByRole('button',{name:'查看本次任务'})).toBeVisible({timeout:30000})
  expect(await page.evaluate(()=>sessionStorage.getItem('audio-intel:video-upload:v1'))).toBeNull()
