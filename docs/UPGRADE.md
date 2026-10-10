@@ -122,11 +122,11 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
-## 未发布：视频转写与简洁 PDF / Unreleased: video transcription and concise PDF
+## v0.1.24 视频转写与简洁 PDF / Video transcription and concise PDF
 
-数据库从 v11 增量升级至 **v12**，只新增续传上传和分片校验记录，不重写历史任务或文件。首次启动新代码前按备份规则停止服务并创建 SQLite 快照。回退须使用该快照，不应由旧代码写入 v12 数据库。已完成音频任务可直接导出简洁 PDF，旧视频任务不会自动补做画面分析。
+从 v0.1.23 升级：**数据迁移：仅数据库**，需要 SQLite 一致快照；更早版本须合并阅读中间版本升级要求。数据库从 v11 增量升级至 **v12**，只新增续传上传和分片校验记录，不重写历史任务或文件。首次启动新代码前按备份规则停止服务并创建 SQLite 快照。回退须使用该快照，不应由旧代码写入 v12 数据库。已完成音频任务可直接导出简洁 PDF，旧视频任务不会自动补做画面分析。
 
-Schema **v12** adds upload/checksum tables without rewriting history or files. Stop the service and take a SQLite snapshot before first startup. Rollback requires the matching backup. Completed historical audio tasks can export concise PDF immediately; old video inputs do not receive automatic presentation backfills.
+Upgrading from v0.1.23 requires a **database-only migration** and a consistent SQLite backup; earlier versions must also follow intervening upgrade notes. Schema **v12** adds upload/checksum tables without rewriting history or files. Stop the service and take a SQLite snapshot before first startup. Rollback requires the matching backup. Completed historical audio tasks can export concise PDF immediately; old video inputs do not receive automatic presentation backfills.
 
 同步 API/ASR 依赖锁并重建前端；新增 ReportLab 与本地字体、显式 Pillow 依赖，模型及推理参数不变。视频上限由独立的 `AUDIO_INTEL_MAX_VIDEO_UPLOAD_BYTES` 控制，默认 25 GiB，不影响原音频 4 GiB。续传元数据使用 sessionStorage，刷新保留、关闭页签/退出登录清除；服务器未完成文件按 24 小时闲置/7 天总寿命清理。见[视频指南](VIDEO_TRANSCRIPTION.md)。按本地部署流程刷新全部原有服务进程。
 

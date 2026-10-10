@@ -95,7 +95,7 @@ Public API changes must update the bilingual `/docs`, `/openapi.json`, executabl
 
 SQLite jobs, queue ordering, history, idempotency records, hotwords, voices, voiceprints, and completed-task snapshots are compatibility surfaces. Before migration development, follow [upgrade backup scope](docs/UPGRADE.md#upgrade-backup-scope): snapshot SQLite for database-only changes, include affected files for file rewrites or deletions, and copy the full data directory for broad or uncertain changes. Confirmed updates without data migration require no additional upgrade backup. Cover migration from the previous schema in tests.
 
-The seven native asynchronous submission endpoints (ASR, single-item TTS, ordered TTS sequences, clone-reference analysis, voiceprint sample upload, document import, and document TTS) require `Idempotency-Key` and must preserve first-accept `202`, same-request replay `200`, conflict `409`, and admission `429` semantics.
+The eight native asynchronous submission endpoints (ASR, video transcription, single-item TTS, ordered TTS sequences, clone-reference analysis, voiceprint sample upload, document import, and document TTS) require `Idempotency-Key` and must preserve first-accept `202`, same-request replay `200`, conflict `409`, and admission `429` semantics.
 
 ## Frontend changes
 
