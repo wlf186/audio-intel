@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import shutil
+import threading
 import time
 import uuid
 import wave
@@ -59,7 +60,9 @@ def wait(client, identifier, expected='ready'):
         item = client.get('/api/v1/library/imports/'+identifier).json()
         if item['state'] not in {'queued','validating','applying'}:
             assert item['state'] == expected, item
-            return item
+            # The durable completion receipt precedes retired-file cleanup.
+            if not client.app.state.library_changing:
+                return item
         time.sleep(.03)
     pytest.fail('Library manager did not finish')
 
@@ -189,6 +192,43 @@ def test_replace_backup_historical_jobs_and_busy_preconditions(local):
         assert db.get_voiceprint_person(target['id']) is None
         assert Path(db.get_voiceprint_sample(first['id'])['audio_path']).exists()
         assert db.get_job(job['id']) == historical
+        assert client.delete(f'/api/v1/library/imports/{identifier}').status_code == 204
+        assert client.get(result['backup_url']).status_code == 200
+
+
+def test_completed_receipt_blocks_writes_until_retired_file_cleanup(local, monkeypatch):
+    person = db.create_voiceprint_person('文件收尾')
+    original = sample(local, person['id'])
+    cleanup_entered, release_cleanup = threading.Event(), threading.Event()
+    original_cleanup = transfer.cleanup
+
+    def held_cleanup(config, identifier, completed):
+        if completed:
+            cleanup_entered.set()
+            assert release_cleanup.wait(10), 'Cleanup test gate was not released'
+        return original_cleanup(config, identifier, completed)
+
+    with TestClient(api.create_app()) as client:
+        identifier = upload(client, exported(client)).json()['id']
+        wait(client, identifier)
+        plan = preview(client, identifier, 'replace')
+        monkeypatch.setattr(transfer, 'cleanup', held_cleanup)
+        try:
+            response = client.post(f'/api/v1/library/imports/{identifier}/apply',
+                                   json={key:plan[key] for key in ('mode','preview_revision')})
+            assert response.status_code == 202
+            assert cleanup_entered.wait(5)
+            receipt = client.get(f'/api/v1/library/imports/{identifier}').json()
+            assert receipt['state'] == 'completed' and receipt['result']
+            assert Path(original['audio_path']).exists()
+            blocked = client.delete(f'/api/v1/library/imports/{identifier}')
+            assert blocked.status_code == 409
+            assert blocked.json()['code'] == 'library_maintenance'
+        finally:
+            release_cleanup.set()
+        result = wait(client, identifier, 'completed')
+        assert not Path(original['audio_path']).exists()
+        assert Path(db.get_voiceprint_sample(original['id'])['audio_path']).exists()
         assert client.delete(f'/api/v1/library/imports/{identifier}').status_code == 204
         assert client.get(result['backup_url']).status_code == 200
 

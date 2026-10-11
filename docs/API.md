@@ -569,6 +569,8 @@ See [the bilingual library guide](LIBRARY.md) for merge/replace rules, sorting, 
 | `GET /api/v1/library/imports/{identifier}/backup` | Protected streaming ZIP of the pre-replacement library; supports Range |
 | `DELETE /api/v1/library/imports/{identifier}` | 204; remove inactive staged files, retain completed results/backups; active operation 409 |
 
+`completed` records the committed database transaction. The manager may still be retiring files and protecting writes, including staging DELETE, with `409 library_maintenance`; retry shortly. The completion receipt stays durable for crash recovery. / `completed` 表示数据库已提交；旧文件清理未完成时，写操作及暂存包删除仍可能返回 `409 library_maintenance`，应稍后重试，完成回执继续用于崩溃恢复。
+
 A complete executable Python client downloads on A and restores on B. Set client URLs and credentials separately; the key variables are optional for installations without authentication. Install `requests` in your separate client environment before running this example. `LIBRARY_MODE=merge` is the default; `replace` explicitly selects full replacement and requires idle queues. No history is copied or edited. Retry upload errors with the same `request_key` for the same bytes.
 
 ```python

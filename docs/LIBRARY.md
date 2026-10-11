@@ -44,8 +44,11 @@ Historical failed/cancelled enrollment retries require their original bound samp
 - 临时上传位于 `data/library_imports/<id>/`；未应用的 ready/failed 包 24 小时后清理，记录变为 expired。可在 API 中主动删除暂存包。已完成包清理暂存文件并保留结果。
 - 替换备份位于 `data/library_backups/<id>.zip`，受鉴权保护且不自动删除。日常数据备份也应包含这些目录；空间不足须先整理或调整部署存储。
 - 音频写入独立新路径，数据库事务成功后才清理旧音频；中断时根据持久化文件日志回滚或完成清理。正在读取的音频不被删除。
+- `completed` 回执表示数据库事务已提交；旧文件仍在收尾清理时，写操作和暂存包删除可能返回 `409 library_maintenance`，应稍后重试。不要据此重新应用资料包或改动恢复日志。
 
 The v2 ZIP (v1 imports supported) contains a strict manifest and declared audio files, without absolute DB paths, history, model weights, credentials or runtimes. Upload and expanded sizes share the configured audio-upload limit, with a 16 MiB manifest and 100,000-entry ceiling. Staging uses `data/library_imports/`; unapplied ready/failed archives expire after 24 hours. Completed results remain. Protected replacement backups in `data/library_backups/` are never automatically deleted. File journals recover interrupted operations; old audio is retired only after the database transaction commits and active readers release it.
+
+A `completed` receipt records the committed database transaction. While retired-file cleanup finishes, writes and staging removal can still return `409 library_maintenance`; retry shortly without reapplying the archive or changing its recovery journal.
 
 接口和可执行示例见 [API guide](API.md#library-export-and-import)。迁移 B 的运行环境仍须在 B 按正常安装流程 setup，不要复制 A 的 `.runtime/`。
 
