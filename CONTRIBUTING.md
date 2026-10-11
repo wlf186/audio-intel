@@ -203,8 +203,8 @@ Record workflow URL, exact SHA, observed error, reproduction and correction toge
 From an authenticated GitHub CLI session, inspect a failing run and download its artifacts (replace the run ID with the run being diagnosed):
 
 ```bash
-gh run view 38014197054 --repo wlf186/audio-intel --log-failed
-gh run download 38014197054 --repo wlf186/audio-intel --name windows-logs --dir tmp/ci-evidence
+gh run view RUN_ID --repo wlf186/audio-intel --log-failed
+gh run download RUN_ID --repo wlf186/audio-intel --name windows-browser-logs --dir tmp/ci-evidence
 # Current artifacts: linux-browser-logs / windows-browser-logs. Older runs used linux-logs / windows-logs.
 corepack pnpm@10.15.1 --dir frontend exec playwright show-trace ../tmp/ci-evidence/playwright/TEST_DIRECTORY/trace.zip
 ```
