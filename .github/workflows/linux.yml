@@ -1,82 +1,139 @@
 name: Linux quality gates
-
-on:
+'on':
   push:
-    branches: [main]
-    tags: ["v*"]
-  pull_request:
+    branches:
+    - main
+    tags:
+    - v*
+  pull_request: null
   schedule:
-    - cron: "23 4 * * 1"
-
+  - cron: 23 4 * * 1
+  workflow_dispatch:
+    inputs:
+      stability_check:
+        description: Repeat timing regressions five times after the full suite
+        type: boolean
+        default: false
 permissions:
   contents: read
-
 concurrency:
-  group: linux-${{ github.ref }}
+  group: linux-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
-  linux:
+  backend:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      AUDIO_INTEL_MOCK_MODE: "1"
-      AUDIO_INTEL_PORT: "20810"
+      AUDIO_INTEL_MOCK_MODE: '1'
+      AUDIO_INTEL_PORT: '20810'
+      AUDIO_INTEL_LOAD_ENV: '0'
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: Install API runtime and build frontend
-        run: ./service.sh setup api
-
-      - name: Verify dependency locks
-        run: .runtime/api/bin/python scripts/lock_dependencies.py --check
-
-      # setup api already runs i18n, both TypeScript checks and the full frontend build.
-      - name: Backend checks
-        run: .runtime/api/bin/python -m pytest -q --durations=20
-
-      - name: Dependency audits
-        run: |
-          corepack pnpm@10.15.1 --dir frontend audit --audit-level high
-          .runtime/bin/uv tool run pip-audit -r requirements-lock/linux/api.txt --disable-pip
-
-      - name: Start and exercise services
-        run: |
-          AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all
-          .runtime/api/bin/python scripts/smoke_test.py
-
-      - name: Browser checks
-        run: |
-          corepack pnpm@10.15.1 --dir frontend exec playwright install --with-deps chromium
-          corepack pnpm@10.15.1 --dir frontend test:e2e
-
-      - name: Audit model runtimes with documented VEX exclusions
-        if: github.event_name == 'schedule'
-        run: |
-          for runtime in asr tts aligner; do
-            .runtime/bin/uv tool run pip-audit -r "requirements-lock/linux/$runtime.txt" --disable-pip \
-              --vulnerability-service osv \
-              --ignore-vuln PYSEC-2026-3447 \
-              --ignore-vuln PYSEC-2025-194 \
-              --ignore-vuln PYSEC-2026-2288 \
-              --ignore-vuln PYSEC-2026-2289 \
-              --ignore-vuln PYSEC-2026-2290 \
-              --ignore-vuln PYSEC-2025-217
-          done
-
-      - name: Stop services
-        if: always()
-        run: ./service.sh stop all
-
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-logs
-          path: logs/
-          if-no-files-found: ignore
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+    - name: Install API runtime and build frontend
+      run: ./service.sh setup api
+    - name: Verify dependency locks
+      run: .runtime/api/bin/python scripts/lock_dependencies.py --check
+    - name: Backend checks
+      run: .runtime/api/bin/python -m pytest -q --durations=20 --junitxml=logs/ci/backend.xml
+    - name: Dependency audits
+      run: |
+        corepack pnpm@10.15.1 --dir frontend audit --audit-level high
+        .runtime/bin/uv tool run pip-audit -r requirements-lock/linux/api.txt --disable-pip
+    - name: Audit model runtimes with documented VEX exclusions
+      if: github.event_name == 'schedule'
+      run: |
+        for runtime in asr tts aligner; do
+          .runtime/bin/uv tool run pip-audit -r "requirements-lock/linux/$runtime.txt" --disable-pip \
+            --vulnerability-service osv \
+            --ignore-vuln PYSEC-2026-3447 \
+            --ignore-vuln PYSEC-2025-194 \
+            --ignore-vuln PYSEC-2026-2288 \
+            --ignore-vuln PYSEC-2026-2289 \
+            --ignore-vuln PYSEC-2026-2290 \
+            --ignore-vuln PYSEC-2025-217
+        done
+    - name: Upload test reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-backend-reports
+        path: logs/ci/
+        if-no-files-found: ignore
+    - name: Upload logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-backend-logs
+        path: logs/
+        if-no-files-found: ignore
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      AUDIO_INTEL_MOCK_MODE: '1'
+      AUDIO_INTEL_PORT: '20810'
+      AUDIO_INTEL_LOAD_ENV: '0'
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+    - name: Install API runtime and build frontend
+      run: ./service.sh setup api
+    - name: Start and exercise services
+      run: |
+        AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all
+        .runtime/api/bin/python scripts/smoke_test.py
+    - name: Install Chromium
+      run: corepack pnpm@10.15.1 --dir frontend exec playwright install --with-deps chromium
+    - name: Browser checks
+      run: corepack pnpm@10.15.1 --dir frontend test:e2e
+    - name: Repeat timing regressions
+      run: corepack pnpm@10.15.1 --dir frontend test:e2e --grep @timing --repeat-each=5 --output=../logs/playwright-stability
+      if: github.event_name == 'workflow_dispatch' && inputs.stability_check
+      env:
+        PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../logs/ci/stability.xml
+    - name: Stop services
+      if: always()
+      run: ./service.sh stop all
+    - name: Upload test reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-browser-reports
+        path: logs/ci/
+        if-no-files-found: ignore
+    - name: Upload logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-browser-logs
+        path: logs/
+        if-no-files-found: ignore
+  linux:
+    needs:
+    - backend
+    - browser
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - name: Require every check to pass
+      uses: actions/github-script@v7
+      env:
+        CHECK_RESULTS: ${{ toJSON(needs) }}
+      with:
+        script: |
+          const results = JSON.parse(process.env.CHECK_RESULTS)
+          for (const name of ['backend', 'browser']) {
+            if (results[name]?.result !== 'success') {
+              core.setFailed(`${name}: ${results[name]?.result ?? 'missing'}`)
+            }
+          }

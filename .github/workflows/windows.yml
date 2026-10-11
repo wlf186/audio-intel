@@ -1,88 +1,155 @@
 name: Native Windows smoke
-
-on:
+'on':
   push:
-    branches: [main]
-    tags: ["v*"]
-  pull_request:
-
+    branches:
+    - main
+    tags:
+    - v*
+  pull_request: null
+  workflow_dispatch:
+    inputs:
+      stability_check:
+        description: Repeat timing regressions five times after the full suite
+        type: boolean
+        default: false
 permissions:
   contents: read
-
 concurrency:
-  group: windows-${{ github.ref }}
+  group: windows-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
-  windows:
+  backend:
     runs-on: windows-latest
     timeout-minutes: 30
     env:
-      AUDIO_INTEL_MOCK_MODE: "1"
-      AUDIO_INTEL_PORT: "20810"
+      AUDIO_INTEL_MOCK_MODE: '1'
+      AUDIO_INTEL_PORT: '20810'
+      AUDIO_INTEL_LOAD_ENV: '0'
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: Native preflight
-        shell: cmd
-        run: service.cmd doctor
-
-      - name: Install API runtime and build frontend
-        shell: cmd
-        run: service.cmd setup api
-
-      - name: Verify cross-platform dependency locks
-        shell: powershell
-        run: |
-          & .\.runtime\api\Scripts\python.exe scripts\lock_dependencies.py --check
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # setup api already runs i18n, both TypeScript checks and the full frontend build.
-      - name: Backend checks
-        shell: powershell
-        run: |
-          & .\.runtime\api\Scripts\python.exe -m pytest -q --durations=20
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Dependency audits
-        shell: powershell
-        run: |
-          & corepack.cmd pnpm@10.15.1 --dir frontend audit --audit-level high
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & .\.runtime\bin\uv.exe tool run pip-audit -r requirements-lock\windows\api.txt --disable-pip
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Start and exercise native services
-        shell: cmd
-        run: |
-          service.cmd start all
-          service.cmd status
-          service.cmd restart all
-          service.cmd status
-          .runtime\api\Scripts\python.exe scripts\smoke_test.py
-
-      - name: Browser checks
-        shell: powershell
-        run: |
-          & corepack.cmd pnpm@10.15.1 --dir frontend exec playwright install chromium
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & corepack.cmd pnpm@10.15.1 --dir frontend test:e2e
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Stop services
-        if: always()
-        shell: cmd
-        run: service.cmd stop all
-
-      - name: Upload logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-logs
-          path: logs/
-          if-no-files-found: ignore
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+    - name: Native preflight
+      shell: cmd
+      run: service.cmd doctor
+    - name: Install API runtime and build frontend
+      shell: cmd
+      run: service.cmd setup api
+    - name: Verify cross-platform dependency locks
+      shell: powershell
+      run: |
+        & .\.runtime\api\Scripts\python.exe scripts\lock_dependencies.py --check
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    - name: Backend checks
+      shell: powershell
+      run: |
+        & .\.runtime\api\Scripts\python.exe -m pytest -q --durations=20 --junitxml=logs/ci/backend.xml
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    - name: Dependency audits
+      shell: powershell
+      run: |
+        & corepack.cmd pnpm@10.15.1 --dir frontend audit --audit-level high
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & .\.runtime\bin\uv.exe tool run pip-audit -r requirements-lock\windows\api.txt --disable-pip
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    - name: Upload test reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-backend-reports
+        path: logs/ci/
+        if-no-files-found: ignore
+    - name: Upload logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-backend-logs
+        path: logs/
+        if-no-files-found: ignore
+  browser:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      AUDIO_INTEL_MOCK_MODE: '1'
+      AUDIO_INTEL_PORT: '20810'
+      AUDIO_INTEL_LOAD_ENV: '0'
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+    - name: Native preflight
+      shell: cmd
+      run: service.cmd doctor
+    - name: Install API runtime and build frontend
+      shell: cmd
+      run: service.cmd setup api
+    - name: Start and exercise native services
+      shell: cmd
+      run: |
+        service.cmd start all
+        service.cmd status
+        service.cmd restart all
+        service.cmd status
+        .runtime\api\Scripts\python.exe scripts\smoke_test.py
+    - name: Install Chromium
+      shell: powershell
+      run: |
+        & corepack.cmd pnpm@10.15.1 --dir frontend exec playwright install chromium
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    - name: Browser checks
+      shell: powershell
+      run: |
+        & corepack.cmd pnpm@10.15.1 --dir frontend test:e2e
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    - name: Repeat timing regressions
+      shell: powershell
+      run: |
+        & corepack.cmd pnpm@10.15.1 --dir frontend test:e2e --grep @timing --repeat-each=5 --output=../logs/playwright-stability
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      if: github.event_name == 'workflow_dispatch' && inputs.stability_check
+      env:
+        PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../logs/ci/stability.xml
+    - name: Stop services
+      if: always()
+      shell: cmd
+      run: service.cmd stop all
+    - name: Upload test reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-browser-reports
+        path: logs/ci/
+        if-no-files-found: ignore
+    - name: Upload logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: windows-browser-logs
+        path: logs/
+        if-no-files-found: ignore
+  windows:
+    needs:
+    - backend
+    - browser
+    if: always()
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+    - name: Require every check to pass
+      uses: actions/github-script@v7
+      env:
+        CHECK_RESULTS: ${{ toJSON(needs) }}
+      with:
+        script: |
+          const results = JSON.parse(process.env.CHECK_RESULTS)
+          for (const name of ['backend', 'browser']) {
+            if (results[name]?.result !== 'success') {
+              core.setFailed(`${name}: ${results[name]?.result ?? 'missing'}`)
+            }
+          }

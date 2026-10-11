@@ -7,7 +7,8 @@ export default defineConfig({
  testDir:'./e2e',
  timeout:30_000,
  retries:0,
- reporter:'line',
+ reporter:process.env.CI?[['line'],['junit',{outputFile:process.env.PLAYWRIGHT_JUNIT_OUTPUT_FILE||'../logs/ci/browser.xml'}]]:'line',
+ forbidOnly:!!process.env.CI,
  outputDir:path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../logs/playwright'),
  use:{
   baseURL:process.env.AUDIO_INTEL_TEST_BASE_URL||'http://127.0.0.1:20810',
