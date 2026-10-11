@@ -1,4 +1,4 @@
-"""Version-one portable library contract and transfer API types."""
+"""Portable library v2 contract with backward-compatible v1 imports."""
 from __future__ import annotations
 
 import base64
@@ -83,6 +83,7 @@ class ArchiveSample(StrictModel):
 class ArchivePerson(StrictModel):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
     name: str
+    group_id: str | None = None
     note: str | None = None
     include_in_hotword_library: bool
     aliases: list[str] = Field(default_factory=list)
@@ -112,16 +113,48 @@ class ArchiveHotwords(StrictModel):
         return name
 
 
+class ArchiveGroup(StrictModel):
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")
+    name: str
+    created_at: str
+    updated_at: str
+
+    @field_validator("name")
+    @classmethod
+    def normalize(cls, value: str) -> str:
+        from .voiceprint_groups import normalize_group_name
+        return normalize_group_name(value)
+
+
 class LibraryArchive(StrictModel):
     format: Literal["audio-intel-library"] = "audio-intel-library"
-    contract_version: Literal[1] = 1
+    contract_version: Literal[1, 2] = 1
     exported_at: str
     source_version: str
     people: list[ArchivePerson]
     hotword_lists: list[ArchiveHotwords]
+    groups: list[ArchiveGroup] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def membership(self):
+        from .db import person_name_key
+        from .voiceprint_groups import UNGROUPED_ID, UNGROUPED_NAME
+        if self.contract_version == 1:
+            if self.groups or any(person.group_id is not None for person in self.people):
+                raise ValueError("Groups require library contract v2")
+            return self
+        ids = {group.id for group in self.groups}
+        if len(ids) != len(self.groups) or len({person_name_key(group.name) for group in self.groups}) != len(self.groups):
+            raise ValueError("Duplicate group ID or name")
+        if not any(group.id == UNGROUPED_ID and group.name == UNGROUPED_NAME for group in self.groups):
+            raise ValueError("Library v2 requires the built-in ungrouped group")
+        if any(person.group_id not in ids for person in self.people):
+            raise ValueError("Every v2 person requires a declared group")
+        return self
 
 
 class LibraryCounts(StrictModel):
+    groups: int = 0
     people: int = 0
     samples: int = 0
     hotword_lists: int = 0
@@ -150,6 +183,7 @@ class LibraryPreview(StrictModel):
 
 
 class LibraryIdMap(StrictModel):
+    groups: dict[str, str] = Field(default_factory=dict)
     people: dict[str, str]
     samples: dict[str, str]
     hotword_lists: dict[str, str]

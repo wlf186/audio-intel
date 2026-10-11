@@ -10,6 +10,7 @@ import re
 import secrets
 import shutil
 import sqlite3
+import sys
 import ssl
 import time
 import uuid
@@ -203,12 +204,16 @@ class BatchDeleteRequest(BaseModel):
 
 
 class VoiceprintPersonCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    group_id: str | None = Field(None, description="默认未分组 / Defaults to Ungrouped")
     name: str = Field(description="人员显示名称，与备注组合规范化后唯一 / Display name; normalized name and note together must be unique")
     note: str | None = Field(None, description=f"可选单行备注，规范化后最多 {MAX_VOICEPRINT_NOTE_CHARS} 字 / Optional single-line note")
     include_in_hotword_library: bool = Field(True, description="是否同步到系统人名热词表 / Whether to sync the name to the system hotword list")
 
 
 class VoiceprintPersonUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    group_id: str | None = Field(None, description="目标声纹分组 / Target voiceprint group")
     name: str | None = Field(None, description="新的人员显示名称 / New display name")
     note: str | None = Field(None, description=f"新备注；null 或空白用于清除，最多 {MAX_VOICEPRINT_NOTE_CHARS} 字 / New note; null or blank clears it")
     include_in_hotword_library: bool | None = Field(None, description="是否同步到系统人名热词表 / Whether to sync the name to the system hotword list")
@@ -421,7 +426,9 @@ def idempotent_job(
     idempotency_key: str,
     file_digest: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    ignored_fields = {"effective_context", "hotword_lists", "hotword_term_count"}
+    ignored_fields = {"effective_context", "hotword_lists", "hotword_term_count", "voiceprint_groups", "voiceprint_person_ids"}
+    if request_data.get("voiceprint_group_ids") is None:
+        ignored_fields.add("voiceprint_group_ids")
     if request_data.get("model") == DEFAULT_ASR_MODEL_ID:
         ignored_fields.add("model")
     if not request_data.get("hotword_list_ids"):
@@ -559,6 +566,7 @@ def public_voiceprint_person(person: dict[str, Any]) -> dict[str, Any]:
     samples = [public_voiceprint_sample(sample) for sample in person.get("samples", [])]
     return {
         "id": person["id"], "name": person["name"], "note": person.get("note"),
+        "group_id": person.get("group_id", "voiceprint_ungrouped"),
         "sort_initial": sort_initial(person["name"]),
         "include_in_hotword_library": bool(person.get("include_in_hotword_library", True)),
         "created_at": person["created_at"],
@@ -835,6 +843,14 @@ def public_hotword_list(item: dict[str, Any]) -> dict[str, Any]:
         "term_count": len(item["terms"]), "created_at": item["created_at"],
         "updated_at": item["updated_at"],
     }
+
+
+def voiceprint_scope_data(raw_ids: str | list[str] | None, enabled: bool, existing_job: dict[str, Any] | None = None) -> dict[str, Any]:
+    from .voiceprint_groups import scope_snapshot
+    try:
+        return scope_snapshot(raw_ids, enabled, existing_job)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 def hotword_request_data(
@@ -1448,6 +1464,7 @@ def create_app() -> FastAPI:
         export_formats: str = Form("json,srt,vtt,txt", description="逗号分隔：json,srt,vtt,txt / Comma-separated export formats"),
         compute_device: str = Form(default_device, description="cpu 或 gpu；省略时使用部署默认值且无静默回退 / cpu or gpu; omission uses the deployment default and there is no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         use_voiceprint_library: bool = Form(True, description="用声纹库匹配并命名说话人 / Match and label speakers from the voiceprint library"),
+        voiceprint_group_ids: str | None = Form(None, description="JSON 分组 ID 数组；省略使用全部，提交时固定人员范围 / JSON group ID array; omission selects all, eligible people are fixed at submission"),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="启用质量中性的单任务自动批处理 / Enable quality-neutral single-job auto-batching"),
         idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
@@ -1464,6 +1481,7 @@ def create_app() -> FastAPI:
         hotword_data = await run_in_threadpool(
             hotword_request_data, context, hotword_list_ids, existing,
         )
+        voiceprint_data = await run_in_threadpool(voiceprint_scope_data, voiceprint_group_ids, use_voiceprint_library and diarize, existing)
         job_id = uuid.uuid4().hex
         original_name = safe_filename(file.filename or "audio.bin")
         input_path = settings.jobs_dir / job_id / "input" / original_name
@@ -1486,7 +1504,7 @@ def create_app() -> FastAPI:
             "align": align, "context": context, "export_formats": formats, "compute_device": compute_device,
             "compute_device_name": compute_device_name, "use_voiceprint_library": use_voiceprint_library,
             "accelerate_single_task": accelerate_single_task,
-            **hotword_data,
+            **hotword_data, **voiceprint_data,
         }
         job, replayed = idempotent_job(
             "asr", original_name, request_data, job_id, "submit_asr",
@@ -2044,6 +2062,7 @@ def create_app() -> FastAPI:
                 payload.name,
                 note=payload.note,
                 include_in_hotword_library=payload.include_in_hotword_library,
+                group_id=payload.group_id,
             ))
         except sqlite3.IntegrityError as exc:
             raise ApiProblem(409, "voiceprint_person_conflict", "A voiceprint person with this name and note already exists") from exc
@@ -2072,6 +2091,8 @@ def create_app() -> FastAPI:
             values["note"] = payload.note
         if "include_in_hotword_library" in fields:
             values["include_in_hotword_library"] = payload.include_in_hotword_library
+        if "group_id" in fields:
+            values["group_id"] = payload.group_id
         try:
             person = update_voiceprint_person(person_id, **values)
         except sqlite3.IntegrityError as exc:
@@ -2132,6 +2153,9 @@ def create_app() -> FastAPI:
             delete_voiceprint_person_record(person["id"])
             shutil.rmtree(settings.voiceprints_dir / person["id"], ignore_errors=True)
         return Response(status_code=204)
+
+    from . import voiceprint_group_api
+    voiceprint_group_api.register(app, sys.modules[__name__], remove_voiceprint_person)
 
     @app.post(
         "/api/v1/voiceprints/people/{person_id}/samples/from-asr", status_code=201,
@@ -2838,7 +2862,6 @@ def create_app() -> FastAPI:
         raise HTTPException(status_code=404, detail="Brand mark not found")
 
     from .document_api import register as register_document_routes
-    import sys
     register_document_routes(app, sys.modules[__name__])
     from .video_api import register as register_video_routes
     register_video_routes(app, sys.modules[__name__])
@@ -3009,6 +3032,7 @@ def add_openai_routes(app: FastAPI) -> None:
         speaker_count: str = Form("auto", description="auto 或 1–15 / auto or 1–15"),
         compute_device: str = Form(default_device, description="cpu 或 gpu；省略时使用部署默认值且无静默回退 / cpu or gpu; omission uses the deployment default and there is no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         use_voiceprint_library: bool = Form(True, description="匹配声纹库 / Match voiceprint library"),
+        voiceprint_group_ids: str | None = Form(None, description="JSON 分组 ID 数组；省略使用全部，提交时固定人员范围 / JSON group ID array; omission selects all, eligible people are fixed at submission"),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
         idempotency_key: str | None = Header(None, alias="Idempotency-Key", description=OPTIONAL_IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
@@ -3030,6 +3054,7 @@ def add_openai_routes(app: FastAPI) -> None:
         hotword_data = await run_in_threadpool(
             hotword_request_data, prompt, hotword_list_ids, existing,
         )
+        voiceprint_data = await run_in_threadpool(voiceprint_scope_data, voiceprint_group_ids, use_voiceprint_library and diarize, existing)
         try:
             speakers = None if speaker_count == "auto" else int(speaker_count)
         except ValueError as exc:
@@ -3047,7 +3072,7 @@ def add_openai_routes(app: FastAPI) -> None:
             "export_formats": ["json", "srt", "vtt", "txt"], "compute_device": compute_device,
             "compute_device_name": compute_device_name, "use_voiceprint_library": use_voiceprint_library,
             "accelerate_single_task": accelerate_single_task,
-            **hotword_data,
+            **hotword_data, **voiceprint_data,
         }
         replayed = False
         if idempotency_key is not None:

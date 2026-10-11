@@ -1,4 +1,46 @@
 {
+  "voiceprintGroups": {
+    "loading": "正在加载分组…",
+    "failed": "无法加载分组，请重试",
+    "filter": "人员分组",
+    "allPeople": "全部人员",
+    "ungrouped": "未分组",
+    "create": "新增分组",
+    "rename": "重命名分组",
+    "delete": "删除分组",
+    "name": "分组名称",
+    "deleteDescription": "删除“{{name}}”后，组内人员移回“未分组”，人员和样本保留。",
+    "selectAll": "全选当前列表",
+    "selectedCount": "已选 {{count}} 人",
+    "selectPerson": "勾选 {{name}}",
+    "moveTo": "移动到分组",
+    "move": "移动人员",
+    "moved": "人员已移动",
+    "deletePeople": "批量删除人员",
+    "deletePeopleDescription": "永久删除已勾选的 {{count}} 位人员及其全部声纹样本？失败的人员将保留勾选。",
+    "deletedCount": "已删除 {{count}} 位人员",
+    "scopeButton": "选择分组",
+    "scopeTitle": "声纹识别分组",
+    "scopeHelp": "提交时固定所选分组的人员范围，之后移动或新增人员不会改变已提交的任务。",
+    "allGroups": "全部分组（包含以后新增的分组）",
+    "chooseAtLeastOne": "请至少选择一个声纹分组",
+    "staleSelection": "已移除不存在的分组，请检查当前选择。"
+  },
+  "transcriptExport": {
+    "redact": "脱敏导出",
+    "replacements": "关键词替换",
+    "rulesLabel": "替换规则（每行 原词=替换词）",
+    "help": "最多 100 组，每项最多 8000 字。区分大小写，最长匹配优先，不连锁替换。开关关闭时停止全部脱敏处理；设置在此浏览器长期保存。音频和视频画面保持原样。",
+    "reset": "恢复默认导出设置",
+    "ruleError": "第 {{line}} 行：{{reason}}",
+    "errors": {
+      "syntax": "请输入非空原词和等号",
+      "duplicate": "原词重复",
+      "limit": "最多配置 100 组替换",
+      "length": "每项最多 8000 字"
+    },
+    "example": "广东移动=gy"
+  },
   "video": {
     "sceneCount": "已展示 {{visible}} / {{total}} 个画面",
     "enrollHelp": "选择本任务中 {{speaker}} 的原始语句，每条分别保存为一个声纹样本。",
@@ -128,7 +170,9 @@
       "edit": "编辑",
       "copy": "复制",
       "copied": "已复制",
-      "download": "下载"
+      "download": "下载",
+      "delete": "删除",
+      "done": "完成"
     },
     "states": {
       "loading": "加载中",
@@ -551,7 +595,8 @@
     "counts": {
       "people": "人员",
       "samples": "样本",
-      "hotword_lists": "自定义词表"
+      "hotword_lists": "自定义词表",
+      "groups": "自定义分组"
     },
     "mergeSummary": "合并 {{people}} 位人员、{{lists}} 份词表；跳过 {{skipped}} 个重复样本，重命名 {{renamed}} 个同名样本。",
     "discard": "清理导入文件",

@@ -14,16 +14,20 @@ import { api, HttpError, formatTime, isUploadCancelled, uploadLimitMessage, type
 import {ConfirmDialog} from '../components/ConfirmDialog'
 import {Modal} from '../components/Modal'
 import {ResourceStatePanel} from '../components/ResourceStatePanel'
+import {VoiceprintGroups,groupLabel,ungroupedId} from '../components/VoiceprintGroups'
 import {PeopleIndex} from '../components/PeopleIndex'
 import {SubmissionProgress} from '../components/SubmissionProgress'
 import { publicAsrLanguages } from '../lib/preferences'
-import type { AsrModelCapability, ComputeDevice, Job, ResourceState, VoiceprintPerson, VoiceprintSample } from '../lib/types'
+import type { AsrModelCapability, ComputeDevice, Job, ResourceState, VoiceprintGroup, VoiceprintPerson, VoiceprintSample } from '../lib/types'
 import { handleTabKeys } from '../lib/tabs'
 import { computeUnavailableReason, voiceprintSampleName, cloneReferenceUsage } from '../lib/presentation'
 import {useTranslation} from 'react-i18next'
 import {resolvedLocale} from '../i18n'
 
 type Props = {
+  groups: VoiceprintGroup[]
+  groupsState: ResourceState
+  refreshGroups: () => Promise<void>
   people: VoiceprintPerson[]
   state: ResourceState
   refresh: () => Promise<void>
@@ -40,6 +44,9 @@ type SampleSource = 'upload' | 'record'
 
 export function VoiceprintsPage({
   people,
+  groups,
+  groupsState,
+  refreshGroups,
   state,
   refresh,
   refreshPeopleAndHotwords,
@@ -54,6 +61,14 @@ export function VoiceprintsPage({
   const {t}=useTranslation()
   const locale=resolvedLocale()
   const [selectedId, setSelectedId] = useState('')
+  const [groupFilter,setGroupFilter]=useState('')
+  const [checked,setChecked]=useState<Set<string>>(()=>new Set())
+  const [moveGroup,setMoveGroup]=useState(ungroupedId)
+  const [confirmBatchDelete,setConfirmBatchDelete]=useState(false)
+  const visiblePeople=useMemo(()=>people.filter(person=>!groupFilter||(person.group_id||ungroupedId)===groupFilter),[people,groupFilter])
+  const changeGroup=(id:string)=>{setGroupFilter(id);setChecked(new Set());setSelectedId('')}
+  useEffect(()=>{if(groupsState==='ready'&&groupFilter&&!groups.some(group=>group.id===groupFilter))changeGroup('')},[groups,groupsState,groupFilter])
+  useEffect(()=>{if(state==='ready')setChecked(current=>new Set([...current].filter(id=>people.some(person=>person.id===id))))},[people,state])
   const [source, setSource] = useState<SampleSource>('upload')
   const [file, setFile] = useState<File>()
   const [language, setLanguage] = useState('Auto')
@@ -80,8 +95,8 @@ export function VoiceprintsPage({
   const sampleUploadController=useRef<AbortController|undefined>(undefined)
   const recorder = useMicrophoneRecorder(30)
   const selected = useMemo(
-    () => people.find((person) => person.id === selectedId) || people[0],
-    [people, selectedId],
+    () => visiblePeople.find((person) => person.id === selectedId) || visiblePeople[0],
+    [visiblePeople, selectedId],
   )
   const microphoneActive =
     recorder.phase === 'requesting' || recorder.phase === 'recording'
@@ -141,6 +156,7 @@ export function VoiceprintsPage({
       const person=editing
         ?await api.updateVoiceprintPerson(editing.id,personName.trim(),personNote.trim()||null,includeInHotwordLibrary)
         :await api.addVoiceprintPerson(personName.trim(),personNote.trim()||null,includeInHotwordLibrary)
+      if(!editing)changeGroup('')
       setSelectedId(person.id)
       setEditorMode(undefined)
       setNotice(t(editing?'voiceprints.personUpdated':'voiceprints.personCreated'))
@@ -244,6 +260,14 @@ export function VoiceprintsPage({
       setNotice(t('voiceprints.sampleDeleted'))
     })
   }
+  const moveSelected=()=>void run(async()=>{await api.moveVoiceprintPeople([...checked],moveGroup);setChecked(new Set());setNotice(t('voiceprintGroups.moved'))})
+  const deleteSelected=()=>void run(async()=>{
+    const result=await api.deleteVoiceprintPeople([...checked])
+    const failures=result.items.filter(item=>!item.deleted)
+    setChecked(new Set(failures.map(item=>item.person_id)));setConfirmBatchDelete(false)
+    setNotice(t('voiceprintGroups.deletedCount',{count:result.items.filter(item=>item.deleted).length}))
+    if(failures.length)setError(failures.map(item=>`${people.find(person=>person.id===item.person_id)?.name||item.person_id}: ${item.detail}`).join('; '))
+  },refreshPeopleAndHotwords)
   const elapsed = Math.min(
     recorder.maxSeconds,
     Math.max(0, recorder.elapsedSeconds),
@@ -262,12 +286,21 @@ export function VoiceprintsPage({
       ) : null}
       <div className="voiceprint-layout">
         <aside className="people-panel">
+          <VoiceprintGroups groups={groups} state={groupsState} value={groupFilter} onChange={changeGroup} refresh={refreshGroups} onChanged={refresh} disabled={busy||microphoneActive}/>
           <button className="create-person-button" disabled={state!=='ready'||busy||microphoneActive} onClick={openCreate}>
             <Plus size={17}/>{t('voiceprints.newPerson')}
           </button>
           <ResourceStatePanel state={state} loadingLabel={t('voiceprints.loadingPeople')} errorLabel={t('voiceprints.loadFailed')} retry={()=>void refresh().catch(()=>{})}/>
-          {state==='ready'&&people.length ? (
-            <PeopleIndex people={people}>{person => (
+          {state==='ready'&&visiblePeople.length?<div className="voiceprint-batch-controls">
+            <label className="batch-select-all"><input type="checkbox" checked={visiblePeople.every(person=>checked.has(person.id))} disabled={busy||microphoneActive} onChange={event=>setChecked(event.target.checked?new Set(visiblePeople.map(person=>person.id)):new Set())}/>{t('voiceprintGroups.selectAll')}</label>
+            <span>{t('voiceprintGroups.selectedCount',{count:checked.size})}</span>
+            {checked.size?<><select aria-label={t('voiceprintGroups.moveTo')} value={moveGroup} disabled={busy||groupsState!=='ready'} onChange={event=>setMoveGroup(event.target.value)}>{groupsState==='ready'?groups.map(group=><option key={group.id} value={group.id}>{groupLabel(group,t('voiceprintGroups.ungrouped'))}</option>):null}</select>
+            <button className="button" disabled={busy||microphoneActive||!checked.size||groupsState!=='ready'} onClick={moveSelected}>{t('voiceprintGroups.move')}</button>
+            <button className="button danger-action" disabled={busy||microphoneActive||!checked.size} onClick={()=>setConfirmBatchDelete(true)}>{t('voiceprintGroups.deletePeople')}</button></>:null}
+          </div>:null}
+          {state==='ready'&&visiblePeople.length ? (
+            <PeopleIndex people={visiblePeople}>{person => (
+              <div className="person-select-row" key={person.id}><label className="person-select-check"><input type="checkbox" aria-label={t('voiceprintGroups.selectPerson',{name:person.name})} checked={checked.has(person.id)} disabled={busy||microphoneActive} onChange={event=>setChecked(current=>{const next=new Set(current);if(event.target.checked)next.add(person.id);else next.delete(person.id);return next})}/></label>
               <button
                 key={person.id}
                 className={`person-row${selected?.id === person.id ? ' active' : ''}`}
@@ -281,7 +314,7 @@ export function VoiceprintsPage({
                   <small>{t('voiceprints.sampleCount',{count:person.sample_count})}</small>
                   <small>{t(person.include_in_hotword_library?'voiceprints.hotwordIncludedLabel':'voiceprints.hotwordExcludedLabel')}</small>
                 </span>
-              </button>
+              </button></div>
             )}</PeopleIndex>
           ) : null}
         </aside>
@@ -612,6 +645,7 @@ export function VoiceprintsPage({
           ):state==='loading'?<div className="empty voiceprint-guide" role="status"><Fingerprint/><h2>{t('voiceprints.preparingLibrary')}</h2><p>{t('voiceprints.preparingHelp')}</p></div>:<div className="empty voiceprint-guide" role="alert"><Fingerprint/><h2>{t('voiceprints.unavailable')}</h2><p>{t('voiceprints.unavailableHelp')}</p><button className="button" onClick={()=>void refresh().catch(()=>{})}>{t('common.actions.reload')}</button></div>}
         </section>
       </div>
+      {confirmBatchDelete?<ConfirmDialog title={t('voiceprintGroups.deletePeople')} description={t('voiceprintGroups.deletePeopleDescription',{count:checked.size})} confirmLabel={t('common.actions.deletePermanently')} danger busy={busy} onClose={()=>{if(!busy)setConfirmBatchDelete(false)}} onConfirm={deleteSelected}/>:null}
       {editorMode?<Modal title={t(editorMode==='create'?'voiceprints.newPersonDialogTitle':'voiceprints.editPersonTitle')} closeLabel={t('voiceprints.closePersonEditor')} onClose={()=>{if(!busy)setEditorMode(undefined)}}><p>{t('voiceprints.editorHelp')} {t('voiceprintNames.personIdentityHelp')}</p>{editorError?<p className="error" role="alert">{editorError}</p>:null}<label>{t('voiceprints.nameRequiredLabel')}<input ref={personNameRef} aria-invalid={Boolean(editorError)} value={personName} maxLength={80} autoFocus onChange={event=>setPersonName(event.target.value)}/></label><label>{t('voiceprints.noteOptional')}<input value={personNote} maxLength={20} placeholder={t('voiceprints.notePlaceholder')} onChange={event=>setPersonNote(event.target.value)}/><small>{t('voiceprints.noteCount',{current:personNote.trim().length})}</small></label><label className="toggle-label person-hotword-toggle"><input type="checkbox" checked={includeInHotwordLibrary} onChange={event=>setIncludeInHotwordLibrary(event.target.checked)}/><span>{t('voiceprints.addToHotwords')}</span><small>{t('voiceprints.addToHotwordsHelp')}</small></label><div className="modal-actions"><button className="button" disabled={busy} onClick={()=>setEditorMode(undefined)}>{t('common.actions.cancel')}</button><button className="primary" disabled={busy||!personName.trim()||personNote.trim().length>20} onClick={savePerson}>{busy?t('voiceprints.saving'):t('voiceprints.savePerson')}</button></div></Modal>:null}
       {renamingSample?<Modal title={t('voiceprintNames.renameSample')} closeLabel={t('common.actions.cancel')} onClose={()=>{if(!busy)setRenamingSample(undefined)}}>{renameError?<p className="error" role="alert">{renameError}</p>:null}<label>{t('voiceprintNames.sampleName')}<input ref={sampleNameRef} aria-invalid={Boolean(renameError)} autoFocus value={sampleName} maxLength={80} onChange={event=>setSampleName(event.target.value)}/><small>{t('voiceprintNames.nameHelp')}</small></label><div className="modal-actions"><button className="button" disabled={busy} onClick={()=>setRenamingSample(undefined)}>{t('common.actions.cancel')}</button><button className="primary" disabled={busy||!sampleName.trim()} onClick={()=>void saveSampleName()}>{busy?t('voiceprints.saving'):t('voiceprintNames.renameSample')}</button></div></Modal>:null}
       {confirmDelete&&selected?<ConfirmDialog title={t(confirmDelete==='person'?'voiceprints.deletePersonTitle':'voiceprints.deleteSampleTitle')} description={confirmDelete==='person'?t('voiceprints.deletePersonDescription',{name:selected.name}):t('voiceprints.deleteSampleDescription')} confirmLabel={t('common.actions.deletePermanently')} danger busy={busy} onClose={()=>setConfirmDelete(undefined)} onConfirm={confirmDelete==='person'?confirmRemovePerson:()=>confirmRemoveSample(confirmDelete)}/>:null}

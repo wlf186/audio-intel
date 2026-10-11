@@ -439,6 +439,8 @@ def init_db() -> None:
         migrate_video_uploads(db)
         from .library_store import migrate as migrate_library_imports
         migrate_library_imports(db)
+        from .voiceprint_groups import migrate as migrate_voiceprint_groups
+        migrate_voiceprint_groups(db)
         db.execute(
             """CREATE TABLE IF NOT EXISTS queue_sequence (
                singleton INTEGER PRIMARY KEY CHECK(singleton=1),value INTEGER NOT NULL)"""
@@ -1163,6 +1165,7 @@ def create_voiceprint_person(
     *,
     note: str | None = None,
     include_in_hotword_library: bool = True,
+    group_id: str | None = None,
 ) -> dict[str, Any]:
     clean_name = normalize_person_name(name)
     clean_note = normalize_person_note(note)
@@ -1171,6 +1174,8 @@ def create_voiceprint_person(
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
         try:
+            from .voiceprint_groups import require_group, UNGROUPED_ID
+            require_group(db, group_id if group_id is not None else UNGROUPED_ID)
             db.execute(
                 """INSERT INTO voiceprint_people(
                    id,name,name_key,note,include_in_hotword_library,created_at,updated_at,note_key
@@ -1185,6 +1190,8 @@ def create_voiceprint_person(
                 (person_id, person_id),
             )
             _sync_voiceprint_hotword_lists(db, now)
+            if group_id is not None:
+                db.execute("UPDATE voiceprint_memberships SET group_id=? WHERE person_id=?", (group_id, person_id))
             db.execute("COMMIT")
         except Exception:
             db.execute("ROLLBACK")
@@ -1198,7 +1205,7 @@ def get_voiceprint_person(person_id: str) -> dict[str, Any] | None:
             "SELECT person_id FROM voiceprint_aliases WHERE alias_id=?", (person_id,)
         ).fetchone()
         resolved = alias["person_id"] if alias else person_id
-        row = db.execute("SELECT * FROM voiceprint_people WHERE id=?", (resolved,)).fetchone()
+        row = db.execute("SELECT p.*,m.group_id FROM voiceprint_people p JOIN voiceprint_memberships m ON m.person_id=p.id WHERE p.id=?", (resolved,)).fetchone()
     return dict(row) if row else None
 
 
@@ -1218,6 +1225,7 @@ def update_voiceprint_person(
     name: str | object = _UNSET,
     note: str | None | object = _UNSET,
     include_in_hotword_library: bool | object = _UNSET,
+    group_id: str | object = _UNSET,
 ) -> dict[str, Any] | None:
     changes: dict[str, Any] = {}
     sync_hotwords = False
@@ -1237,7 +1245,7 @@ def update_voiceprint_person(
             raise ValueError("include_in_hotword_library must be a boolean")
         changes["include_in_hotword_library"] = int(include_in_hotword_library)
         sync_hotwords = True
-    if not changes:
+    if not changes and group_id is _UNSET:
         raise ValueError("At least one person field must be provided")
     now = utcnow()
     changes["updated_at"] = now
@@ -1245,12 +1253,17 @@ def update_voiceprint_person(
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
         try:
+            if group_id is not _UNSET:
+                from .voiceprint_groups import require_group
+                require_group(db, group_id)
             cursor = db.execute(
                 f"UPDATE voiceprint_people SET {assignment} WHERE id=?",
                 (*changes.values(), person_id),
             )
             if cursor.rowcount and sync_hotwords:
                 _sync_voiceprint_hotword_lists(db, now)
+            if cursor.rowcount and group_id is not _UNSET:
+                db.execute("UPDATE voiceprint_memberships SET group_id=? WHERE person_id=?", (group_id, person_id))
             db.execute("COMMIT")
         except Exception:
             db.execute("ROLLBACK")
@@ -1344,7 +1357,7 @@ def list_voiceprint_people() -> list[dict[str, Any]]:
     for sample in samples:
         by_person.setdefault(sample["person_id"], []).append(sample)
     with connect() as db:
-        rows = db.execute("SELECT * FROM voiceprint_people ORDER BY name_key,note_key,id").fetchall()
+        rows = db.execute("SELECT p.*,m.group_id FROM voiceprint_people p JOIN voiceprint_memberships m ON m.person_id=p.id ORDER BY p.name_key,p.note_key,p.id").fetchall()
     return [{**dict(row), "samples": by_person.get(row["id"], [])} for row in rows]
 
 

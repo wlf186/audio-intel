@@ -23,6 +23,9 @@ def main() -> None:
     parser.add_argument('--device', choices=('cpu', 'gpu'))
     parser.add_argument('--language', default='Auto')
     parser.add_argument('--pdf', type=Path, help='Wait for completion and download the concise PDF')
+    parser.add_argument('--voiceprint-group', action='append', help='Eligible voiceprint group ID; repeat to select several, omit for all')
+    parser.add_argument('--no-redact', action='store_true', help='Export original names, notes and text')
+    parser.add_argument('--replacements', type=Path, help='UTF-8 JSON array of source/target replacements for PDF export')
     args = parser.parse_args()
     try:
         submit(args)
@@ -51,7 +54,7 @@ def submit(args: argparse.Namespace) -> None:
             raise ValueError('Resume journal belongs to another file; use a different --state')
     else:
         state = {'file': identity, 'create_key': uuid.uuid4().hex, 'job_key': uuid.uuid4().hex,
-                 'parameters': {'language': args.language, 'compute_device': args.device}}
+                 'parameters': {'language': args.language, 'compute_device': args.device, **({'voiceprint_group_ids': args.voiceprint_group} if getattr(args, 'voiceprint_group', None) else {})}}
 
     def save() -> None:
         args.state.parent.mkdir(parents=True, exist_ok=True)
@@ -105,7 +108,7 @@ def submit(args: argparse.Namespace) -> None:
                 job = call('GET', '/api/v1/jobs/' + job['id'])
             if job['state'] != 'succeeded':
                 raise RuntimeError(job.get('error_message') or job['state'])
-            with client.stream('GET', f"/api/v1/jobs/{job['id']}/transcript.pdf") as response:
+            with client.stream('POST', f"/api/v1/jobs/{job['id']}/transcript-export", json={'format': 'pdf', 'redact': not getattr(args, 'no_redact', False), 'replacements': json.loads(args.replacements.read_text(encoding='utf-8')) if getattr(args, 'replacements', None) and not getattr(args, 'no_redact', False) else []}) as response:
                 response.raise_for_status()
                 args.pdf.parent.mkdir(parents=True, exist_ok=True)
                 temporary = None

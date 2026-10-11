@@ -36,7 +36,7 @@ Results support merge-next, split, boundary adjustment, replacement images and r
 
 ## PDF 与磁盘 / PDF and disk use
 
-音频提供主操作「导出简洁 PDF」，次级「明细与字幕」保留 JSON、TXT、SRT、VTT。简洁 PDF 将相同 speaker ID 的相邻发言合并为一段，保留第一句开始与最后一句结束时间，不删改口头语、不做总结；同名但不同 ID 的说话人不会误合并。视频仅提供图文简洁 PDF，按画面分段，画面下展示相应讨论。PDF 内嵌本地简体中文字体，无云服务或系统字体依赖。
+音频提供主操作「导出简洁 PDF」，次级「明细与字幕」保留 JSON、TXT、SRT、VTT。简洁 PDF 将相同 speaker ID 的相邻发言合并为一段，保留第一句开始与最后一句结束时间，不删改口头语、不做总结；同名但不同 ID 的说话人不会误合并。视频也支持 JSON、TXT、SRT、VTT，并提供图文简洁 PDF，按画面分段，画面下展示相应讨论。PDF 内嵌本地简体中文字体，无云服务或系统字体依赖。
 
 Audio offers a primary concise PDF action and a secondary details/subtitles menu. Adjacent speech with the same speaker ID merges with its combined time range; words and disfluencies are preserved. Equal names with different IDs do not merge. Video offers illustrated concise PDF, with images followed by their discussion. A bundled Chinese font keeps PDF rendering offline.
 
@@ -75,9 +75,9 @@ Resume first verifies local bytes against the server manifest. Verification perc
 
 Reading mode hides section edits. Choose Edit sections to modify them, then Finish editing to return. Dialogs retain their opening revision and time range. Background revision changes or HTTP 409 preserve the draft and disable saving; Discard this edit and reload explicitly drops the draft before loading current sections. No automatic replay overwrites another client's changes.
 
-PDF 下载通过一次 GET 接收完整内容后保存。429 按 Retry-After 等待后手动重试，413 表示超出导出上限，应拆分源文件重新转写；音频还可下载明细与字幕。401 重新登录后再导出，断网直接重试导出，无需重新转写。
+PDF 下载通过一次 POST 接收完整内容后保存。429 按 Retry-After 等待后手动重试，413 表示超出导出上限，应拆分源文件重新转写；音频还可下载明细与字幕。401 重新登录后再导出，断网直接重试导出，无需重新转写。
 
-PDF uses a single GET and saves after the full response arrives. For 429, wait for Retry-After then export manually; for 413, split the source and transcribe smaller files, or use audio detail/subtitle exports. Sign in again after 401. Retry an interrupted download without submitting a new transcription.
+PDF uses a single POST and saves after the full response arrives. For 429, wait for Retry-After then export manually; for 413, split the source and transcribe smaller files, or use audio detail/subtitle exports. Sign in again after 401. Retry an interrupted download without submitting a new transcription.
 
 命令行 `--pdf` 期间续传文件还保存已接受的 `job_id`，直到 PDF 完整写入临时文件、关闭并原子替换目标文件后才清除。轮询中断、下载失败、任务失败或取消均保留记录，重跑只查询原任务；确需新任务时使用新的 `--state`。已有完整 PDF 不会被失败下载破坏。省略 `--pdf` 时，提交成功即清除记录。旧记录可继续使用；恢复时沿用记录中的转写设置。
 
@@ -104,3 +104,11 @@ English: In **Illustrated reading**, choose **Add to voiceprint library** beside
 | ![Desktop voiceprint enrollment](assets/video-transcription/enroll-1440.png) | ![Mobile voiceprint enrollment](assets/video-transcription/enroll-390.png) |
 
 截图使用合成测试数据 / Screenshots use synthetic test data.
+
+## 分组与脱敏导出 / Groups and redacted export
+
+音视频任务均可选择多个声纹分组，默认全部，提交时固定人员 ID。PDF、JSON、TXT、SRT、VTT 下载默认脱敏，可关闭；只处理下载副本，原始结果、音频和截图不改写。关键词每行 `原词=替换词`，最多 100 对，浏览器长期记忆开关和规则。具体算法、边界和接口见 [API 指南](API.md#on-demand-redacted-transcript-export--按需脱敏导出)。
+
+CLI 的 `--voiceprint-group ID` 可重复选择分组，省略使用全部；`--pdf` 默认脱敏，`--no-redact` 导出原文，`--replacements rules.json` 接收 UTF-8 `{source,target}` 数组。中断后沿用原续传记录和已接受任务，不重新计算任务范围；导出选项在下载时应用。
+
+English: Select voiceprint groups for audio/video; eligible people are fixed at acceptance. All transcript formats default to redacted downloads, preserving original results/audio/images. CLI `--voiceprint-group ID` repeats, `--pdf` redacts by default, `--no-redact` exports raw, and `--replacements` reads a UTF-8 JSON array. Export options are applied at download time; resumed accepted jobs keep their scope.

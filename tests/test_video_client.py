@@ -52,7 +52,7 @@ def test_resume_never_resubmits_accepted_job(args, monkeypatch, failure):
             if broken and failure == 'lost_accept':
                 raise httpx.ReadError('accept response lost')
             return httpx.Response(202, json={'id': 'existing-job', 'state': 'queued'})
-        if request.url.path.endswith('/transcript.pdf'):
+        if request.url.path.endswith('/transcript-export'):
             if broken and failure == 'busy':
                 return httpx.Response(429, headers={'Retry-After': '2'})
             if broken and failure == 'stream':
@@ -100,7 +100,7 @@ def test_legacy_upload_journal_and_submit_only_completion(args, monkeypatch):
 def test_cli_failure_reports_job_and_retry_command(args, monkeypatch, capsys):
     args.state.write_text(json.dumps({'file': {'path': str(args.video.resolve()), 'size': 7}, 'job_id': 'same-job'}), encoding='utf-8')
     def handler(request):
-        return httpx.Response(429, headers={'Retry-After': '9'}) if request.url.path.endswith('.pdf') else httpx.Response(200, json={'id': 'same-job', 'state': 'succeeded'})
+        return httpx.Response(429, headers={'Retry-After': '9'}) if request.url.path.endswith('/transcript-export') else httpx.Response(200, json={'id': 'same-job', 'state': 'succeeded'})
     install_client(monkeypatch, handler)
     monkeypatch.setattr('sys.argv', ['scripts/submit_video.py', str(args.video), '--state', str(args.state), '--pdf', str(args.pdf)])
     with pytest.raises(SystemExit) as exc:

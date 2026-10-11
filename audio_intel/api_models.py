@@ -254,6 +254,8 @@ class AsrCapability(PublicModel):
     diarization: str
     speaker_count: SpeakerCountCapability
     voiceprint_library: bool
+    voiceprint_group_selection: bool = True
+    transcript_export: dict[str, Any] = Field(default_factory=lambda: {"formats": ["pdf", "json", "txt", "srt", "vtt"], "redact_default": True, "max_replacements": 100})
     languages: list[str]
     default_language: str
     timestamp_precisions: list[str]
@@ -804,6 +806,7 @@ class VoiceprintSampleResponse(PublicModel):
 class VoiceprintPersonResponse(PublicModel):
     id: str
     name: str
+    group_id: str = Field(description="唯一声纹分组 ID / Single voiceprint group ID")
     sort_initial: str = Field(pattern=r"^[A-Z#]$", json_schema_extra={"example": "Z"}, description="姓名的拼音或英文字母索引 A–Z，其他为 # / Pinyin or Latin name index A–Z, otherwise #")
     note: str | None = Field(None, description="人员备注，最多 20 字 / Optional person note, maximum 20 characters")
     include_in_hotword_library: bool = Field(description="名字是否同步到系统人名热词表 / Whether the name is synchronized to the system name hotword list")

@@ -1,4 +1,46 @@
 {
+  "voiceprintGroups": {
+    "loading": "Loading groups…",
+    "failed": "Could not load groups. Retry.",
+    "filter": "Person group",
+    "allPeople": "All people",
+    "ungrouped": "Ungrouped",
+    "create": "New group",
+    "rename": "Rename group",
+    "delete": "Delete group",
+    "name": "Group name",
+    "deleteDescription": "Deleting “{{name}}” moves its members to Ungrouped. People and samples remain.",
+    "selectAll": "Select the current list",
+    "selectedCount": "{{count}} people selected",
+    "selectPerson": "Select {{name}}",
+    "moveTo": "Move to group",
+    "move": "Move people",
+    "moved": "People moved",
+    "deletePeople": "Delete selected people",
+    "deletePeopleDescription": "Permanently delete {{count}} selected people and all their samples? Failed deletions remain selected.",
+    "deletedCount": "Deleted {{count}} people",
+    "scopeButton": "Choose groups",
+    "scopeTitle": "Voiceprint recognition groups",
+    "scopeHelp": "Eligible people are fixed at submission. Later moves or additions do not change submitted jobs.",
+    "allGroups": "All groups (including future groups)",
+    "chooseAtLeastOne": "Select at least one voiceprint group",
+    "staleSelection": "Unavailable groups were removed. Review your selection."
+  },
+  "transcriptExport": {
+    "redact": "Redacted export",
+    "replacements": "Keyword replacements",
+    "rulesLabel": "Replacement rules (one source=target per line)",
+    "help": "Up to 100 pairs, 8000 characters per value. Case-sensitive, longest match first, without chained replacements. Turning redaction off disables all transformations. Settings persist in this browser. Audio and video images remain unchanged.",
+    "reset": "Reset export settings",
+    "ruleError": "Line {{line}}: {{reason}}",
+    "errors": {
+      "syntax": "Enter a nonempty source and an equals sign",
+      "duplicate": "Duplicate source",
+      "limit": "At most 100 replacement pairs",
+      "length": "At most 8000 characters per value"
+    },
+    "example": "Company name=Company"
+  },
   "video": {
     "sceneCount": "Showing {{visible}} / {{total}} scenes",
     "enrollHelp": "Select original sentences by {{speaker}} in this task. Each sentence becomes a separate voiceprint sample.",
@@ -128,7 +170,9 @@
       "edit": "Edit",
       "copy": "Copy",
       "copied": "Copied",
-      "download": "Download"
+      "download": "Download",
+      "delete": "Delete",
+      "done": "Done"
     },
     "states": {
       "loading": "Loading",
@@ -561,7 +605,8 @@
     "counts": {
       "people": "People",
       "samples": "Samples",
-      "hotword_lists": "Custom lists"
+      "hotword_lists": "Custom lists",
+      "groups": "Custom groups"
     },
     "mergeSummary": "Merge {{people}} people and {{lists}} lists; skip {{skipped}} duplicate samples and rename {{renamed}} colliding samples.",
     "discard": "Discard staged archive",

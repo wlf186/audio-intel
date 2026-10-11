@@ -38,13 +38,23 @@ Historical failed/cancelled enrollment retries require their original bound samp
 
 ## 格式、限制与存放 / Format, limits and storage
 
-- ZIP v1：`manifest.json` 中 `format="audio-intel-library"`、`contract_version=1`，以及声明的 `audio/<sample-id>.<extension>`。不含数据库绝对路径、历史任务、模型权重、密钥或推理环境。
+- 当前导出 ZIP v2：`manifest.json` 中 `format="audio-intel-library"`、`contract_version=2`，包含分组及人员归属；仍接受 ZIP v1 导入，以及声明的 `audio/<sample-id>.<extension>`。不含数据库绝对路径、历史任务、模型权重、密钥或推理环境。
 - 严格校验未知字段、重复 ID/姓名/路径、路径穿越、符号链接、加密和异常音频。仅支持 stored/deflated ZIP；每个音频须与声明的大小和 SHA-256 一致。
 - 上传及解压总量均受 `limits.max_upload_bytes`（默认 4 GiB）约束；manifest 最大 16 MiB、文件最多 100,000 个，并保持既有热词数量/长度和磁盘保护。合并后超过限制须先调整词表。
 - 临时上传位于 `data/library_imports/<id>/`；未应用的 ready/failed 包 24 小时后清理，记录变为 expired。可在 API 中主动删除暂存包。已完成包清理暂存文件并保留结果。
 - 替换备份位于 `data/library_backups/<id>.zip`，受鉴权保护且不自动删除。日常数据备份也应包含这些目录；空间不足须先整理或调整部署存储。
 - 音频写入独立新路径，数据库事务成功后才清理旧音频；中断时根据持久化文件日志回滚或完成清理。正在读取的音频不被删除。
 
-The v1 ZIP contains a strict manifest and declared audio files, without absolute DB paths, history, model weights, credentials or runtimes. Upload and expanded sizes share the configured audio-upload limit, with a 16 MiB manifest and 100,000-entry ceiling. Staging uses `data/library_imports/`; unapplied ready/failed archives expire after 24 hours. Completed results remain. Protected replacement backups in `data/library_backups/` are never automatically deleted. File journals recover interrupted operations; old audio is retired only after the database transaction commits and active readers release it.
+The v2 ZIP (v1 imports supported) contains a strict manifest and declared audio files, without absolute DB paths, history, model weights, credentials or runtimes. Upload and expanded sizes share the configured audio-upload limit, with a 16 MiB manifest and 100,000-entry ceiling. Staging uses `data/library_imports/`; unapplied ready/failed archives expire after 24 hours. Completed results remain. Protected replacement backups in `data/library_backups/` are never automatically deleted. File journals recover interrupted operations; old audio is retired only after the database transaction commits and active readers release it.
 
 接口和可执行示例见 [API guide](API.md#library-export-and-import)。迁移 B 的运行环境仍须在 B 按正常安装流程 setup，不要复制 A 的 `.runtime/`。
+
+## 人员分组 / Person groups
+
+每人只属于一个分组；新增及升级前已有人员默认“未分组”。可新增、重命名自建分组，并在“全部人员”或分组视图中勾选、全选当前列表、批量移动或确认后永久删除。批量移动失败不部分生效；批量删除逐人报告失败并保留勾选，活动样本导入和音频读取仍受保护。删除分组只将人员移回“未分组”，不删除人员或样本；内置组不可重命名或删除。拼音索引只作用于当前人员列表。
+
+ZIP v2 包含分组及归属，仍接受 v1。v1 新人员进入“未分组”；v2 合并按规范化组名匹配，已有同身份人员保留目标端分组并提示差异，替换恢复包内归属。分组变化使旧预览失效，需重新预览。导入统计中的分组数只计自建组。资料库替换备份与升级临时 SQLite 备份分别管理。
+
+ASR 默认使用全部分组，手动多选会长期记忆，提交时固定人员 ID；之后移动或新增人员不改变排队任务。资料库替换及恢复 ASR 默认配置恢复全部分组。已完成识别、TTS 参考及历史请求快照保持原样。
+
+English: Each person belongs to one group. Ungrouped is built-in and is the default for existing/new people. Filter and select people for atomic batch moves or confirmed per-person deletes. Group deletion moves members to Ungrouped without removing samples. ZIP v2 preserves groups, with v1 imports supported. Merge matches group names, retains existing target memberships with warnings, and replacement restores source membership; changed groups invalidate previews. Group counts exclude Ungrouped. ASR scope is snapshotted at acceptance. Persistent browser choices reset to all on library replacement; historical tasks remain unchanged.

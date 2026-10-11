@@ -29,6 +29,61 @@ The bundled browser exchanges the key for an opaque HttpOnly same-origin session
 
 The `version` returned by health and system responses is also used as OpenAPI `info.version`. A clean tagged checkout reports its `X.Y.Z` release version; later source commits use SemVer build metadata such as `X.Y.Z+3.g8adfe46`, with `.dirty` appended for tracked local modifications. A shallow or stale-tag checkout may omit the commit distance but retains the commit hash. Source archives without Git metadata report their embedded release fallback. Treat the full string as build identity rather than assuming that every source checkout equals the latest release artifact.
 
+## Voiceprint groups and recognition scope / 声纹分组与识别范围
+
+Every person belongs to one group, exposed as `group_id`. Existing/new people default to `voiceprint_ungrouped` (未分组 / Ungrouped), which cannot be renamed or deleted. Names are normalized and unique, 1–80 characters. Deleting another group atomically moves its members to Ungrouped; it retains people and audio. Personnel identity remains globally unique by normalized name plus note.
+
+| Operation | Endpoint / Contract |
+| --- | --- |
+| List / create groups | `GET` / `POST /api/v1/voiceprints/groups`; creation body `{"name":"Team"}` |
+| Rename / delete group | `PATCH` / `DELETE /api/v1/voiceprints/groups/{group_id}` |
+| Move people | `POST /api/v1/voiceprints/people/batch-move`, `{"person_ids":["voice_…"],"group_id":"group_…"}`; all-or-nothing validation |
+| Delete people | `POST /api/v1/voiceprints/people/batch-delete`, `{"person_ids":["voice_…"],"purge":true}`; per-person `deleted`, `status`, `detail`, protecting active imports and readers |
+
+Audio and OpenAI-compatible submissions accept optional **JSON-array form text** `voiceprint_group_ids`; video submissions accept a JSON array. Omission means all groups, including Ungrouped. Empty/unknown groups are rejected when matching is enabled. An empty group is valid and contributes no candidates. The accepted request stores group names and eligible person IDs; later moves/additions do not alter scope. Missing people are skipped, while names and samples are read at execution. Retry preserves the request and idempotent replay preserves its first snapshot even after group deletion. Historical requests without snapshots retain legacy behavior. Scope snapshots appear only in per-job detail, never global summary/SSE.
+
+```bash
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
+REQUEST_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
+VOICEPRINT_GROUP_IDS=$(curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" "$BASE_URL/api/v1/voiceprints/groups" | jq -c '[.items[0].id]')
+curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  -H "Idempotency-Key: $REQUEST_KEY" -F file=@meeting.wav -F compute_device=cpu \
+  -F "voiceprint_group_ids=$VOICEPRINT_GROUP_IDS" "$BASE_URL/api/v1/asr/jobs"
+```
+
+中文：分组删除只移动人员，批量删除人员需明确确认。ASR 提交时固定人员范围，后续移动不影响排队任务；浏览器默认使用全部，手动多选长期记忆，失效选择不自动扩大范围。
+
+## On-demand redacted transcript export / 按需脱敏导出
+
+`POST /api/v1/jobs/{job_id}/transcript-export` is a protected synchronous download for successful audio/video ASR. It needs no Idempotency-Key; cookie clients retain same-origin write checks. Body: `format` (`pdf`, `json`, `txt`, `srt`, `vtt`; default `pdf`), `redact` (default `true`), and `replacements` (default `[]`, at most 100 unique `{source,target}` pairs, 8000 characters per value). Undeclared fields and invalid/duplicate rules return `422`. PDF saturation returns `429` with Retry-After; oversized exports return `413`.
+
+Names use uppercase Latin word or Chinese pinyin initials: Vince Carter → VC, 刘亦菲 → LYF, Liu Yifei → LY, Marco → M. Collisions become VC-1, VC-2 in speaker order. Generic speaker numbers remain. Notes mask the middle `ceil(n/2)` Unicode characters: 01234567 → 01****67, 广东移动有限公司 → 广东****公司. Literal keyword replacements affect transcript text and timed words, are case-sensitive, longest-first and single-pass without chaining. Matched word spans merge in the export copy and retain their full time range. Empty targets delete the matched text.
+
+Redacted JSON contains transcript fields, speakers, segments/timed words and safe timing/model/video metadata; auxiliary identity/hotword snapshots and artifact paths are omitted. Redacted titles/file names are generic. Download transformations never modify stored jobs or historical artifacts. Audio and video images remain unchanged; names in body text only change when covered by explicit keywords. `redact=false` disables **all** transformations, including keyword rules. The original artifact and GET/HEAD PDF routes remain raw backward-compatible surfaces.
+
+```bash
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
+JOB_ID=${JOB_ID:?export the completed ASR job ID first}
+curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"format":"txt","redact":true,"replacements":[{"source":"广东移动","target":"gy"}]}' \
+  "$BASE_URL/api/v1/jobs/$JOB_ID/transcript-export" -o transcript.txt
+```
+
+```python
+import os
+from pathlib import Path
+import httpx
+base = os.getenv("AUDIO_INTEL_BASE_URL", "http://127.0.0.1:20810")
+headers = {"Authorization": "Bearer " + os.environ["AUDIO_INTEL_API_KEY"]} if os.getenv("AUDIO_INTEL_API_KEY") else {}
+response = httpx.post(base + "/api/v1/jobs/" + os.environ["JOB_ID"] + "/transcript-export", headers=headers,
+                      json={"format": "json", "redact": True, "replacements": [{"source": "广东移动", "target": "gy"}]}, timeout=300)
+response.raise_for_status()
+Path("transcript.json").write_bytes(response.content)
+```
+
+中文：界面全部转写下载默认脱敏。替换编辑器按行 `原词=替换词`，按第一个等号拆分，忽略空行、允许空替换词；错误显示行号。独立 localStorage `audio-intel:transcript-export:v1` 保存开关和原始编辑内容，刷新、重开、退出登录及资料库替换后保留；恢复默认导出设置开启脱敏并清空规则。ASR 分组偏好使用 v4，兼容迁移旧版本。
+
 ## Native asynchronous lifecycle
 
 The following submission endpoints require an `Idempotency-Key` header containing 8–128 characters:

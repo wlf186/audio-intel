@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from . import db as database
 from .hotwords import MAX_HOTWORD_LISTS, normalize_hotword_terms, hotword_name_key
 from .library_models import LibraryArchive
+from .voiceprint_groups import UNGROUPED_ID
 
 
 def migrate(db: sqlite3.Connection) -> None:
@@ -72,7 +73,7 @@ def snapshot(db: sqlite3.Connection) -> dict[str, Any]:
     aliases: dict[str, list[str]] = {}
     for row in db.execute("SELECT alias_id,person_id FROM voiceprint_aliases ORDER BY alias_id"):
         aliases.setdefault(row["person_id"], []).append(row["alias_id"])
-    people = [dict(row) for row in db.execute("SELECT * FROM voiceprint_people ORDER BY id")]
+    people = [dict(row) for row in db.execute("SELECT p.*,m.group_id FROM voiceprint_people p JOIN voiceprint_memberships m ON m.person_id=p.id ORDER BY p.id")]
     for person in people:
         person["samples"] = samples.get(person["id"], [])
         person["aliases"] = aliases.get(person["id"], [])
@@ -81,20 +82,20 @@ def snapshot(db: sqlite3.Connection) -> dict[str, Any]:
         item = dict(row)
         item["terms"] = json.loads(item.pop("terms_json"))
         lists.append(item)
-    return {"people": people, "hotword_lists": lists}
+    return {"people": people, "hotword_lists": lists, "groups": [dict(row) for row in db.execute("SELECT * FROM voiceprint_groups ORDER BY id")]}
 
 
 def counts(data: dict[str, Any]) -> dict[str, int]:
-    return {"people": len(data["people"]), "samples": sum(len(p["samples"]) for p in data["people"]), "hotword_lists": len(data["hotword_lists"])}
+    return {"groups": sum(group["id"] != UNGROUPED_ID for group in data.get("groups", [])), "people": len(data["people"]), "samples": sum(len(p["samples"]) for p in data["people"]), "hotword_lists": len(data["hotword_lists"])}
 
 
 def revision(data: dict[str, Any]) -> str:
     # Feature-cache writes and their timestamps must not invalidate a preview.
     people = []
     for person in data["people"]:
-        people.append({**{k: person.get(k) for k in ("id", "name", "note", "include_in_hotword_library", "aliases")},
+        people.append({**{k: person.get(k) for k in ("id", "name", "note", "group_id", "include_in_hotword_library", "aliases")},
                        "samples": [{k: s.get(k) for k in ("id", "name", "state", "language", "audio_path", "transcript", "words", "duration", "error_message")} for s in person["samples"]]})
-    return digest({"people": people, "hotword_lists": [{k: item[k] for k in ("id", "name", "terms")} for item in data["hotword_lists"]]})
+    return digest({"groups": [{k: g[k] for k in ("id", "name")} for g in data.get("groups", [])], "people": people, "hotword_lists": [{k: item[k] for k in ("id", "name", "terms")} for item in data["hotword_lists"]]})
 
 
 def require_idle(db: sqlite3.Connection) -> None:
@@ -122,17 +123,17 @@ def load_archive(config: Any, identifier: str) -> LibraryArchive:
 
 def build_plan(archive: LibraryArchive, current: dict[str, Any], mode: str) -> dict[str, Any]:
     source = archive.model_dump(mode="json")
-    destination = current if mode == "merge" else {"people": [], "hotword_lists": []}
+    destination = current if mode == "merge" else {"people": [], "hotword_lists": [], "groups": [g for g in current.get("groups", []) if g["id"] == UNGROUPED_ID]}
     people = {(database.person_name_key(p["name"]), database.person_name_key(p.get("note") or "")): p for p in destination["people"]}
     aliases = {alias: p["id"] for p in destination["people"] for alias in p["aliases"]}
     used_people = {p["id"] for p in destination["people"]} | set(aliases)
     used_samples = {s["id"] for p in destination["people"] for s in p["samples"]}
     used_lists = {item["id"] for item in destination["hotword_lists"]} | {"hotwords_voiceprint_people", "hotwords_voiceprint_people_short"}
     new_people, new_samples, hotwords, new_aliases = [], [], [], []
-    mappings: dict[str, dict[str, str]] = {"people": {}, "samples": {}, "hotword_lists": {}}
+    mappings: dict[str, dict[str, str]] = {"groups": {UNGROUPED_ID: UNGROUPED_ID}, "people": {}, "samples": {}, "hotword_lists": {}}
     stats = {"mode": mode, "preview_revision": digest([archive.model_dump(mode="json"), revision(current), mode]),
-             "source": counts(source), "target": counts(current), "added": {"people": 0, "samples": 0, "hotword_lists": 0},
-             "removed": counts(current) if mode == "replace" else {"people": 0, "samples": 0, "hotword_lists": 0},
+             "source": counts(source), "target": counts(current), "added": {"groups": 0, "people": 0, "samples": 0, "hotword_lists": 0},
+             "removed": counts(current) if mode == "replace" else {"groups": 0, "people": 0, "samples": 0, "hotword_lists": 0},
              "merged_people": 0, "merged_hotword_lists": 0, "skipped_samples": 0, "renamed_samples": 0, "warnings": []}
 
     def identifier(value: str, used: set[str], prefix: str) -> str:
@@ -140,15 +141,30 @@ def build_plan(archive: LibraryArchive, current: dict[str, Any], mode: str) -> d
         used.add(result)
         return result
 
+    existing_groups = {database.person_name_key(g["name"]): g for g in destination.get("groups", [])}
+    used_groups = {g["id"] for g in destination.get("groups", [])} | {UNGROUPED_ID}
+    new_groups = []
+    for group in source.get("groups", []):
+        if group["id"] == UNGROUPED_ID:
+            continue
+        existing_group = existing_groups.get(database.person_name_key(group["name"]))
+        group_id = existing_group["id"] if existing_group else identifier(group["id"], used_groups, "group_")
+        mappings["groups"][group["id"]] = group_id
+        if not existing_group:
+            new_groups.append({**group, "id": group_id})
+
     for person in source["people"]:
         identity = (database.person_name_key(person["name"]), database.person_name_key(person.get("note") or ""))
         existing = people.get(identity)
         person_id = existing["id"] if existing else identifier(person["id"], used_people, "voice_")
         mappings["people"][person["id"]] = person_id
+        target_group = mappings["groups"][person.get("group_id") or UNGROUPED_ID]
         if existing:
             stats["merged_people"] += 1
+            if existing.get("group_id", UNGROUPED_ID) != target_group:
+                stats["warnings"].append(f"Person {person['name']} retains the target library group")
         else:
-            new_people.append({**person, "id": person_id})
+            new_people.append({**person, "id": person_id, "group_id": target_group})
         for alias in dict.fromkeys([person_id, *person["aliases"]]):
             if alias not in aliases:
                 aliases[alias] = person_id
@@ -199,18 +215,22 @@ def build_plan(archive: LibraryArchive, current: dict[str, Any], mode: str) -> d
     new_list_count = sum(not item["update"] for item in hotwords)
     if len(current_lists) + new_list_count > MAX_HOTWORD_LISTS:
         raise ValueError(f"Import exceeds the {MAX_HOTWORD_LISTS} custom hotword list limit")
-    stats["added"] = {"people": len(new_people), "samples": len(new_samples), "hotword_lists": new_list_count}
-    return {"preview": stats, "people": new_people, "samples": new_samples, "aliases": new_aliases, "hotwords": hotwords, "id_map": mappings}
+    stats["added"] = {"groups": len(new_groups), "people": len(new_people), "samples": len(new_samples), "hotword_lists": new_list_count}
+    return {"preview": stats, "groups": new_groups, "people": new_people, "samples": new_samples, "aliases": new_aliases, "hotwords": hotwords, "id_map": mappings}
 
 
 def commit_plan(db: sqlite3.Connection, plan: dict[str, Any], mode: str) -> None:
     if mode == "replace":
         db.execute("DELETE FROM voiceprint_people")
+        db.execute("DELETE FROM voiceprint_groups WHERE id!=?", (UNGROUPED_ID,))
         db.execute("DELETE FROM asr_hotword_lists WHERE kind='custom'")
+    for group in plan.get("groups", []):
+        db.execute("INSERT INTO voiceprint_groups VALUES(?,?,?,?,?)", (group["id"], group["name"], database.person_name_key(group["name"]), group["created_at"], group["updated_at"]))
     for person in plan["people"]:
         db.execute("""INSERT INTO voiceprint_people(id,name,name_key,note,note_key,include_in_hotword_library,created_at,updated_at)
             VALUES(?,?,?,?,?,?,?,?)""", (person["id"], person["name"], database.person_name_key(person["name"]), person["note"], database.person_name_key(person["note"] or ""),
                                      int(person["include_in_hotword_library"]), person["created_at"], person["updated_at"]))
+    db.executemany("UPDATE voiceprint_memberships SET group_id=? WHERE person_id=?", [(p.get("group_id", UNGROUPED_ID), p["id"]) for p in plan["people"]])
     db.executemany("INSERT INTO voiceprint_aliases(alias_id,person_id) VALUES(?,?)", plan["aliases"])
     for sample in plan["samples"]:
         db.execute("""INSERT INTO voiceprint_samples(id,person_id,name,name_key,state,language,audio_path,transcript,words_json,duration,

@@ -94,8 +94,12 @@ class VideoJobRequest(StrictModel):
     hotword_list_ids: list[str] = Field(default_factory=list, max_length=8)
     compute_device: Literal['cpu', 'gpu'] | None = None
     use_voiceprint_library: bool = True
+    voiceprint_group_ids: list[str] | None = Field(None, description="所选声纹分组；省略全部，提交时固定人员范围 / Selected voiceprint groups; omission selects all, eligible people are snapshotted")
     accelerate_single_task: bool = True
     video_roi: VideoRegion | None = None
+
+
+from .transcript_export import TranscriptExportRequest
 
 
 class SceneEdit(StrictModel):
@@ -283,6 +287,10 @@ def register(app: Any, api: Any) -> None:
         api.ensure_service('asr')
         key = api.validate_idempotency_key(idempotency_key)
         caller = body.model_dump(mode='json')
+        if body.voiceprint_group_ids is None:
+            caller.pop('voiceprint_group_ids', None)
+        else:
+            caller['voiceprint_group_ids'] = sorted(set(body.voiceprint_group_ids))
         fingerprint = api.request_fingerprint(caller)
         async with upload_lock(body.upload_id):
             old = await run_in_threadpool(db.find_idempotent_job, 'submit_video', api.idempotency_key_hash(key))
@@ -298,6 +306,7 @@ def register(app: Any, api: Any) -> None:
             selected, device, device_name = await run_in_threadpool(api.validate_asr_model_device, body.model, body.compute_device or config.default_compute_device)
             language = api.validate_asr_language(body.language)
             hotwords = await run_in_threadpool(api.hotword_request_data, body.context, ','.join(body.hotword_list_ids), None)
+            scope = await run_in_threadpool(api.voiceprint_scope_data, body.voiceprint_group_ids, body.use_voiceprint_library and body.diarize, None)
             from .video_frames import probe
             partial, target = store.paths(config, row)
             try:
@@ -308,7 +317,7 @@ def register(app: Any, api: Any) -> None:
             if not decision.accepted:
                 raise api.admission_problem(decision, 'asr')
             try:
-                payload = {**caller, **hotwords, 'video_caller': caller, 'purpose': 'video_transcription',
+                payload = {**caller, **hotwords, **scope, 'video_caller': caller, 'purpose': 'video_transcription',
                            'model': selected['public_id'], 'language': language, 'compute_device': device,
                            'compute_device_name': device_name, 'export_formats': []}
                 job, replayed = await run_in_threadpool(store.complete, config, row, payload, api.idempotency_key_hash(key), fingerprint)
@@ -352,6 +361,35 @@ def register(app: Any, api: Any) -> None:
             raise HTTPException(429, str(exc), headers={'Retry-After': '2'}) from exc
         filename = quote(Path(job['display_name']).stem + '-transcript.pdf')
         return Response(payload if request.method != 'HEAD' else None, media_type='application/pdf', headers={'Content-Length': str(len(payload)), 'Content-Disposition': f"attachment; filename*=UTF-8''{filename}", 'Cache-Control': 'no-store'})
+
+    @app.post('/api/v1/jobs/{job_id}/transcript-export', tags=tags, response_class=Response,
+              operation_id='exportTranscript', summary='按需脱敏导出转写 / Export a transcript with optional redaction',
+              description='默认缩写姓名、遮盖备注；最多 100 对字面关键词替换（每项最多 8000 字）。关闭 redact 停止全部处理。只处理导出副本；音频和画面保持原样。\n\n**English:** Names are abbreviated and notes masked by default. Up to 100 literal replacements, 8000 characters per value. Disabling redact disables all transformations. Original results, audio and images remain unchanged.',
+              responses={**errors, **api.NOT_FOUND_RESPONSE, **api.VALIDATION_RESPONSE,
+                         200: {'description': '所选格式的下载 / Download in the selected format', 'content': {mime: {'schema': api.BINARY_SCHEMA} for mime in ('application/pdf', 'application/json', 'text/plain', 'application/x-subrip', 'text/vtt')}}})
+    def transcript_export(job_id: str, body: TranscriptExportRequest, _: None = auth) -> Response:
+        from .transcript_export import export_result, format_transcript, MIME_TYPES
+        from .transcript_pdf import download
+        try:
+            with speaker_update_lock(job_id), task_reader(job_id):
+                job = completed(job_id)
+                result = export_result(job['result'], body)
+                title = 'Transcript' if body.redact else job['display_name']
+                if body.format == 'pdf':
+                    variant = hashlib.sha256(json.dumps([job['updated_at'], body.model_dump()], sort_keys=True).encode()).hexdigest()
+                    payload = download(title, result, config.jobs_dir / job_id / 'output', cache_variant=variant)
+                else:
+                    content = format_transcript(result, body.format)
+                    if len(content) > 4_000_000:
+                        raise ValueError('Transcript exceeds export resource budget; split the source')
+                    payload = content.encode('utf-8')
+        except ValueError as exc:
+            raise HTTPException(413, str(exc)) from exc
+        except (BlockingIOError, RuntimeError) as exc:
+            raise HTTPException(429, str(exc), headers={'Retry-After': '2'}) from exc
+        stem = 'transcript' if body.redact else Path(job['display_name']).stem + '-transcript'
+        filename = quote(stem + '.' + body.format)
+        return Response(payload, media_type=MIME_TYPES[body.format], headers={'Content-Length': str(len(payload)), 'Content-Disposition': f"attachment; filename*=UTF-8''{filename}", 'Cache-Control': 'no-store'})
 
     @app.get('/api/v1/jobs/{job_id}/video-scenes', tags=tags, response_model=VideoScenesResponse, responses=errors,
              description='按画面返回可阅读段落及当前修订号，完整原始分段仍在任务结果中。\n\n**English:** Read illustrated paragraphs and the current revision; original detailed segments remain in job results.',

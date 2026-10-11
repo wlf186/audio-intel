@@ -1,7 +1,8 @@
 import {useEffect,useRef,useState} from 'react'
-import {Download} from 'lucide-react'
+import {Download,Settings2} from 'lucide-react'
 import {useTranslation} from 'react-i18next'
-import {artifactUrl,HttpError,requestResponse} from '../lib/api'
+import {HttpError,requestResponse} from '../lib/api'
+import {loadTranscriptExportPreferences,saveTranscriptExportPreferences,parseTranscriptRules,defaultTranscriptExportPreferences,type TranscriptExportPreferences} from '../lib/transcriptExportPreferences'
 import type {Job} from '../lib/types'
 
 function downloadName(response:Response){
@@ -14,6 +15,8 @@ function downloadName(response:Response){
 
 export function TranscriptExport({job}:{job:Job}){
  const {t}=useTranslation()
+ const [preferences,setPreferences]=useState(loadTranscriptExportPreferences)
+ const updatePreferences=(next:TranscriptExportPreferences)=>{setPreferences(next);saveTranscriptExportPreferences(next);setError('')}
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
  const [remaining,setRemaining]=useState(0)
@@ -22,12 +25,14 @@ export function TranscriptExport({job}:{job:Job}){
  const video=Boolean(job.result?.video)
  useEffect(()=>()=>{controller.current?.abort();releaseDownload.current?.()},[])
  useEffect(()=>{if(!remaining)return;const timer=setTimeout(()=>setRemaining(value=>Math.max(0,value-1)),1000);return()=>clearTimeout(timer)},[remaining])
- async function pdf(){
+ async function download(format:string){
   if(controller.current||remaining)return
+  const parsed=preferences.redact?parseTranscriptRules(preferences.rules):{rules:[]}
+  if(parsed.error){setError(t('transcriptExport.ruleError',{line:parsed.errorLine,reason:t(`transcriptExport.errors.${parsed.error}`)}));return}
   const active=new AbortController();controller.current=active
   setBusy(true);setError('')
   try{
-   const response=await requestResponse(`/api/v1/jobs/${job.id}/transcript.pdf`,{signal:active.signal})
+   const response=await requestResponse(`/api/v1/jobs/${job.id}/transcript-export`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({format,redact:preferences.redact,replacements:parsed.rules}),signal:active.signal})
    const blob=await response.blob()
    if(active.signal.aborted)return
    releaseDownload.current?.()
@@ -46,8 +51,12 @@ export function TranscriptExport({job}:{job:Job}){
   }finally{if(!active.signal.aborted){controller.current=undefined;setBusy(false)}}
  }
  return <div className="transcript-export">
-  <div className="transcript-export-actions"><button className="primary" title={t(video?'video.pdfVideoHelp':'video.pdfAudioHelp')} disabled={busy||remaining>0} onClick={()=>void pdf()}><Download size={16}/>{busy?t('video.pdfPreparing'):remaining?t('video.pdfRetryIn',{seconds:remaining}):t('video.pdf')}</button>
-  {!video&&job.result?.artifacts?.length?<details className="transcript-export-details"><summary>{t('video.detailFormats')}</summary><div>{job.result.artifacts.map(item=><a className="button" title={t('asr.results.downloadNamed',{name:item.name})} key={item.name} href={artifactUrl(job.id,item.name)}><Download size={14}/><span>{item.name.split('.').pop()?.toUpperCase()}<small>{t(item.name.endsWith('.srt')||item.name.endsWith('.vtt')?'video.subtitleFormat':'video.detailFormat')}</small></span></a>)}</div></details>:null}</div>
+  <div className="transcript-export-actions"><button className="primary" title={t(video?'video.pdfVideoHelp':'video.pdfAudioHelp')} disabled={busy||remaining>0} onClick={()=>void download('pdf')}><Download size={16}/>{busy?t('video.pdfPreparing'):remaining?t('video.pdfRetryIn',{seconds:remaining}):t('video.pdf')}</button>
+  <details className="transcript-export-details"><summary>{t('video.detailFormats')}</summary><div>{['json','txt','srt','vtt'].map(format=><button className="button" disabled={busy||remaining>0} title={t('asr.results.downloadNamed',{name:'transcript.'+format})} key={format} onClick={()=>void download(format)}><Download size={14}/><span>{format.toUpperCase()}<small>{t(format==='srt'||format==='vtt'?'video.subtitleFormat':'video.detailFormat')}</small></span></button>)}</div></details></div>
+  <div className="transcript-redaction-controls"><label className="redaction-toggle"><input type="checkbox" checked={preferences.redact} onChange={event=>updatePreferences({...preferences,redact:event.target.checked})}/>{t('transcriptExport.redact')}</label>
+   <details><summary role="button" aria-label={t('transcriptExport.replacements')} title={t('transcriptExport.replacements')}><Settings2 size={16}/></summary><div className="transcript-rule-editor"><p>{t('transcriptExport.help')}</p><label>{t('transcriptExport.rulesLabel')}<textarea aria-label={t('transcriptExport.rulesLabel')} rows={5} value={preferences.rules} spellCheck={false} placeholder={t('transcriptExport.example')} onChange={event=>updatePreferences({...preferences,rules:event.target.value})}/></label><button className="button" disabled={busy} onClick={()=>updatePreferences({...defaultTranscriptExportPreferences})}>{t('transcriptExport.reset')}</button></div></details>
+  </div>
+
   {error?<p className="error" role="alert">{error}</p>:null}
  </div>
 }

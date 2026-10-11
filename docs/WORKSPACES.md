@@ -19,3 +19,11 @@ The Library uses a single page heading and Voiceprints/Hotwords tabs. Desktop pe
 视频转写结果默认使用紧凑播放进度条，波形可按需展开。PC 截图与对应文字并排，点击截图可放大；“图文阅读／逐句明细”和分段编辑操作共用阅读工具栏。音频结果仍默认展示波形。详见[音视频指南](VIDEO_TRANSCRIPTION.md)。
 
 Video results use a compact seek bar with an optional waveform. Desktop frames sit beside their matching text and open an enlarged view when clicked. Reading mode and scene editing share a toolbar. Audio results retain their default waveform. See the [audio/video guide](VIDEO_TRANSCRIPTION.md).
+
+## 分组与导出习惯 / Group and export preferences
+
+声纹库在当前分组内提供批量勾选，切换视图清空勾选；新增人员进入“未分组”。ASR 的“选择分组”默认全部（包含之后新增分组），手动选择只记住指定 ID。加载失败可重试，失效 ID 移除后提示，全部失效时阻止提交，不能扩大到全部。localStorage ASR 偏好 v4 兼容迁移 v3/v2/v1；恢复参数默认和资料库替换恢复全部分组。
+
+转写下载的“脱敏导出”默认开启，规则每行 `原词=替换词`，最多 100 对，错误提示行号。独立 localStorage `audio-intel:transcript-export:v1` 长期保存开关和编辑内容，包括尚未修正的输入；刷新、重开、退出登录、资料库替换均保留。关闭开关停止姓名/备注处理和关键词替换，规则保留；“恢复默认导出设置”开启并清空规则。正文只替换明确关键词，音频和画面保持原样。
+
+English: ASR v4 preferences migrate older settings and persist either all future groups or explicit IDs. Invalid choices never widen scope. Library replacement resets group selection to all. Export v1 preferences independently persist toggle/editor contents across logout and replacement; reset enables redaction and clears rules. Disabling redaction disables every transformation without losing the rules. Loading/error/retry states remain explicit.

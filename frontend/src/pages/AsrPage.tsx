@@ -1,8 +1,9 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Download, FileAudio, Pause, Pencil, Play, RotateCcw, Search, UploadCloud, UserPlus, X } from 'lucide-react'
+import { Download, Layers, FileAudio, Pause, Pencil, Play, RotateCcw, Search, UploadCloud, UserPlus, X } from 'lucide-react'
 import { api, HttpError, size, formatTime, isUploadCancelled, sourceUrl, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
-import type { AsrModelCapability, ComputeDevice, HotwordLibraryCapability, HotwordList, Job, JobDetailResource, JobResult, JobSummary, ResourceState, ResultRevealRequest, Segment, Speaker, VoiceprintPerson } from '../lib/types'
+import type { AsrModelCapability, ComputeDevice, HotwordLibraryCapability, HotwordList, Job, JobDetailResource, JobResult, JobSummary, ResourceState, ResultRevealRequest, Segment, Speaker, VoiceprintGroup, VoiceprintPerson } from '../lib/types'
 import './asr.css'
+import {groupLabel} from '../components/VoiceprintGroups'
 import {TranscriptExport} from '../components/TranscriptExport'
 import {VideoTranscript} from '../components/VideoTranscript'
 import {VideoSpeakerEnrollment} from '../components/VideoSpeakerEnrollment'
@@ -124,6 +125,9 @@ type Props = {
   hotwordLists: HotwordList[]
   hotwordsState: ResourceState
   hotwordLimits?: HotwordLibraryCapability
+  voiceprintGroups: VoiceprintGroup[]
+  voiceprintGroupsState: ResourceState
+  refreshVoiceprintGroups: () => Promise<void>
   voiceprints: VoiceprintPerson[]
   voiceprintsState: ResourceState
   refreshVoiceprints: () => Promise<void>
@@ -132,7 +136,7 @@ type Props = {
   onRevealHandled: (token: number) => void
 }
 
-export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, videoCapability, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
+export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, videoCapability, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, voiceprintGroups, voiceprintGroupsState, refreshVoiceprintGroups, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const { t, i18n } = useTranslation()
   const [view, setView] = useState<'create'|'video'|'results'>('create')
   const [compact, setCompact] = useState(()=>matchMedia('(max-width: 1023px)').matches)
@@ -165,6 +169,8 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const setFile=(next:File|undefined)=>{if(isVideoTab){setVideoFile(next);if(!resume)setVideoRoi(undefined)}else setAudioFile(next)}
   const formats=isVideoTab?videoCapability?.formats:audioFormats
   const uploadLimit=isVideoTab?videoCapability?.max_upload_bytes:maxUploadBytes
+  const [groupsOpen,setGroupsOpen]=useState(false)
+  const [groupSelectionWarning,setGroupSelectionWarning]=useState(false)
   const [preferences, setPreferences] = useState<AsrPreferences>(() => loadAsrPreferences(maxSpeakers,defaultComputeDevice))
   useEffect(()=>{const reset=()=>setPreferences(current=>({...current,hotwordListIds:[]}));addEventListener('audio-intel:library-replaced',reset);return()=>removeEventListener('audio-intel:library-replaced',reset)},[])
   const [busy, setBusy] = useState(false)
@@ -263,6 +269,8 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const { language, speakerCount: speakers, align, useVoiceprints, computeDevice, accelerateSingleTask } = preferences
   const model = chosenModel.id
   const effectiveComputeDevice: ComputeDevice = computeDevice === 'gpu' && gpuCapability?.available === false ? 'cpu' : computeDevice
+  const manualGroups=preferences.voiceprintGroupMode==='selected'
+  const groupSelectionIssue=useVoiceprints&&manualGroups?(voiceprintGroupsState!=='ready'?t('voiceprintGroups.failed'):!preferences.voiceprintGroupIds.length?t('voiceprintGroups.chooseAtLeastOne'):''):''
   const selectedHotwordIds = useMemo(() => new Set(preferences.hotwordListIds), [preferences.hotwordListIds])
   const matchingHotwords = hotwordLists.filter(item=>hotwordListDisplayName(item,t).toLocaleLowerCase().includes(hotwordQuery.trim().toLocaleLowerCase()))
   const selectedHotwordStats = useMemo(() => hotwordStats(hotwordLists, selectedHotwordIds), [hotwordLists, selectedHotwordIds])
@@ -310,7 +318,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     const saved=loadVideoResume();setResume(saved)
     if(!saved)return
     const p=saved.params
-    setPreferences(current=>({...current,model:String(p.model||current.model),language:String(p.language||'Auto'),speakerCount:p.speaker_count?String(p.speaker_count):'auto',align:p.align!==false,useVoiceprints:p.use_voiceprint_library!==false,computeDevice:p.compute_device==='cpu'?'cpu':'gpu',accelerateSingleTask:p.accelerate_single_task!==false,hotwordListIds:Array.isArray(p.hotword_list_ids)?p.hotword_list_ids as string[]:[]}))
+    setPreferences(current=>({...current,model:String(p.model||current.model),language:String(p.language||'Auto'),speakerCount:p.speaker_count?String(p.speaker_count):'auto',align:p.align!==false,useVoiceprints:p.use_voiceprint_library!==false,computeDevice:p.compute_device==='cpu'?'cpu':'gpu',accelerateSingleTask:p.accelerate_single_task!==false,hotwordListIds:Array.isArray(p.hotword_list_ids)?p.hotword_list_ids as string[]:[],voiceprintGroupMode:Array.isArray(p.voiceprint_group_ids)?'selected':'all',voiceprintGroupIds:Array.isArray(p.voiceprint_group_ids)?p.voiceprint_group_ids as string[]:[]}))
     setVideoRoi(p.video_roi as VideoRegion|undefined)
   },[isVideoTab])
   useLayoutEffect(() => {
@@ -363,7 +371,14 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   }, [onRevealHandled, revealRequest])
 
 
+  useEffect(()=>{
+    if(voiceprintGroupsState!=='ready'||preferences.voiceprintGroupMode!=='selected')return
+    const ids=preferences.voiceprintGroupIds.filter(id=>voiceprintGroups.some(group=>group.id===id))
+    if(ids.length!==preferences.voiceprintGroupIds.length){setGroupSelectionWarning(true);setPreferences(current=>{const next={...current,voiceprintGroupIds:ids};saveAsrPreferences(next);return next})}
+  },[voiceprintGroups,voiceprintGroupsState,preferences.voiceprintGroupMode,preferences.voiceprintGroupIds])
+
   const submit = async () => {
+    if(groupSelectionIssue){setError(groupSelectionIssue);setGroupsOpen(true);return}
     if (selectedHotwordIds.size && hotwordsState !== 'ready') { setError(t('asr.workspace.hotwordsUnavailable')); return }
     if (selectedHotwordIssue) {
       setError(selectedHotwordIssue)
@@ -388,11 +403,12 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       data.set('diarize', 'true')
       data.set('align', String(align))
       data.set('use_voiceprint_library', String(useVoiceprints))
+      if(manualGroups)data.set('voiceprint_group_ids',JSON.stringify(preferences.voiceprintGroupIds))
       data.set('export_formats', 'json,srt,vtt,txt')
       data.set('compute_device', effectiveComputeDevice)
       data.set('accelerate_single_task', String(accelerateSingleTask))
       if (selectedHotwordIds.size) data.set('hotword_list_ids', [...selectedHotwordIds].join(','))
-      const job = isVideoTab?await submitVideo(file,{model,language,speaker_count:speakers==='auto'?null:Number(speakers),diarize:true,align,use_voiceprint_library:useVoiceprints,compute_device:effectiveComputeDevice,accelerate_single_task:accelerateSingleTask,hotword_list_ids:[...selectedHotwordIds],video_roi:videoRoi||null},{signal:controller.signal,onProgress:setUploadProgress}):await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
+      const job = isVideoTab?await submitVideo(file,{model,language,speaker_count:speakers==='auto'?null:Number(speakers),diarize:true,align,use_voiceprint_library:useVoiceprints,...(manualGroups?{voiceprint_group_ids:preferences.voiceprintGroupIds}:{}),compute_device:effectiveComputeDevice,accelerate_single_task:accelerateSingleTask,hotword_list_ids:[...selectedHotwordIds],video_roi:videoRoi||null},{signal:controller.signal,onProgress:setUploadProgress}):await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
       onJobSubmitted(job)
       setLastSubmitted(job)
       onSelect(job)
@@ -635,7 +651,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
         <div className="asr-voiceprint-toggle"><label className="toggle-label">
           <input type="checkbox" checked={useVoiceprints} onChange={(event) => updatePreference('useVoiceprints', event.target.checked)} />
           <span>{t('asr.voiceprints.label')}</span>
-        </label><InfoTooltip id="asr-voiceprints-help" label={t('asr.voiceprints.label')} text={t('asr.voiceprints.help')}/></div>
+        </label><InfoTooltip id="asr-voiceprints-help" label={t('asr.voiceprints.label')} text={t('asr.voiceprints.help')}/><button className="button voiceprint-scope-button" aria-label={t('voiceprintGroups.scopeButton')} title={t('voiceprintGroups.scopeButton')} disabled={!useVoiceprints} onClick={()=>setGroupsOpen(true)}><Layers size={16}/></button></div>
         <div className="acceleration-control">
           <label>
             <input type="checkbox" checked={accelerateSingleTask} onChange={(event) => updatePreference('accelerateSingleTask', event.target.checked)} />
@@ -645,6 +661,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
         </div>
         </div>
         </div></div>
+        {groupSelectionIssue?<p className="error" role="alert">{groupSelectionIssue}</p>:null}
         <div className="asr-hotword-summary">
           <span>{t('asr.hotwords.label')}</span>
           <p>{hotwordsState==='ready'?t('asr.workspace.hotwordSummary',{lists:selectedHotwordIds.size,terms:selectedHotwordStats.terms}):t(hotwordsState==='loading'?'asr.workspace.loadingHotwords':'asr.workspace.hotwordsUnavailable')}</p>
@@ -665,7 +682,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           ) : null}
           {lastSubmitted?<div className="asr-submitted"><span>{lastSubmitted.display_name}</span><button className="button" onClick={()=>{onSelect(lastSubmitted);setView('results')}}>{t('asr.workspace.viewSubmitted')}</button></div>:null}
           {uploadProgress?<SubmissionProgress label={t('asr.uploadLabel')} progress={uploadProgress} onCancel={()=>uploadController.current?.abort()} cancelLabel={isVideoTab?t('video.pause'):undefined}/>:null}
-          <button className="primary" disabled={busy || !chosenModel.installed || Boolean(selectedHotwordIssue) || Boolean(fileLimitError) || (selectedHotwordIds.size>0&&hotwordsState!=='ready')} aria-describedby={selectedHotwordIssue ? 'asr-hotword-submit-error' : undefined} onClick={submit}>
+          <button className="primary" disabled={busy || !chosenModel.installed || Boolean(selectedHotwordIssue) || Boolean(groupSelectionIssue) || Boolean(fileLimitError) || (selectedHotwordIds.size>0&&hotwordsState!=='ready')} aria-describedby={selectedHotwordIssue ? 'asr-hotword-submit-error' : undefined} onClick={submit}>
             <Play size={18} />
             {submitLabel}
           </button>
@@ -930,6 +947,15 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           </button>
         </Modal>
       ) : null}
+      {groupsOpen?<Modal title={t('voiceprintGroups.scopeTitle')} closeLabel={t('common.actions.cancel')} onClose={()=>setGroupsOpen(false)}>
+        <p>{t('voiceprintGroups.scopeHelp')}</p>
+        <ResourceStatePanel state={voiceprintGroupsState} loadingLabel={t('voiceprintGroups.loading')} errorLabel={t('voiceprintGroups.failed')} retry={()=>void refreshVoiceprintGroups().catch(()=>{})}/>
+        {groupSelectionWarning?<p className="notice" role="status">{t('voiceprintGroups.staleSelection')}</p>:null}
+        <label className="group-choice"><input type="checkbox" checked={!manualGroups} disabled={voiceprintGroupsState!=='ready'} onChange={event=>{setGroupSelectionWarning(false);setPreferences(current=>{const next={...current,voiceprintGroupMode:event.target.checked?'all' as const:'selected' as const,voiceprintGroupIds:event.target.checked?[]:voiceprintGroups.map(group=>group.id)};saveAsrPreferences(next);return next})}}/>{t('voiceprintGroups.allGroups')}</label>
+        <div className="group-choice-list">{voiceprintGroupsState==='ready'?voiceprintGroups.map(group=><label className="group-choice" key={group.id}><input type="checkbox" checked={!manualGroups||preferences.voiceprintGroupIds.includes(group.id)} onChange={event=>{setGroupSelectionWarning(false);setPreferences(current=>{const selected=new Set(current.voiceprintGroupMode==='all'?voiceprintGroups.map(item=>item.id):current.voiceprintGroupIds);if(event.target.checked)selected.add(group.id);else selected.delete(group.id);const next={...current,voiceprintGroupMode:'selected' as const,voiceprintGroupIds:[...selected]};saveAsrPreferences(next);return next})}}/>{groupLabel(group,t('voiceprintGroups.ungrouped'))}<small>{group.person_count}</small></label>):null}</div>
+        {groupSelectionIssue?<p className="error" role="alert">{groupSelectionIssue}</p>:null}
+        <div className="modal-actions"><button className="primary" onClick={()=>setGroupsOpen(false)}>{t('common.actions.done')}</button></div>
+      </Modal>:null}
       {videoEnrollment&&selected&&videoEnrollment.jobId===selected.id?<VideoSpeakerEnrollment key={`${selected.id}:${videoEnrollment.speakerId}`} job={selected} speakerId={videoEnrollment.speakerId} people={voiceprints} peopleState={voiceprintsState} refreshPeople={refreshVoiceprints} refreshPeopleAndHotwords={refreshPeopleAndHotwords} onClose={()=>setVideoEnrollment(undefined)} onSuccess={count=>{setVideoEnrollment(undefined);setResultNotice(t('video.enrolledCount',{count}))}}/>:null}
       {libraryOpen ? (
         <Modal title={t('asr.library.title')} closeLabel={t('asr.library.close')} onClose={() => {if(!libraryBusy)setLibraryOpen(false)}}>

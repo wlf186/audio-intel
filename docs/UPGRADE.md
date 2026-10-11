@@ -29,68 +29,52 @@ Windows 使用 `service.cmd`，备份范围遵循同一规则；命令失败时�
 | 明确无数据库迁移，也不改写或删除历史文件 | 不强制创建升级备份；普通调试和重启同样无需重复复制数据 |
 | 仅迁移数据库，历史文件保持不变 | 创建 SQLite 数据库一致快照 |
 | 改写或删除历史音频、声纹等持久化文件 | 备份数据库及升级说明列出的受影响文件 |
-| 影响范围广泛，或无法确认范围 | 完整备份实际数据目录 |
+| 确需保护大量历史文件，或核实后仍无法确认影响且必须继续升级 | 完整备份实际数据目录 |
 
 每个 Release 应写明“数据迁移：无／仅数据库／涉及文件”、适用的起始版本及备份范围。跨版本升级必须覆盖中间版本；不能仅凭目标版本号小、schema 未变化或最新一条说明判断。新增任务正常生成文件不属于这里的历史文件迁移。日常数据备份按数据重要性单独安排，不绑定每次发版。
 
 需要备份时，先停止使用该数据目录的全部服务，确认进程树退出，在新版本首次启动或迁移操作前完成备份。数据库和关联文件必须对应同一停服时点。本节升级备份放在项目内被 Git 忽略的 `backups/`，不得放入待复制的数据目录内部。沿用 `AUDIO_INTEL_DATA_DIR` 的实际配置，不要误备份默认路径。
 
-### 按需备份示例（Linux / Windows）
+### 按需备份与验收后清理（Linux / Windows）
 
-仅当上表要求备份时执行。将以下标准库示例保存为项目内的 `tmp/backup-upgrade.py`（先创建 `tmp/`），从项目根目录使用现有 API Python 运行，无需安装依赖。`database` 只备份 SQLite；`full` 复制完整数据目录。数据库快照使用 Backup API，包含尚在 WAL 中的已提交数据，不能用单独复制主数据库文件代替。
+**不要仅因 schema 变化就全量复制数据。** 先核实跨版本迁移影响；没有持久化数据迁移时不创建额外升级备份，仅数据库迁移只创建 SQLite 一致快照，不复制视频、音频和任务文件。涉及历史文件时只补充受影响文件；确实需要时才选择 `full`。不要为了升级每次复制几十 GB 的媒体。日常备份与临时升级备份分别管理。
 
-```python
-import os
-import shutil
-import sqlite3
-import sys
-import tempfile
-from contextlib import closing
-from pathlib import Path
-
-scope = sys.argv[1] if len(sys.argv) == 2 else ""
-if scope not in {"database", "full"}:
-    raise SystemExit("Usage: backup-upgrade.py database|full")
-root = Path.cwd().resolve()
-data = Path(os.environ.get("AUDIO_INTEL_DATA_DIR", "data")).resolve(strict=True)
-backups = (root / "backups").resolve()
-if not backups.is_relative_to(root) or backups.is_relative_to(data):
-    raise SystemExit("Backups must stay inside the project and outside the data directory")
-# mode=ro prevents a missing source database from being silently created.
-with closing(sqlite3.connect((data / "audio_intel.sqlite3").as_uri() + "?mode=ro", uri=True)) as source:
-    backups.mkdir(parents=True, exist_ok=True)
-    destination = Path(tempfile.mkdtemp(prefix="upgrade-" + scope + "-", dir=backups))
-    if scope == "database":
-        saved = destination / "audio_intel.sqlite3"
-        with closing(sqlite3.connect(saved)) as target:
-            source.backup(target)
-    else:
-        shutil.copytree(data, destination / "data")
-        saved = destination / "data" / "audio_intel.sqlite3"
-with closing(sqlite3.connect(saved.as_uri() + "?mode=ro", uri=True)) as check:
-    if check.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
-        raise SystemExit("Backup integrity check failed; do not continue the upgrade")
-print("Verified backup:", destination)
-```
+服务入口不会自动创建或删除升级备份。使用项目自带的标准库工具，必须明确指定实际数据目录和范围。工具不从客户端 shell 推断服务的 `.env` 配置。先记录实际目录、确认无未完成工作、停服并确认进程树退出，在新版本首次启动前运行：
 
 Linux：
 
 ```bash
-.runtime/api/bin/python tmp/backup-upgrade.py database
-# 完整备份时，将 database 改为 full；不要把两种模式都执行一遍。
+# 按实际部署配置填写；以下 data 仅适用于默认数据目录。
+.runtime/api/bin/python scripts/upgrade_backup.py create --data-dir data --scope database
 ```
 
 Windows PowerShell：
 
 ```powershell
-.\.runtime\api\Scripts\python.exe tmp\backup-upgrade.py database
+.\.runtime\api\Scripts\python.exe scripts\upgrade_backup.py create --data-dir data --scope database
 if ($LASTEXITCODE -ne 0) { throw "Backup failed; stop the upgrade" }
-# 完整备份时，将 database 改为 full。
 ```
 
-只在命令成功并输出 `Verified backup:` 后继续；失败时可能留下不完整的备份目录，不得用于回退。涉及文件的升级，在数据库快照成功后，按升级说明将受影响文件以原相对路径复制到同一备份目录的 `data/` 下并核对副本；全部完成前保持停服。专用迁移工具已有数据库及受影响文件备份机制时，按该工具说明操作，无需再复制整个目录。
+仅在确需完整目录备份时将 `database` 改为 `full`，不要同时执行两种范围。SQLite 使用 Backup API，包含尚在 WAL 中的已提交数据，并验证完整性和外键；不能只复制主数据库文件。记下 `Verified backup:` 输出的准确目录、备份范围和大小。涉及文件的升级将指定受影响文件以原相对路径补充到同一备份目录的 `data/` 下，完成前保持停服。失败可能留下标记为 creating 的不完整目录，不得用于回退。
 
-回退必须停止新版本，使用同一时点的数据库和受影响文件备份。单独恢复数据库的前提是关联文件仍与该快照兼容；新版本已经处理任务或修改文件后，不能直接用旧数据库覆盖当前状态。既有备份保留，不在升级中自动清理。
+**完整升级验收通过后，必须及时清理本次临时升级备份及同次失败副本。** 验收包括数据库完整性、历史任务和关联文件可读性、相关功能，以及 API、supervisor 和 executor 来自最终代码的检查；不能仅以健康探测、进程存活或 GitHub 发布成功作为依据。执行升级的人或代理负责清理和记录结果。未完成验收、验收失败或仍在回退时保留恢复资料。
+
+验收通过后，针对本次记录的每个具体目录分别执行：
+
+```bash
+.runtime/api/bin/python scripts/upgrade_backup.py cleanup backups/upgrade-database-实际目录后缀 --verified
+```
+
+```powershell
+.\.runtime\api\Scripts\python.exe scripts\upgrade_backup.py cleanup backups\upgrade-database-实际目录后缀 --verified
+if ($LASTEXITCODE -ne 0) { throw "Backup cleanup failed; resolve before closing maintenance" }
+```
+
+将示例路径替换为实际记录，不能传空路径、`backups/` 根目录、数据目录或其他备份。工具核对升级备份标记及目录范围，拒绝符号链接和越界删除；`--verified` 表示执行者确认完整验收已通过，不会替代验收。清理成功后记录目录、时间和释放字节数；失败时报告并处理，不能把备份长期留存当作升级完成。不要使用通配符清空备份根目录。既有未受此工具管理的临时升级备份，需核实来源及已通过的验收后精确清理；日常备份、资料库替换备份和历史专项备份遵循各自保留规则。
+
+回退必须停服，并使用同一时点的数据库及受影响文件。新版本已处理任务或修改文件后，不能直接用旧数据库覆盖当前状态。验收通过并清理临时备份后，该临时回退点不再存在；长期恢复由独立日常备份承担。
+
+English: Choose the smallest necessary upgrade backup scope: no extra backup without persistent migration, a consistent SQLite-only snapshot for database changes, and affected files only for file migrations. Do not copy large media merely because the schema changes. Use `scripts/upgrade_backup.py create --data-dir <actual-directory> --scope database|full` after stopping all users of that directory. Record its exact output path. After complete local deployment acceptance—including database integrity, history/files, functionality, and final API/supervisor/executor identities—**promptly remove every temporary backup from this upgrade**, including failed attempts, using `cleanup <recorded-directory> --verified`. Failed or incomplete acceptance retains rollback material. The tool validates purpose/path markers and refuses root, outside and symlink directories. Daily and library-replacement backups remain separately managed. Resolve cleanup failures before closing maintenance.
 
 ## Local development and deployment
 
@@ -102,7 +86,7 @@ if ($LASTEXITCODE -ne 0) { throw "Backup failed; stop the upgrade" }
 2. **停止后再修改。** 先检查 queued/running/cancelling 任务、排队或执行中的文档导入等操作；有未完成工作时等待或报告，不擅自取消。进入停服窗口时可先 `stop api` 关闭新提交入口，再检查一次队列，确认空闲后 `stop all`。如出现新任务，恢复原 API 并等待，避免 `stop all` 中断它。确认记录的旧进程树已退出，再编辑运行代码或安装依赖。
 3. **按变更验证。** 测试沿用现有环境，临时实例使用独立的数据、PID、日志、缓存和临时目录。正式升级和迁移开发均按[升级备份范围](#upgrade-backup-scope)选择备份，记录选择依据及实际路径；明确无数据迁移的升级无需额外复制数据。依赖锁变化才同步对应环境，前端源码/版本/依赖变化才重建前端；模型变化按 manifest 准备。纯 Python 修改不需要每次执行 `setup all`。测试进程要在收尾时退出，不能把 mock 服务留作日常实例。
 4. **最终代码确定后恢复。** 完成最后一次修改、测试及相关 tag 操作，记录目标 SHA、预期应用版本和源码就绪时间。正式 release 部署要求已验证的干净提交；本地未提交修改要另外记录 dirty 状态和 diff 摘要，不能宣称部署了干净的发布版本。清理残留测试/服务进程，按记录的配置和组件重新启动。原本停止的组件保持停止，除非用户要求启动；用户要求继续停服时记录待部署状态。收尾后再次修改运行代码，必须重新完成这一轮。
-5. **验收后才算完成。** 按下表检查，并在被忽略的 `logs/local-deploy.json` 中记录部署状态、目标 SHA/dirty 状态、预期及实际版本、源码就绪时间、进程身份、检查结果和失败原因。开始维护时也记录原运行组件及配置文件位置，让后续会话能够继续收尾；不要保存凭据。GitHub Release 成功、本机部署成功分别报告。失败时保留诊断和待办，不能把发布成功当作部署成功；回退如涉及数据库迁移，必须配套使用升级前备份，不能只回退源码。
+5. **验收并清理后才算完成。** 按下表检查，并在被忽略的 `logs/local-deploy.json` 中记录部署状态、目标 SHA/dirty 状态、预期及实际版本、源码就绪时间、进程身份、检查结果和失败原因。开始维护时也记录原运行组件及配置文件位置，让后续会话能够继续收尾；不要保存凭据。GitHub Release 成功、本机部署成功分别报告。完整验收通过后按上文精确清理本次临时升级备份及同次失败副本，记录释放空间；清理失败需处理并报告。失败时保留诊断和待办，不能把发布成功当作部署成功；回退如涉及数据库迁移，必须配套使用升级前备份，不能只回退源码。
 
 | 验收项 | 判断依据 |
 | --- | --- |
@@ -121,6 +105,16 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 默认 60 秒空闲回收用于释放**用过的**执行器资源，不是定时检查或部署新版本。新建但尚未执行任务的 executor 可以长期待命，supervisor 和 API 也不会因此重启。不要通过等待、只重启 API 或缩短空闲窗口来代替完整部署收尾。
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
+
+## v0.1.31 声纹分组与脱敏导出
+
+从 v0.1.30 升级：**数据迁移：仅数据库**，schema v13 → v14 新增声纹分组及人员归属表，既有人员进入“未分组”。首次启动前仅需 SQLite 一致快照，不复制视频、音频或历史任务文件；完整验收通过后必须清理本次临时升级备份。更早版本需覆盖中间升级要求。模型和依赖锁不变，重建前端并刷新原运行的全部服务及执行器。
+
+声纹库支持分组及批量移动/删除；ASR 音频、视频和兼容提交支持分组范围，接受请求时固定人员 ID，旧任务保持原行为。资料库导出使用 ZIP v2，导入兼容 v1；合并保留已有人员目标端分组，替换恢复包内分组。历史请求、结果和文件不自动改写。
+
+全部转写格式支持默认开启的按需脱敏，关闭后导出原文。姓名缩写、备注遮盖和最多 100 组字面关键词替换只作用于下载副本；音频和视频画面保持原样。ASR 偏好迁移至 localStorage v4；分组选择长期记忆，资料库替换恢复全部。独立 `audio-intel:transcript-export:v1` 长期保存脱敏开关和规则，退出登录及资料库替换后保留，恢复默认导出设置时开启并清空规则。
+
+English: From v0.1.30 this is a database-only v13 → v14 migration; take a consistent SQLite snapshot without copying media, and remove this upgrade's temporary backup after complete acceptance. Existing people enter Ungrouped. Eligible voiceprint IDs are snapshotted on submission. ZIP v2 retains groups while imports accept v1. No historical jobs or files are rewritten. Default-on redaction transforms download copies across PDF/JSON/TXT/SRT/VTT; audio/images remain unchanged. ASR preferences migrate to localStorage v4. Export policy uses independent persistent localStorage v1, retained on logout/library replacement and cleared by its own reset. Models and dependency locks are unchanged.
 
 ## v0.1.30 资料库迁移、拼音索引与 PC 工作台
 

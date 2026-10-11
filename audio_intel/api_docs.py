@@ -23,6 +23,25 @@ Service entrypoints automatically load the project-root `.env`, with exported en
 2. **Authorize** → `GET /api/v1/capabilities`：鉴权并读取实时能力和默认值 / authenticate and read live capabilities.
 3. 长任务使用异步 `/api/v1/asr/jobs` 或 `/api/v1/tts/jobs`；需要一次生成多个独立音频时使用 `/api/v1/tts/sequence-jobs`。复用 `Idempotency-Key` 并通过 SSE 或 `status_url` 跟踪；OpenAI 客户端可使用同步 `/v1/audio/transcriptions`、`/v1/audio/speech`。
 
+## 声纹分组与脱敏下载 / Voiceprint groups and redacted downloads
+
+`GET /api/v1/voiceprints/groups` 查询分组；新增人员默认“未分组”，删除自建分组将人员移回默认组。批量移动 `/api/v1/voiceprints/people/batch-move` 原子执行，批量删除 `/api/v1/voiceprints/people/batch-delete` 返回逐人结果并要求 `purge=true`。
+
+Audio and compatible submissions accept `voiceprint_group_ids` as JSON-array form text; video takes a JSON array. Omission selects all. Eligible person IDs are fixed on first acceptance; replay and retry preserve the scope. Group moves do not rewrite historical results. Library ZIP v2 includes membership and continues to accept v1 imports.
+
+`POST /api/v1/jobs/{job_id}/transcript-export` 支持 PDF/JSON/TXT/SRT/VTT，默认 `redact=true`，姓名缩写、备注遮盖居中一半；最多 100 对 `{source,target}` 字面关键词替换，每项最多 8000 字，区分大小写、最长优先、不连锁。关闭开关停止全部处理，任务原数据、音频和画面保持原样。
+
+Redacted downloads abbreviate names, mask notes, replace configured transcript keywords and remove auxiliary original identity snapshots from JSON. Turning redact off returns original content. PDF cache and resource limits remain bounded; binary downloads use normal authentication and Retry-After recovery. Legacy artifact/PDF GET routes retain raw compatibility. Only export copies change.
+
+```bash
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
+JOB_ID=${JOB_ID:?export the completed ASR job ID first}
+curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"format":"pdf","redact":true,"replacements":[{"source":"广东移动","target":"gy"}]}' \
+  "$BASE_URL/api/v1/jobs/$JOB_ID/transcript-export" -o transcript.pdf
+```
+
 <details>
 <summary><strong>有序 TTS：提交、等待与下载 / Ordered TTS: submit, wait, and download</strong></summary>
 

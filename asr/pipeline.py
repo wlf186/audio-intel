@@ -810,19 +810,10 @@ def write_asr_exports(
     def add(name: str, content: str, mime: str) -> None:
         path = output / name; path.write_text(content, encoding="utf-8")
         artifacts.append({"name": name, "path": str(path), "mime_type": mime, "size_bytes": path.stat().st_size})
-    if "json" in formats:
-        payload = {key: value for key, value in result.items() if key != "artifacts"}
-        add("transcript.json", json.dumps(payload, ensure_ascii=False, indent=2), "application/json")
-    if "txt" in formats:
-        add("transcript.txt", "\n".join(f"[{timecode(x['start'])} - {timecode(x['end'])}] {x['speaker_label']}: {x['text']}" for x in result["segments"]), "text/plain")
-    if "srt" in formats:
-        add("transcript.srt", "\n\n".join(f"{i}\n{timecode(x['start'], ',')} --> {timecode(x['end'], ',')}\n{x['speaker_label']}: {x['text']}" for i, x in enumerate(result["segments"], 1)), "application/x-subrip")
-    if "vtt" in formats:
-        add("transcript.vtt", "WEBVTT\n\n" + "\n\n".join(
-            f"{timecode(x['start'])} --> {timecode(x['end'])}\n"
-            f"<v {html.escape(x['speaker_label'], quote=False)}>{x['text']}"
-            for x in result["segments"]
-        ), "text/vtt")
+    from audio_intel.transcript_export import format_transcript, MIME_TYPES
+    for format in formats:
+        if format in {"json", "txt", "srt", "vtt"}:
+            add("transcript." + format, format_transcript(result, format), MIME_TYPES[format])
     result["artifacts"] = artifacts
     return result
 
@@ -895,6 +886,10 @@ def process_job(context: JobContext) -> dict[str, Any]:
     if use_voiceprints:
         try:
             voiceprint_people = list_voiceprint_people()
+            if "voiceprint_person_ids" in request:
+                eligible = set(request["voiceprint_person_ids"])
+                voiceprint_people = [person for person in voiceprint_people if person["id"] in eligible]
+                voiceprint_status["missing_person_ids"] = sorted(eligible - {person["id"] for person in voiceprint_people})
         except Exception:
             voiceprint_status["status"] = "degraded"
     diarization_executor = None

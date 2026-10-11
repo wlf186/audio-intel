@@ -115,7 +115,7 @@ def test_roundtrip_blank_target_preserves_audio_identity_and_snapshots(local):
         identifier = item.json()['id']
         wait(client, identifier)
         plan = preview(client, identifier)
-        assert plan['added'] == {'people':1,'samples':3,'hotword_lists':1}
+        assert plan['added'] == {'groups':0,'people':1,'samples':3,'hotword_lists':1}
         result = apply(client, identifier, plan)
         assert result['result']['id_map']['people'][person['id']] == person['id']
         restored = db.get_voiceprint_person(person['id'])
@@ -204,7 +204,7 @@ def test_archive_validation_rejects_corruption_without_library_changes(local, mu
         if mutation == 'checksum':original['audio']['sha256'] = '0'*64
         if mutation == 'traversal':extra = ('../outside.wav', b'bad')
         if mutation == 'undeclared':extra = ('other.txt', b'bad')
-        if mutation == 'version':manifest['contract_version'] = 2
+        if mutation == 'version':manifest['contract_version'] = 3
         if mutation == 'duplicate_id':manifest['people'].append(manifest['people'][0])
         if mutation == 'invalid_audio':
             import hashlib
@@ -312,7 +312,7 @@ def test_v12_migration_adds_receipts_without_changing_history(local):
     db.init_db();db.init_db()
     assert db.get_job(job['id']) == before
     with db.connect() as connection:
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 13
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 14
         assert connection.execute('SELECT COUNT(*) FROM library_imports').fetchone()[0] == 0
 
 

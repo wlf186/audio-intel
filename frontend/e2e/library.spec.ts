@@ -118,7 +118,7 @@ test('a delayed merge preview cannot overwrite the selected replacement preview'
  await dialog.getByRole('radio',{name:/替换现有资料/}).check()
  await expect(dialog.getByRole('table')).toContainText('移除')
  await page.waitForTimeout(850)
- await expect(dialog.getByRole('table').locator('tbody tr').first()).toContainText('27')
+ await expect(dialog.getByRole('table').getByRole('row').filter({hasText:'人员'})).toContainText('27')
  await expect(dialog.getByRole('button',{name:'应用导入'})).toBeEnabled()
  expect(errors).toEqual([])
 })

@@ -1,4 +1,4 @@
-import type {LibraryImport,LibraryMode,LibraryPreview,DocumentSectionPage,DocumentImport,DocumentPreview,AuthSession,BatchDeleteResult,Capabilities,Health,HotwordList,Job,JobListQuery,JobListResponse,JobResult,Probe,TlsBootstrap,VoiceprintPerson,VoiceprintSample} from './types'
+import type {LibraryImport,LibraryMode,LibraryPreview,DocumentSectionPage,DocumentImport,DocumentPreview,AuthSession,BatchDeleteResult,Capabilities,Health,HotwordList,Job,JobListQuery,JobListResponse,JobResult,Probe,TlsBootstrap,VoiceprintGroup,VoiceprintPerson,VoiceprintSample} from './types'
 import type {TFunction} from 'i18next'
 import i18n from '../i18n'
 
@@ -143,6 +143,12 @@ export const api={
   voices:()=>request<{items:Array<{id:string;name:string;language:string}>;preset_speakers:string[]}>('/api/v1/tts/voices'),
   addVoice:(data:FormData)=>request<{id:string}>('/api/v1/tts/voices',{method:'POST',body:data}),
   renameSpeaker:(jobId:string,speakerId:string,name:string,note?:string|null)=>request<JobResult>(`/api/v1/jobs/${jobId}/speakers/${encodeURIComponent(speakerId)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,note})}),
+  voiceprintGroups:()=>request<{items:VoiceprintGroup[]}>('/api/v1/voiceprints/groups'),
+  addVoiceprintGroup:(name:string)=>request<VoiceprintGroup>('/api/v1/voiceprints/groups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}),
+  renameVoiceprintGroup:(id:string,name:string)=>request<VoiceprintGroup>(`/api/v1/voiceprints/groups/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})}),
+  removeVoiceprintGroup:(id:string)=>request<void>(`/api/v1/voiceprints/groups/${id}`,{method:'DELETE'}),
+  moveVoiceprintPeople:(personIds:string[],groupId:string)=>request<void>('/api/v1/voiceprints/people/batch-move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({person_ids:personIds,group_id:groupId})}),
+  deleteVoiceprintPeople:(personIds:string[])=>request<{items:{person_id:string;deleted:boolean;status:number;detail?:string}[]}>('/api/v1/voiceprints/people/batch-delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({person_ids:personIds,purge:true})}),
   voiceprints:()=>request<{items:VoiceprintPerson[]}>('/api/v1/voiceprints/people'),
   addVoiceprintPerson:(name:string,note:string|null=null,includeInHotwordLibrary=true)=>request<VoiceprintPerson>('/api/v1/voiceprints/people',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,note,include_in_hotword_library:includeInHotwordLibrary})}),
   updateVoiceprintPerson:(id:string,name:string,note:string|null,includeInHotwordLibrary:boolean)=>request<VoiceprintPerson>(`/api/v1/voiceprints/people/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,note,include_in_hotword_library:includeInHotwordLibrary})}),

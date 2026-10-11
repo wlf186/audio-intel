@@ -103,12 +103,13 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
   await page.screenshot({path:testInfo.outputPath('reading.png'),fullPage:true})
   expect(errors).toEqual([])
  })
- test(`PDF recoverable errors and single GET ${width} ${locale}`,async({page},testInfo)=>{
+ test(`PDF recoverable errors and single POST ${width} ${locale}`,async({page},testInfo)=>{
   await page.setViewportSize({width,height:960})
   const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&!/429|413|401|ERR_FAILED/.test(m.text()))errors.push(m.text())})
   const f=await fixture(page,locale);let status=429;const methods:string[]=[]
-  await page.route('**/transcript.pdf',route=>{
+  await page.route('**/transcript-export',route=>{
    methods.push(route.request().method())
+   expect(route.request().postDataJSON()).toEqual({format:'pdf',redact:true,replacements:[]})
    if(status===0)return route.abort('failed')
    if(status!==200)return route.fulfill({status,headers:{'Retry-After':'1'},json:{detail:'fixture'}})
    return route.fulfill({contentType:'application/pdf',headers:{'Content-Disposition':"attachment; filename*=UTF-8''%E8%AE%B2%E5%BA%A7.pdf"},body:'%PDF-test'})
@@ -119,7 +120,7 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
   status=413;await exportButton.click();await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'上限':'limit')
   status=0;await exportButton.click();await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'中断':'interrupted')
   status=200;const downloading=page.waitForEvent('download');await exportButton.click();const download=await downloading;expect(download.suggestedFilename()).toBe('讲座.pdf');expect(await download.failure()).toBeNull()
-  expect(methods).toEqual(['GET','GET','GET','GET'])
+  expect(methods).toEqual(['POST','POST','POST','POST'])
   await expect(page.locator('.transcript-export [role=alert]')).toHaveCount(0)
   await page.screenshot({path:testInfo.outputPath('export.png'),fullPage:true})
   status=401;await exportButton.click();await expect(page.getByRole('heading',{name:zh?'访问验证':'Access verification',exact:true})).toBeVisible()
@@ -130,8 +131,8 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
 test('switching tasks aborts a pending PDF without downloading stale content',async({page})=>{
  const f=await fixture(page);let release!:()=>void;const held=new Promise<void>(resolve=>{release=resolve});let downloads=0
  page.on('download',()=>downloads++)
- await page.route('**/transcript.pdf',async route=>{await held;await route.fulfill({contentType:'application/pdf',body:'%PDF-old'}).catch(()=>undefined)})
- await f.open();const requested=page.waitForRequest('**/transcript.pdf')
+ await page.route('**/transcript-export',async route=>{await held;await route.fulfill({contentType:'application/pdf',body:'%PDF-old'}).catch(()=>undefined)})
+ await f.open();const requested=page.waitForRequest('**/transcript-export')
  await page.locator('.transcript-export button.primary').click();const request=await requested
  const failed=page.waitForEvent('requestfailed',{predicate:failed=>failed===request})
  await page.getByRole('button',{name:/Other fixture.mp4/}).click()

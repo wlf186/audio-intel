@@ -31,7 +31,7 @@ h1{text-shadow:none}
  .asr-workspace.view-results .result-panel{min-height:0}
  .asr-workspace .asr-create{min-height:0}
  .asr-settings:not(.expanded) .asr-settings-body{display:grid}
- .asr-settings-body{grid-template-columns:minmax(0,1fr);gap:6px 16px;align-content:start;overflow:auto;padding:10px 14px}
+ .asr-settings-body{grid-template-columns:minmax(0,1fr);gap:6px 16px;align-content:start;overflow:auto;padding:8px 14px}
  .asr-settings-body label{margin:0;font-size:13px;line-height:18px}
  .asr-settings-body select{margin-top:4px}
  .asr-device-warning{align-self:end;margin:0;font-size:12px;line-height:18px}
@@ -81,11 +81,12 @@ h1{text-shadow:none}
 .library-content .page-pad{padding:0 24px 20px}
 .library-content .voiceprint-page{display:flex;flex-direction:column;min-height:0;height:100%;overflow:hidden}
 .library-content .voiceprint-layout{min-height:0;flex:1;overflow:hidden}
-.library-content .people-panel{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.library-content .people-panel{display:flex;flex-direction:column;min-height:0;overflow:auto}
 .library-content .people-panel>.create-person-button{flex-shrink:0}
-.library-content .people-index{flex:1;min-height:0;max-height:none}
+.library-content .people-index{flex:1;min-height:132px;max-height:none}
 .library-content .samples-panel{overflow:auto;min-height:0}
-.library-content .people-alphabet button{min-height:12px;flex:1;padding:0;font-size:11px;line-height:1}
+.library-content .people-alphabet{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-content:stretch;width:60px}
+.library-content .people-alphabet button{min-height:12px;width:100%;padding:0;font-size:11px;line-height:1}
 .library-content .person-row{min-height:64px;padding:8px;gap:8px}
 .library-content .person-row span{gap:3px}
 .library-content .hotwords-page{height:100%;min-height:0;display:flex;flex-direction:column}
@@ -98,7 +99,7 @@ h1{text-shadow:none}
 
 /* Results keep downloads and playback compact, leaving the body for reading. */
 .asr-workspace .result-head{display:flex;align-items:center;gap:12px;padding:10px 12px;overflow:visible}
-.result-identity{min-width:0;flex:1 1 260px;display:grid;gap:5px}
+.result-identity{min-width:0;flex:1 1 200px;display:grid;gap:5px}
 .result-identity>span:first-child{display:flex;align-items:center;gap:8px;overflow-wrap:anywhere;font-size:14px}
 .result-identity>span:nth-child(2){font-size:11px;white-space:normal;color:var(--muted)}
 .asr-workspace .transcript-export{padding:0;border:0;min-width:0}
@@ -143,6 +144,7 @@ h1{text-shadow:none}
  .library-content .page-pad{padding:0 14px 16px}
  .library-content .people-panel{max-height:none;padding:10px}
  .library-content .people-index{height:280px;min-height:220px}
+ .library-content .people-alphabet{display:flex;width:var(--library-index-width)}
  .library-content .people-alphabet button{min-height:44px;flex-shrink:0}
  .library-content .hotword-layout{display:block}
  .library-content .hotword-list,.library-content .hotword-editor{overflow:visible}
@@ -157,3 +159,6 @@ h1{text-shadow:none}
  .video-scene-content{gap:8px}
  .video-transcript{padding:12px}
 }
+
+.asr-workspace .transcript-export{display:flex;flex-wrap:wrap;align-items:start;gap:8px}.transcript-export-actions{flex-wrap:nowrap}.transcript-redaction-controls{margin-top:0;flex-wrap:nowrap;align-items:center;gap:8px}.transcript-redaction-controls .redaction-toggle{margin:0;font-size:12px}.transcript-redaction-controls details{position:relative;flex:0 0 auto;font-size:12px}.transcript-redaction-controls summary{padding:8px;border:1px solid var(--line)}.transcript-rule-editor{position:absolute;right:0;top:100%;z-index:15;width:340px;max-width:calc(100vw - 52px);max-height:60dvh;overflow:auto;padding:14px;border:1px solid var(--line);background:var(--panel-2);box-shadow:0 8px 20px #0009}.transcript-export>p{width:100%;margin:0}
+.transcript-redaction-controls summary{width:44px;justify-content:center}

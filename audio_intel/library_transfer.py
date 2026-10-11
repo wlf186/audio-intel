@@ -90,10 +90,10 @@ def prepare_export(config: Any) -> tuple[ExitStack, bytes, list[tuple[str, Path]
                     except ValueError:
                         pass  # An invalid optional feature cache is rebuilt by existing ASR behavior.
                 samples.append(item)
-            people.append({**{k: person.get(k) for k in ("id", "name", "note", "aliases", "created_at", "updated_at")},
+            people.append({**{k: person.get(k) for k in ("id", "name", "note", "group_id", "aliases", "created_at", "updated_at")},
                            "include_in_hotword_library": bool(person["include_in_hotword_library"]), "samples": samples})
         hotwords = [{k: item[k] for k in ("id", "name", "terms", "created_at", "updated_at")} for item in snapshot["hotword_lists"]]
-        archive = LibraryArchive(exported_at=database.utcnow(), source_version=__version__, people=people, hotword_lists=hotwords)
+        archive = LibraryArchive(contract_version=2, groups=[{k: g[k] for k in ("id", "name", "created_at", "updated_at")} for g in snapshot["groups"]], exported_at=database.utcnow(), source_version=__version__, people=people, hotword_lists=hotwords)
         manifest = archive.model_dump_json(exclude_none=True).encode("utf-8")
         # Include streaming ZIP64 headers, data descriptors and the central directory.
         overhead = 256 + sum(256 + 2 * len(name.encode("utf-8")) for name, _ in files)

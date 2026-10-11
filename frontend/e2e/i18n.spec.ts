@@ -46,6 +46,7 @@ test('detects, switches, and persists the interface language without reloading p
   if(path==='/api/v1/health')return route.fulfill({json:{status:'ok'}})
   if(path==='/api/v1/system')return route.fulfill({json:{status:'ok',offline:true,bind:'127.0.0.1:20810',services:['asr','tts'],workers:[],hardware:{},models:[],storage:{data:'/tmp/data'}}})
   if(path==='/api/v1/jobs')return route.fulfill({json:{items:[],count:0,total:0,limit:100,offset:0,has_more:false}})
+  if(path==='/api/v1/voiceprints/groups')return route.fulfill({json:{items:[]}})
   if(path==='/api/v1/voiceprints/people')return route.fulfill({json:{items:[]}})
   if(path==='/api/v1/asr/hotword-lists')return route.fulfill({json:{items:[
    {id:'hotwords_voiceprint_people',name:'声纹库人名（全名）',kind:'system',terms:[],term_count:0},

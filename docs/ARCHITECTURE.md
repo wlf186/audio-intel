@@ -209,6 +209,16 @@ Concise PDF is a protected, on-demand API export, with a bounded in-memory cache
 
 ### Transcription recovery and binary contracts
 
-Scene-edit dialogs snapshot their opening revision and bounds independently of refreshed job details; a changed revision disables saving until explicit discard/reload. Server revision checks remain authoritative. The browser verifies confirmed upload chunks with a separate `verifying` progress phase before resuming network transfer. PDF export uses a cancellable single GET with normal session handling and Retry-After feedback; successful binary responses are represented accurately in OpenAPI, and HEAD describes headers only.
+Scene-edit dialogs snapshot their opening revision and bounds independently of refreshed job details; a changed revision disables saving until explicit discard/reload. Server revision checks remain authoritative. The browser verifies confirmed upload chunks with a separate `verifying` progress phase before resuming network transfer. PDF export uses a cancellable single POST with normal session handling and Retry-After feedback; successful binary responses are represented accurately in OpenAPI, and HEAD describes headers only.
 
 The executable video client atomically persists the accepted job ID in its existing UTF-8 journal and resumes polling/download without another submission. A requested PDF is written to a sibling temporary file, closed and atomically replaced before journal removal; a failed download preserves any complete destination. This is client-local recovery, with no database or historical-result migration. Browser sessionStorage/localStorage lifetimes remain unchanged.
+
+## Voiceprint grouping and export copies
+
+SQLite v14 adds independent group and single-membership tables, with a default-membership trigger covering normal creation, legacy voice creation and archive imports. Existing person rows and historical jobs remain unchanged. Batch movement validates all identities inside one immediate transaction; group deletion moves members before deleting the group. Portable ZIP v2 snapshots groups/membership, accepts legacy v1, and includes group edits in preview revisions.
+
+ASR first acceptance snapshots selected groups and eligible person IDs. Workers read only eligible surviving IDs; names/ready samples remain execution-time data. Idempotency compares caller selection while excluding derived membership snapshots, and retries preserve the persisted request. Legacy jobs keep their former matching semantics. Group snapshots never enter global summaries/SSE.
+
+Synchronous transcript export holds the task reader and speaker-update lock, transforms a copy and formats it without writing persistent artifacts. Uppercase name initials share one collision map across formats; note masking counts Unicode characters. Escaped literal rules apply longest-first in one pass and merge matched timed-word spans. Redacted JSON whitelists transcript/timing/model fields and omits auxiliary original identities and paths. PDF cache identity includes result revision and policy; size/concurrency budgets remain. This is text redaction, with original audio/video pixels unchanged. Browser export preference v1 is independent of ASR v4 and survives logout/library replacement.
+
+Temporary upgrade backups have a recorded purpose and exact path. Scope follows migration impact, never schema number alone; complete local acceptance precedes mandatory exact-directory cleanup. Separate daily/library backups are not part of upgrade cleanup.

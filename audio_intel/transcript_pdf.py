@@ -83,8 +83,8 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     return stream.getvalue()
 
 
-def download(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
-    key = hashlib.sha256(json.dumps([str(output_dir), title, result], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+def download(title: str, result: dict[str, Any], output_dir: Path, cache_variant: str = "") -> bytes:
+    key = hashlib.sha256(json.dumps([str(output_dir), title, result, cache_variant], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     now = time.monotonic()
     with _lock:
         for old in [k for k, (expiry, _) in _cache.items() if expiry <= now]:
