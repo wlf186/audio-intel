@@ -22,6 +22,8 @@ export function TranscriptExport({job}:{job:Job}){
  const [remaining,setRemaining]=useState(0)
  const controller=useRef<AbortController|undefined>(undefined)
  const releaseDownload=useRef<(()=>void)|undefined>(undefined)
+ const formats=useRef<HTMLDetailsElement>(null)
+ const rules=useRef<HTMLDetailsElement>(null)
  const video=Boolean(job.result?.video)
  useEffect(()=>()=>{controller.current?.abort();releaseDownload.current?.()},[])
  useEffect(()=>{if(!remaining)return;const timer=setTimeout(()=>setRemaining(value=>Math.max(0,value-1)),1000);return()=>clearTimeout(timer)},[remaining])
@@ -52,9 +54,9 @@ export function TranscriptExport({job}:{job:Job}){
  }
  return <div className="transcript-export">
   <div className="transcript-export-actions"><button className="primary" title={t(video?'video.pdfVideoHelp':'video.pdfAudioHelp')} disabled={busy||remaining>0} onClick={()=>void download('pdf')}><Download size={16}/>{busy?t('video.pdfPreparing'):remaining?t('video.pdfRetryIn',{seconds:remaining}):t('video.pdf')}</button>
-  <details className="transcript-export-details"><summary>{t('video.detailFormats')}</summary><div>{['json','txt','srt','vtt'].map(format=><button className="button" disabled={busy||remaining>0} title={t('asr.results.downloadNamed',{name:'transcript.'+format})} key={format} onClick={()=>void download(format)}><Download size={14}/><span>{format.toUpperCase()}<small>{t(format==='srt'||format==='vtt'?'video.subtitleFormat':'video.detailFormat')}</small></span></button>)}</div></details></div>
+  <details ref={formats} onToggle={event=>{if(event.currentTarget.open&&rules.current)rules.current.open=false}} className="transcript-export-details"><summary>{t('video.detailFormats')}</summary><div>{['json','txt','srt','vtt'].map(format=><button className="button" disabled={busy||remaining>0} title={t('asr.results.downloadNamed',{name:'transcript.'+format})} key={format} onClick={()=>void download(format)}><Download size={14}/><span>{format.toUpperCase()}<small>{t(format==='srt'||format==='vtt'?'video.subtitleFormat':'video.detailFormat')}</small></span></button>)}</div></details></div>
   <div className="transcript-redaction-controls"><label className="redaction-toggle"><input type="checkbox" checked={preferences.redact} onChange={event=>updatePreferences({...preferences,redact:event.target.checked})}/>{t('transcriptExport.redact')}</label>
-   <details><summary role="button" aria-label={t('transcriptExport.replacements')} title={t('transcriptExport.replacements')}><Settings2 size={16}/></summary><div className="transcript-rule-editor"><p>{t('transcriptExport.help')}</p><label>{t('transcriptExport.rulesLabel')}<textarea aria-label={t('transcriptExport.rulesLabel')} rows={5} value={preferences.rules} spellCheck={false} placeholder={t('transcriptExport.example')} onChange={event=>updatePreferences({...preferences,rules:event.target.value})}/></label><button className="button" disabled={busy} onClick={()=>updatePreferences({...defaultTranscriptExportPreferences})}>{t('transcriptExport.reset')}</button></div></details>
+   <details ref={rules} onToggle={event=>{if(event.currentTarget.open&&formats.current)formats.current.open=false}}><summary role="button" aria-label={t('transcriptExport.replacements')} title={t('transcriptExport.replacements')}><Settings2 size={16}/></summary><div className="transcript-rule-editor"><p>{t('transcriptExport.help')}</p><label>{t('transcriptExport.rulesLabel')}<textarea aria-label={t('transcriptExport.rulesLabel')} rows={5} value={preferences.rules} spellCheck={false} placeholder={t('transcriptExport.example')} onChange={event=>updatePreferences({...preferences,rules:event.target.value})}/></label><button className="button" disabled={busy} onClick={()=>updatePreferences({...defaultTranscriptExportPreferences})}>{t('transcriptExport.reset')}</button></div></details>
   </div>
 
   {error?<p className="error" role="alert">{error}</p>:null}

@@ -120,6 +120,7 @@ for(const width of [1440,390])test(`redaction export preference, validation and 
  await panel.getByRole('checkbox',{name:'脱敏导出',exact:true}).uncheck()
  await editor.fill('bad syntax')
  await panel.getByText('明细与字幕',{exact:true}).click()
+ await expect(editor).toBeHidden()
  downloading=page.waitForEvent('download');await panel.getByRole('button',{name:/^JSON/}).click();await downloading
  expect(state.exports.at(-1)).toEqual({format:'json',redact:false,replacements:[]})
  await page.reload();await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
