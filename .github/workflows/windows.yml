@@ -116,7 +116,7 @@ jobs:
     - name: Repeat timing regressions
       shell: powershell
       run: |
-        & corepack.cmd pnpm@10.15.1 --dir frontend test:e2e --grep @timing --repeat-each=5 --output=../logs/playwright-stability
+        & corepack.cmd pnpm@10.15.1 --dir frontend test:e2e --grep '@timing' --repeat-each=5 --output=../logs/playwright-stability
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       if: (github.event_name == 'workflow_dispatch' && inputs.stability_check) || startsWith(github.ref, 'refs/heads/ci/stability/')
       env:

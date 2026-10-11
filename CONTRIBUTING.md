@@ -86,7 +86,7 @@ The optional **Run workflow → stability_check** input adds five executions of 
 
 ```bash
 # Against a separately started, isolated mock service; never the normal deployment.
-AUDIO_INTEL_TEST_BASE_URL=http://127.0.0.1:20961 corepack pnpm@10.15.1 --dir frontend test:e2e --grep @timing --repeat-each=5
+AUDIO_INTEL_TEST_BASE_URL=http://127.0.0.1:20961 corepack pnpm@10.15.1 --dir frontend test:e2e --grep '@timing' --repeat-each=5
 # Optional remote stability run, after committing the candidate:
 git push origin HEAD:ci/stability/my-change
 ```

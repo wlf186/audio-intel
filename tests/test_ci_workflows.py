@@ -62,3 +62,25 @@ def test_full_checks_remain_on_main_and_tags_with_distinct_reports(platform):
         assert "--grep" not in check["run"] and "--shard" not in check["run"]
         artifacts.extend(step["with"]["name"] for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
     assert len(artifacts) == len(set(artifacts)) == 4
+
+
+def test_native_powershell_preserves_stability_tag_argument(tmp_path):
+    powershell = shutil.which("powershell") or shutil.which("pwsh")
+    if powershell is None:
+        pytest.skip("The native Windows job verifies PowerShell argument parsing")
+    workflow = yaml.safe_load((ROOT / ".github/workflows/windows.yml").read_text(encoding="utf-8"))
+    command = next(step["run"] for step in workflow["jobs"]["browser"]["steps"] if step.get("name") == "Repeat timing regressions")
+    # A bare @timing is splatted by PowerShell and disappears before pnpm runs.
+    # Capture arguments after the real shell parser, without invoking Playwright.
+    script = tmp_path / "capture-arguments.ps1"
+    script.write_text("""
+function corepack.cmd {
+    ConvertTo-Json -InputObject @($args) -Compress
+    $global:LASTEXITCODE = 0
+}
+""" + command, encoding="utf-8")
+    result = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script)], check=True, capture_output=True, text=True, timeout=10)
+    arguments = json.loads(result.stdout)
+    assert arguments[arguments.index("--grep") + 1] == "@timing"
+    assert "--repeat-each=5" in arguments
+    assert "--output=../logs/playwright-stability" in arguments
