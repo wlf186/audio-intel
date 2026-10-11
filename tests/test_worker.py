@@ -235,16 +235,17 @@ def test_supervised_worker_cancels_running_job_and_continues(tmp_path, monkeypat
             first["id"],
             lambda job: job["state"] == "running" and job["stage"].startswith("synthesizing_"),
         )
-        started = time.monotonic()
-        db_module.request_cancel(first["id"])
         second = db_module.create_job("tts", "next", {
             "text": "你好。", "voice_mode": "preset", "speaker": "Vivian",
             "compute_device": "cpu", "response_format": "wav", "language": "Chinese",
         })
 
+        assert db_module.get_job(second["id"])["state"] == "queued"
+        started = time.monotonic()
+        db_module.request_cancel(first["id"])
         cancelled = _wait_for_job(first["id"], lambda job: job["state"] == "cancelled", timeout=3)
-        # Measure cancellation before waiting for a replacement executor and the
-        # next task; their startup/inference time is a separate queue check.
+        # Queue submission and replacement startup are separate from cancellation.
+        # Enqueue before timing so Windows DB I/O cannot inflate cancellation latency.
         assert time.monotonic() - started < 3
         assert cancelled["stage"] == "cancelled"
         assert not psutil.pid_exists(initial_executor_pid)

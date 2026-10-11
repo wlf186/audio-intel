@@ -1,4 +1,5 @@
 import json
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 
@@ -12,13 +13,13 @@ def test_database_backup_includes_wal_without_copying_media_and_exact_cleanup(tm
     data.mkdir()
     media = data / "large-video.mp4"
     media.write_bytes(b"original media must remain")
-    with sqlite3.connect(data / "audio_intel.sqlite3") as connection:
+    with closing(sqlite3.connect(data / "audio_intel.sqlite3")) as connection:
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("CREATE TABLE history(text TEXT)")
         connection.execute("INSERT INTO history VALUES('历史任务')")
         connection.commit()
         saved = create(tmp_path, data, "database")
-        with sqlite3.connect(saved / "audio_intel.sqlite3") as copy:
+        with closing(sqlite3.connect(saved / "audio_intel.sqlite3")) as copy:
             assert copy.execute("SELECT text FROM history").fetchone()[0] == "历史任务"
         assert not list(saved.rglob("*.mp4"))
         with pytest.raises(ValueError):
@@ -35,7 +36,7 @@ def test_database_backup_includes_wal_without_copying_media_and_exact_cleanup(tm
 def test_full_scope_and_cleanup_reject_root_outside_and_forged_identity(tmp_path):
     data = tmp_path / "data"
     data.mkdir()
-    with sqlite3.connect(data / "audio_intel.sqlite3") as connection:
+    with closing(sqlite3.connect(data / "audio_intel.sqlite3")) as connection:
         connection.execute("CREATE TABLE jobs(id TEXT)")
     (data / "video.mp4").write_bytes(b"full scope media")
     saved = create(tmp_path, data, "full")
@@ -55,9 +56,10 @@ def test_full_backup_never_writes_through_database_symlink(tmp_path):
     data = tmp_path / "data"
     data.mkdir()
     original = tmp_path / "outside.sqlite3"
-    with sqlite3.connect(original) as connection:
+    with closing(sqlite3.connect(original)) as connection:
         connection.execute("CREATE TABLE history(text TEXT)")
         connection.execute("INSERT INTO history VALUES('retain')")
+        connection.commit()
     try:
         (data / "audio_intel.sqlite3").symlink_to(original)
     except OSError:
@@ -66,9 +68,33 @@ def test_full_backup_never_writes_through_database_symlink(tmp_path):
     saved = create(tmp_path, data, "full")
     snapshot = saved / "data/audio_intel.sqlite3"
     assert not snapshot.is_symlink()
-    with sqlite3.connect(snapshot) as connection:
+    with closing(sqlite3.connect(snapshot)) as connection:
         assert connection.execute("SELECT text FROM history").fetchone()[0] == "retain"
         connection.execute("DELETE FROM history")
+        connection.commit()
     assert original.read_bytes() == before
     cleanup(tmp_path, str(saved), True)
     assert original.read_bytes() == before
+
+
+def test_interrupted_cleanup_keeps_identity_for_retry(tmp_path, monkeypatch):
+    from scripts import upgrade_backup
+    data = tmp_path / "data"
+    data.mkdir()
+    with closing(sqlite3.connect(data / "audio_intel.sqlite3")) as connection:
+        connection.execute("CREATE TABLE history(text TEXT)")
+    saved = create(tmp_path, data, "database")
+    identity = json.loads((saved / MARKER).read_text(encoding="utf-8"))
+    original = upgrade_backup.shutil.rmtree
+
+    def locked(path):
+        (path / MARKER).unlink()
+        raise PermissionError("Snapshot reader still holds a Windows file lock")
+
+    monkeypatch.setattr(upgrade_backup.shutil, "rmtree", locked)
+    with pytest.raises(PermissionError):
+        cleanup(tmp_path, str(saved), True)
+    assert json.loads((saved / MARKER).read_text(encoding="utf-8")) == identity
+    monkeypatch.setattr(upgrade_backup.shutil, "rmtree", original)
+    assert cleanup(tmp_path, str(saved), True) > 0
+    assert not saved.exists()

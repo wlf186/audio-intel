@@ -64,7 +64,14 @@ def cleanup(root: Path, value: str, verified: bool) -> int:
     if not isinstance(marker, dict) or marker.get("purpose") != "audio-intel-upgrade" or marker.get("root") != str(root) or marker.get("path") != str(path):
         raise ValueError("Backup identity does not match this project and directory")
     size = sum(item.stat().st_size for item in path.rglob("*") if item.is_file() and not item.is_symlink())
-    shutil.rmtree(path)
+    try:
+        shutil.rmtree(path)
+    except OSError:
+        # Windows file locks can interrupt deletion after the marker was removed.
+        # Keep the verified identity so cleanup can be retried after releasing it.
+        if path.is_dir() and not path.is_symlink() and not marker_path.is_symlink():
+            marker_path.write_text(json.dumps(marker, ensure_ascii=False, indent=2), encoding="utf-8")
+        raise
     return size
 
 
