@@ -1183,6 +1183,7 @@ export function TtsPage({
             {t('tts.computeDevice')}
             <select
               aria-label={t('tts.computeDeviceAria')}
+              aria-describedby={draft.computeDevice==='gpu'&&effectiveTtsDevice==='cpu'?'tts-device-warning':undefined}
               value={effectiveTtsDevice}
               onChange={(event) =>
                 updatePreference(
@@ -1196,16 +1197,13 @@ export function TtsPage({
               </option>
               <option value="cpu">CPU · FP32</option>
             </select>
-            {draft.computeDevice === 'gpu' && effectiveTtsDevice === 'cpu' ? (
-              <small className="device-hint device-warning">
-                {computeUnavailableReason(ttsGpu,t,t('tts.gpuFallback'))}
-              </small>
-            ) : (
+            {draft.computeDevice !== 'gpu' || effectiveTtsDevice !== 'cpu' ? (
               <small className="device-hint">
                 {t(inputMode==='document'?'document.computeHelp':'tts.computeHelp')}
               </small>
-            )}
+            ) : null}
           </label>
+          {draft.computeDevice === 'gpu' && effectiveTtsDevice === 'cpu' ? <small id="tts-device-warning" className="device-hint device-warning tts-device-warning">{computeUnavailableReason(ttsGpu,t,t('tts.gpuFallback'))}</small> : null}
           <div className="acceleration-control">
             <label>
               <input

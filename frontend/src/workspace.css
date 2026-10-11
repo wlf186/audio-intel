@@ -34,6 +34,7 @@ h1{text-shadow:none}
  .asr-settings-body{grid-template-columns:minmax(0,1fr);gap:6px 16px;align-content:start;overflow:auto;padding:10px 14px}
  .asr-settings-body label{margin:0;font-size:13px;line-height:18px}
  .asr-settings-body select{margin-top:4px}
+ .asr-device-warning{align-self:end;margin:0;font-size:12px;line-height:18px}
  .asr-settings-body>.asr-hotword-summary{margin-top:0;padding:2px 0}
  .asr-settings-toggle{pointer-events:none}
  .asr-settings-toggle::after{display:none}
@@ -64,6 +65,8 @@ h1{text-shadow:none}
  .tts-workspace .tts-settings .two-cols label,.tts-workspace .tts-settings-body>.device-control{grid-column:auto;margin:0}
  .tts-workspace .tts-settings-body>.tabs{margin:0}
  .tts-workspace .tts-settings-body>.acceleration-control{margin:0;min-height:44px}
+ .tts-workspace .tts-settings-body>.tts-device-warning{grid-column:auto;align-self:center;margin:0;font-size:12px;line-height:18px}
+ .tts-workspace .tts-settings-body>.tts-device-warning+.acceleration-control{grid-column:auto}
  .tts-workspace .tts-settings .reference-asr-options{grid-template-columns:minmax(0,1fr) 120px}
 }
 

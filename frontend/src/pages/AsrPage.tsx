@@ -578,7 +578,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       <WorkbenchDivider workbench="asr"/>
       <section className={`asr-settings${settingsOpen?' expanded':''}`} id="asr-settings-pane">
         <div className="settings-heading"><button className="asr-settings-toggle" aria-expanded={!compact||settingsOpen} aria-controls="asr-settings-body" onClick={()=>{if(compact)setSettingsOpen(value=>!value)}}>{t('asr.workspace.settings')} · {effectiveComputeDevice.toUpperCase()}</button><button className="reset-settings" title={t('asr.restoreDefaults')} aria-label={t('asr.restoreDefaults')} onClick={resetPreferences}><RotateCcw size={16}/></button></div>
-        {computeDevice==='gpu'&&effectiveComputeDevice==='cpu'?<p className="notice">{computeUnavailableReason(gpuCapability,t)}</p>:null}
+        {compact&&(!settingsOpen||!advancedOpen)&&computeDevice==='gpu'&&effectiveComputeDevice==='cpu'?<p className="notice">{computeUnavailableReason(gpuCapability,t)}</p>:null}
         {selectedHotwordIds.size>0&&hotwordsState!=='ready'?<ResourceStatePanel state={hotwordsState} loadingLabel={t('asr.workspace.loadingHotwords')} errorLabel={t('asr.workspace.hotwordsUnavailable')} retry={()=>void refreshHotwords().catch(()=>undefined)}/>:null}
         {selectedHotwordIssue?<p id="asr-hotword-submit-error" className="error" role="alert">{selectedHotwordIssue}</p>:null}
         <fieldset id="asr-settings-body" className="asr-settings-body" disabled={busy||(isVideoTab&&Boolean(resume))}>
@@ -622,15 +622,15 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
         </label>
         <label>
           {t('asr.computeDevice')}
-          <select aria-label={t('asr.computeDeviceAria')} title={t('asr.computeHelp')} value={effectiveComputeDevice} onChange={(event) => updatePreference('computeDevice', event.target.value as ComputeDevice)}>
+          <select aria-label={t('asr.computeDeviceAria')} aria-describedby={computeDevice==='gpu'&&effectiveComputeDevice==='cpu'?'asr-device-warning':undefined} title={t('asr.computeHelp')} value={effectiveComputeDevice} onChange={(event) => updatePreference('computeDevice', event.target.value as ComputeDevice)}>
             <option value="gpu" disabled={gpuCapability?.available === false}>
               GPU · BF16
               {gpuCapability?.available === false ? t('asr.modelUnavailable') : t('asr.defaultMark')}
             </option>
             <option value="cpu">CPU · FP32</option>
           </select>
-          {computeDevice === 'gpu' && effectiveComputeDevice === 'cpu' ? <small className="device-hint">{computeUnavailableReason(gpuCapability,t)}</small> : null}
         </label>
+        {computeDevice === 'gpu' && effectiveComputeDevice === 'cpu' ? <small id="asr-device-warning" className="device-hint asr-device-warning">{computeUnavailableReason(gpuCapability,t)}</small> : null}
         <div className="asr-options">
         <div className="asr-voiceprint-toggle"><label className="toggle-label">
           <input type="checkbox" checked={useVoiceprints} onChange={(event) => updatePreference('useVoiceprints', event.target.checked)} />

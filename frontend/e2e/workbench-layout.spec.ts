@@ -1,4 +1,4 @@
-import {capabilitiesFor,expect,test,type Page} from './fixtures'
+import {capabilitiesFor,systemFor,expect,test,type Page} from './fixtures'
 import type {Job,VoiceprintPerson} from '../src/lib/types'
 import path from 'node:path'
 import {execFileSync} from 'node:child_process'
@@ -10,12 +10,27 @@ function wave(){
  buffer.write('RIFF');buffer.writeUInt32LE(buffer.length-8,4);buffer.write('WAVEfmt ',8);buffer.writeUInt32LE(16,16);buffer.writeUInt16LE(1,20);buffer.writeUInt16LE(1,22);buffer.writeUInt32LE(16000,24);buffer.writeUInt32LE(32000,28);buffer.writeUInt16LE(2,32);buffer.writeUInt16LE(16,34);buffer.write('data',36);buffer.writeUInt32LE(buffer.length-44,40)
  return buffer
 }
-async function fixture(page:Page){
+async function fixture(page:Page,gpuAvailable?:boolean){
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  const capability=await capabilitiesFor(page)
  capability.events.sse=false
+ if(gpuAvailable!==undefined){
+  capability.deployment={profile:'full',default_compute_device:'gpu',gpu_runtime_installed:true}
+  for(const model of [...capability.asr.models,...capability.tts.model_capabilities])for(const device of model.compute_devices){
+   device.available=device.id==='cpu'||gpuAvailable
+   device.default=device.id===(gpuAvailable?'gpu':'cpu')
+   if(device.id==='gpu'){
+    device.unavailable_reason=gpuAvailable?undefined:'No compatible NVIDIA GPU is available'
+    device.unavailable_reason_code=undefined
+   }
+  }
+  const system=await systemFor(page)
+  system.deployment=capability.deployment
+  system.hardware.gpu=gpuAvailable?(system.hardware.gpu||{name:'Layout regression GPU',memory_used_mib:0,memory_total_mib:16384,utilization:0}):undefined
+  await page.route('**/api/v1/system',route=>route.fulfill({json:system}))
+ }
  const people:VoiceprintPerson[]=Array.from({length:27},(_,i)=>({id:`person-${i}`,name:i===26?'曾华':`Alice ${String(i).padStart(2,'0')}`,sort_initial:i===26?'Z':'A',sample_count:1,include_in_hotword_library:true,created_at:now,updated_at:now,samples:[{id:`sample-${i}`,person_id:`person-${i}`,name:'参考录音',state:'ready',language:'Chinese',duration:60,transcript:'这是用于声音克隆的参考录音。',words:[],tts_eligible:true,embedding_status:'ready',created_at:now,updated_at:now,audio_url:`/api/v1/voiceprints/samples/sample-${i}/audio`}]}))
  const scenes=Array.from({length:30},(_,i)=>({id:`scene-${i}`,start:i*2,end:i*2+2,frame_time:i*2,image:'frame.jpg',paragraphs:[{speaker:'s0',speaker_label:'张三',start:i*2,end:i*2+1,text:`第 ${i+1} 段：在截图旁阅读转写内容，无需先滚过整张幻灯片。`,segment_ids:[i]}]}))
  const job:Job={id:'layout-video',kind:'asr',purpose:'video_transcription',state:'succeeded',stage:'completed',progress:1,display_name:'桌面体验评审.mp4',created_at:now,updated_at:now,request:{purpose:'video_transcription'},result:{duration:60,language:'Chinese',model:'qwen3-asr-1.7b',timestamp_precision:'segment',playback_url:'/api/v1/jobs/layout-video/playback',waveform:Array.from({length:200},(_,i)=>.1+i%9/12),speakers:[{id:'s0',label:'张三'}],segments:scenes.map((scene,i)=>({id:i,start:scene.start,end:scene.end,speaker:'s0',speaker_label:'张三',text:scene.paragraphs[0].text,words:[]})),artifacts:[],video:{contract_version:1,revision:1,duration:60,scenes,original_scenes:scenes}}}
@@ -50,10 +65,10 @@ async function noOverflow(page:Page,width:number){
  expect(await page.title()).toContain('Sandevistan-Audio')
 }
 
-for(const viewport of [{width:1024,height:768},{width:1280,height:720},{width:1366,height:768},{width:1440,height:900},{width:1920,height:1080}]){
- test(`desktop controls and equal panes at ${viewport.width}x${viewport.height}`,async({page})=>{
+for(const viewport of [{width:1024,height:768},{width:1280,height:720},{width:1366,height:768},{width:1440,height:900},{width:1920,height:1080}])for(const gpuAvailable of [true,false]){
+ test(`desktop controls and equal panes at ${viewport.width}x${viewport.height}, GPU ${gpuAvailable?'available':'unavailable'}`,async({page})=>{
   await page.setViewportSize(viewport)
-  const {errors}=await fixture(page)
+  const {errors}=await fixture(page,gpuAvailable)
   await page.goto('/#asr');await equalPanes(page,'asr')
   await page.locator('input[type=file]').setInputFiles({name:'会议录音.wav',mimeType:'audio/wav',buffer:wave()})
   await expect(page.locator('.asr-file-info')).toContainText('会议录音.wav')
@@ -62,6 +77,11 @@ for(const viewport of [{width:1024,height:768},{width:1280,height:720},{width:13
   expect((await page.locator('.asr-upload').boundingBox())!.height).toBeLessThan(180)
   await expect(page.locator('.asr-settings-toggle')).toHaveAttribute('aria-expanded','true')
   await expect(page.getByLabel('ASR 模型', {exact:true})).toBeVisible()
+  await expect(page.getByLabel('ASR 计算设备')).toHaveValue(gpuAvailable?'gpu':'cpu')
+  if(!gpuAvailable){
+   await expect(page.locator('.asr-settings').getByText('No compatible NVIDIA GPU is available',{exact:true})).toHaveCount(1)
+   await expect(page.locator('.asr-settings .device-hint')).toBeVisible()
+  }
   await expect(page.getByRole('button',{name:'开始转写',exact:true})).toBeInViewport()
   if(viewport.width>=1280){
    expect(await page.locator('.asr-settings-body').evaluate(e=>e.scrollHeight-e.clientHeight)).toBeLessThanOrEqual(1)
@@ -74,6 +94,11 @@ for(const viewport of [{width:1024,height:768},{width:1280,height:720},{width:13
   await page.locator('.text-editor textarea').fill('调整分栏后仍保留这段文本。')
   await expect(page.locator('.document-settings-toggle')).toHaveAttribute('aria-expanded','true')
   await expect(page.getByLabel('TTS 模型',{exact:true})).toBeVisible()
+  await expect(page.getByLabel('TTS 计算设备')).toHaveValue(gpuAvailable?'gpu':'cpu')
+  if(!gpuAvailable){
+   await expect(page.locator('#tts-device-warning')).toBeVisible()
+   await expect(page.locator('.tts-settings').getByText('No compatible NVIDIA GPU is available',{exact:true})).toHaveCount(1)
+  }
   await expect(page.getByRole('button',{name:'生成语音',exact:true})).toBeInViewport()
   if(viewport.width>=1280)expect(await page.locator('.tts-settings-body').evaluate(e=>e.scrollHeight-e.clientHeight)).toBeLessThanOrEqual(1)
   await noOverflow(page,viewport.width)
@@ -256,11 +281,15 @@ for(const locale of ['zh-CN','en-US'])test(`compact library and video reading in
 
 test('mobile controls and tooltip remain reachable without horizontal overflow',async({page})=>{
  await page.setViewportSize({width:390,height:844})
- const {errors}=await fixture(page)
+ const {errors}=await fixture(page,false)
  await page.goto('/#asr')
  await expect(page.getByRole('separator')).toBeHidden()
+ await expect(page.locator('.asr-settings .notice')).toBeVisible()
  await page.locator('input[type=file]').setInputFiles({name:'会议.wav',mimeType:'audio/wav',buffer:wave()})
  await page.locator('.asr-settings-toggle').click();await page.locator('.asr-advanced-toggle').click()
+ await expect(page.locator('.asr-settings .notice')).toHaveCount(0)
+ await expect(page.locator('#asr-device-warning')).toBeVisible()
+ await expect(page.getByLabel('ASR 计算设备')).toHaveValue('cpu')
  const help=page.locator('.asr-settings-body .acceleration-control .info-tooltip button')
  await help.focus();await expect(page.getByRole('tooltip')).toBeVisible()
  const tooltip=(await page.getByRole('tooltip').boundingBox())!
