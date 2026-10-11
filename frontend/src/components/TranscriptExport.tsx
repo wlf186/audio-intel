@@ -46,9 +46,8 @@ export function TranscriptExport({job}:{job:Job}){
   }finally{if(!active.signal.aborted){controller.current=undefined;setBusy(false)}}
  }
  return <div className="transcript-export">
-  <div className="transcript-export-actions"><button className="primary" disabled={busy||remaining>0} onClick={()=>void pdf()}><Download size={16}/>{busy?t('video.pdfPreparing'):remaining?t('video.pdfRetryIn',{seconds:remaining}):t('video.pdf')}</button>
+  <div className="transcript-export-actions"><button className="primary" title={t(video?'video.pdfVideoHelp':'video.pdfAudioHelp')} disabled={busy||remaining>0} onClick={()=>void pdf()}><Download size={16}/>{busy?t('video.pdfPreparing'):remaining?t('video.pdfRetryIn',{seconds:remaining}):t('video.pdf')}</button>
   {!video&&job.result?.artifacts?.length?<details className="transcript-export-details"><summary>{t('video.detailFormats')}</summary><div>{job.result.artifacts.map(item=><a className="button" title={t('asr.results.downloadNamed',{name:item.name})} key={item.name} href={artifactUrl(job.id,item.name)}><Download size={14}/><span>{item.name.split('.').pop()?.toUpperCase()}<small>{t(item.name.endsWith('.srt')||item.name.endsWith('.vtt')?'video.subtitleFormat':'video.detailFormat')}</small></span></a>)}</div></details>:null}</div>
-  <small>{video?t('video.pdfVideoHelp'):t('video.pdfAudioHelp')}</small>
   {error?<p className="error" role="alert">{error}</p>:null}
  </div>
 }

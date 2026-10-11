@@ -228,6 +228,8 @@ Add `Authorization: Bearer $AUDIO_INTEL_API_KEY` when authentication is configur
 | [Installation](docs/INSTALL.md) | Linux prerequisites, full and partial setup, proxy, directories, and service modes |
 | [Native Windows](docs/WINDOWS.md) | Windows setup, lifecycle behavior, firewall, and troubleshooting |
 | [Document TTS](docs/DOCUMENT_TTS.md) | Import, segmentation, synthesis, API examples, and streaming downloads |
+| [Library transfer](docs/LIBRARY.md) | Voiceprints and hotwords, full ZIP transfer, merge/replacement, pinyin sorting and A–Z index |
+| [Workspace layout](docs/WORKSPACES.md) | Resizable desktop panes, independent layout preferences, compact library and video reading |
 | [API](docs/API.md) | Native asynchronous and OpenAI-compatible usage contracts |
 | [Architecture and capabilities](docs/ARCHITECTURE.md) | Pipelines, models, devices, acceleration, queues, progress, and cancellation |
 | [Local HTTPS](docs/HTTPS.md) | Project CA, certificate trust, SAN renewal, and fingerprint verification |

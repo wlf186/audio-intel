@@ -14,6 +14,7 @@ import { api, HttpError, formatTime, isUploadCancelled, uploadLimitMessage, type
 import {ConfirmDialog} from '../components/ConfirmDialog'
 import {Modal} from '../components/Modal'
 import {ResourceStatePanel} from '../components/ResourceStatePanel'
+import {PeopleIndex} from '../components/PeopleIndex'
 import {SubmissionProgress} from '../components/SubmissionProgress'
 import { publicAsrLanguages } from '../lib/preferences'
 import type { AsrModelCapability, ComputeDevice, Job, ResourceState, VoiceprintPerson, VoiceprintSample } from '../lib/types'
@@ -249,16 +250,6 @@ export function VoiceprintsPage({
   )
   return (
     <div className="voiceprint-page page-pad hud-page">
-      <div className="page-heading">
-        <div>
-          <h1 tabIndex={-1}>{t('voiceprints.title')}</h1>
-          <p>{t('voiceprints.subtitle')}</p>
-        </div>
-        <span className="online">
-          <Fingerprint size={15} />
-          LOCAL VOICE ID
-        </span>
-      </div>
       {error ? (
         <p className="error" role="alert">
           {error}
@@ -276,10 +267,10 @@ export function VoiceprintsPage({
           </button>
           <ResourceStatePanel state={state} loadingLabel={t('voiceprints.loadingPeople')} errorLabel={t('voiceprints.loadFailed')} retry={()=>void refresh().catch(()=>{})}/>
           {state==='ready'&&people.length ? (
-            people.map((person) => (
+            <PeopleIndex people={people}>{person => (
               <button
                 key={person.id}
-                className={selected?.id === person.id ? 'active' : ''}
+                className={`person-row${selected?.id === person.id ? ' active' : ''}`}
                 disabled={busy || microphoneActive}
                 onClick={() => setSelectedId(person.id)}
               >
@@ -291,7 +282,7 @@ export function VoiceprintsPage({
                   <small>{t(person.include_in_hotword_library?'voiceprints.hotwordIncludedLabel':'voiceprints.hotwordExcludedLabel')}</small>
                 </span>
               </button>
-            ))
+            )}</PeopleIndex>
           ) : null}
         </aside>
         <section className="samples-panel">

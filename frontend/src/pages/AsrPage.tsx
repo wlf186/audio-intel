@@ -14,6 +14,7 @@ import { Waveform } from '../components/Waveform'
 import { JobMini } from '../components/JobMini'
 import { Modal } from '../components/Modal'
 import { InfoTooltip } from '../components/InfoTooltip'
+import { WorkbenchDivider } from '../components/WorkbenchDivider'
 import { clearAsrPreferences, defaultAsrPreferences, loadAsrPreferences, publicAlignerLanguages, publicAsrLanguages, saveAsrPreferences, type AsrPreferences } from '../lib/preferences'
 import { visibleWorkspaceJobs } from '../lib/jobs'
 import { computeUnavailableReason, voiceprintPersonLabel, speakerIdentity, hotwordListDisplayName } from '../lib/presentation'
@@ -134,9 +135,10 @@ type Props = {
 export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, videoCapability, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const { t, i18n } = useTranslation()
   const [view, setView] = useState<'create'|'video'|'results'>('create')
-  const [compact, setCompact] = useState(()=>matchMedia('(max-width: 1199px)').matches)
-  useEffect(()=>{const media=matchMedia('(max-width: 1199px)');const change=()=>setCompact(media.matches);media.addEventListener('change',change);return()=>media.removeEventListener('change',change)},[])
+  const [compact, setCompact] = useState(()=>matchMedia('(max-width: 1023px)').matches)
+  useEffect(()=>{const media=matchMedia('(max-width: 1023px)');const change=()=>setCompact(media.matches);media.addEventListener('change',change);return()=>media.removeEventListener('change',change)},[])
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [advancedOpen,setAdvancedOpen]=useState(false)
   const [hotwordsOpen, setHotwordsOpen] = useState(false)
   const [hotwordQuery, setHotwordQuery] = useState('')
   const [lastSubmitted, setLastSubmitted] = useState<JobSummary>()
@@ -152,6 +154,9 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const [discardOpen,setDiscardOpen]=useState(false)
   const [videoReading,setVideoReading]=useState(true)
   const [videoEditing,setVideoEditing]=useState(false)
+  const [videoWaveform,setVideoWaveform]=useState(false)
+  const [videoToolbar,setVideoToolbar]=useState<HTMLDivElement|null>(null)
+  useEffect(()=>setVideoWaveform(false),[selectedJobId])
   const [videoEnrollment,setVideoEnrollment]=useState<{jobId:string;speakerId:string}>()
   useEffect(()=>setVideoEnrollment(undefined),[selectedJobId])
   useEffect(()=>setVideoEditing(false),[selectedJobId])
@@ -161,6 +166,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const formats=isVideoTab?videoCapability?.formats:audioFormats
   const uploadLimit=isVideoTab?videoCapability?.max_upload_bytes:maxUploadBytes
   const [preferences, setPreferences] = useState<AsrPreferences>(() => loadAsrPreferences(maxSpeakers,defaultComputeDevice))
+  useEffect(()=>{const reset=()=>setPreferences(current=>({...current,hotwordListIds:[]}));addEventListener('audio-intel:library-replaced',reset);return()=>removeEventListener('audio-intel:library-replaced',reset)},[])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -443,7 +449,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     setCurrentTime(player.currentTime)
   }, [duration])
   const chooseFile=(next?:File)=>{if(!next)return;const extension=next.name.split('.').pop()?.toLowerCase();if(formats&&!formats.includes(extension||'')){setError(t('video.unsupportedFormat'));return}setFile(next);setError('');setNotice('')}
-  const chooseDropped = (event: React.DragEvent<HTMLButtonElement>) => {
+  const chooseDropped = (event: React.DragEvent<HTMLElement>) => {
     event.preventDefault()
     const next = event.dataTransfer.files[0]
     chooseFile(next)
@@ -555,28 +561,27 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       }}>
         {(['create',...(videoCapability?.supported?['video' as const]:[]),'results'] as const).map(item=><button key={item} data-view={item} disabled={busy} id={`asr-tab-${item}`} role="tab" aria-selected={view===item} aria-controls={item==='results'?'asr-results':'asr-create'} tabIndex={view===item?0:-1} onClick={()=>selectWorkspace(item)}>{t(`asr.workspace.${item}`)}</button>)}
       </div>
-      <aside className="control-panel asr-create" id="asr-create" role="tabpanel" aria-labelledby={isVideoTab?'asr-tab-video':'asr-tab-create'} hidden={view==='results'} data-module="AUDIO_INPUT / UP_01">
-      <div className="asr-upload">
+      <aside className="control-panel asr-create resizable-workbench" id="asr-create" role="tabpanel" aria-labelledby={isVideoTab?'asr-tab-video':'asr-tab-create'} hidden={view==='results'}>
+      <div className={`asr-upload${file?' has-file':''}`} id="asr-input-pane">
 
         <input ref={input} hidden type="file" accept={formats?formats.map(item=>'.'+item).join(','):isVideoTab?'video/*':'audio/*'} disabled={busy} onChange={(event) => chooseFile(event.target.files?.[0])} />
-        <button className="dropzone" disabled={busy} onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={chooseDropped}>
+        {!file?<button className="dropzone" disabled={busy} onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={chooseDropped}>
           <UploadCloud size={44} />
-          <b>{file?.name || t(isVideoTab?'video.dropzone':'asr.dropzone.title')}</b>
-          <span>{file ? t('asr.dropzone.reselect') : formats?.map(item=>item.toUpperCase()).join(' / ')||t('asr.dropzone.formats')}</span>
-        </button>
-        {file?<div className="asr-file-info"><span>{file.name} · {size(file.size,i18n.resolvedLanguage)}</span><button className="button" disabled={busy} onClick={()=>{setFile(undefined);if(input.current)input.current.value='';setError('')}}>{t('asr.workspace.removeFile')}</button></div>:null}
+          <b>{t(isVideoTab?'video.dropzone':'asr.dropzone.title')}</b>
+          <span>{formats?.map(item=>item.toUpperCase()).join(' / ')||t('asr.dropzone.formats')}</span>
+        </button>:<div className="asr-file-info" onDragOver={event=>event.preventDefault()} onDrop={chooseDropped}><span><b>{file.name}</b><small>{size(file.size,i18n.resolvedLanguage)}</small></span><div className="asr-file-actions"><button className="button" disabled={busy} onClick={()=>input.current?.click()}>{t('workspaceSplit.changeFile')}</button><button className="button" disabled={busy} onClick={()=>{setFile(undefined);if(input.current)input.current.value='';setError('')}}>{t('asr.workspace.removeFile')}</button></div></div>}
         <p>{t('video.uploadLimit',{limit:size(uploadLimit||0,i18n.resolvedLanguage)})}</p>
         <p>{t(isVideoTab?'video.uploadHelp':'asr.subtitle')}</p>
         {isVideoTab&&resume?<div className="video-resume"><p>{t('video.resumeNotice',{name:resume.name})}</p><button className="button" disabled={busy} onClick={()=>setDiscardOpen(true)}>{t('video.discard')}</button></div>:null}
         {isVideoTab&&file?<VideoRegionPicker file={file} value={videoRoi} onChange={setVideoRoi} disabled={busy||Boolean(resume)}/>:null}
       </div>
-      <section className={`asr-settings${settingsOpen?' expanded':''}`}>
-        <button className="asr-settings-toggle" aria-expanded={!compact||settingsOpen} aria-controls="asr-settings-body" onClick={()=>{if(compact)setSettingsOpen(value=>!value)}}>{t('asr.workspace.settings')} · {language==='Auto'?t('common.languages.Auto'):language} · {effectiveComputeDevice.toUpperCase()}</button>
+      <WorkbenchDivider workbench="asr"/>
+      <section className={`asr-settings${settingsOpen?' expanded':''}`} id="asr-settings-pane">
+        <div className="settings-heading"><button className="asr-settings-toggle" aria-expanded={!compact||settingsOpen} aria-controls="asr-settings-body" onClick={()=>{if(compact)setSettingsOpen(value=>!value)}}>{t('asr.workspace.settings')} · {effectiveComputeDevice.toUpperCase()}</button><button className="reset-settings" title={t('asr.restoreDefaults')} aria-label={t('asr.restoreDefaults')} onClick={resetPreferences}><RotateCcw size={16}/></button></div>
         {computeDevice==='gpu'&&effectiveComputeDevice==='cpu'?<p className="notice">{computeUnavailableReason(gpuCapability,t)}</p>:null}
         {selectedHotwordIds.size>0&&hotwordsState!=='ready'?<ResourceStatePanel state={hotwordsState} loadingLabel={t('asr.workspace.loadingHotwords')} errorLabel={t('asr.workspace.hotwordsUnavailable')} retry={()=>void refreshHotwords().catch(()=>undefined)}/>:null}
         {selectedHotwordIssue?<p id="asr-hotword-submit-error" className="error" role="alert">{selectedHotwordIssue}</p>:null}
         <fieldset id="asr-settings-body" className="asr-settings-body" disabled={busy||(isVideoTab&&Boolean(resume))}>
-          <button className="reset-settings" onClick={resetPreferences}><RotateCcw size={14}/>{t('asr.restoreDefaults')}</button>
         <label>
           {t('asr.language')}
           <select value={language} onChange={(event) => updatePreference('language', event.target.value)}>
@@ -603,13 +608,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
             <option value="segment">{t('asr.timestamps.segment')}</option>
           </select>
         </label>
-        <div className="asr-hotword-summary">
-          <span>{t('asr.hotwords.label')}</span>
-          <p>{hotwordsState==='ready'?t('asr.workspace.hotwordSummary',{lists:selectedHotwordIds.size,terms:selectedHotwordStats.terms}):t(hotwordsState==='loading'?'asr.workspace.loadingHotwords':'asr.workspace.hotwordsUnavailable')}</p>
-          <button className="button" onClick={()=>setHotwordsOpen(true)}>{t('asr.workspace.chooseHotwords')}</button>
-          {selectedHotwordIds.size?<button className="button" onClick={()=>updatePreference('hotwordListIds',[])}>{t('asr.workspace.clearHotwords')}</button>:null}
-        </div>
-        <details className="asr-advanced"><summary>{t('asr.workspace.advanced')} · {chosenModel.name} · {effectiveComputeDevice.toUpperCase()}</summary>
+        <div className={`asr-advanced${advancedOpen?' expanded':''}`}><button type="button" className="asr-advanced-toggle" aria-expanded={!compact||advancedOpen} aria-controls="asr-advanced-body" onClick={()=>setAdvancedOpen(value=>!value)}>{t('asr.workspace.advanced')} · {chosenModel.name} · {effectiveComputeDevice.toUpperCase()}</button><div className="asr-advanced-body" id="asr-advanced-body">
         <label>
           {t('asr.model')}
           <select aria-label={t('asr.model')} value={model} onChange={(event) => updatePreference('model', event.target.value)}>
@@ -621,22 +620,22 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
             ))}
           </select>
         </label>
-        <label className="toggle-label">
-          <input type="checkbox" checked={useVoiceprints} onChange={(event) => updatePreference('useVoiceprints', event.target.checked)} />
-          <span>{t('asr.voiceprints.label')}</span>
-          <small className="device-hint">{t('asr.voiceprints.help')}</small>
-        </label>
         <label>
           {t('asr.computeDevice')}
-          <select aria-label={t('asr.computeDeviceAria')} value={effectiveComputeDevice} onChange={(event) => updatePreference('computeDevice', event.target.value as ComputeDevice)}>
+          <select aria-label={t('asr.computeDeviceAria')} title={t('asr.computeHelp')} value={effectiveComputeDevice} onChange={(event) => updatePreference('computeDevice', event.target.value as ComputeDevice)}>
             <option value="gpu" disabled={gpuCapability?.available === false}>
               GPU · BF16
               {gpuCapability?.available === false ? t('asr.modelUnavailable') : t('asr.defaultMark')}
             </option>
             <option value="cpu">CPU · FP32</option>
           </select>
-          {computeDevice === 'gpu' && effectiveComputeDevice === 'cpu' ? <small className="device-hint">{computeUnavailableReason(gpuCapability,t)}</small> : <small className="device-hint">{t('asr.computeHelp')}</small>}
+          {computeDevice === 'gpu' && effectiveComputeDevice === 'cpu' ? <small className="device-hint">{computeUnavailableReason(gpuCapability,t)}</small> : null}
         </label>
+        <div className="asr-options">
+        <div className="asr-voiceprint-toggle"><label className="toggle-label">
+          <input type="checkbox" checked={useVoiceprints} onChange={(event) => updatePreference('useVoiceprints', event.target.checked)} />
+          <span>{t('asr.voiceprints.label')}</span>
+        </label><InfoTooltip id="asr-voiceprints-help" label={t('asr.voiceprints.label')} text={t('asr.voiceprints.help')}/></div>
         <div className="acceleration-control">
           <label>
             <input type="checkbox" checked={accelerateSingleTask} onChange={(event) => updatePreference('accelerateSingleTask', event.target.checked)} />
@@ -644,9 +643,15 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           </label>
           <InfoTooltip id="asr-acceleration-help" text={t('asr.accelerationHelp')} />
         </div>
-        </details>
+        </div>
+        </div></div>
+        <div className="asr-hotword-summary">
+          <span>{t('asr.hotwords.label')}</span>
+          <p>{hotwordsState==='ready'?t('asr.workspace.hotwordSummary',{lists:selectedHotwordIds.size,terms:selectedHotwordStats.terms}):t(hotwordsState==='loading'?'asr.workspace.loadingHotwords':'asr.workspace.hotwordsUnavailable')}</p>
+          <button className="button" onClick={()=>setHotwordsOpen(true)}>{t('asr.workspace.chooseHotwords')}</button>
+          {selectedHotwordIds.size?<button className="button" onClick={()=>updatePreference('hotwordListIds',[])}>{t('asr.workspace.clearHotwords')}</button>:null}
+        </div>
         </fieldset>
-        <p className="asr-export-note">{isVideoTab?t('video.pdfVideoHelp'):t('video.exportNote')}</p>
         <div className="submission-actions">
           {error||fileLimitError ? (
             <p className="error" role="alert">
@@ -705,13 +710,13 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           <>
             <div className="result-head">
               {detail?.state==='loading'?<small role="status">{t('asr.results.loading')}</small>:null}
-              <span>
+              <div className="result-identity"><span>
                 <FileAudio size={20} />
                 {selected.display_name}
               </span>
               <span>
                 {String(result.model_name || selected.request.model || 'Qwen3-ASR')} · {formatTime(duration)} · {(result.compute_device || selected.request.compute_device || 'gpu').toString().toUpperCase()} {result.precision || ''}
-              </span>
+              </span></div>
               <TranscriptExport key={selected.id} job={selected}/>
             </div>
             <audio
@@ -734,7 +739,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
                 }
               }}
             />
-            <div className="wave-area">
+            <div className="wave-area" hidden={Boolean(result.video)&&!videoWaveform}>
               <Waveform peaks={result.waveform} currentTime={currentTime} duration={duration} onSeek={seek} />
               <div className="time-ruler">
                 <span>00:00</span>
@@ -748,6 +753,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               </button>
               <strong>{formatTime(currentTime)}</strong>
               <span>/ {formatTime(duration)}</span>
+              {result.video?<><input className="video-playback-progress" type="range" aria-label={t('workspaceSplit.playbackPosition')} min={0} max={duration||0} step={.1} value={Math.min(currentTime,duration)} onChange={event=>{stopAt.current=undefined;seekWord(Number(event.target.value))}}/><button className="button waveform-toggle" aria-pressed={videoWaveform} onClick={()=>setVideoWaveform(value=>!value)}>{t('workspaceSplit.waveform')}</button></>:null}
               <span className="grow" />
               <span>
                 {result.language} · {result.timestamp_precision === 'word_or_character' ? t('asr.results.wordAlignment') : t('asr.results.segmentTimestamps')}
@@ -772,8 +778,8 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
                 }}>{t('asr.results.retryPlayback')}</button>
               </p>
             ) : null}
-            {result.video?<div className="video-view-tabs" role="group" aria-label={t('video.readingMode')}><button aria-pressed={videoReading} onClick={()=>setVideoReading(true)}>{t('video.reading')}</button><button aria-pressed={!videoReading} onClick={()=>setVideoReading(false)}>{t('video.details')}</button></div>:null}
-            {result.video&&videoReading?<VideoTranscript job={selected} editing={videoEditing} onEditingChange={setVideoEditing} onUpdated={onJobResultUpdated} onSeek={seconds=>{stopAt.current=undefined;seekWord(seconds)}} onEnroll={speakerId=>{audio.current?.pause();setVideoEnrollment({jobId:selected.id,speakerId})}} onRename={id=>{const segment=result.segments?.find(item=>item.speaker===id);if(segment)openRename(segment)}}/>:<>
+            {result.video?<div className="video-view-tabs" role="group" aria-label={t('video.readingMode')}><button aria-pressed={videoReading} onClick={()=>setVideoReading(true)}>{t('video.reading')}</button><button aria-pressed={!videoReading} onClick={()=>setVideoReading(false)}>{t('video.details')}</button><div className="video-toolbar" ref={setVideoToolbar}/></div>:null}
+            {result.video&&videoReading?<VideoTranscript job={selected} toolbar={videoToolbar} editing={videoEditing} onEditingChange={setVideoEditing} onUpdated={onJobResultUpdated} onSeek={seconds=>{stopAt.current=undefined;seekWord(seconds)}} onEnroll={speakerId=>{audio.current?.pause();setVideoEnrollment({jobId:selected.id,speakerId})}} onRename={id=>{const segment=result.segments?.find(item=>item.speaker===id);if(segment)openRename(segment)}}/>:<>
             <div className="transcript-tools">
               <Search size={18} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('asr.results.search')} />

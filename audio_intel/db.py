@@ -437,6 +437,8 @@ def init_db() -> None:
         migrate(db)
         from .video_uploads import migrate as migrate_video_uploads
         migrate_video_uploads(db)
+        from .library_store import migrate as migrate_library_imports
+        migrate_library_imports(db)
         db.execute(
             """CREATE TABLE IF NOT EXISTS queue_sequence (
                singleton INTEGER PRIMARY KEY CHECK(singleton=1),value INTEGER NOT NULL)"""

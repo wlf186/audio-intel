@@ -31,6 +31,7 @@ import { JobMini } from '../components/JobMini'
 import { AudioTransport } from '../components/AudioTransport'
 import { ResourceStatePanel } from '../components/ResourceStatePanel'
 import { InfoTooltip } from '../components/InfoTooltip'
+import { WorkbenchDivider } from '../components/WorkbenchDivider'
 import { useMicrophoneRecorder } from '../hooks/useMicrophoneRecorder'
 import {
   clearTtsPreferences,
@@ -164,13 +165,14 @@ export function TtsPage({
     if(view === 'document') setDocumentVisited(true)
   }
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [compactWorkspace, setCompactWorkspace] = useState(()=>matchMedia('(max-width:1199px)').matches)
-  useEffect(()=>{const media=matchMedia('(max-width:1199px)');const update=()=>setCompactWorkspace(media.matches);media.addEventListener('change',update);return()=>media.removeEventListener('change',update)},[])
+  const [compactWorkspace, setCompactWorkspace] = useState(()=>matchMedia('(max-width:1023px)').matches)
+  useEffect(()=>{const media=matchMedia('(max-width:1023px)');const update=()=>setCompactWorkspace(media.matches);media.addEventListener('change',update);return()=>media.removeEventListener('change',update)},[])
   const [documentSelection, setDocumentSelection] = useState<DocumentSelection>()
   const [preferences, setPreferences] =
     useState<TtsPreferences>(()=>loadTtsPreferences(defaultComputeDevice))
   const [content, setContent] = useState<TtsContent>(()=>loadTtsContent(t('tts.defaultText')))
   const [referenceRanges,setReferenceRanges]=useState(loadReferenceRanges)
+  useEffect(()=>{const reset=()=>{setPreferences(current=>({...current,personId:'',sampleId:''}));setReferenceRanges({})};addEventListener('audio-intel:library-replaced',reset);return()=>removeEventListener('audio-intel:library-replaced',reset)},[])
   const changeReferenceRange=(sampleId:string,value?:ReferenceRange)=>{
     setReferenceRanges(current=>{const next={...current};if(value)next[sampleId]=value;else delete next[sampleId];saveReferenceRanges(next);return next})
   }
@@ -637,11 +639,11 @@ export function TtsPage({
         <div
           id="tts-mode-content"
           hidden={workspaceView==='results'}
-          className="document-prepare"
+          className="document-prepare resizable-workbench"
           role="tabpanel"
           aria-labelledby={`tts-workspace-${inputMode}`}
         >
-          <div className="tts-input-content">
+          <div className="tts-input-content" id="tts-input-pane">
             <div hidden={inputMode!=='document'} className="tts-document-input">
               {documentVisited&&documentCapability?<DocumentInput capability={documentCapability} onChange={setDocumentSelection}/>:null}
             </div>
@@ -651,10 +653,10 @@ export function TtsPage({
               <small>{draft.text.length} / 50,000</small>
             </label>
           </div>
-          <section className={`tts-settings${settingsOpen?' expanded':''}`} aria-label={t('document.settings')}>
-            <button className="document-settings-toggle" type="button" aria-expanded={!compactWorkspace||settingsOpen} aria-controls="tts-settings-body" onClick={()=>setSettingsOpen(value=>!value)}><strong>{t('document.settings')}</strong><span>{draft.mode==='preset'?draft.speaker:t(draft.mode==='voice_design'?'tts.mode.design':'tts.mode.clone')} · {selectedTtsModel?.name} · {effectiveTtsDevice.toUpperCase()}</span>{compactWorkspace&&!settingsOpen&&draft.computeDevice==='gpu'&&effectiveTtsDevice==='cpu'?<span className="document-settings-warning">{computeUnavailableReason(ttsGpu,t,t('tts.gpuFallback'))}</span>:null}</button>
+          <WorkbenchDivider workbench="tts"/>
+          <section className={`tts-settings${settingsOpen?' expanded':''}`} id="tts-settings-pane" aria-label={t('document.settings')}>
+            <div className="settings-heading"><button className="document-settings-toggle" type="button" aria-expanded={!compactWorkspace||settingsOpen} aria-controls="tts-settings-body" onClick={()=>{if(compactWorkspace)setSettingsOpen(value=>!value)}}><strong>{t('document.settings')}</strong><span>{draft.mode==='preset'?draft.speaker:t(draft.mode==='voice_design'?'tts.mode.design':'tts.mode.clone')} · {effectiveTtsDevice.toUpperCase()}</span>{compactWorkspace&&!settingsOpen&&draft.computeDevice==='gpu'&&effectiveTtsDevice==='cpu'?<span className="document-settings-warning">{computeUnavailableReason(ttsGpu,t,t('tts.gpuFallback'))}</span>:null}</button><button className="reset-settings" type="button" title={t('referenceRange.resetHelp')} aria-label={t('tts.restoreDefaults')} onClick={resetPreferences}><RotateCcw size={16}/></button></div>
             <div id="tts-settings-body" className="tts-settings-body">
-            <button className="reset-settings" type="button" title={t('referenceRange.resetHelp')} onClick={resetPreferences}><RotateCcw size={14}/>{t('tts.restoreDefaults')}</button>
             {modeTabs}
           {draft.mode === 'inline_clone' ? (
             <div
@@ -1195,7 +1197,7 @@ export function TtsPage({
               <option value="cpu">CPU · FP32</option>
             </select>
             {draft.computeDevice === 'gpu' && effectiveTtsDevice === 'cpu' ? (
-              <small className="device-hint">
+              <small className="device-hint device-warning">
                 {computeUnavailableReason(ttsGpu,t,t('tts.gpuFallback'))}
               </small>
             ) : (

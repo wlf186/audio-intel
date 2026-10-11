@@ -175,6 +175,11 @@
     "mainNavigation": "主导航",
     "workspace": "工作台",
     "pages": {
+        "library": {
+          "full": "资料库",
+          "medium": "资料库",
+          "short": "资料"
+        },
       "asr": {"full": "转写工作台", "medium": "转写", "short": "转写"},
       "tts": {"full": "语音合成", "medium": "合成", "short": "合成"},
       "hotwords": {"full": "热词库", "medium": "热词", "short": "热词"},
@@ -508,5 +513,76 @@
       "length": "已按目标 {{count, number}} 字符分段。",
       "unknown": "分段预览已就绪，请核对各分段的切分依据。"
     }
+  },
+  "library": {
+    "title": "资料库",
+    "subtitle": "统一管理声纹与热词，用完整资料包快速迁移到另一台服务器。",
+    "export": "导出完整包",
+    "import": "导入完整包",
+    "sections": "资料库分类",
+    "alphabet": "人员字母索引",
+    "jumpLetter": "跳到 {{letter}} 开头的人员",
+    "importTitle": "导入资料库",
+    "packageHelp": "资料包包含人员、样本音频、转写与时间轴、自定义热词。系统人名热词随恢复后的人员重新生成。任务历史、模型和浏览器偏好不随包迁移。",
+    "loadingImports": "正在读取导入记录…",
+    "loadFailed": "导入记录读取失败",
+    "recent": "最近导入",
+    "newImport": "上传新的资料包",
+    "archiveFile": "完整资料包（ZIP）",
+    "upload": "上传并校验",
+    "uploading": "资料包",
+    "mode": "导入方式",
+    "modes": {
+      "merge": "合并并保留原资料",
+      "replace": "替换现有资料"
+    },
+    "modeHelp": {
+      "merge": "补充人员和未重复样本，同名热词表追加未重复词条，保留已有人员设置。",
+      "replace": "移除现有两库资料，以包内容完整恢复。必须等待任务完成；先自动保存完整备份。"
+    },
+    "previewLoading": "正在计算导入影响…",
+    "previewFailed": "导入预览失败，请查看错误并重试",
+    "preview": "导入影响预览",
+    "contents": "资料",
+    "inPackage": "包中",
+    "existing": "现有",
+    "added": "新增",
+    "removed": "移除",
+    "counts": {
+      "people": "人员",
+      "samples": "样本",
+      "hotword_lists": "自定义词表"
+    },
+    "mergeSummary": "合并 {{people}} 位人员、{{lists}} 份词表；跳过 {{skipped}} 个重复样本，重命名 {{renamed}} 个同名样本。",
+    "discard": "清理导入文件",
+    "apply": "应用导入",
+    "replaceTitle": "替换整个资料库？",
+    "replaceWarning": "现有人员、样本和自定义热词将全部移除，再恢复资料包内容。系统会先保存完整备份。历史任务保持不变；旧库选择、参考区间偏好和热词编辑草稿会清空，TTS 正文和 ASR 输入草稿保留。",
+    "replaceConfirm": "备份并替换资料库",
+    "downloadBackup": "下载替换前备份",
+    "completed": "导入完成，声纹库与热词库已同步。",
+    "downloadRequested": "下载请求已发送，请查看浏览器下载列表。",
+    "downloadFailed": "下载失败，请重试。",
+    "downloadWindow": "资料包下载",
+    "states": {
+      "queued": "等待校验",
+      "validating": "正在校验",
+      "ready": "可预览并应用",
+      "applying": "正在应用资料包",
+      "completed": "已完成",
+      "failed": "校验失败",
+      "expired": "临时包已清理"
+    },
+    "resultSummary": "新增 {{people}} 位人员、{{samples}} 条样本、{{lists}} 个热词表。"
+  },
+  "workspaceSplit": {
+    "resize": "调整输入区与参数区宽度",
+    "ratio": "输入区 {{left}}%，参数区 {{right}}%",
+    "help": "拖动调整宽度；方向键微调，Shift 加快调整，Home/End 调至边界；双击恢复均分。",
+    "reset": "恢复左右均分",
+    "changeFile": "更换文件",
+    "playbackPosition": "播放位置（秒）",
+    "waveform": "波形",
+    "enlargeFrame": "放大查看截图"
   }
 }

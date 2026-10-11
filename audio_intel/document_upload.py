@@ -17,7 +17,8 @@ from .utils import safe_filename
 OVERHEAD = 1024 * 1024
 
 
-async def receive_document(request: Request, partial: Path | None, limit: int) -> tuple[str, str, int, str]:
+async def receive_document(request: Request, partial: Path | None, limit: int, *,
+                           formats: set[str] | frozenset[str] | None = None) -> tuple[str, str, int, str]:
     content_type, options = parse_options_header(request.headers.get("content-type", ""))
     if content_type != b"multipart/form-data" or not options.get(b"boundary"):
         raise HTTPException(422, "Expected multipart/form-data with one file field")
@@ -63,7 +64,9 @@ async def receive_document(request: Request, partial: Path | None, limit: int) -
             raise HTTPException(422, "Only one file field is supported")
         name = safe_filename(fields[b"filename"].decode("utf-8", errors="replace") or "document")
         suffix = Path(name).suffix.lower()
-        if suffix not in FORMATS:
+        if formats is not None and suffix not in formats:
+            raise HTTPException(422, "Use a ZIP library archive")
+        if formats is None and suffix not in FORMATS:
             raise HTTPException(422, "Use EPUB, TXT, PDF, Markdown, DOCX, XLSX or PPTX; convert legacy DOC/XLS/PPT first / 旧格式请先另存为 DOCX/XLSX/PPTX")
         if partial is not None:
             partial.parent.mkdir(parents=True, exist_ok=True)

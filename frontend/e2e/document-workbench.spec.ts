@@ -39,8 +39,8 @@ for(const [width,height] of [[1440,900],[1280,720],[1024,768],[720,450],[390,844
   const main=await page.locator('.document-input').boundingBox()
   const submit=await page.locator('.submission-actions').boundingBox()
   expect(main&&submit).toBeTruthy()
-  expect(width>=1200?submit!.x>=main!.x+main!.width:submit!.y>=main!.y+main!.height).toBe(true)
-  if(width>=1200){
+  expect(width>=1024?submit!.x>=main!.x+main!.width:submit!.y>=main!.y+main!.height).toBe(true)
+  if(width>=1024){
    expect(submit!.y+submit!.height).toBeLessThanOrEqual(height-44)
    expect((await page.locator('.document-input').boundingBox())!.height).toBeLessThan(900)
   }
@@ -72,7 +72,7 @@ for(const [width,height] of [[1440,900],[1280,720],[1024,768],[720,450],[390,844
   await page.getByRole('tab',{name:'文档合成',exact:true}).click()
   await expect(page.locator('.document-selection-bar')).toContainText('已选 2 段')
   await expect(page.locator('.document-sections li input').first()).toBeChecked()
-  if(width<1200){
+  if(width<1024){
    await expect(page.locator('.tts-settings-body')).toBeHidden()
    await page.locator('.document-settings-toggle').click()
    await expect(page.getByLabel('TTS 计算设备')).toBeVisible()
@@ -81,12 +81,12 @@ for(const [width,height] of [[1440,900],[1280,720],[1024,768],[720,450],[390,844
   await page.getByRole('tab',{name:'文本合成',exact:true}).click()
   await page.locator('.text-editor textarea').fill('文档与文本草稿应分别保留')
   await page.getByRole('tab',{name:'文档合成',exact:true}).click()
-  if(width<1200)await page.locator('.document-settings-toggle').click()
+  if(width<1024)await page.locator('.document-settings-toggle').click()
   await page.getByRole('button',{name:'恢复默认配置'}).click()
   await expect(page.getByRole('tab',{name:'文档合成',exact:true})).toHaveAttribute('aria-selected','true')
   await expect(page.locator('.document-selection-bar')).toContainText('已选 2 段')
   await expect(page.locator('.document-sections li input').first()).toBeChecked()
-  if(width<1200)await page.locator('.document-settings-toggle').click()
+  if(width<1024)await page.locator('.document-settings-toggle').click()
   await page.locator('.document-source').scrollIntoViewIfNeeded()
   if(width===1440||width===390)await page.screenshot({path:`/tmp/tts-unified-document-zh-${width}.png`})
   await page.locator('.language-switcher select:visible').first().selectOption('en-US')
@@ -104,7 +104,7 @@ for(const width of [1440,390]){
   page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text())})
   await page.setViewportSize({width,height:900})
   await documentWorkspace(page,true)
-  if(width<1200)await page.locator('.document-settings-toggle').click()
+  if(width<1024)await page.locator('.document-settings-toggle').click()
   await page.getByRole('tab',{name:'声音克隆',exact:true}).click()
   await expect(page.getByLabel('克隆参考 ASR 模型')).toBeVisible()
   await page.locator('#tts-reference-record').click()

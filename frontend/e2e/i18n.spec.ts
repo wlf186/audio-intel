@@ -27,7 +27,7 @@ async function expectNavigationLayout(page:Page,width:number,labels:string[],mod
   const lastBox=buttons.at(-1)!.getBoundingClientRect()
   return {columns:getComputedStyle(element).gridTemplateColumns.split(' ').length,tabWidth:firstBox.width,reservedWidth:navigationBox.right-lastBox.right}
  })
- expect(slots.columns).toBe(width>900?7:6)
+ expect(slots.columns).toBe(width>900?6:5)
  expect(Math.abs(slots.reservedWidth-(width>900?slots.tabWidth:0))).toBeLessThanOrEqual(1)
  const firstButton=navigation.getByRole('button').first()
  expect(await firstButton.evaluate(element=>getComputedStyle(element).display)).toBe(stacked?'flex':'grid')
@@ -59,8 +59,8 @@ test('detects, switches, and persists the interface language without reloading p
  await page.goto('/#tts')
  await expect(page.locator('html')).toHaveAttribute('lang','en-US')
  await expect(page.getByRole('heading',{name:'Speech synthesis'})).toBeVisible()
- const fullLabels=['Transcription','Speech synthesis','Hotword library','Voiceprint library','Task history','System status']
- const mediumLabels=['Transcribe','Synthesize','Hotwords','Voiceprints','Tasks','System']
+ const fullLabels=['Transcription','Speech synthesis','Library','Task history','System status']
+ const mediumLabels=['Transcribe','Synthesize','Library','Tasks','System']
  await expectNavigationLayout(page,1920,fullLabels,'full')
  await expectNavigationLayout(page,2200,fullLabels,'full')
  await expectNavigationLayout(page,2400,fullLabels,'full')
@@ -96,7 +96,7 @@ test('detects, switches, and persists the interface language without reloading p
  await page.getByRole('combobox',{name:'界面语言'}).selectOption('en-US')
  await expect(page.getByRole('heading',{name:'Speech synthesis'})).toBeVisible()
  await page.setViewportSize({width:390,height:844})
- await expectNavigationLayout(page,390,['ASR','TTS','Hotwords','Voices','Tasks','System'],'short',true)
+ await expectNavigationLayout(page,390,['ASR','TTS','Library','Tasks','System'],'short',true)
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
  const switcher=page.getByRole('combobox',{name:'Interface language'})
  await expect(switcher).toBeVisible()

@@ -20,6 +20,7 @@ Original code and documentation in this repository are licensed under Apache-2.0
 | React / Vite | <https://react.dev/>, <https://vite.dev/> | MIT |
 | Lucide React | <https://github.com/lucide-icons/lucide> | ISC |
 | Swagger UI Dist | <https://github.com/swagger-api/swagger-ui> | Apache-2.0 |
+| pypinyin 0.55.0 | <https://github.com/mozillazg/python-pinyin> | MIT; offline person ordering in the API environment |
 
 Users must review the current upstream model cards and licenses before use or redistribution. Upstream terms control if this notice and an upstream source disagree.
 

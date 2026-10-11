@@ -86,3 +86,12 @@ export function loadTtsContent(defaultText=defaultTtsContent.text):TtsContent{
  write(sessionStorage,ttsContentKey,content);legacyTtsContentKeys.forEach(key=>remove(sessionStorage,key));return content
 }
 export function saveTtsContent(value:TtsContent){write(sessionStorage,ttsContentKey,value)}
+
+export function resetLibraryPreferences(){
+ const asr=parsed(localStorage,asrPreferencesKey)
+ if(asr)write(localStorage,asrPreferencesKey,{...asr,hotwordListIds:[]})
+ const tts=parsed(localStorage,ttsPreferencesKey)
+ if(tts)write(localStorage,ttsPreferencesKey,{...tts,personId:'',sampleId:''})
+ remove(localStorage,'audio-intel:tts-reference-ranges:v1')
+ remove(sessionStorage,'audio-intel:hotword-draft:v1')
+}

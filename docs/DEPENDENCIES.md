@@ -56,3 +56,5 @@ API 锁和前端锁要求审计无已知漏洞。Qwen/Torch 当前精确约束�
 
 
 视频转写沿用 API/ASR 已固定的 PyAV 和 NumPy；显式依赖 Pillow 12.3.0。简洁 PDF 在 API 环境使用 ReportLab 4.5.1 与仓库内 Noto Sans SC 字体，不依赖系统字体或在线服务。浏览器分片 SHA-256 使用 @noble/hashes 2.0.1，在 Web Worker 运行。字体来源与许可证见 [第三方说明](../THIRD_PARTY_NOTICES.md)。模型、Transformers、精度和既有推理批次保持不变。
+
+API 环境固定使用 pypinyin 0.55.0 离线生成声纹人员的拼音排序与索引。姓氏读音覆盖只在排序时应用，不改写姓名、系统热词或历史快照；ASR/TTS/aligner 不安装该依赖。

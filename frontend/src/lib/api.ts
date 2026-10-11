@@ -1,4 +1,4 @@
-import type {DocumentSectionPage,DocumentImport,DocumentPreview,AuthSession,BatchDeleteResult,Capabilities,Health,HotwordList,Job,JobListQuery,JobListResponse,JobResult,Probe,TlsBootstrap,VoiceprintPerson,VoiceprintSample} from './types'
+import type {LibraryImport,LibraryMode,LibraryPreview,DocumentSectionPage,DocumentImport,DocumentPreview,AuthSession,BatchDeleteResult,Capabilities,Health,HotwordList,Job,JobListQuery,JobListResponse,JobResult,Probe,TlsBootstrap,VoiceprintPerson,VoiceprintSample} from './types'
 import type {TFunction} from 'i18next'
 import i18n from '../i18n'
 
@@ -114,6 +114,12 @@ export const api={
   job:(id:string)=>request<Job>(`/api/v1/jobs/${id}`),
   system:()=>request<Health>('/api/v1/system'),
   capabilities:()=>request<Capabilities>('/api/v1/capabilities'),
+  libraryImports:()=>request<LibraryImport[]>('/api/v1/library/imports'),
+  libraryImport:(id:string)=>request<LibraryImport>(`/api/v1/library/imports/${id}`),
+  submitLibraryImport:(data:FormData,options?:SubmissionOptions)=>submitForm<LibraryImport>('/api/v1/library/imports',data,options),
+  previewLibraryImport:(id:string,mode:LibraryMode)=>request<LibraryPreview>(`/api/v1/library/imports/${id}/preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})}),
+  applyLibraryImport:(id:string,mode:LibraryMode,preview_revision:string)=>request<LibraryImport>(`/api/v1/library/imports/${id}/apply`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,preview_revision})}),
+  removeLibraryImport:(id:string)=>request<void>(`/api/v1/library/imports/${id}`,{method:'DELETE'}),
   hotwordLists:()=>request<{items:HotwordList[];count:number}>('/api/v1/asr/hotword-lists'),
   addHotwordList:(name:string,terms:string[])=>request<HotwordList>('/api/v1/asr/hotword-lists',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,terms})}),
   updateHotwordList:(id:string,name:string,terms:string[])=>request<HotwordList>(`/api/v1/asr/hotword-lists/${id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,terms})}),

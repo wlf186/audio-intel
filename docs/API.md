@@ -42,6 +42,8 @@ The following submission endpoints require an `Idempotency-Key` header containin
 - `POST /api/v1/tts/document-jobs`
 - `POST /api/v1/voiceprints/people/{person_id}/samples/upload`
 
+The independent library-transfer upload also requires an `Idempotency-Key`; its receipt, preview and application lifecycle is described under [Library export and import](#library-export-and-import).
+
 Generate one key per logical submission and reuse it after timeouts, disconnects, or `429` responses:
 
 ```bash
@@ -496,3 +498,88 @@ Successful PDF GET responses use `application/pdf`; frame and preview GET respon
 Scene times are seconds from the shared video origin. ROI coordinates are fractions of the complete picture, with `x + width <= 1` and `y + height <= 1`. `frame` permits the section start but excludes its end; `split` requires a time strictly inside that section; `boundary` requires a time strictly between the current section's start and the following section's end. Merge/boundary need a following section. Capture `revision` when editing begins and never replace it with a background refresh revision while retaining old inputs. A stale revision returns `409`; reload and reconcile before editing again. Swagger includes examples for all five actions.
 
 视频 PDF/JPEG 成功响应为二进制；HEAD 无响应体，上传到期时间单位为 Unix 秒。上传创建/重放的 201 与异步任务首次 202、重放 200 分开。时间均为视频相对秒，ROI 为画面比例。编辑时必须固定开始时的修订号，冲突后重新读取，不得保留旧输入却替换成后台的新 revision。PDF 429 按 Retry-After 重试，413 拆分源文件，401 重新鉴权；下载重试不应重新提交视频任务。
+
+## Library export and import
+
+See [the bilingual library guide](LIBRARY.md) for merge/replace rules, sorting, limits, backup storage and browser preference changes. All library endpoints require the existing Bearer/session authentication when configured.
+
+| Endpoint | Contract |
+| --- | --- |
+| `GET /api/v1/library/export` | Stream the complete ZIP; unfinished enrollment or missing ready audio returns 409 |
+| `POST /api/v1/library/imports` | Multipart `file`; mandatory 8–128 character `Idempotency-Key`; first acceptance 202, identical bytes replay 200, conflict/expired 409, admission 429 |
+| `GET /api/v1/library/imports?limit=20` | Recent persisted receipts (array, limit 1–100) |
+| `GET /api/v1/library/imports/{identifier}` | Poll queued/validating/ready/applying/completed/failed/expired state |
+| `POST /api/v1/library/imports/{identifier}/preview` | Strict JSON `{mode: "merge"}` or `{mode: "replace"}`; returns counts and preview revision |
+| `POST /api/v1/library/imports/{identifier}/apply` | Strict JSON `mode` plus `preview_revision`; 202, completed matching replay 200; changed/busy library 409 |
+| `GET /api/v1/library/imports/{identifier}/backup` | Protected streaming ZIP of the pre-replacement library; supports Range |
+| `DELETE /api/v1/library/imports/{identifier}` | 204; remove inactive staged files, retain completed results/backups; active operation 409 |
+
+A complete executable Python client downloads on A and restores on B. Set client URLs and credentials separately; the key variables are optional for installations without authentication. Install `requests` in your separate client environment before running this example. `LIBRARY_MODE=merge` is the default; `replace` explicitly selects full replacement and requires idle queues. No history is copied or edited. Retry upload errors with the same `request_key` for the same bytes.
+
+```python
+import os
+import time
+import uuid
+from pathlib import Path
+
+import requests
+
+a_url = os.environ["LIBRARY_SOURCE_URL"].rstrip("/")
+b_url = os.environ["LIBRARY_TARGET_URL"].rstrip("/")
+mode = os.environ.get("LIBRARY_MODE", "merge")
+if mode not in {"merge", "replace"}:
+    raise ValueError("LIBRARY_MODE must be merge or replace")
+
+def session(key_name):
+    client = requests.Session()
+    key = os.environ.get(key_name)
+    if key:
+        client.headers["Authorization"] = "Bearer " + key
+    return client
+
+a = session("LIBRARY_SOURCE_KEY")
+b = session("LIBRARY_TARGET_KEY")
+archive = Path("audio-intel-library.zip")
+with a.get(a_url + "/api/v1/library/export", stream=True, timeout=120) as response:
+    response.raise_for_status()
+    with archive.open("wb") as output:
+        for chunk in response.iter_content(256 * 1024):
+            output.write(chunk)
+request_key = uuid.uuid4().hex
+with archive.open("rb") as source:
+    response = b.post(b_url + "/api/v1/library/imports",
+                      headers={"Idempotency-Key": request_key},
+                      files={"file": (archive.name, source, "application/zip")}, timeout=120)
+response.raise_for_status()
+url = b_url + "/api/v1/library/imports/" + response.json()["id"]
+
+def wait():
+    deadline = time.monotonic() + 3600
+    while time.monotonic() < deadline:
+        response = b.get(url, timeout=30)
+        response.raise_for_status()
+        receipt = response.json()
+        if receipt["state"] not in {"queued", "validating", "applying"}:
+            if receipt.get("error") or receipt["state"] in {"failed", "expired"}:
+                raise RuntimeError(receipt.get("error") or receipt["state"])
+            return receipt
+        time.sleep(1)
+    raise TimeoutError("Inspect the persisted import receipt before retrying")
+
+if wait()["state"] != "ready":
+    raise RuntimeError("Archive is not ready")
+response = b.post(url + "/preview", json={"mode": mode}, timeout=120)
+response.raise_for_status()
+preview = response.json()
+print("Preview:", preview)
+response = b.post(url + "/apply",
+                  json={"mode": mode, "preview_revision": preview["preview_revision"]}, timeout=120)
+response.raise_for_status()
+receipt = wait()
+if receipt["state"] != "completed":
+    raise RuntimeError("Import was not applied; inspect receipt and refresh preview")
+print("Result:", receipt["result"])
+print("Replacement backup:", receipt.get("backup_url"))
+```
+
+`GET /api/v1/voiceprints/people` returns required `sort_initial` (A–Z or #) and full-pinyin/Latin ordered people; `/api/v1/tts/voices` uses the same ordering. The frontend passes that order through clone, document TTS, ASR rename/enrollment and video enrollment pickers. System hotword term order and historical speaker snapshots are unchanged.

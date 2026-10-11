@@ -184,7 +184,7 @@ test('long person and sample names remain fully readable without mobile overflow
  await expect(page.locator('.sample-summary')).toContainText(people[0].samples[0].name)
  await expect(page.locator('.sample-summary')).toContainText(people[0].name)
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
- await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'声纹库',exact:true}).click()
+ await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'资料库',exact:true}).click()
  const rename=page.getByRole('button',{name:`重命名 ${people[0].samples[0].name}`,exact:true})
  await rename.scrollIntoViewIfNeeded()
  await expect(rename).toBeVisible()

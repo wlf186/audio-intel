@@ -230,6 +230,8 @@ curl --fail-with-body -sS \
 | [安装与复原](docs/INSTALL.md) | Linux 前提、完整/部分安装、代理、目录和服务模式 |
 | [原生 Windows](docs/WINDOWS.md) | Windows 安装、生命周期、防火墙和排障 |
 | [文档 TTS](docs/DOCUMENT_TTS.md) | 文档导入、分段、合成、API 示例和流式下载 |
+| [资料库迁移](docs/LIBRARY.md) | 声纹与热词完整 ZIP 导出导入、合并/替换、拼音排序和 A–Z 索引 |
+| [工作台布局](docs/WORKSPACES.md) | PC 可拖动分栏、分别记住布局、紧凑资料库和视频图文阅读 |
 | [API](docs/API.md) | 原生异步与 OpenAI 兼容使用契约 |
 | [架构与能力](docs/ARCHITECTURE.md) | 管线、模型、设备、加速、队列、进度和取消 |
 | [局域网 HTTPS](docs/HTTPS.md) | 项目 CA、证书信任、SAN 更新和指纹核对 |

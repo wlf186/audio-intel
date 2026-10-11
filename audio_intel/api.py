@@ -555,9 +555,11 @@ def public_voiceprint_sample(sample: dict[str, Any]) -> dict[str, Any]:
 
 
 def public_voiceprint_person(person: dict[str, Any]) -> dict[str, Any]:
+    from .person_order import sort_initial
     samples = [public_voiceprint_sample(sample) for sample in person.get("samples", [])]
     return {
         "id": person["id"], "name": person["name"], "note": person.get("note"),
+        "sort_initial": sort_initial(person["name"]),
         "include_in_hotword_library": bool(person.get("include_in_hotword_library", True)),
         "created_at": person["created_at"],
         "updated_at": person["updated_at"], "sample_count": len(samples), "samples": samples,
@@ -997,6 +999,22 @@ def create_app() -> FastAPI:
                 await app.state.admission.release(kind, decision.reserved_bytes)
         response.headers["Server-Timing"] = f"total;dur={(time.monotonic() - started) * 1000:.1f}"
         return response
+    @app.middleware("http")
+    async def library_maintenance(request: Request, call_next: Any) -> Response:
+        library_route = request.url.path.startswith("/api/v1/library/")
+        modifying = request.method in {"POST", "PUT", "PATCH", "DELETE"} and not request.url.path.startswith("/api/v1/auth/")
+        sample_read = request.url.path.startswith("/api/v1/voiceprints/samples/")
+        library_submission = library_route and (request.url.path.endswith('/apply') or request.url.path == '/api/v1/library/imports') and request.method == 'POST'
+        guarded = (modifying or sample_read) and not library_submission and _admission_authenticated(request)
+        if guarded and app.state.library_changing:
+            return _problem_response(ApiProblem(409, "library_maintenance", "Library import is applying; retry shortly / 资料导入正在应用，请稍后重试"))
+        if guarded:
+            app.state.library_requests += 1
+        try:
+            return await call_next(request)
+        finally:
+            if guarded:
+                app.state.library_requests -= 1
     docs_assets = settings.frontend_dir / "docs-assets"
     app.mount("/docs-assets", StaticFiles(directory=docs_assets, check_dir=False), name="docs-assets")
 
@@ -1944,7 +1962,8 @@ def create_app() -> FastAPI:
         operation_id="listTtsVoices", responses={**AUTH_RESPONSES},
     )
     def voices(_: None = Depends(require_api_key)) -> VoiceListResponse:
-        return {"items": list_voices(), "preset_speakers": PRESET_SPEAKERS}
+        from .person_order import person_order
+        return {"items": sorted(list_voices(), key=person_order), "preset_speakers": PRESET_SPEAKERS}
 
     @app.post(
         "/api/v1/tts/voices", status_code=201, response_model=VoiceProfileResponse,
@@ -2002,11 +2021,12 @@ def create_app() -> FastAPI:
         "/api/v1/voiceprints/people", response_model=VoiceprintPeopleResponse,
         response_model_exclude_unset=True, tags=[VOICEPRINT_TAG],
         summary="列出声纹人员和样本 / List voiceprint people and samples",
-        description=bilingual("人员响应包含名字、可选备注、“加入热词库”开关及全部样本；TTS 只应选择可用样本。", "Each person includes its name, optional note, hotword-library switch, and samples; TTS clients must select an eligible sample."),
+        description=bilingual("按完整拼音或拉丁字母排序，同名按备注和 ID 排序；sort_initial 为 A–Z 或最后的 # 组。包含名字、可选备注、热词同步开关及全部样本；TTS 只应选择可用样本。", "Sorted by full pinyin or Latin spelling, with note and ID ties; sort_initial is A–Z or the final # group. Includes name, optional note, hotword switch and samples; TTS clients must select an eligible sample."),
         operation_id="listVoiceprintPeople", responses={**AUTH_RESPONSES},
     )
     def voiceprint_people(_: None = Depends(require_api_key)) -> VoiceprintPeopleResponse:
-        return {"items": [public_voiceprint_person(item) for item in list_voiceprint_people()]}
+        from .person_order import person_order
+        return {"items": [public_voiceprint_person(item) for item in sorted(list_voiceprint_people(), key=person_order)]}
 
     @app.post(
         "/api/v1/voiceprints/people", status_code=201, response_model=VoiceprintPersonResponse,
@@ -2361,7 +2381,8 @@ def create_app() -> FastAPI:
         roots = {settings.voiceprints_dir.resolve(), settings.voices_dir.resolve()}
         if not any(root in path.parents for root in roots) or not path.is_file():
             raise HTTPException(status_code=404, detail="Voiceprint sample audio is unavailable")
-        return FileResponse(path, media_type="audio/wav")
+        from .library_transfer import VoiceprintFileResponse
+        return VoiceprintFileResponse(path, sample_id)
 
     @app.get(
         "/api/v1/jobs", response_model=JobListResponse, response_model_exclude_unset=True,
@@ -2471,6 +2492,10 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Job not found")
         if job["state"] not in {"failed", "cancelled"}:
             raise HTTPException(status_code=409, detail="Only failed or cancelled jobs can be retried")
+        if (job.get("request") or {}).get("purpose") == "voiceprint_import":
+            sample = await run_in_threadpool(get_voiceprint_sample, job["request"].get("voiceprint_sample_id", ""))
+            if sample is None or sample.get("source_job_id") != job_id:
+                raise HTTPException(409, "The original enrollment sample is unavailable; upload a new sample")
         if (job.get("request") or {}).get("purpose") == "tts_document":
             from .document_api import validate_snapshot
             await run_in_threadpool(validate_snapshot, settings, job_id)
@@ -2817,6 +2842,8 @@ def create_app() -> FastAPI:
     register_document_routes(app, sys.modules[__name__])
     from .video_api import register as register_video_routes
     register_video_routes(app, sys.modules[__name__])
+    from .library_api import register as register_library_routes
+    register_library_routes(app, sys.modules[__name__])
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa(full_path: str) -> Response:

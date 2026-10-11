@@ -122,6 +122,28 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## v0.1.30 资料库迁移、拼音索引与 PC 工作台
+
+从正式发布的 v0.1.29 升级：**数据迁移：仅数据库**，首次启动前停止服务并创建 SQLite 一致快照，具体见下文。已完成资料库开发版 schema v13 迁移的实例无新增数据迁移，无需重复升级备份。更早版本须覆盖中间版本要求。同步 API 依赖锁、重建前端，并刷新原运行的 API、ASR/TTS supervisor 和 executor。
+
+English: From released v0.1.29, this is a **database-only migration**: stop and snapshot SQLite before first startup as described below. Library-development installations already at schema v13 require no additional migration or upgrade backup. Earlier installations must cover intervening requirements. Synchronize API locks, rebuild the UI and refresh all originally running API, supervisor and executor processes.
+
+### PC 工作台布局 / Desktop workspaces
+
+布局调整本身不增加 API、数据库或模型变更。桌面 ASR/TTS 新建页面默认 50/50、可拖动且参数展开，资料库移除重复标题，视频阅读采用截图与文字并排。
+
+新增 `audio-intel:workbench-layout:v1` localStorage，分别长期保存 ASR/TTS 分栏比例，退出登录和资料库替换后保留。恢复参数默认不清除布局；双击分隔线或其恢复按钮只重置当前工作台。原有草稿周期不变。操作和存储说明见[工作台布局](WORKSPACES.md)。
+
+English: The layout changes themselves add no API, database or model changes. Desktop creation panes default to 50/50 with expanded settings. The new localStorage key preserves independent ASR/TTS ratios across sign-out and library replacement. Parameter resets preserve layout; divider resets affect only the current workbench. Existing draft lifetimes are unchanged. See the workspace guide.
+
+### 资料库迁移与拼音索引 / Library transfer and ordering
+
+**数据迁移：仅数据库**，schema v12 → v13 新增独立资料导入记录表，不改写既有音频、历史任务或热词快照。首次启动新代码前停服并按上面的升级备份规则创建一致 SQLite 快照。新增 API 离线拼音依赖 pypinyin 0.55.0，需同步 API 环境的 Linux/Windows 哈希锁并重建前端；ASR/TTS/aligner 依赖和模型不变。
+
+主导航声纹库与热词库合并为“资料库”，旧 hash 链接仍兼容；所有人员下拉框按完整拼音排序。资料包导出/校验/合并不迁移历史；用户主动选择替换时才备份并替换库。替换备份持久存放于 data/library_backups，非升级 SQLite 备份。格式、限制、浏览器偏好清理和 A → B 步骤见 [资料库指南](LIBRARY.md)。
+
+English: Database-only v12 → v13 migration adds persisted library transfer receipts, preserving existing files/history. Stop and snapshot SQLite before first startup. Synchronize API dependency locks for pypinyin 0.55.0, rebuild the UI and refresh the previously running processes. The new Library navigation preserves legacy hashes. Explicit replacement creates a separate portable backup and clears library-related browser selections, preserving other drafts. See the library guide for transfer contracts.
+
 ## v0.1.29 视频编辑就绪回归与发布恢复
 
 从已部署的 v0.1.28、v0.1.27 源码或正式发布的 v0.1.26 升级：**数据迁移：无**，无需额外升级备份，不改写数据库、历史任务、视频、音频或声纹样本。模型、依赖、推理设置和浏览器存储生命周期不变。重建前端并按本地部署流程刷新 API、ASR/TTS supervisor 和 executor；更早版本须覆盖中间版本迁移要求。
@@ -287,7 +309,7 @@ ASR 改为固定的“新建转写 / 任务与结果”页签，TTS 改为“文
 - 从 schema v9 升级到 v10 前先停止服务并创建 SQLite 快照；该迁移仅涉及数据库，历史文件无需复制。从更旧版本升级需合并中间迁移的[备份要求](#upgrade-backup-scope)。v10 事务内重建人员组合唯一约束（规范化姓名＋备注），为样本增加人员内唯一的持久化名称，并校验外键；失败整体回滚。既有样本按升级前声纹库列表编号保存为“样本 N”，后续增删不会重新编号。任务、别名、音频路径与历史快照保持不变；回退须使用升级前备份，不能让旧版直接操作 v10 数据库。
 - 样本上传新增可选 `name` 基名、样本响应新增 `name`，重命名使用样本 PATCH；所有状态均可改名。新建时名称冲突自动追加序号，手动改名冲突返回 `409`。人员组合重复同样返回 `409`，旧声音档案创建遇到同名多人时返回 `409`。TTS 新请求增加人员备注和样本名称快照，兼容旧请求、幂等记录及序列契约 v1。
 - 人员和样本编辑错误现在显示在对应弹窗内；编辑草稿仅留在当前弹窗状态，关闭或刷新即丢弃。现有浏览器偏好和 ASR/TTS 内容草稿的保存周期不变。
-- API 启动时自动将 SQLite 迁移到当前 schema v12。v8 新增的声纹人名系统词表在 v9 更名为“声纹库人名（全名）”，稳定 ID 不变；同时新增“声纹库人名（去姓）”，为已开启热词同步的既有人员回填可靠提取的两字中文名或英文首名。若升级前已有词表占用新系统名称，会保留内容并追加“原自定义”后缀；历史任务仍保留提交时的词表名称和内容。上述数据迁移仅涉及数据库，需在启动新版本前创建 SQLite 快照；已经使用当前 schema 且明确无其他数据迁移的更新无需额外备份。完整范围按[升级备份规则](#upgrade-backup-scope)判断。
+- API 启动时自动将 SQLite 迁移到当前 schema v13。v8 新增的声纹人名系统词表在 v9 更名为“声纹库人名（全名）”，稳定 ID 不变；同时新增“声纹库人名（去姓）”，为已开启热词同步的既有人员回填可靠提取的两字中文名或英文首名。若升级前已有词表占用新系统名称，会保留内容并追加“原自定义”后缀；历史任务仍保留提交时的词表名称和内容。上述数据迁移仅涉及数据库，需在启动新版本前创建 SQLite 快照；已经使用当前 schema 且明确无其他数据迁移的更新无需额外备份。完整范围按[升级备份规则](#upgrade-backup-scope)判断。
 - 历史 ASR/TTS 任务、旧声音档案和既有声纹样本保持可读；人员名字、备注及开关变化不会回写历史任务或已提交热词快照。
 - 浏览器鉴权改用进程内会话 Cookie，升级或重启后需要重新输入 API Key。
 - `/api/v1/health` 现在是公开最小探针；原详细结构迁移到受保护的 `/api/v1/system`。监控脚本如依赖硬件、worker、模型或路径字段必须切换端点并增加 Bearer Header。

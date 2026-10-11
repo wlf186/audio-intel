@@ -1,4 +1,4 @@
-.asr-workspace.workbench{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr);gap:16px;padding:24px;min-width:0;align-content:start}
+.asr-workspace.workbench{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr);gap:12px;padding:20px;min-width:0;align-content:start}
 .asr-workspace [hidden]{display:none!important}
 .asr-heading h1{margin:0;font-size:25px;color:var(--yellow)}
 .asr-tabs{display:flex;border-bottom:1px solid var(--line);gap:8px}
@@ -7,16 +7,20 @@
 .asr-tabs button:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
 .asr-workspace .asr-create{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:24px;padding:0;border:0;background:none;box-shadow:none;min-height:0;overflow:visible}
 .asr-upload,.asr-settings{min-width:0;overflow-wrap:anywhere}
-.asr-upload{padding:20px;border:1px solid var(--line);align-self:start;background:var(--panel)}
-.asr-upload .dropzone{margin:0;min-height:180px;height:auto;padding:24px 12px}
+.asr-upload{padding:16px;border:1px solid var(--line);align-self:start;background:var(--panel);max-height:100%;overflow:auto}
+.asr-upload .dropzone{margin:0;min-height:132px;height:auto;padding:20px 12px}
 .asr-upload .dropzone b{overflow-wrap:anywhere;max-width:100%}
 .asr-upload p{color:var(--muted);line-height:1.6}
-.asr-file-info{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-top:16px}
+.asr-file-info{display:flex;gap:12px;align-items:center;justify-content:space-between}
 .asr-file-info span{min-width:0}
+.asr-file-info b,.asr-file-info small{display:block;overflow-wrap:anywhere}
+.asr-file-info small{margin-top:6px;color:var(--muted);font-size:12px}
+.asr-file-actions{display:flex;gap:8px;flex-shrink:0}
+.asr-upload>p{font-size:12px;margin:10px 0 0}
 .asr-file-info button{flex-shrink:0}
 .asr-settings{border:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
 .asr-settings-toggle{padding:16px;text-align:left;background:transparent;color:var(--text);border:0;border-bottom:1px solid var(--line);font:inherit;min-height:44px}
-.asr-settings-body{padding:16px;overflow:auto;min-height:0}
+.asr-settings-body{padding:14px;overflow:auto;min-height:0;flex:1}
 .asr-settings-body label{display:block;margin:12px 0}
 .asr-settings-body select{width:100%;margin-top:6px}
 .asr-settings-body .toggle-label{display:grid;grid-template-columns:24px 1fr;gap:8px}
@@ -50,7 +54,7 @@
 .asr-workspace .segment-select input{width:18px;height:18px;margin:0;cursor:pointer}
 .asr-workspace .segments article{grid-template-columns:44px 110px 118px minmax(0,1fr) 44px}
 .asr-task-status{padding:16px}
-@media(min-width:1200px){.asr-settings-toggle{pointer-events:none}.asr-workspace{height:100%}.asr-results{overflow:hidden}}
+@media(min-width:1200px){.asr-results{overflow:hidden}}
 @media(max-width:1199px){
  .asr-workspace.workbench{height:auto;min-height:100%;grid-template-rows:auto auto auto}
  .asr-workspace .asr-create{grid-template-columns:minmax(0,1fr)}

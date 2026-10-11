@@ -526,6 +526,7 @@ OPENAPI_TAGS = [
     {"name": "ASR / 语音识别", "description": "原生异步 ASR 任务。 / Native asynchronous transcription jobs."},
     {"name": "TTS / 语音合成", "description": "预置音色、声音克隆与 1.7B 音色设计。 / Preset voices, voice cloning, and 1.7B voice design."},
     {"name": "Voiceprints / 声纹库", "description": "人员、样本、入库和受保护音频。 / People, samples, imports, and protected audio."},
+    {"name": "Library / 资料库", "description": "声纹与热词完整迁移、预览、合并、替换和备份。 / Complete voiceprint/hotword transfer, preview, merge, replacement, and backup."},
     {"name": "Jobs / 任务", "description": "状态、进度、结果、取消、重试、文件和 SSE。 / Status, progress, results, cancellation, retry, media, and SSE."},
     {"name": "OpenAI compatibility / OpenAI 兼容", "description": "同步兼容接口；长任务优先使用原生异步 API。 / Synchronous compatibility endpoints; prefer native jobs for long work."},
 ]
@@ -1283,6 +1284,12 @@ def enrich_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
         for method, operation in methods.items():
             if method not in {"get", "head", "post", "put", "patch", "delete"}:
                 continue
+            if operation.get("operationId") == "importLibrary":
+                for parameter in operation.get("parameters", []):
+                    if parameter["name"] == "Idempotency-Key":
+                        parameter["required"] = True
+                        parameter["schema"] = {"type": "string", "minLength": 8, "maxLength": 128}
+                        parameter["description"] = "每次逻辑上传生成一个键，重试时复用 / One key per logical upload; reuse on retries"
             request_body = operation.get("requestBody", {})
             for media in request_body.get("content", {}).values():
                 if media.get("schema", {}).get("format") == "binary":
@@ -1299,7 +1306,7 @@ def enrich_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
                 if not str(status).startswith("2"):
                     continue
                 for content_type, media in response.get("content", {}).items():
-                    if content_type in {"text/event-stream", "application/octet-stream", "application/pdf"} or content_type.startswith(("audio/", "video/", "image/")):
+                    if content_type in {"text/event-stream", "application/octet-stream", "application/pdf", "application/zip"} or content_type.startswith(("audio/", "video/", "image/")):
                         continue
                     response_schema = media.get("schema", {})
                     ref_name = response_schema.get("$ref", "").rsplit("/", 1)[-1]

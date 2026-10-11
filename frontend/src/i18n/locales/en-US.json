@@ -175,6 +175,11 @@
     "mainNavigation": "Main navigation",
     "workspace": "Workspace",
     "pages": {
+        "library": {
+          "full": "Library",
+          "medium": "Library",
+          "short": "Library"
+        },
       "asr": {"full": "Transcription", "medium": "Transcribe", "short": "ASR"},
       "tts": {"full": "Speech synthesis", "medium": "Synthesize", "short": "TTS"},
       "hotwords": {"full": "Hotword library", "medium": "Hotwords", "short": "Hotwords"},
@@ -518,5 +523,76 @@
       "length": "Split with a target of {{count, number}} characters.",
       "unknown": "Preview ready. Review the split basis shown for each section."
     }
+  },
+  "library": {
+    "title": "Library",
+    "subtitle": "Manage voiceprints and hotwords together, and move them to another server in one archive.",
+    "export": "Export full archive",
+    "import": "Import full archive",
+    "sections": "Library sections",
+    "alphabet": "Person alphabet index",
+    "jumpLetter": "Jump to people starting with {{letter}}",
+    "importTitle": "Import library",
+    "packageHelp": "Archives contain people, sample audio, transcripts, word timing and custom hotwords. System name lists are regenerated from restored people. Job history, models and browser preferences are not transferred.",
+    "loadingImports": "Loading import receipts…",
+    "loadFailed": "Could not load imports",
+    "recent": "Recent imports",
+    "newImport": "Upload a new archive",
+    "archiveFile": "Complete archive (ZIP)",
+    "upload": "Upload and validate",
+    "uploading": "Library archive",
+    "mode": "Import mode",
+    "modes": {
+      "merge": "Merge and keep existing data",
+      "replace": "Replace existing libraries"
+    },
+    "modeHelp": {
+      "merge": "Add people and distinct samples, append new terms to matching lists, and retain existing person settings.",
+      "replace": "Remove both current libraries and restore the archive. Wait for jobs to finish; a complete backup is saved first."
+    },
+    "previewLoading": "Calculating import changes…",
+    "previewFailed": "Could not preview the import; review the error and retry",
+    "preview": "Import preview",
+    "contents": "Content",
+    "inPackage": "Archive",
+    "existing": "Existing",
+    "added": "Added",
+    "removed": "Removed",
+    "counts": {
+      "people": "People",
+      "samples": "Samples",
+      "hotword_lists": "Custom lists"
+    },
+    "mergeSummary": "Merge {{people}} people and {{lists}} lists; skip {{skipped}} duplicate samples and rename {{renamed}} colliding samples.",
+    "discard": "Discard staged archive",
+    "apply": "Apply import",
+    "replaceTitle": "Replace the entire library?",
+    "replaceWarning": "All existing people, samples and custom hotwords will be removed and replaced by the archive. A complete backup is saved first. Job history is retained. Old library selections, reference range preferences and hotword editing drafts are cleared; TTS text and ASR input drafts are preserved.",
+    "replaceConfirm": "Back up and replace libraries",
+    "downloadBackup": "Download previous library backup",
+    "completed": "Import completed; voiceprints and hotwords are synchronized.",
+    "downloadRequested": "Download requested. Check your browser downloads.",
+    "downloadFailed": "Download failed. Please retry.",
+    "downloadWindow": "Library archive download",
+    "states": {
+      "queued": "Awaiting validation",
+      "validating": "Validating",
+      "ready": "Ready to preview and apply",
+      "applying": "Applying archive",
+      "completed": "Completed",
+      "failed": "Validation failed",
+      "expired": "Staged archive removed"
+    },
+    "resultSummary": "Added {{people}} people, {{samples}} samples and {{lists}} hotword lists."
+  },
+  "workspaceSplit": {
+    "resize": "Resize input and settings panes",
+    "ratio": "Input {{left}}%, settings {{right}}%",
+    "help": "Drag to resize; use arrow keys, Shift for larger steps, and Home/End for limits. Double-click to reset to equal widths.",
+    "reset": "Reset to equal widths",
+    "changeFile": "Change file",
+    "playbackPosition": "Playback position (seconds)",
+    "waveform": "Waveform",
+    "enlargeFrame": "Enlarge screenshot"
   }
 }
