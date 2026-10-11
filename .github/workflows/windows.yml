@@ -3,6 +3,7 @@ name: Native Windows smoke
   push:
     branches:
     - main
+    - ci/**
     tags:
     - v*
   pull_request: null

@@ -48,7 +48,7 @@ for (const item of cases) {
 @pytest.mark.parametrize("platform", ["linux", "windows"])
 def test_full_checks_remain_on_main_and_tags_with_distinct_reports(platform):
     workflow = yaml.safe_load((ROOT / ".github/workflows" / f"{platform}.yml").read_text(encoding="utf-8"))
-    assert workflow["on"]["push"] == {"branches": ["main"], "tags": ["v*"]}
+    assert workflow["on"]["push"] == {"branches": ["main", "ci/**"], "tags": ["v*"]}
     assert "pull_request" in workflow["on"]
     artifacts = []
     for kind in ("backend", "browser"):
