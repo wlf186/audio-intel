@@ -10,8 +10,9 @@
 set -e
 # 当前版本的入口会自动加载 .env；外部显式环境变量仍优先。
 ./service.sh stop all
-# 需要备份时，在此按下文执行；备份失败则停止升级。
 git pull --ff-only
+# 仅更新源码不会迁移数据库；可取得新版备份工具。
+# 在 setup/start 或任何数据迁移前完成下文要求的备份；失败则停止。
 ./service.sh setup all
 ./service.sh start all
 ```
@@ -39,7 +40,7 @@ Windows 使用 `service.cmd`，备份范围遵循同一规则；命令失败时�
 
 **不要仅因 schema 变化就全量复制数据。** 先核实跨版本迁移影响；没有持久化数据迁移时不创建额外升级备份，仅数据库迁移只创建 SQLite 一致快照，不复制视频、音频和任务文件。涉及历史文件时只补充受影响文件；确实需要时才选择 `full`。不要为了升级每次复制几十 GB 的媒体。日常备份与临时升级备份分别管理。
 
-服务入口不会自动创建或删除升级备份。使用项目自带的标准库工具，必须明确指定实际数据目录和范围。工具不从客户端 shell 推断服务的 `.env` 配置。先记录实际目录、确认无未完成工作、停服并确认进程树退出，在新版本首次启动前运行：
+服务入口不会自动创建或删除升级备份。使用项目自带的标准库工具，必须明确指定实际数据目录和范围。工具不从客户端 shell 推断服务的 `.env` 配置。先记录实际目录、确认无未完成工作、停服并确认进程树退出。旧版本尚未包含工具时，先仅执行 `git pull --ff-only` 获取源码，再创建备份；源码更新本身不会迁移数据库。必要备份须在新版本 `setup`、`start` 或其他迁移操作前成功完成：
 
 Linux：
 
@@ -74,7 +75,7 @@ if ($LASTEXITCODE -ne 0) { throw "Backup cleanup failed; resolve before closing 
 
 回退必须停服，并使用同一时点的数据库及受影响文件。新版本已处理任务或修改文件后，不能直接用旧数据库覆盖当前状态。验收通过并清理临时备份后，该临时回退点不再存在；长期恢复由独立日常备份承担。
 
-English: Choose the smallest necessary upgrade backup scope: no extra backup without persistent migration, a consistent SQLite-only snapshot for database changes, and affected files only for file migrations. Do not copy large media merely because the schema changes. Use `scripts/upgrade_backup.py create --data-dir <actual-directory> --scope database|full` after stopping all users of that directory. Record its exact output path. After complete local deployment acceptance—including database integrity, history/files, functionality, and final API/supervisor/executor identities—**promptly remove every temporary backup from this upgrade**, including failed attempts, using `cleanup <recorded-directory> --verified`. Failed or incomplete acceptance retains rollback material. The tool validates purpose/path markers and refuses root, outside and symlink directories. Daily and library-replacement backups remain separately managed. Resolve cleanup failures before closing maintenance.
+English: Choose the smallest necessary upgrade backup scope: no extra backup without persistent migration, a consistent SQLite-only snapshot for database changes, and affected files only for file migrations. Do not copy large media merely because the schema changes. Use `scripts/upgrade_backup.py create --data-dir <actual-directory> --scope database|full` after stopping all users of that directory. If the old checkout lacks this tool, first pull only the new source, then back up before setup, startup or any migration; pulling source does not migrate data. Record its exact output path. After complete local deployment acceptance—including database integrity, history/files, functionality, and final API/supervisor/executor identities—**promptly remove every temporary backup from this upgrade**, including failed attempts, using `cleanup <recorded-directory> --verified`. Failed or incomplete acceptance retains rollback material. The tool validates purpose/path markers and refuses root, outside and symlink directories. Daily and library-replacement backups remain separately managed. Resolve cleanup failures before closing maintenance.
 
 ## Local development and deployment
 
