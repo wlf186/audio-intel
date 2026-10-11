@@ -101,10 +101,13 @@ test('global HTTPS certificate help opens from the header',async({page})=>{
  expect(errors).toEqual([])
 })
 
-test('summary SSE stays idle and task details load once with retry states',async({page})=>{
+for(const width of [1440,390])test(`summary SSE stays idle and task details load once with retry states at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900})
  const errors:string[]=[]
  let jobsCalls=0
  let detailCalls=0
+ let releaseDetail:()=>void=()=>undefined
+ const detailGate=new Promise<void>(resolve=>{releaseDetail=resolve})
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  await page.addInitScript(()=>{
@@ -123,11 +126,13 @@ test('summary SSE stays idle and task details load once with retry states',async
  const summary={id:'summary-asr',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'按需详情.wav',created_at:now,updated_at:now,compute_device:'cpu',source_url:'data:audio/wav;base64,'+testWave().toString('base64')}
  const detail={...summary,request:{compute_device:'cpu',language:'Chinese',align:true},result:{text:'按需加载成功',language:'Chinese',duration:1,timestamp_precision:'segment',segments:[],speakers:[],artifacts:[]}}
  await routeJobList(page,route=>{jobsCalls+=1;return route.fulfill({json:{items:[summary],count:1,total:1,limit:100,offset:0,has_more:false}})})
- await page.route(url=>url.pathname==='/api/v1/jobs/summary-asr',async route=>{detailCalls+=1;if(detailCalls===1){await new Promise(resolve=>setTimeout(resolve,250));return route.fulfill({status:503,json:{detail:'temporary'}})}return route.fulfill({json:detail})})
+ await page.route(url=>url.pathname==='/api/v1/jobs/summary-asr',async route=>{detailCalls+=1;if(detailCalls===1){await detailGate;return route.fulfill({status:503,json:{detail:'temporary'}})}return route.fulfill({json:detail})})
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{default_model:'qwen3-asr-0.6b',models:[],hotword_library:{supported:true,max_lists:100,max_terms_per_list:200,max_selected_lists:8,max_selected_terms:500,max_prompt_chars:8000,max_name_chars:80,max_term_chars:64},speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15},events:{sse:true,global_url:'/api/v1/events',heartbeat_seconds:15,history_replay:false,global_mode:'summary_delta'}}}))
- await page.goto('/#asr')
- await showAsrResults(page)
- await expect(page.getByRole('heading',{name:'正在加载转写结果'})).toBeVisible()
+ try{
+  await page.goto('/#asr')
+  await showAsrResults(page)
+  await expect(page.getByRole('heading',{name:'正在加载转写结果'})).toBeVisible()
+ }finally{releaseDetail()}
  await expect(page.getByRole('heading',{name:'转写结果加载失败'})).toBeVisible()
  await page.getByRole('button',{name:'重新加载'}).click()
  await expect(page.locator('.result-head')).toContainText('按需详情.wav')
