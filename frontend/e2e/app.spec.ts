@@ -1752,7 +1752,13 @@ test('view result reveals ASR and TTS result panels on mobile',async({page})=>{
  expect(errors).toEqual([])
 })
 
-test('task history paginates on the server and pins an old selected result',async({page})=>{
+for(const width of [1440,390])for(const delayed of [false,true])test(`task history paginates on the server and pins an old selected result at ${width}px (${delayed?'held':'normal'} filter response)`,async({page})=>{
+ await page.setViewportSize({width,height:900})
+ const errors:string[]=[]
+ page.on('pageerror',error=>errors.push(error.message))
+ page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+ let releaseFilter:()=>void=()=>undefined
+ const filterGate=new Promise<void>(resolve=>{releaseFilter=resolve})
  const base=Date.parse('2026-08-25T12:00:00+00:00')
  const jobs=Array.from({length:61},(_,index)=>({
   id:`history-${String(index+1).padStart(2,'0')}`,kind:index%2===0?'asr':'tts',state:'succeeded',stage:'completed',progress:1,
@@ -1762,9 +1768,10 @@ test('task history paginates on the server and pins an old selected result',asyn
  const sorted=[...jobs].sort((left,right)=>Date.parse(right.created_at)-Date.parse(left.created_at))
  const requests:string[]=[]
  await page.route('**/api/v1/auth/session',route=>route.fulfill({json:{required:false,authenticated:true}}))
- await routeJobList(page,route=>{
+ await routeJobList(page,async route=>{
   const url=new URL(route.request().url());requests.push(url.search)
   const kind=url.searchParams.get('kind'),state=url.searchParams.get('state'),query=(url.searchParams.get('q')||'').toLowerCase()
+  if(delayed&&kind==='tts'&&query==='history-58')await filterGate
   const filtered=sorted.filter(job=>(!kind||job.kind===kind)&&(!state||job.state===state)&&(!query||job.id.includes(query)||job.display_name.toLowerCase().includes(query)))
   const limit=Number(url.searchParams.get('limit')||100),offset=Number(url.searchParams.get('offset')||0),items=filtered.slice(offset,offset+limit)
   return route.fulfill({json:{items,count:items.length,total:filtered.length,limit,offset,has_more:offset+items.length<filtered.length}})
@@ -1777,7 +1784,11 @@ test('task history paginates on the server and pins an old selected result',asyn
  await page.goto('/#jobs')
  await expect(page.locator('.table-row')).toHaveCount(25)
  await expect(page.getByText('第 1 / 3 页 · 共 61 条')).toBeVisible()
- await page.getByRole('button',{name:'第 3 页'}).click()
+ if(width===390){
+  await page.getByRole('button',{name:'下一页',exact:true}).click()
+  await expect(page.getByText('第 2 / 3 页 · 共 61 条')).toBeVisible()
+  await page.getByRole('button',{name:'下一页',exact:true}).click()
+ }else await page.getByRole('button',{name:'第 3 页'}).click()
  await expect(page.locator('.table-row')).toHaveCount(11)
  await expect(page.getByText('第 3 / 3 页 · 共 61 条')).toBeVisible()
  const oldRow=page.locator('.table-row').filter({has:page.getByText('历史任务 1',{exact:true})})
@@ -1790,10 +1801,26 @@ test('task history paginates on the server and pins an old selected result',asyn
  await page.getByPlaceholder('任务名称或 ID').fill('history-58')
  await expect(page.locator('.table-row')).toHaveCount(1)
  await expect(page.locator('.table-row')).toContainText('历史任务 58')
- await page.locator('.filter').getByRole('button',{name:'TTS'}).click()
- await expect(page.locator('.table-row')).toHaveCount(1)
+ const filteredReady=page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/v1/jobs'&&url.searchParams.get('q')==='history-58'&&url.searchParams.get('kind')==='tts'})
+ try{
+  await page.locator('.filter').getByRole('button',{name:'TTS'}).click()
+  if(delayed){
+   await expect(page.locator('.jobs-table')).toHaveAttribute('aria-busy','true')
+   // The unchanged row count belongs to the previous response until filtering finishes.
+   await expect(page.locator('.table-row')).toHaveCount(1)
+   releaseFilter()
+  }
+  const response=await filteredReady
+  expect(response.ok()).toBe(true)
+  expect(await response.finished()).toBeNull()
+  await expect(page.locator('.jobs-table')).toHaveAttribute('aria-busy','false')
+  await expect(page.locator('.table-row')).toHaveCount(1)
+  await expect(page.locator('.table-row')).toContainText('历史任务 58')
+ }finally{releaseFilter();await filteredReady.catch(()=>undefined)}
  expect(requests.some(value=>value.includes('limit=25')&&value.includes('offset=50'))).toBe(true)
  expect(requests.some(value=>value.includes('q=history-58')&&value.includes('kind=tts'))).toBe(true)
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+ expect(errors).toEqual([])
 })
 
 test('task lists stay newest-first and retain an older selected task',async({page})=>{
