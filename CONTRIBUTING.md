@@ -76,6 +76,31 @@ For changes involving text files, filesystem operations, process lifecycle, serv
 - Wait for the observable state an assertion depends on. Loaded waveform data does not guarantee a painted canvas. For virtual-clock tests, pause time before navigation and advance it deliberately after the required UI state is ready. Preserve meaningful assertions rather than relying on fixed sleeps or machine speed.
 - Turn demonstrated platform defects into focused regression cases, using local emulation where practical and native Windows checks for the remaining behavior. See the [document TTS validation record](docs/DOCUMENT_TTS_VALIDATION.md) for the checkpoint, session-clock, canvas and rollback incidents and their validation limits.
 
+### Parallel CI and early Windows feedback
+
+Linux and native Windows each run independent `backend` and `browser` jobs. Both jobs install the locked API runtime and build the frontend in separate runners. Backend jobs run the complete pytest suite, lock verification and dependency audits; browser jobs run service lifecycle/smoke checks and the complete Playwright suite. Linux retains its scheduled model-runtime audit. The stable `linux` and `windows` summary checks require **both** jobs to succeed: failure, cancellation, a skipped job or a missing result cannot pass. A backend failure does not prevent browser diagnostics.
+
+The complete workflows run for `main`, `v*` tags, pull requests, and `ci/**` development branches. Start native Windows feedback with the first reviewable development change, before release preparation. When PR creation is unavailable, pushing a `ci/**` branch provides the same full checks without changing token permissions. Prefer an ordinary feature branch for PR-only validation to avoid duplicate branch/PR runs. All exact-SHA main and tag release gates remain required.
+
+The optional **Run workflow → stability_check** input adds five executions of every `@timing` browser test after the full suite. Alternatively, push the candidate to a `ci/stability/<topic>` branch to run the same extra checks on both platforms. This also works with credentials that permit workflow-file pushes but not Actions dispatch or PR creation. These runs supplement full coverage; they never replace the main/tag gates. A failure in any repetition fails the job; automatic test retries remain disabled.
+
+```bash
+# Against a separately started, isolated mock service; never the normal deployment.
+AUDIO_INTEL_TEST_BASE_URL=http://127.0.0.1:20961 corepack pnpm@10.15.1 --dir frontend test:e2e --grep @timing --repeat-each=5
+# Optional remote stability run, after committing the candidate:
+git push origin HEAD:ci/stability/my-change
+```
+
+Each job always uploads JUnit statistics as `<platform>-<job>-reports`; failed jobs additionally upload `<platform>-<job>-logs`, including available Playwright screenshots, traces and error contexts. Backend results are under `logs/ci/backend.xml`; browser results are `browser.xml`, with optional `stability.xml` alongside them. Stability traces use `logs/playwright-stability/` so they do not erase full-suite traces. Browser installation and test execution are separate steps. Compare job/step durations and test/skip counts; report queue wait separately. Parallel jobs add a small duplicate setup cost and require runner capacity, so measured wall-clock improvement is not a fixed guarantee.
+
+### Deterministic asynchronous browser checks
+
+Use the shared `responseGate` fixture for controlled delays: create a gate, `await gate.hold()` in the intended route handler, wait for `gate.arrived` and the pending UI, then `gate.release()` at the precise point required by the scenario. Shared teardown releases gates before route-draining hooks, including after an assertion fails. Match the request method, path, parameters/body as appropriate; an unchanged row count or closed dialog alone cannot establish completion of a new request.
+
+Register response waits **before** the action, then require response completion and the resulting UI state. For response-order tests, hold the old response until the new result renders, release it, and assert the result remains correct. For polling, pause the browser clock before navigation, explicitly disable SSE in the fixture, advance an entire polling interval, and verify a poll actually completed before checking persistence. Keep real-time observation windows when elapsed time is the behavior under test (for example, the 5.2-second SSE idle assertion); explain such waits rather than replacing them with an immediate negative assertion.
+
+Tag readiness, response-order and polling regressions with `@timing`, including desktop and 390 px cases where applicable. Keep console-error, overflow, original deadline and request-count assertions. SQLite snapshot readers must close their connections before deleting files; a committed library-import receipt precedes retired-file cleanup and release of the write gate. Keep the existing backup, cancellation and held-cleanup regressions in the full backend suite. Repetitions provide additional evidence; controlled timing and explicit resource ownership address the cause.
+
 ### Clean-checkout validation
 
 Validate affected documentation and build outputs from a clean checkout or source archive of the candidate, with test state and build artifacts isolated from the running service. A clean `git status` alone does not rule out ignored files masking missing release content. Public document links must resolve to files shipped in Git and valid section anchors; the existing documentation tests check file existence and Git inclusion, so also check anchors when adding or changing them. An earlier release candidate linked to an ignored local skill file that existed only in the development workspace. Keep public guidance self-contained and let local tooling reference it.
@@ -180,7 +205,7 @@ From an authenticated GitHub CLI session, inspect a failing run and download its
 ```bash
 gh run view 38014197054 --repo wlf186/audio-intel --log-failed
 gh run download 38014197054 --repo wlf186/audio-intel --name windows-logs --dir tmp/ci-evidence
-# Linux workflow artifact name: linux-logs. Older runs may have no retained trace.
+# Current artifacts: linux-browser-logs / windows-browser-logs. Older runs used linux-logs / windows-logs.
 corepack pnpm@10.15.1 --dir frontend exec playwright show-trace ../tmp/ci-evidence/playwright/TEST_DIRECTORY/trace.zip
 ```
 

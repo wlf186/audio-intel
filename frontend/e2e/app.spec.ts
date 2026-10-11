@@ -9,7 +9,7 @@ function routeJobList(page:Page,handler:(route:Route)=>Promise<unknown>|unknown)
 test.beforeEach(async({page})=>{await page.route('**/api/v1/capabilities',async route=>{const body=await capabilitiesFor(page);body.events={...body.events,sse:false};await route.fulfill({json:body})})})
 test.afterEach(async({page})=>{await page.unrouteAll({behavior:'ignoreErrors'})})
 
-for(const width of [1440,390])for(const delayed of [false,true])test(`CPU-only deployment defaults to CPU and disables GPU controls at ${width}px (${delayed?'delayed':'normal'} capabilities)`,async({page},testInfo)=>{
+for(const width of [1440,390])for(const delayed of [false,true])test(`CPU-only deployment defaults to CPU and disables GPU controls at ${width}px (${delayed?'delayed':'normal'} capabilities)`,{tag:'@timing'},async({page},testInfo)=>{
  await page.setViewportSize({width,height:900})
  let releaseCapabilities:()=>void=()=>undefined
  const capabilityGate=new Promise<void>(resolve=>{releaseCapabilities=resolve})
@@ -101,13 +101,12 @@ test('global HTTPS certificate help opens from the header',async({page})=>{
  expect(errors).toEqual([])
 })
 
-for(const width of [1440,390])test(`summary SSE stays idle and task details load once with retry states at ${width}px`,async({page})=>{
+for(const width of [1440,390])test(`summary SSE stays idle and task details load once with retry states at ${width}px`,{tag:'@timing'},async({page,responseGate},testInfo)=>{
  await page.setViewportSize({width,height:900})
  const errors:string[]=[]
  let jobsCalls=0
  let detailCalls=0
- let releaseDetail:()=>void=()=>undefined
- const detailGate=new Promise<void>(resolve=>{releaseDetail=resolve})
+ const detailGate=responseGate()
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  await page.addInitScript(()=>{
@@ -126,25 +125,26 @@ for(const width of [1440,390])test(`summary SSE stays idle and task details load
  const summary={id:'summary-asr',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'按需详情.wav',created_at:now,updated_at:now,compute_device:'cpu',source_url:'data:audio/wav;base64,'+testWave().toString('base64')}
  const detail={...summary,request:{compute_device:'cpu',language:'Chinese',align:true},result:{text:'按需加载成功',language:'Chinese',duration:1,timestamp_precision:'segment',segments:[],speakers:[],artifacts:[]}}
  await routeJobList(page,route=>{jobsCalls+=1;return route.fulfill({json:{items:[summary],count:1,total:1,limit:100,offset:0,has_more:false}})})
- await page.route(url=>url.pathname==='/api/v1/jobs/summary-asr',async route=>{detailCalls+=1;if(detailCalls===1){await detailGate;return route.fulfill({status:503,json:{detail:'temporary'}})}return route.fulfill({json:detail})})
+ await page.route(url=>url.pathname==='/api/v1/jobs/summary-asr',async route=>{detailCalls+=1;if(detailCalls===1){await detailGate.hold();return route.fulfill({status:503,json:{detail:'temporary'}})}return route.fulfill({json:detail})})
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{default_model:'qwen3-asr-0.6b',models:[],hotword_library:{supported:true,max_lists:100,max_terms_per_list:200,max_selected_lists:8,max_selected_terms:500,max_prompt_chars:8000,max_name_chars:80,max_term_chars:64},speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true},limits:{max_clone_reference_seconds:15},events:{sse:true,global_url:'/api/v1/events',heartbeat_seconds:15,history_replay:false,global_mode:'summary_delta'}}}))
  try{
   await page.goto('/#asr')
   await showAsrResults(page)
   await expect(page.getByRole('heading',{name:'正在加载转写结果'})).toBeVisible()
- }finally{releaseDetail()}
+ }finally{detailGate.release()}
  await expect(page.getByRole('heading',{name:'转写结果加载失败'})).toBeVisible()
  await page.getByRole('button',{name:'重新加载'}).click()
  await expect(page.locator('.result-head')).toContainText('按需详情.wav')
  await expect(page.locator('.waveform-empty')).toHaveAttribute('aria-label','音频播放位置')
  await page.evaluate(job=>{const target=window as typeof window&{emitJobEvent:(name:string,data:unknown)=>void};target.emitJobEvent('snapshot',{jobs:[job],workers:[]});target.emitJobEvent('heartbeat',{})},summary)
+ // Observe a real interval longer than the 5-second fallback poll.
  await page.waitForTimeout(5200)
  expect(jobsCalls).toBe(1)
  expect(detailCalls).toBe(2)
- await page.screenshot({path:'/tmp/audio-intel-summary-detail-desktop.png',fullPage:false})
+ await page.screenshot({path:testInfo.outputPath('summary-detail-desktop.png'),fullPage:false})
  await page.setViewportSize({width:390,height:844})
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
- await page.screenshot({path:'/tmp/audio-intel-summary-detail-mobile.png',fullPage:false})
+ await page.screenshot({path:testInfo.outputPath('summary-detail-mobile.png'),fullPage:false})
  expect(errors.filter(message=>!message.includes('503 (Service Unavailable)'))).toEqual([])
  expect(errors.filter(message=>message.includes('503 (Service Unavailable)'))).toHaveLength(1)
 })
@@ -319,7 +319,21 @@ test('TTS 1.7B exposes VoiceDesign instructions and applies the model GPU gate',
  expect(errors).toEqual([])
 })
 
-test('TTS draft and clone mode survive background polling',async({page})=>{
+for(const width of [1440,390])test(`TTS draft and clone mode survive background polling at ${width}px`,{tag:'@timing'},async({page})=>{
+ await page.setViewportSize({width,height:900})
+ await page.clock.install({time:new Date('2026-10-11T00:00:00Z')})
+ await page.clock.pauseAt(new Date('2026-10-11T00:00:01Z'))
+ const capability=await capabilitiesFor(page);capability.events.sse=false
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:capability}))
+ let jobsCalls=0
+ await routeJobList(page,route=>{jobsCalls++;return route.fulfill({json:{items:[],count:0,total:0,limit:100,offset:0,has_more:false}})})
+ const pollJobs=async()=>{
+  const previous=jobsCalls
+  const response=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v1/jobs')
+  await page.clock.runFor(5000)
+  expect(await (await response).finished()).toBeNull()
+  expect(jobsCalls).toBeGreaterThan(previous)
+ }
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
@@ -328,18 +342,20 @@ test('TTS draft and clone mode survive background polling',async({page})=>{
  await page.reload()
  const text=page.locator('.text-editor textarea')
  await text.fill('')
- await page.waitForTimeout(4500)
+ await pollJobs()
  await expect(text).toHaveValue('')
+ await expandTtsSettings(page)
  await page.getByRole('tab',{name:'声音克隆'}).click()
  await expect(page.getByRole('region',{name:'一次性克隆参考'})).toBeVisible()
  await expect(page.getByText('克隆参考自动识别')).toBeVisible()
- await page.waitForTimeout(4500)
+ await pollJobs()
  await expect(page.getByRole('region',{name:'一次性克隆参考'})).toBeVisible()
  await expect(page.getByRole('button',{name:/生成语音/})).toBeDisabled()
  const presetTab=page.getByRole('tab',{name:'预置音色'})
  await presetTab.focus()
  await presetTab.press('ArrowRight')
  await expect(page.getByRole('tab',{name:'声音克隆'})).toHaveAttribute('aria-selected','true')
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  expect(errors).toEqual([])
 })
 
@@ -755,7 +771,11 @@ test('mobile job pagination stays in flow and preserves the five-item app naviga
  expect(errors).toEqual([])
 })
 
-test('task history only reports jobs added after the live baseline is ready',async({page})=>{
+for(const width of [1440,390])test(`task history only reports jobs added after the live baseline is ready at ${width}px`,{tag:'@timing'},async({page,responseGate},testInfo)=>{
+ await page.setViewportSize({width,height:900})
+ const baselineGate=responseGate()
+ await page.clock.install({time:new Date('2026-10-11T00:00:00Z')})
+ await page.clock.pauseAt(new Date('2026-10-11T00:00:01Z'))
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
@@ -764,16 +784,14 @@ test('task history only reports jobs added after the live baseline is ready',asy
  const updatedHistorical={...historical,state:'cancelled',stage:'cancelled',updated_at:'2026-08-29T04:01:00Z'}
  const newJob={id:'actually-new-job',kind:'asr',state:'queued',stage:'queued',progress:0,display_name:'真正新增任务',created_at:'2026-08-29T04:02:00Z',updated_at:'2026-08-29T04:02:00Z',request:{compute_device:'cpu'}}
  let globalCalls=0
- let initialGlobalReady=false
  await page.route('**/api/v1/auth/session',route=>route.fulfill({json:{required:false,authenticated:true}}))
  await routeJobList(page,async route=>{
   const url=new URL(route.request().url())
   const globalRequest=!url.searchParams.has('limit')
   if(globalRequest){
    globalCalls+=1
-   if(globalCalls===1)await new Promise(resolve=>setTimeout(resolve,250))
+   if(globalCalls===1)await baselineGate.hold()
    const items=globalCalls>=3?[newJob,updatedHistorical]:globalCalls===2?[updatedHistorical]:[historical]
-   initialGlobalReady=true
    return route.fulfill({json:{items,count:items.length,total:items.length,limit:100,offset:0,has_more:false}})
   }
   const items=globalCalls>=3?[newJob,updatedHistorical]:globalCalls===2?[updatedHistorical]:[historical]
@@ -786,18 +804,24 @@ test('task history only reports jobs added after the live baseline is ready',asy
 
  await page.goto('/#jobs')
  await expect(page.getByText('已有历史任务',{exact:true})).toBeVisible()
- await expect.poll(()=>initialGlobalReady).toBe(true)
+ await baselineGate.arrived
+ await expect(page.getByRole('region',{name:'新任务提示'})).toHaveCount(0)
+ const baseline=page.waitForResponse(response=>{const url=new URL(response.url());return url.pathname==='/api/v1/jobs'&&!url.searchParams.has('limit')})
+ baselineGate.release()
+ expect(await (await baseline).finished()).toBeNull()
  await expect(page.getByRole('region',{name:'新任务提示'})).toHaveCount(0)
 
+ await page.clock.runFor(5000)
  await expect.poll(()=>globalCalls,{timeout:7000}).toBeGreaterThanOrEqual(2)
  await expect(page.locator('.table-row').filter({hasText:'已有历史任务'}).getByText('已取消',{exact:true})).toBeVisible()
  await expect(page.getByRole('region',{name:'新任务提示'})).toHaveCount(0)
 
+ await page.clock.runFor(5000)
  await expect.poll(()=>globalCalls,{timeout:7000}).toBeGreaterThanOrEqual(3)
  const banner=page.getByRole('region',{name:'新任务提示'})
  await expect(banner).toBeVisible()
  await expect(page.getByText('真正新增任务',{exact:true})).toHaveCount(0)
- await page.screenshot({path:'/tmp/audio-intel-new-job-banner-desktop.png',fullPage:false})
+ await page.screenshot({path:testInfo.outputPath('new-job-banner-desktop.png'),fullPage:false})
 
  await page.setViewportSize({width:390,height:844})
  await expect(banner).toBeVisible()
@@ -805,7 +829,7 @@ test('task history only reports jobs added after the live baseline is ready',asy
  await banner.getByRole('button',{name:'返回第一页查看'}).click()
  await expect(page.getByText('真正新增任务',{exact:true})).toBeVisible()
  await expect(banner).toHaveCount(0)
- await page.screenshot({path:'/tmp/audio-intel-new-job-banner-mobile.png',fullPage:false})
+ await page.screenshot({path:testInfo.outputPath('new-job-banner-mobile.png'),fullPage:false})
  expect(errors).toEqual([])
 })
 
@@ -1239,6 +1263,7 @@ test('protected deep links wait for login before loading jobs and TTS voices',as
  await page.route('**/api/v1/tts/voices',route=>{if(!authenticated)protectedBeforeLogin+=1;voicesCalls+=1;return route.fulfill({json:{items:[],preset_speakers:['Vivian']}})})
  await page.goto('/#tts')
  await expect(page.getByRole('dialog',{name:'访问验证'})).toBeVisible()
+ // Keep a real observation window: no protected requests may start before login.
  await page.waitForTimeout(150)
  expect(protectedBeforeLogin).toBe(0)
  expect(jobsCalls).toBe(0)
@@ -1757,13 +1782,12 @@ test('view result reveals ASR and TTS result panels on mobile',async({page})=>{
  expect(errors).toEqual([])
 })
 
-for(const width of [1440,390])for(const delayed of [false,true])test(`task history paginates on the server and pins an old selected result at ${width}px (${delayed?'held':'normal'} filter response)`,async({page})=>{
+for(const width of [1440,390])for(const delayed of [false,true])test(`task history paginates on the server and pins an old selected result at ${width}px (${delayed?'held':'normal'} filter response)`,{tag:'@timing'},async({page,responseGate},testInfo)=>{
  await page.setViewportSize({width,height:900})
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
- let releaseFilter:()=>void=()=>undefined
- const filterGate=new Promise<void>(resolve=>{releaseFilter=resolve})
+ const filterGate=responseGate()
  const base=Date.parse('2026-08-25T12:00:00+00:00')
  const jobs=Array.from({length:61},(_,index)=>({
   id:`history-${String(index+1).padStart(2,'0')}`,kind:index%2===0?'asr':'tts',state:'succeeded',stage:'completed',progress:1,
@@ -1776,7 +1800,7 @@ for(const width of [1440,390])for(const delayed of [false,true])test(`task histo
  await routeJobList(page,async route=>{
   const url=new URL(route.request().url());requests.push(url.search)
   const kind=url.searchParams.get('kind'),state=url.searchParams.get('state'),query=(url.searchParams.get('q')||'').toLowerCase()
-  if(delayed&&kind==='tts'&&query==='history-58')await filterGate
+  if(delayed&&kind==='tts'&&query==='history-58')await filterGate.hold()
   const filtered=sorted.filter(job=>(!kind||job.kind===kind)&&(!state||job.state===state)&&(!query||job.id.includes(query)||job.display_name.toLowerCase().includes(query)))
   const limit=Number(url.searchParams.get('limit')||100),offset=Number(url.searchParams.get('offset')||0),items=filtered.slice(offset,offset+limit)
   return route.fulfill({json:{items,count:items.length,total:filtered.length,limit,offset,has_more:offset+items.length<filtered.length}})
@@ -1813,7 +1837,7 @@ for(const width of [1440,390])for(const delayed of [false,true])test(`task histo
    await expect(page.locator('.jobs-table')).toHaveAttribute('aria-busy','true')
    // The unchanged row count belongs to the previous response until filtering finishes.
    await expect(page.locator('.table-row')).toHaveCount(1)
-   releaseFilter()
+   filterGate.release()
   }
   const response=await filteredReady
   expect(response.ok()).toBe(true)
@@ -1821,7 +1845,7 @@ for(const width of [1440,390])for(const delayed of [false,true])test(`task histo
   await expect(page.locator('.jobs-table')).toHaveAttribute('aria-busy','false')
   await expect(page.locator('.table-row')).toHaveCount(1)
   await expect(page.locator('.table-row')).toContainText('历史任务 58')
- }finally{releaseFilter();await filteredReady.catch(()=>undefined)}
+ }finally{filterGate.release();await filteredReady.catch(()=>undefined)}
  expect(requests.some(value=>value.includes('limit=25')&&value.includes('offset=50'))).toBe(true)
  expect(requests.some(value=>value.includes('q=history-58')&&value.includes('kind=tts'))).toBe(true)
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
@@ -1900,7 +1924,7 @@ test('task lists stay newest-first and retain an older selected task',async({pag
  expect(errors).toEqual([])
 })
 
-test('long mobile transcripts render progressively and pass scroll at boundaries',async({page})=>{
+test('long mobile transcripts render progressively and pass scroll at boundaries',{tag:'@timing'},async({page},testInfo)=>{
  const now='2026-08-25T12:00:00+00:00'
  const segments=Array.from({length:220},(_,id)=>({id,start:id*2,end:id*2+1.8,speaker:`Speaker_${id%3}`,speaker_label:`Speaker ${id%3}`,text:`第 ${id+1} 条会议转写内容，用于验证长列表内部滚动。`}))
  const result={text:segments.map(item=>item.text).join(''),language:'Chinese',duration:440,timestamp_precision:'segment',speakers:Array.from({length:3},(_,id)=>({id:`Speaker_${id}`,label:`Speaker ${id}`})),segments,waveform:[.2,.5,.3],artifacts:[]}
@@ -1920,10 +1944,8 @@ test('long mobile transcripts render progressively and pass scroll at boundaries
  await expect(page.locator('.segments article')).toHaveCount(80)
  await page.locator('.result-panel').evaluate(element=>element.scrollIntoView({block:'start'}))
  await expect(page.locator('.result-panel')).toBeInViewport()
- await page.waitForTimeout(50)
- const dimensions=await page.locator('.segments').evaluate(element=>({clientHeight:element.clientHeight,scrollHeight:element.scrollHeight}))
- expect(dimensions.clientHeight).toBeGreaterThan(100)
- expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight*10)
+ await expect.poll(()=>page.locator('.segments').evaluate(element=>element.clientHeight)).toBeGreaterThan(100)
+ await expect.poll(()=>page.locator('.segments').evaluate(element=>element.scrollHeight/element.clientHeight)).toBeGreaterThan(10)
  expect(await page.evaluate(()=>document.documentElement.scrollHeight)).toBeLessThan(3000)
  await page.locator('.segments').evaluate(element=>{element.scrollTop=element.scrollHeight})
  await expect.poll(()=>page.locator('.segments article').count()).toBeGreaterThan(80)
@@ -1941,5 +1963,5 @@ test('long mobile transcripts render progressively and pass scroll at boundaries
  await expect.poll(()=>page.evaluate(()=>window.scrollY)).toBeLessThan(outerBefore)
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
  await page.locator('.result-panel').evaluate(element=>element.scrollIntoView({block:'start'}))
- await page.screenshot({path:'/tmp/audio-intel-long-transcript-mobile.png',fullPage:false})
+ await page.screenshot({path:testInfo.outputPath('long-transcript-mobile.png'),fullPage:false})
 })

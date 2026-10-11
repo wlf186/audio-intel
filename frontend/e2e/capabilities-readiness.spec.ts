@@ -10,7 +10,7 @@ function asrDevice(body:Awaited<ReturnType<typeof capabilitiesFor>>){
 }
 
 for(const width of [1440,390]){
- test(`capabilities loading waits for readiness and survives reload at ${width}px`,async({page},info)=>{
+ test(`capabilities loading waits for readiness and survives reload at ${width}px`,{tag:'@timing'},async({page},info)=>{
   await page.setViewportSize({width,height:900})
   const errors:string[]=[]
   page.on('pageerror',error=>errors.push(error.message))
@@ -38,7 +38,7 @@ for(const width of [1440,390]){
   }finally{release()}
  })
 
- for(const failure of ['http','disconnect'] as const)test(`capabilities ${failure} shows an error and recovers on retry at ${width}px`,async({page},info)=>{
+ for(const failure of ['http','disconnect'] as const)test(`capabilities ${failure} shows an error and recovers on retry at ${width}px`,{tag:'@timing'},async({page},info)=>{
   await page.setViewportSize({width,height:900})
   const errors:string[]=[]
   page.on('pageerror',error=>errors.push(error.message))
@@ -71,7 +71,7 @@ for(const width of [1440,390]){
   expect(errors).toEqual([])
  })
 
- test(`live capabilities populate ASR and TTS after reload at ${width}px`,async({page},info)=>{
+ test(`live capabilities populate ASR and TTS after reload at ${width}px`,{tag:'@timing'},async({page},info)=>{
   await page.setViewportSize({width,height:900})
   const errors:string[]=[]
   page.on('pageerror',error=>errors.push(error.message))

@@ -91,13 +91,18 @@ jobs:
       shell: cmd
       run: service.cmd setup api
     - name: Start and exercise native services
-      shell: cmd
+      shell: powershell
       run: |
-        service.cmd start all
-        service.cmd status
-        service.cmd restart all
-        service.cmd status
-        .runtime\api\Scripts\python.exe scripts\smoke_test.py
+        & .\service.cmd start all
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & .\service.cmd status
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & .\service.cmd restart all
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & .\service.cmd status
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        & .\.runtime\api\Scripts\python.exe scripts\smoke_test.py
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     - name: Install Chromium
       shell: powershell
       run: |
@@ -113,7 +118,7 @@ jobs:
       run: |
         & corepack.cmd pnpm@10.15.1 --dir frontend test:e2e --grep @timing --repeat-each=5 --output=../logs/playwright-stability
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      if: github.event_name == 'workflow_dispatch' && inputs.stability_check
+      if: (github.event_name == 'workflow_dispatch' && inputs.stability_check) || startsWith(github.ref, 'refs/heads/ci/stability/')
       env:
         PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../logs/ci/stability.xml
     - name: Stop services

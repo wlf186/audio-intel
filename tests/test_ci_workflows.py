@@ -21,6 +21,7 @@ def test_parallel_gate_rejects_failed_cancelled_skipped_or_missing_jobs(platform
     gate = jobs[platform]
     assert set(gate["needs"]) == {"backend", "browser"}
     assert gate["if"] == "always()"
+    assert not gate.get("continue-on-error", False)
     script = gate["steps"][0]["with"]["script"]
     # Execute the actual workflow predicate, including missing/unexpected states.
     node = shutil.which("node")
@@ -56,6 +57,8 @@ def test_full_checks_remain_on_main_and_tags_with_distinct_reports(platform):
         assert job["env"]["AUDIO_INTEL_LOAD_ENV"] == "0"
         check = next(step for step in job["steps"] if step.get("name") == ("Backend checks" if kind == "backend" else "Browser checks"))
         assert "if" not in check
+        assert not check.get("continue-on-error", False)
+        assert not job.get("continue-on-error", False)
         assert "--grep" not in check["run"] and "--shard" not in check["run"]
         artifacts.extend(step["with"]["name"] for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
     assert len(artifacts) == len(set(artifacts)) == 4

@@ -89,6 +89,7 @@ test('detects, switches, and persists the interface language without reloading p
  await expect(page.locator('html')).toHaveAttribute('lang','zh-CN')
  await expect(page.getByRole('heading',{name:'语音合成'})).toBeVisible()
  await expect(editor).toHaveValue('Keep this draft while switching languages')
+ // Observe the settled language switch for unintended protected-resource refetches.
  await page.waitForTimeout(300)
  expect(protectedRequests).toHaveLength(requestCount)
  await page.reload()

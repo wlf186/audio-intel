@@ -16,8 +16,25 @@ type SnapshotOptions={page:Page;baseURL?:string;extraHTTPHeaders?:Record<string,
 type WorkerReaders={capabilities:(options:SnapshotOptions)=>Promise<CapabilitySnapshot>;system:(options:SnapshotOptions)=>Promise<Health>}
 const pageReaders=new WeakMap<Page,SnapshotReaders>()
 
+type ResponseGate={arrived:Promise<void>;hold:()=>Promise<void>;release:()=>void}
+type ResponseGateFactory=(()=>ResponseGate)&{releaseAll:()=>void}
+
 // Only fixture data is cached. Live API/browser contract tests remain unmocked.
-export const test=base.extend<{snapshotAccess:void},{apiSnapshots:WorkerReaders}>({
+export const test=base.extend<{snapshotAccess:void;responseGate:ResponseGateFactory},{apiSnapshots:WorkerReaders}>({
+ responseGate:async({},use)=>{
+  const gates:ResponseGate[]=[]
+  const create=()=>{
+   let signalArrival:()=>void=()=>undefined
+   let release:()=>void=()=>undefined
+   const arrived=new Promise<void>(resolve=>{signalArrival=resolve})
+   const pending=new Promise<void>(resolve=>{release=resolve})
+   const gate={arrived,hold:()=>{signalArrival();return pending},release}
+   gates.push(gate)
+   return gate
+  }
+  const releaseAll=()=>{for(const gate of gates)gate.release()}
+  try{await use(Object.assign(create,{releaseAll}))}finally{releaseAll()}
+ },
  apiSnapshots:[async({playwright},use)=>{
   const pending=new Map<string,Promise<unknown>>()
   const read=async<T>(path:string,options:SnapshotOptions):Promise<T>=>{
@@ -50,6 +67,9 @@ export const test=base.extend<{snapshotAccess:void},{apiSnapshots:WorkerReaders}
   try{await use()}finally{pageReaders.delete(page)}
  },{auto:true}],
 })
+
+// Run before consumers' afterEach hooks that wait for route handlers to finish.
+test.afterEach(async({responseGate})=>{responseGate.releaseAll()})
 
 function snapshots(page:Page){
  const readers=pageReaders.get(page)

@@ -98,7 +98,7 @@ jobs:
       run: corepack pnpm@10.15.1 --dir frontend test:e2e
     - name: Repeat timing regressions
       run: corepack pnpm@10.15.1 --dir frontend test:e2e --grep @timing --repeat-each=5 --output=../logs/playwright-stability
-      if: github.event_name == 'workflow_dispatch' && inputs.stability_check
+      if: (github.event_name == 'workflow_dispatch' && inputs.stability_check) || startsWith(github.ref, 'refs/heads/ci/stability/')
       env:
         PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../logs/ci/stability.xml
     - name: Stop services

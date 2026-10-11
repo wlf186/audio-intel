@@ -100,14 +100,16 @@ test('upload, replace confirmation, completed counts, backup and preserved TTS d
  expect(errors).toEqual([])
 })
 
-test('a delayed merge preview cannot overwrite the selected replacement preview',async({page})=>{
+for(const width of [1440,390])test(`a delayed merge preview cannot overwrite the selected replacement preview at ${width}px`,{tag:'@timing'},async({page,responseGate})=>{
+ await page.setViewportSize({width,height:900})
+ const mergeGate=responseGate()
  const {errors}=await workspace(page)
  const receipt:LibraryImport={id:'2'.repeat(32),name:'已校验.zip',state:'ready',size_bytes:1,created_at:now,updated_at:now}
  let mergeCalls=0
  await page.route(/\/api\/v1\/library\/imports(?:\/.*)?$/,async route=>{
   if(new URL(route.request().url()).pathname.endsWith('/preview')){
    const mode=route.request().postDataJSON().mode as LibraryMode
-   if(mode==='merge'&&mergeCalls++===0)await new Promise(resolve=>setTimeout(resolve,700))
+   if(mode==='merge'&&mergeCalls++===0)await mergeGate.hold()
    return route.fulfill({json:plan(mode)})
   }
   return route.fulfill({json:[receipt]})
@@ -115,10 +117,14 @@ test('a delayed merge preview cannot overwrite the selected replacement preview'
  await page.goto('/#library')
  await page.getByRole('button',{name:'导入完整包'}).click()
  const dialog=page.getByRole('dialog',{name:'导入资料库'})
+ await mergeGate.arrived
  await dialog.getByRole('radio',{name:/替换现有资料/}).check()
  await expect(dialog.getByRole('table')).toContainText('移除')
- await page.waitForTimeout(850)
+ const staleResponse=page.waitForResponse(response=>new URL(response.url()).pathname.endsWith('/preview')&&response.request().postDataJSON().mode==='merge')
+ mergeGate.release()
+ expect(await (await staleResponse).finished()).toBeNull()
  await expect(dialog.getByRole('table').getByRole('row').filter({hasText:'人员'})).toContainText('27')
  await expect(dialog.getByRole('button',{name:'应用导入'})).toBeEnabled()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  expect(errors).toEqual([])
 })
