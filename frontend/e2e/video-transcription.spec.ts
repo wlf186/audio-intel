@@ -1,3 +1,4 @@
+import {openTranscriptExport,closeTranscriptExport} from './ux-helpers'
 import {capabilitiesFor,expect,test} from './fixtures'
 import path from 'node:path'
 import {execFileSync} from 'node:child_process'
@@ -45,10 +46,9 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  await expect(page.getByRole('button',{name:'查看本次任务'})).toBeVisible({timeout:30000})
  await page.getByRole('button',{name:'查看本次任务'}).click()
  await expect(page.locator('.video-section')).toHaveCount(2,{timeout:30000})
- await expect(page.locator('.transcript-export-details')).toHaveCount(1)
- await page.locator('.transcript-export-details summary').click()
- await expect(page.locator('.transcript-export-details button')).toHaveCount(4)
- await page.locator('.transcript-export-details summary').click()
+ await openTranscriptExport(page)
+ if(width===390){await expect(page.locator('.transcript-export-modal select option')).toHaveCount(5);await closeTranscriptExport(page)}
+ else{await page.getByRole('button',{name:'明细与字幕',exact:true}).click();await expect(page.locator('.transcript-export-details-panel button')).toHaveCount(4);await page.keyboard.press('Escape')}
  await page.getByRole('button',{name:'编辑分段',exact:true}).click()
  await page.getByRole('button',{name:'与下一段合并',exact:true}).click()
  await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click()
@@ -71,11 +71,13 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click()
  await expect(page.getByRole('dialog')).toHaveCount(0)
  await expect(page.locator('.video-section')).toHaveCount(2)
+ await openTranscriptExport(page)
  const downloadPromise=page.waitForEvent('download')
  await page.getByRole('button',{name:'导出简洁 PDF',exact:true}).click()
  const download=await downloadPromise
  expect(await download.failure()).toBeNull()
  expect(download.suggestedFilename()).toMatch(/\.pdf$/)
+ await closeTranscriptExport(page)
  await page.getByRole('button',{name:'逐句明细',exact:true}).click()
  await expect(page.locator('.segments article').first()).toBeVisible()
  await page.getByRole('button',{name:'图文阅读',exact:true}).click()

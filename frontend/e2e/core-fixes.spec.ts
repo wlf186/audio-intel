@@ -111,6 +111,7 @@ test('pending voiceprint polling stops after session expiry and resumes after lo
  await expect(page.getByRole('heading',{name:'访问验证'})).toHaveCount(0)
  await expect.poll(()=>calls).toBe(3)
  await page.locator('nav').getByRole('button',{name:/资料库/}).click()
+ await page.locator('.person-row').first().click()
  await expect(page.locator('.sample-state.pending')).toBeVisible()
  await page.clock.fastForward(2100)
  await expect.poll(()=>calls).toBe(4)

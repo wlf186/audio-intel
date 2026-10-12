@@ -1,12 +1,15 @@
-import {useMemo,useRef,useState,type ReactNode} from 'react'
+import {useEffect,useLayoutEffect,useMemo,useRef,useState,type ReactNode} from 'react'
 import {useTranslation} from 'react-i18next'
 import type {VoiceprintPerson} from '../lib/types'
 
 const alphabet=[...'ABCDEFGHIJKLMNOPQRSTUVWXYZ','#']
 
-export function PeopleIndex({people,children}:{people:VoiceprintPerson[];children:(person:VoiceprintPerson)=>ReactNode}){
+export function PeopleIndex({people,children,positionKey='',shown=true,scrollTop=0,alphabetScrollTop=0,onPositionChange}:{people:VoiceprintPerson[];children:(person:VoiceprintPerson)=>ReactNode;positionKey?:string;shown?:boolean;scrollTop?:number;alphabetScrollTop?:number;onPositionChange?:(scrollTop:number,alphabetScrollTop:number)=>void}){
  const {t}=useTranslation()
  const list=useRef<HTMLDivElement>(null)
+ const rail=useRef<HTMLElement>(null)
+ const position=useRef({scrollTop,alphabetScrollTop})
+ const callback=useRef(onPositionChange);callback.current=onPositionChange
  const headings=useRef(new Map<string,HTMLElement>())
  const [active,setActive]=useState('')
  const groups=useMemo(()=>{
@@ -24,6 +27,16 @@ export function PeopleIndex({people,children}:{people:VoiceprintPerson[];childre
   setActive(letter)
   heading.focus({preventScroll:true})
  }
+ useLayoutEffect(()=>{if(!shown)return;if(list.current)list.current.scrollTop=scrollTop;if(rail.current)rail.current.scrollTop=alphabetScrollTop},[positionKey,shown])
+ useEffect(()=>{
+  let timer:ReturnType<typeof setTimeout>|undefined
+  const capture=()=>{if(!shown||!list.current?.clientHeight)return;position.current={scrollTop:list.current.scrollTop,alphabetScrollTop:rail.current?.scrollTop||0};callback.current?.(position.current.scrollTop,position.current.alphabetScrollTop)}
+  const schedule=()=>{if(!timer)timer=setTimeout(()=>{timer=undefined;capture()},150)}
+  const element=list.current,alphabet=rail.current
+  element?.addEventListener('scroll',schedule,{passive:true});alphabet?.addEventListener('scroll',schedule,{passive:true})
+  window.addEventListener('audio-intel:checkpoint-workspace',capture);window.addEventListener('pagehide',capture)
+  return()=>{if(timer)clearTimeout(timer);capture();element?.removeEventListener('scroll',schedule);alphabet?.removeEventListener('scroll',schedule);window.removeEventListener('audio-intel:checkpoint-workspace',capture);window.removeEventListener('pagehide',capture)}
+ },[shown,positionKey])
  const track=()=>{
   if(!list.current)return
   if(list.current.scrollTop>0&&list.current.scrollTop+list.current.clientHeight>=list.current.scrollHeight-2){
@@ -41,14 +54,14 @@ export function PeopleIndex({people,children}:{people:VoiceprintPerson[];childre
     {group.people.map(person=>children(person))}
    </section>)}
   </div>
-  <nav className="people-alphabet" aria-label={t('library.alphabet')} onKeyDown={event=>{
+  <nav ref={rail} className="people-alphabet" aria-label={t('library.alphabet')} onKeyDown={event=>{
    if(!['ArrowUp','ArrowDown','Home','End'].includes(event.key))return
    const buttons=[...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]
    const current=buttons.indexOf(document.activeElement as HTMLButtonElement)
    const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:event.key==='ArrowDown'?Math.min(current+1,buttons.length-1):Math.max(current-1,0)
    event.preventDefault();buttons[next]?.focus()
   }}>
-   {alphabet.map(letter=><button type="button" key={letter} aria-label={t('library.jumpLetter',{letter})} aria-current={active===letter?'location':undefined} disabled={!groups.some(group=>group.letter===letter)} onClick={()=>jump(letter)}>{letter}</button>)}
+   {groups.map(({letter})=><button type="button" key={letter} aria-label={t('library.jumpLetter',{letter})} aria-current={active===letter?'location':undefined} onClick={()=>jump(letter)}>{letter}</button>)}
   </nav>
  </div>
 }

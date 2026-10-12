@@ -19,7 +19,8 @@ function savedLayouts():Partial<Record<Workbench,number>>{
 export function WorkbenchDivider({workbench}:{workbench:Workbench}){
  const {t}=useTranslation()
  const handle=useRef<HTMLDivElement>(null)
- const [initial]=useState(()=>savedLayouts()[workbench]??.5)
+ const defaultRatio=workbench==='asr'?.35:.5
+ const [initial]=useState(()=>savedLayouts()[workbench]??defaultRatio)
  const preferred=useRef(initial)
  const geometry=useRef({width:0,ratio:.5,min:0,max:1})
  const drag=useRef<{id:number;x:number;ratio:number;previous:number}|undefined>(undefined)
@@ -41,7 +42,7 @@ export function WorkbenchDivider({workbench}:{workbench:Workbench}){
  }
  const schedule=()=>{if(!frame.current)frame.current=requestAnimationFrame(()=>{frame.current=0;paint()})}
  const save=()=>{try{localStorage.setItem(storageKey,JSON.stringify({...savedLayouts(),[workbench]:preferred.current}))}catch{/* Keep the layout usable when storage is unavailable. */}}
- const reset=()=>{preferred.current=.5;paint();save()}
+ const reset=()=>{preferred.current=defaultRatio;paint();save()}
  useLayoutEffect(()=>{
   const container=handle.current?.parentElement?.parentElement
   if(!container)return

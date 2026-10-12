@@ -4,6 +4,9 @@ import {useTranslation} from 'react-i18next'
 import {HttpError,requestResponse} from '../lib/api'
 import {loadTranscriptExportPreferences,saveTranscriptExportPreferences,parseTranscriptRules,defaultTranscriptExportPreferences,type TranscriptExportPreferences} from '../lib/transcriptExportPreferences'
 import type {Job} from '../lib/types'
+import {Modal} from './Modal'
+import {ActionPopover} from './ActionPopover'
+import {useCompactWorkspace} from '../hooks/useCompactWorkspace'
 
 function downloadName(response:Response){
  const disposition=response.headers.get('Content-Disposition')||''
@@ -22,8 +25,12 @@ export function TranscriptExport({job}:{job:Job}){
  const [remaining,setRemaining]=useState(0)
  const controller=useRef<AbortController|undefined>(undefined)
  const releaseDownload=useRef<(()=>void)|undefined>(undefined)
- const formats=useRef<HTMLDetailsElement>(null)
- const rules=useRef<HTMLDetailsElement>(null)
+ const compact=useCompactWorkspace()
+ const [open,setOpen]=useState(false)
+ const [format,setFormat]=useState('pdf')
+ const parsedRules=parseTranscriptRules(preferences.rules)
+ const ruleError=parsedRules.error?t('transcriptExport.ruleError',{line:parsedRules.errorLine,reason:t(`transcriptExport.errors.${parsedRules.error}`)}):''
+ const blocked=busy||remaining>0||Boolean(preferences.redact&&ruleError)
  const video=Boolean(job.result?.video)
  useEffect(()=>()=>{controller.current?.abort();releaseDownload.current?.()},[])
  useEffect(()=>{if(!remaining)return;const timer=setTimeout(()=>setRemaining(value=>Math.max(0,value-1)),1000);return()=>clearTimeout(timer)},[remaining])
@@ -52,13 +59,20 @@ export function TranscriptExport({job}:{job:Job}){
    }else setError(t('video.pdfNetwork'))
   }finally{if(!active.signal.aborted){controller.current=undefined;setBusy(false)}}
  }
+ const redaction=<label className="redaction-toggle"><input type="checkbox" checked={preferences.redact} onChange={event=>updatePreferences({...preferences,redact:event.target.checked})}/>{t('transcriptExport.redact')}</label>
+ const editor=<div className="transcript-rule-editor"><p>{t('transcriptExport.help')}</p><label>{t('transcriptExport.rulesLabel')}<textarea aria-label={t('transcriptExport.rulesLabel')} aria-invalid={Boolean(ruleError)} aria-describedby={ruleError?'transcript-rule-error':undefined} rows={5} value={preferences.rules} spellCheck={false} placeholder={t('transcriptExport.example')} onChange={event=>updatePreferences({...preferences,rules:event.target.value})}/></label>{ruleError?<p id="transcript-rule-error" className="error" role="alert">{ruleError}</p>:null}<button className="button" disabled={busy} onClick={()=>updatePreferences({...defaultTranscriptExportPreferences})}>{t('transcriptExport.reset')}</button></div>
+ const label=busy?t('video.pdfPreparing'):remaining?t('video.pdfRetryIn',{seconds:remaining}):t(format==='pdf'?'video.pdf':'common.actions.download')
  return <div className="transcript-export">
-  <div className="transcript-export-actions"><button className="primary" title={t(video?'video.pdfVideoHelp':'video.pdfAudioHelp')} disabled={busy||remaining>0} onClick={()=>void download('pdf')}><Download size={16}/>{busy?t('video.pdfPreparing'):remaining?t('video.pdfRetryIn',{seconds:remaining}):t('video.pdf')}</button>
-  <details ref={formats} onToggle={event=>{if(event.currentTarget.open&&rules.current)rules.current.open=false}} className="transcript-export-details"><summary>{t('video.detailFormats')}</summary><div>{['json','txt','srt','vtt'].map(format=><button className="button" disabled={busy||remaining>0} title={t('asr.results.downloadNamed',{name:'transcript.'+format})} key={format} onClick={()=>void download(format)}><Download size={14}/><span>{format.toUpperCase()}<small>{t(format==='srt'||format==='vtt'?'video.subtitleFormat':'video.detailFormat')}</small></span></button>)}</div></details></div>
-  <div className="transcript-redaction-controls"><label className="redaction-toggle"><input type="checkbox" checked={preferences.redact} onChange={event=>updatePreferences({...preferences,redact:event.target.checked})}/>{t('transcriptExport.redact')}</label>
-   <details ref={rules} onToggle={event=>{if(event.currentTarget.open&&formats.current)formats.current.open=false}}><summary role="button" aria-label={t('transcriptExport.replacements')} title={t('transcriptExport.replacements')}><Settings2 size={16}/></summary><div className="transcript-rule-editor"><p>{t('transcriptExport.help')}</p><label>{t('transcriptExport.rulesLabel')}<textarea aria-label={t('transcriptExport.rulesLabel')} rows={5} value={preferences.rules} spellCheck={false} placeholder={t('transcriptExport.example')} onChange={event=>updatePreferences({...preferences,rules:event.target.value})}/></label><button className="button" disabled={busy} onClick={()=>updatePreferences({...defaultTranscriptExportPreferences})}>{t('transcriptExport.reset')}</button></div></details>
-  </div>
-
-  {error?<p className="error" role="alert">{error}</p>:null}
+  {compact?<button className="primary export-mobile-trigger" onClick={()=>setOpen(true)}><Download size={16}/>{t('transcriptExport.open')}</button>:<>
+   <div className="transcript-export-actions"><button className="primary" title={t(video?'video.pdfVideoHelp':'video.pdfAudioHelp')} disabled={blocked} onClick={()=>void download('pdf')}><Download size={16}/>{busy?t('video.pdfPreparing'):remaining?t('video.pdfRetryIn',{seconds:remaining}):t('video.pdf')}</button>
+    <ActionPopover label={t('video.detailFormats')} className="transcript-export-details" closeOnAction>{['json','txt','srt','vtt'].map(value=><button className="button" title={t('asr.results.downloadNamed',{name:`transcript.${value}`})} disabled={blocked} key={value} onClick={()=>void download(value)}><Download size={14}/><span>{value.toUpperCase()}<small>{t(value==='srt'||value==='vtt'?'video.subtitleFormat':'video.detailFormat')}</small></span></button>)}</ActionPopover>
+   </div><div className="transcript-redaction-controls">{redaction}<ActionPopover label={t('transcriptExport.replacements')} className="transcript-rules" icon={<Settings2 size={16}/>}>{editor}</ActionPopover></div>
+  </>}
+  {error&&(!compact||!open)?<p className="error" role="alert">{error}</p>:null}
+  {!compact&&preferences.redact&&ruleError?<p className="error" role="note">{ruleError}</p>:null}
+  {compact&&open?<Modal className="transcript-export-modal" title={t('transcriptExport.open')} closeLabel={t('common.actions.close')} onClose={()=>setOpen(false)}>
+   <div className="modal-scroll-body"><label>{t('transcriptExport.format')}<select value={format} onChange={event=>setFormat(event.target.value)}>{['pdf','txt','srt','vtt','json'].map(value=><option key={value} value={value}>{value.toUpperCase()}</option>)}</select></label>{redaction}{editor}{error?<p className="error" role="alert">{error}</p>:null}</div>
+   <div className="modal-actions"><button className="button" onClick={()=>setOpen(false)}>{t('common.actions.close')}</button><button className="primary" disabled={blocked} onClick={()=>void download(format)}><Download size={16}/>{label}</button></div>
+  </Modal>:null}
  </div>
 }

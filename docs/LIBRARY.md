@@ -1,13 +1,13 @@
 # 资料库迁移 / Library transfer
 
-在主导航打开“资料库”，用“声纹库 / 热词库”子页管理资料。声纹人员和各模块的人员下拉框按完整拼音或拉丁字母排序，同名按备注、ID 稳定排序；中文姓氏采用常见姓氏读音（如单 shan、曾 zeng、区 ou），数字和符号放到最后的 `#` 组。人员列表右侧 A–Z / # 索引只滚动人员列表，不改变当前选中人员。旧 `#voiceprints`、`#hotwords` 链接会转到对应资料库子页。
+在主导航打开“资料库”，用“声纹库 / 热词库”子页管理资料。声纹人员和各模块的人员下拉框按完整拼音或拉丁字母排序，同名按备注、ID 稳定排序；中文姓氏采用常见姓氏读音（如单 shan、曾 zeng、区 ou），数字和符号放到最后的 `#` 组。人员列表右侧仅显示有人员的字母 / # 索引只滚动人员列表，不改变当前选中人员。旧 `#voiceprints`、`#hotwords` 链接会转到对应资料库子页。
 
 The Library navigation contains Voiceprints and Hotwords tabs. Person lists and pickers share server-side full-pinyin/Latin ordering, common surname readings and stable name/note/ID ties. Numbers and symbols belong to the final `#` group. The alphabet rail scrolls the person list without changing the selected person. Legacy hashes redirect to the matching tab.
 
 ## 从 A 服务器恢复到 B / Restore on another server
 
-1. 等待 A 的声纹入库完成，在资料库点击“导出资料库”。浏览器直接下载 ZIP，无需把整个包放入浏览器内存。正在入库或可用音频缺失时导出返回 `409`，请先完成入库或修复该样本。
-2. 在 B 打开资料库，点击“导入资料库”，选择 A 导出的 ZIP。上传后在后台离线检查格式、文件清单、SHA-256、音频和容量；不用 GPU。
+1. 等待 A 的声纹入库完成，在“资料库工具”中点击“导出完整包”。浏览器直接下载 ZIP，无需把整个包放入浏览器内存。正在入库或可用音频缺失时导出返回 `409`，请先完成入库或修复该样本。
+2. 在 B 打开资料库，在“资料库工具”中点击“导入完整包”，选择 A 导出的 ZIP。上传后在后台离线检查格式、文件清单、SHA-256、音频和容量；不用 GPU。
 3. 查看预览，选择默认的“合并”或“替换全部资料”。只有校验成功且预览仍对应当前资料时才能应用；库发生变化时重新预览。
 4. 应用后查看结果数量。替换前备份可在同一导入记录下载，使用相同导入流程恢复。刷新页面可重新打开最近的记录继续查看。
 
@@ -54,10 +54,18 @@ A `completed` receipt records the committed database transaction. While retired-
 
 ## 人员分组 / Person groups
 
-每人只属于一个分组；新增及升级前已有人员默认“未分组”。可新增、重命名自建分组，并在“全部人员”或分组视图中勾选、全选当前列表、批量移动或确认后永久删除。批量移动失败不部分生效；批量删除逐人报告失败并保留勾选，活动样本导入和音频读取仍受保护。删除分组只将人员移回“未分组”，不删除人员或样本；内置组不可重命名或删除。拼音索引只作用于当前人员列表。
+每人只属于一个分组；升级前已有人员默认“未分组”；界面新增人员默认当前分组（全部人员视图默认“未分组”），新建／编辑弹窗可指定归属。可新增、重命名自建分组，并在“全部人员”或分组视图中勾选、全选当前列表、批量移动或确认后永久删除。批量移动失败不部分生效；批量删除逐人报告失败并保留勾选，活动样本导入和音频读取仍受保护。删除分组只将人员移回“未分组”，不删除人员或样本；内置组不可重命名或删除。拼音索引只作用于当前人员列表。
 
 ZIP v2 包含分组及归属，仍接受 v1。v1 新人员进入“未分组”；v2 合并按规范化组名匹配，已有同身份人员保留目标端分组并提示差异，替换恢复包内归属。分组变化使旧预览失效，需重新预览。导入统计中的分组数只计自建组。资料库替换备份与升级临时 SQLite 备份分别管理。
 
 ASR 默认使用全部分组，手动多选会长期记忆，提交时固定人员 ID；之后移动或新增人员不改变排队任务。资料库替换及恢复 ASR 默认配置恢复全部分组。已完成识别、TTS 参考及历史请求快照保持原样。
 
-English: Each person belongs to one group. Ungrouped is built-in and is the default for existing/new people. Filter and select people for atomic batch moves or confirmed per-person deletes. Group deletion moves members to Ungrouped without removing samples. ZIP v2 preserves groups, with v1 imports supported. Merge matches group names, retains existing target memberships with warnings, and replacement restores source membership; changed groups invalidate previews. Group counts exclude Ungrouped. ASR scope is snapshotted at acceptance. Persistent browser choices reset to all on library replacement; historical tasks remain unchanged.
+English: Each person belongs to one group. Ungrouped is built-in and is the default for existing people and new people created in the all-people view. Creation/editing can choose a group; new people default to the currently filtered group. Filter and select people for atomic batch moves or confirmed per-person deletes. Group deletion moves members to Ungrouped without removing samples. ZIP v2 preserves groups, with v1 imports supported. Merge matches group names, retains existing target memberships with warnings, and replacement restores source membership; changed groups invalidate previews. Group counts exclude Ungrouped. ASR scope is snapshotted at acceptance. Persistent browser choices reset to all on library replacement; historical tasks remain unchanged.
+
+## 查找与导入操作 / Finding people and importing
+
+搜索姓名或备注，不区分拉丁字母大小写。全选只作用于当前筛选列表，切换搜索或分组清空勾选；部分选中时显示半选状态，批量删除失败的人员仍保留勾选与错误原因。空资料库、空分组和搜索无匹配各有提示。
+
+导入弹窗根据服务器回执显示“上传校验 → 预览选择 → 应用结果”，底部操作始终可见。替换确认列出将移除的分组、人员、样本和热词表数量；旧回执缺少数量时显示“未提供”，不假设为零。最近记录、后台轮询、预览修订校验和替换前备份继续有效。人员导航和未提交样本的保存周期见[工作台指南](WORKSPACES.md#阅读与人员导航--reading-and-person-navigation)。
+
+English: Search names/notes case-insensitively. Select-all covers the filtered list; changing filters clears selection, and partial selection uses the mixed state. Failed batch deletions remain selected with reasons. Import steps follow the persisted server receipt and keep footer actions visible. Replacement confirmation lists removed group/person/sample/hotword counts; missing historical counts say Not provided. Receipt polling, revision checks and downloadable backups remain available.

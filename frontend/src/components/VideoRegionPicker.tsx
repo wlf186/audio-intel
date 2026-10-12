@@ -15,7 +15,7 @@ export function VideoRegionPicker({file,value,onChange,disabled}:{file:File;valu
  return <div className="video-region">
   {failed?<p role="status">{t('video.previewUnsupported')}</p>:<>
    <div className="video-region-media" style={{aspectRatio:aspect}}>
-    <video src={url} preload="metadata" controls onLoadedMetadata={event=>setAspect(event.currentTarget.videoWidth/event.currentTarget.videoHeight)} onError={()=>{setFailed(true);onChange(undefined)}}/>
+    {url?<video src={url} preload="metadata" controls onLoadedMetadata={event=>setAspect(event.currentTarget.videoWidth/event.currentTarget.videoHeight)} onError={()=>{setFailed(true);onChange(undefined)}}/>:null}
     {value?<div className="video-region-box" style={{left:`${value.x*100}%`,top:`${value.y*100}%`,width:`${value.width*100}%`,height:`${value.height*100}%`}}/>:null}
     {selecting?<button type="button" className="video-region-draw" aria-label={t('video.drawRegion')} onPointerDown={event=>{start.current=point(event);event.currentTarget.setPointerCapture(event.pointerId)}} onPointerMove={event=>{if(!start.current)return;const end=point(event);onChange({x:Math.min(start.current.x,end.x),y:Math.min(start.current.y,end.y),width:Math.max(.01,Math.abs(start.current.x-end.x)),height:Math.max(.01,Math.abs(start.current.y-end.y))})}} onPointerUp={()=>{start.current=undefined;setSelecting(false)}} onPointerCancel={()=>{start.current=undefined;setSelecting(false)}}/>:null}
    </div>

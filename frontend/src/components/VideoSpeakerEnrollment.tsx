@@ -7,12 +7,12 @@ import {voiceprintPersonLabel} from '../lib/presentation'
 import {Modal} from './Modal'
 import {ResourceStatePanel} from './ResourceStatePanel'
 
-type Props={job:Job;speakerId:string;people:VoiceprintPerson[];peopleState:ResourceState;refreshPeople:()=>Promise<void>;refreshPeopleAndHotwords:()=>Promise<void>;onClose:()=>void;onSuccess:(count:number)=>void}
-export function VideoSpeakerEnrollment({job,speakerId,people,peopleState,refreshPeople,refreshPeopleAndHotwords,onClose,onSuccess}:Props){
+type Props={job:Job;speakerId:string;initialSegmentIds?:number[];people:VoiceprintPerson[];peopleState:ResourceState;refreshPeople:()=>Promise<void>;refreshPeopleAndHotwords:()=>Promise<void>;onClose:()=>void;onSuccess:(count:number)=>void}
+export function VideoSpeakerEnrollment({job,speakerId,initialSegmentIds=[],people,peopleState,refreshPeople,refreshPeopleAndHotwords,onClose,onSuccess}:Props){
  const {t}=useTranslation()
  const [step,setStep]=useState<'select'|'person'>('select')
- const [selected,setSelected]=useState<Set<number>>(()=>new Set())
- const [visible,setVisible]=useState(40)
+ const [selected,setSelected]=useState<Set<number>>(()=>new Set(initialSegmentIds))
+ const [visible,setVisible]=useState(()=>{const values=(job.result?.segments||[]).filter(segment=>segment.speaker===speakerId);const last=Math.max(...initialSegmentIds.map(id=>values.findIndex(segment=>segment.id===id)),0);return Math.max(40,Math.ceil((last+1)/40)*40)})
  const [personId,setPersonId]=useState('')
  const [name,setName]=useState('')
  const [note,setNote]=useState('')
@@ -30,6 +30,7 @@ export function VideoSpeakerEnrollment({job,speakerId,people,peopleState,refresh
  const imported=useMemo(()=>new Set(people.flatMap(person=>person.samples||[]).filter(sample=>sample.source_job_id===job.id).map(sample=>sample.source_segment_id)),[people,job.id])
  const selectedIds=segments.filter(segment=>selected.has(segment.id)&&!imported.has(segment.id)).map(segment=>segment.id)
  const stop=()=>{player.current?.pause();end.current=undefined;setPlaying(undefined)}
+ useEffect(()=>{document.querySelector<HTMLElement>('.video-enrollment-row:has(input:checked)')?.scrollIntoView({block:'nearest'})},[])
  useEffect(()=>{active.current=true;const audio=player.current;return()=>{active.current=false;audio?.pause()}},[])
  function close(){if(submitting.current)return;stop();onClose()}
  async function preview(segment:Segment){
@@ -63,11 +64,12 @@ export function VideoSpeakerEnrollment({job,speakerId,people,peopleState,refresh
  }
  return <Modal className="video-enrollment" title={t('asr.library.title')} closeLabel={t('asr.library.close')} onClose={close}>
   <audio ref={player} src={job.result?.playback_url||`/api/v1/jobs/${job.id}/playback`} preload="none" onTimeUpdate={()=>{if(end.current!==undefined&&player.current&&player.current.currentTime>=end.current)stop()}} onEnded={stop} onError={()=>{stop();setError(t('asr.results.playbackError'))}}/>
+  <p className="enrollment-step" role="status">{t('workspaceUx.enrollmentStep',{step:step==='select'?1:2})}</p>
   <p>{t('video.enrollHelp',{speaker:speaker?.label||speakerId})}</p>
   <ResourceStatePanel state={peopleState} loadingLabel={t('voiceprints.loadingPeople')} errorLabel={t('voiceprints.loadFailed')} retry={()=>void refreshPeople().catch(()=>undefined)}/>
   {error?<p className="error" role="alert">{error}</p>:null}
   {step==='select'?<>
-   <div className="video-enrollment-list">
+   <div className="video-enrollment-list modal-scroll-body">
     {segments.slice(0,visible).map(segment=><div className="video-enrollment-row" key={segment.id}>
      <label><input type="checkbox" aria-label={t('asr.segment.select',{number:segment.id+1})} checked={selectedIds.includes(segment.id)} disabled={peopleState!=='ready'||imported.has(segment.id)} onChange={()=>setSelected(current=>{const next=new Set(current);if(next.has(segment.id))next.delete(segment.id);else next.add(segment.id);return next})}/><span><b>{formatTime(segment.start)} – {formatTime(segment.end)}</b><span>{segment.text}</span>{peopleState==='ready'&&imported.has(segment.id)?<small>{t('video.alreadyImported')}</small>:null}</span></label>
      <button className="button" onClick={()=>void preview(segment)} aria-label={t(playing===segment.id?'video.stopSample':'video.previewSample',{number:segment.id+1})}>{t(playing===segment.id?'asr.results.pause':'asr.results.play')}</button>

@@ -1,3 +1,4 @@
+import {openTranscriptExport} from './ux-helpers'
 import {capabilitiesFor,expect,test,type Page} from './fixtures'
 import type {VoiceprintGroup,VoiceprintPerson} from '../src/lib/types'
 
@@ -23,7 +24,7 @@ async function setup(page:Page){
   const group=state.groups.find(g=>g.id===id)!;group.name=route.request().postDataJSON().name;return route.fulfill({json:group})
  })
  await page.route('**/api/v1/voiceprints/people',route=>{
-  if(route.request().method()==='POST'){const person={...state.people[0],...route.request().postDataJSON(),id:'person_new',group_id:ungrouped};state.people.push(person);return route.fulfill({status:201,json:person})}
+  if(route.request().method()==='POST'){const person={...state.people[0],...route.request().postDataJSON(),id:'person_new'};state.people.push(person);return route.fulfill({status:201,json:person})}
   return route.fulfill({json:{items:state.people}})
  })
  await page.route('**/api/v1/voiceprints/people/batch-move',route=>{const body=route.request().postDataJSON();for(const person of state.people)if(body.person_ids.includes(person.id))person.group_id=body.group_id;return route.fulfill({status:204})})
@@ -111,28 +112,32 @@ for(const width of [1440,390])test(`redaction export preference, validation and 
  await page.setViewportSize({width,height:900});await page.goto('/#asr')
  await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  const panel=page.locator('.transcript-export')
+ await openTranscriptExport(page)
  await expect(panel.getByRole('checkbox',{name:'脱敏导出',exact:true})).toBeChecked()
- await panel.getByRole('button',{name:'关键词替换',exact:true}).click()
- const editor=panel.getByLabel('替换规则（每行 原词=替换词）',{exact:true})
- await editor.fill('广东移动=gy\ncontact=reach')
- let downloading=page.waitForEvent('download');await panel.getByRole('button',{name:'导出简洁 PDF',exact:true}).click();await downloading
+ const editor=page.getByLabel('替换规则（每行 原词=替换词）',{exact:true})
+ const openRules=async()=>{if(width===1440)await panel.getByRole('button',{name:'关键词替换',exact:true}).click()}
+ await openRules();await editor.fill('广东移动=gy\ncontact=reach')
+ let downloading=page.waitForEvent('download');await page.getByRole('button',{name:'导出简洁 PDF',exact:true}).click();await downloading
  expect(state.exports.at(-1)).toEqual({format:'pdf',redact:true,replacements:[{source:'广东移动',target:'gy'},{source:'contact',target:'reach'}]})
  await panel.getByRole('checkbox',{name:'脱敏导出',exact:true}).uncheck()
+ if(width===1440)await openRules()
  await editor.fill('bad syntax')
- await panel.getByText('明细与字幕',{exact:true}).click()
- await expect(editor).toBeHidden()
- downloading=page.waitForEvent('download');await panel.getByRole('button',{name:/^JSON/}).click();await downloading
+ if(width===1440){await panel.getByRole('button',{name:'明细与字幕',exact:true}).click();await expect(editor).toBeHidden()}
+ else await page.locator('.transcript-export-modal select').selectOption('json')
+ downloading=page.waitForEvent('download');await (width===1440?page.getByRole('button',{name:/^JSON/}):page.locator('.transcript-export-modal .modal-actions .primary')).click();await downloading
  expect(state.exports.at(-1)).toEqual({format:'json',redact:false,replacements:[]})
- await page.reload();await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+ await page.reload();await page.getByRole('tab',{name:'任务与结果',exact:true}).click();await openTranscriptExport(page)
  await expect(panel.getByRole('checkbox',{name:'脱敏导出',exact:true})).not.toBeChecked()
- await panel.getByRole('button',{name:'关键词替换',exact:true}).click();await expect(editor).toHaveValue('bad syntax')
+ await openRules();await expect(editor).toHaveValue('bad syntax')
  await panel.getByRole('checkbox',{name:'脱敏导出',exact:true}).check()
- await panel.getByRole('button',{name:'导出简洁 PDF',exact:true}).click()
- await expect(panel.getByRole('alert')).toContainText('第 1 行')
+ if(width===390)await page.locator('.transcript-export-modal select').selectOption('pdf')
+ await expect(page.getByRole('button',{name:'导出简洁 PDF',exact:true})).toBeDisabled()
+ if(width===1440)await openRules()
+ await expect(page.getByRole('alert')).toContainText('第 1 行')
  expect(state.exports).toHaveLength(2)
  await editor.fill('广东移动=gy')
  await page.screenshot({path:info.outputPath(`redaction-${width}.png`),fullPage:true})
- await panel.getByRole('button',{name:'恢复默认导出设置',exact:true}).click()
+ await page.getByRole('button',{name:'恢复默认导出设置',exact:true}).click()
  await expect(editor).toHaveValue('');await expect(panel.getByRole('checkbox',{name:'脱敏导出',exact:true})).toBeChecked()
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  expect(errors).toEqual([])

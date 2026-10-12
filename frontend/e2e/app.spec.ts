@@ -1,3 +1,4 @@
+import {openSampleForm} from './ux-helpers'
 import {expandAsrAdvanced,expandAsrSettings,showAsrResults} from './asr-helpers'
 import {expandTtsSettings} from './tts-helpers'
 import {capabilitiesFor,systemFor,expect,test} from './fixtures'
@@ -635,7 +636,7 @@ test('voiceprint metadata synchronizes independently selectable full and surname
  await dialog.getByLabel('备注（选填）').fill('研发一部')
  await expect(dialog.getByRole('checkbox',{name:'加入热词库'})).toBeChecked()
  await dialog.getByRole('button',{name:'保存人员'}).click()
- expect(submitted).toEqual({name:'张三丰',note:'研发一部',include_in_hotword_library:true})
+ expect(submitted).toEqual({name:'张三丰',note:'研发一部',include_in_hotword_library:true,group_id:'voiceprint_ungrouped'})
  await expect(page.locator('.samples-panel .person-note')).toHaveText('研发一部')
  await expect(page.getByText('已加入人名热词')).toBeVisible()
  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'资料库'}).click()
@@ -688,7 +689,7 @@ test('Auto-detected languages outside the aligner list explain segment-only time
  await expect(page.getByLabel('时间戳')).toHaveValue('word')
  await expect(page.getByText('Arabic · 句级时间戳')).toBeVisible()
  await expect(page.getByRole('button',{name:/查看 .*字词时间戳/})).toHaveCount(0)
- await page.locator('.transcript-export-details summary').click()
+ await page.getByRole('button',{name:'明细与字幕',exact:true}).click()
  await expect(page.getByTitle('下载 transcript.srt')).toBeVisible()
  await page.getByPlaceholder('搜索转写内容').fill('مرحبا')
  await expect(page.locator('.segments article')).toHaveCount(1)
@@ -1122,9 +1123,11 @@ test('voiceprint samples support upload and previewed microphone recording',asyn
  await page.goto('/#voiceprints')
  await expect(page.getByRole('heading',{name:'资料库',exact:true})).toBeVisible()
  await expect(page.getByRole('tab',{name:'声纹库',exact:true})).toHaveAttribute('aria-selected','true')
+ await openSampleForm(page)
  await expect(page.getByLabel('声纹样本语言').locator('option')).toHaveCount(12)
  await page.getByLabel('声纹样本语言').selectOption('Spanish')
  await page.getByLabel('声纹入库计算设备').selectOption('cpu')
+ await openSampleForm(page)
  const fileInput=page.locator('.sample-input-panel input[type="file"]')
  await fileInput.setInputFiles({name:'uploaded-sample.wav',mimeType:'audio/wav',buffer:Buffer.from('RIFF-upload')})
  await page.getByRole('button',{name:'自动转写并入库'}).click()

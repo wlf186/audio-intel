@@ -1,3 +1,4 @@
+import {openTranscriptExport} from './ux-helpers'
 import {capabilitiesFor,expect,test,type Page} from './fixtures'
 import {createHash} from 'node:crypto'
 
@@ -115,7 +116,8 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
    return route.fulfill({contentType:'application/pdf',headers:{'Content-Disposition':"attachment; filename*=UTF-8''%E8%AE%B2%E5%BA%A7.pdf"},body:'%PDF-test'})
   })
   await f.open()
-  const exportButton=page.locator('.transcript-export button.primary')
+  await openTranscriptExport(page)
+  const exportButton=page.locator(width===390?'.transcript-export-modal .modal-actions .primary':'.transcript-export-actions>.primary')
   await exportButton.click();await expect(exportButton).toBeDisabled();await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'繁忙':'busy');await expect(exportButton).toBeEnabled()
   status=413;await exportButton.click();await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'上限':'limit')
   status=0;await exportButton.click();await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'中断':'interrupted')

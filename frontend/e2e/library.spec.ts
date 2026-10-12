@@ -1,3 +1,4 @@
+import {openLibraryImport} from './ux-helpers'
 import {capabilitiesFor,expect,test,type Page} from './fixtures'
 import {expandTtsSettings} from './tts-helpers'
 import type {LibraryImport,LibraryMode,LibraryPreview,VoiceprintPerson} from '../src/lib/types'
@@ -36,7 +37,7 @@ for(const width of [1440,390]){
   await expect(list.locator('.person-row').first()).toContainText('Alice 00')
   const selected=await page.locator('.samples-panel h2').textContent()
   const rail=page.getByRole('navigation',{name:'人员字母索引'})
-  await expect(rail.getByRole('button',{name:'跳到 B 开头的人员'})).toBeDisabled()
+  await expect(rail.getByRole('button',{name:'跳到 B 开头的人员'})).toHaveCount(0)
   const jump=rail.getByRole('button',{name:'跳到 Z 开头的人员'})
   await jump.scrollIntoViewIfNeeded();await jump.click()
   expect(await list.evaluate(element=>element.scrollTop)).toBeGreaterThan(0)
@@ -77,7 +78,7 @@ test('upload, replace confirmation, completed counts, backup and preserved TTS d
  await page.goto('/#tts')
  await page.locator('.text-editor textarea').fill('迁移资料后保留这段正文。')
  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'资料库',exact:true}).click()
- await page.getByRole('button',{name:'导入完整包'}).click()
+ await openLibraryImport(page)
  const dialog=page.getByRole('dialog',{name:'导入资料库',exact:true})
  await dialog.getByLabel('完整资料包（ZIP）').setInputFiles({name:'资料.zip',mimeType:'application/zip',buffer:Buffer.from('mock zip')})
  await dialog.getByRole('button',{name:'上传并校验'}).click()
@@ -94,7 +95,7 @@ test('upload, replace confirmation, completed counts, backup and preserved TTS d
  const download=page.waitForEvent('download')
  await dialog.getByRole('button',{name:'下载替换前备份'}).click()
  expect((await download).suggestedFilename()).toBe('backup.zip')
- await dialog.getByRole('button',{name:'关闭',exact:true}).click()
+ await dialog.locator('.modal-actions').getByRole('button',{name:'关闭',exact:true}).click()
  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'语音合成',exact:true}).click()
  await expect(page.locator('.text-editor textarea')).toHaveValue('迁移资料后保留这段正文。')
  expect(errors).toEqual([])
@@ -115,7 +116,7 @@ for(const width of [1440,390])test(`a delayed merge preview cannot overwrite the
   return route.fulfill({json:[receipt]})
  })
  await page.goto('/#library')
- await page.getByRole('button',{name:'导入完整包'}).click()
+ await openLibraryImport(page)
  const dialog=page.getByRole('dialog',{name:'导入资料库'})
  await mergeGate.arrived
  await dialog.getByRole('radio',{name:/替换现有资料/}).check()

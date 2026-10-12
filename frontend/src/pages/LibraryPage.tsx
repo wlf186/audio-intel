@@ -9,6 +9,7 @@ import {SubmissionProgress} from '../components/SubmissionProgress'
 import {ResourceStatePanel} from '../components/ResourceStatePanel'
 import {handleTabKeys} from '../lib/tabs'
 import {resolvedLocale} from '../i18n'
+import {ActionPopover} from '../components/ActionPopover'
 
 const pendingKey='audio-intel:library-import:v1'
 function pendingId(){try{return sessionStorage.getItem(pendingKey)}catch{return null}}
@@ -114,8 +115,10 @@ export function LibraryPage({tab,onTabChange,maxUploadBytes,onImported,children}
   try{await api.removeLibraryImport(item.id);setItems(current=>current.filter(row=>row.id!==item.id));setItem(undefined);setPreview(undefined);setPending()}
   catch(cause){setError((cause as Error).message)}finally{setBusy(false)}
  }
+ const phase=!item||['queued','validating','failed','expired'].includes(item.state)?1:item.state==='ready'?2:3
+ const removedSummary=preview?t('workspaceUx.replaceCounts',{groups:preview.removed.groups??t('workspaceUx.notProvided'),people:preview.removed.people,samples:preview.removed.samples,lists:preview.removed.hotword_lists}):''
  return <div className="library-page hud-page">
-  <div className="page-heading library-heading"><div><h1 tabIndex={-1}>{t('library.title')}</h1><p>{t('library.subtitle')}</p></div><div className="library-tools"><button className="button" onClick={()=>download('/api/v1/library/export')}><Download size={17}/>{t('library.export')}</button><button className="primary" onClick={()=>setOpen(true)}><Upload size={17}/>{t('library.import')}</button></div></div>
+  <div className="page-heading library-heading"><div><h1 tabIndex={-1}>{t('library.title')}</h1><p>{t('library.subtitle')}</p></div><div className="library-tools"><ActionPopover label={t('workspaceUx.libraryTools')} className="library-tool-menu" closeOnAction><button className="button" onClick={()=>download('/api/v1/library/export')}><Download size={17}/>{t('library.export')}</button><button className="button" onClick={()=>setOpen(true)}><Upload size={17}/>{t('library.import')}</button></ActionPopover></div></div>
   {error&&!open?<p className="error library-message" role="alert">{error}</p>:null}
   {notice&&!open?<p className="notice library-message" role="status">{notice}</p>:null}
   {active&&!open?<button className="button library-message" onClick={()=>setOpen(true)}>{t(`library.states.${item.state as 'queued'|'validating'|'applying'}`)}</button>:null}
@@ -123,25 +126,28 @@ export function LibraryPage({tab,onTabChange,maxUploadBytes,onImported,children}
    {(['voiceprints','hotwords'] as const).map(value=><button id={`library-tab-${value}`} key={value} role="tab" aria-selected={tab===value} aria-controls="library-panel" tabIndex={tab===value?0:-1} onClick={()=>onTabChange(value)}>{t(value==='voiceprints'?'voiceprints.title':'hotwords.title')}</button>)}
   </div>
   <div className="library-content" id="library-panel" role="tabpanel" aria-labelledby={`library-tab-${tab}`}>{children}</div>
-  {open?<Modal title={t('library.importTitle')} closeLabel={t('common.actions.close')} onClose={()=>{if(!busy)setOpen(false)}}>
-   <p>{t('library.packageHelp')}</p>
+  {open?<Modal className="library-import-modal" title={t('library.importTitle')} closeLabel={t('common.actions.close')} onClose={()=>{if(!busy)setOpen(false)}}>
+   <ol className="import-stepper" aria-label={t('workspaceUx.importSteps')}>{([1,2,3] as const).map(step=><li key={step} aria-current={phase===step?'step':undefined}><b>{step}</b>{t(`workspaceUx.importStep${step}`)}</li>)}</ol>
+   <div className="modal-scroll-body">
+   {phase===1?<p>{t('library.packageHelp')}</p>:null}
    <ResourceStatePanel state={state} loadingLabel={t('library.loadingImports')} errorLabel={t('library.loadFailed')} retry={()=>void refresh()}/>
    {state==='ready'&&items.length?<label>{t('library.recent')}<select disabled={busy||Boolean(active)} value={item?.id||''} onChange={event=>{const next=items.find(row=>row.id===event.target.value);setItem(next);setMode(next?.mode||'merge');setPreview(undefined);setError('')}}><option value="">{t('library.newImport')}</option>{items.map(row=><option key={row.id} value={row.id}>{row.name} · {t(`library.states.${row.state}`)}</option>)}</select></label>:null}
-   {!active?<label>{t('library.archiveFile')}<input type="file" accept=".zip,application/zip" disabled={busy} onChange={event=>{setFile(event.target.files?.[0]);setError('')}}/></label>:null}
-   {file?<button className="primary" disabled={busy} onClick={()=>void upload()}><Upload size={16}/>{t('library.upload')}</button>:null}
+   {phase===1&&!active?<label className="library-file-picker">{t('library.archiveFile')}<input type="file" accept=".zip,application/zip" disabled={busy} onChange={event=>{setFile(event.target.files?.[0]);setError('')}}/></label>:null}
    {progress?<SubmissionProgress progress={progress} label={t('library.uploading')} onCancel={()=>controller.current?.abort()}/>:null}
    {item?<div className="library-import-status"><Archive size={20}/><b>{item.name}</b><span role="status">{t(`library.states.${item.state}`)}</span></div>:null}
    {item?.state==='ready'?<><fieldset className="library-mode"><legend>{t('library.mode')}</legend>{(['merge','replace'] as const).map(value=><label key={value}><input type="radio" name="library-mode" value={value} checked={mode===value} disabled={busy} onChange={()=>setMode(value)}/><span><b>{t(`library.modes.${value}`)}</b><small>{t(`library.modeHelp.${value}`)}</small></span></label>)}</fieldset>
     <ResourceStatePanel state={previewState} loadingLabel={t('library.previewLoading')} errorLabel={t('library.previewFailed')} retry={()=>void requestPreview()}/>
-    {previewState==='ready'&&preview?<><table className="library-preview"><caption>{t('library.preview')}</caption><thead><tr><th>{t('library.contents')}</th><th>{t('library.inPackage')}</th><th>{t('library.existing')}</th><th>{t('library.added')}</th>{mode==='replace'?<th>{t('library.removed')}</th>:null}</tr></thead><tbody>{(['groups','people','samples','hotword_lists'] as const).map(key=><tr key={key}><th>{t(`library.counts.${key}`)}</th><td>{preview.source[key]??0}</td><td>{preview.target[key]??0}</td><td>{preview.added[key]??0}</td>{mode==='replace'?<td>{preview.removed[key]??0}</td>:null}</tr>)}</tbody></table>
+    {previewState==='ready'&&preview?<>{mode==='replace'?<p className="replace-summary">{removedSummary}</p>:null}<table className="library-preview"><caption>{t('library.preview')}</caption><thead><tr><th>{t('library.contents')}</th><th>{t('library.inPackage')}</th><th>{t('library.existing')}</th><th>{t('library.added')}</th>{mode==='replace'?<th>{t('library.removed')}</th>:null}</tr></thead><tbody>{(['groups','people','samples','hotword_lists'] as const).map(key=><tr key={key}><th>{t(`library.counts.${key}`)}</th><td>{preview.source[key]??t('workspaceUx.notProvided')}</td><td>{preview.target[key]??t('workspaceUx.notProvided')}</td><td>{preview.added[key]??t('workspaceUx.notProvided')}</td>{mode==='replace'?<td>{preview.removed[key]??t('workspaceUx.notProvided')}</td>:null}</tr>)}</tbody></table>
     <p>{t('library.mergeSummary',{people:preview.merged_people,lists:preview.merged_hotword_lists,skipped:preview.skipped_samples,renamed:preview.renamed_samples})}</p>{preview.warnings.length?<ul>{preview.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>:null}</>:null}
-    <div className="modal-actions"><button className="button" disabled={busy} onClick={()=>void clear()}>{t('library.discard')}</button><button className={mode==='replace'?'button danger-action':'primary'} disabled={busy||previewState!=='ready'||!preview||preview.mode!==mode} onClick={()=>mode==='replace'?setConfirm(true):void apply()}>{t('library.apply')}</button></div>
    </>:null}
    {item?.backup_url?<button className="button" onClick={()=>download(item.backup_url!)}><Download size={16}/>{t('library.downloadBackup')}</button>:null}
    {item?.state==='completed'?<><p className="notice" role="status">{t('library.completed')}</p>{item.result?<><p>{t('library.resultSummary',{people:item.result.added.people,samples:item.result.added.samples,lists:item.result.added.hotword_lists})}</p><p>{t('library.mergeSummary',{people:item.result.merged_people,lists:item.result.merged_hotword_lists,skipped:item.result.skipped_samples,renamed:item.result.renamed_samples})}</p>{item.result.warnings.length?<ul>{item.result.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul>:null}</>:null}</>:null}
    {item?.error?<p className="error" role="alert">{item.error}</p>:null}{error?<p className="error" role="alert">{error}</p>:null}{notice?<p className="notice" role="status">{notice}</p>:null}
-   {item?.state==='failed'||item?.state==='expired'?<button className="button" disabled={busy} onClick={()=>void clear()}>{t('library.discard')}</button>:null}
+   </div>
+   <div className="modal-actions">
+    {phase===2?<><button className="button" disabled={busy} onClick={()=>void clear()}>{t('library.discard')}</button><button className={mode==='replace'?'button danger-action':'primary'} disabled={busy||previewState!=='ready'||!preview||preview.mode!==mode} onClick={()=>mode==='replace'?setConfirm(true):void apply()}>{t('library.apply')}</button></>:phase===1?<><button className="button" disabled={busy} onClick={()=>item&&!active?void clear():setOpen(false)}>{t(item&&!active?'library.discard':'common.actions.close')}</button><button className="primary" disabled={busy||Boolean(active)||!file} onClick={()=>void upload()}><Upload size={16}/>{t('library.upload')}</button></>:<button className="button" disabled={busy} onClick={()=>setOpen(false)}>{t('common.actions.close')}</button>}
+   </div>
   </Modal>:null}
-  {confirm?<ConfirmDialog title={t('library.replaceTitle')} description={t('library.replaceWarning')} confirmLabel={t('library.replaceConfirm')} busy={busy} danger onClose={()=>{if(!busy)setConfirm(false)}} onConfirm={()=>void apply()}/>:null}
+  {confirm?<ConfirmDialog title={t('library.replaceTitle')} description={`${removedSummary}\n\n${t('library.replaceWarning')}`} confirmLabel={t('library.replaceConfirm')} busy={busy} danger onClose={()=>{if(!busy)setConfirm(false)}} onConfirm={()=>void apply()}/>:null}
  </div>
 }

@@ -51,8 +51,9 @@ async function fixture(page:Page,gpuAvailable?:boolean){
  await page.route('**/api/v1/asr/hotword-lists',route=>route.fulfill({json:{items:[{id:'words',name:'项目词表',kind:'custom',terms:['语音合成','转写'],term_count:2,created_at:now,updated_at:now}],count:1}}))
  return {errors}
 }
-async function equalPanes(page:Page,kind:'asr'|'tts'){
- await expect.poll(async()=>Math.abs((await page.locator(`#${kind}-input-pane`).boundingBox())!.width-(await page.locator(`#${kind}-settings-pane`).boundingBox())!.width)).toBeLessThanOrEqual(1)
+async function defaultPanes(page:Page,kind:'asr'|'tts'){
+ const expected=kind==='asr'?.35:.5
+ await expect.poll(async()=>{const input=(await page.locator(`#${kind}-input-pane`).boundingBox())!.width,settings=(await page.locator(`#${kind}-settings-pane`).boundingBox())!.width;return Math.abs(input/(input+settings)-expected)}).toBeLessThanOrEqual(.035)
 }
 async function drag(page:Page,delta:number){
  const box=(await page.getByRole('separator').boundingBox())!
@@ -66,10 +67,10 @@ async function noOverflow(page:Page,width:number){
 }
 
 for(const viewport of [{width:1024,height:768},{width:1280,height:720},{width:1366,height:768},{width:1440,height:900},{width:1920,height:1080}])for(const gpuAvailable of [true,false]){
- test(`desktop controls and equal panes at ${viewport.width}x${viewport.height}, GPU ${gpuAvailable?'available':'unavailable'}`,async({page})=>{
+ test(`desktop controls and default panes at ${viewport.width}x${viewport.height}, GPU ${gpuAvailable?'available':'unavailable'}`,async({page})=>{
   await page.setViewportSize(viewport)
   const {errors}=await fixture(page,gpuAvailable)
-  await page.goto('/#asr');await equalPanes(page,'asr')
+  await page.goto('/#asr');await defaultPanes(page,'asr')
   await page.locator('input[type=file]').setInputFiles({name:'会议录音.wav',mimeType:'audio/wav',buffer:wave()})
   await expect(page.locator('.asr-file-info')).toContainText('会议录音.wav')
   await expect(page.getByText('会议录音.wav',{exact:true})).toHaveCount(1)
@@ -90,7 +91,7 @@ for(const viewport of [{width:1024,height:768},{width:1280,height:720},{width:13
   await noOverflow(page,viewport.width)
   await page.screenshot({path:`/tmp/pc-layout-final-asr-${viewport.width}.png`})
   await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'语音合成',exact:true}).click()
-  await equalPanes(page,'tts')
+  await defaultPanes(page,'tts')
   await page.locator('.text-editor textarea').fill('调整分栏后仍保留这段文本。')
   await expect(page.locator('.document-settings-toggle')).toHaveAttribute('aria-expanded','true')
   await expect(page.getByLabel('TTS 模型',{exact:true})).toBeVisible()
@@ -116,7 +117,7 @@ for(const viewport of [{width:1024,height:768},{width:1280,height:720},{width:13
 
 test('divider drag, independent durable preferences and reset preserve input nodes',async({page})=>{
  const {errors}=await fixture(page)
- await page.goto('/#asr');await equalPanes(page,'asr')
+ await page.goto('/#asr');await defaultPanes(page,'asr')
  await page.locator('input[type=file]').setInputFiles({name:'保留文件.wav',mimeType:'audio/wav',buffer:wave()})
  await page.locator('input[type=file]').evaluate(e=>{(window as unknown as {selectedInput:Element}).selectedInput=e})
  await drag(page,-180)
@@ -127,7 +128,7 @@ test('divider drag, independent durable preferences and reset preserve input nod
  await page.getByRole('tab',{name:'新建视频转写',exact:true}).click()
  expect((await page.locator('#asr-input-pane').boundingBox())!.width).toBeCloseTo(width,0)
  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'语音合成',exact:true}).click()
- await equalPanes(page,'tts')
+ await defaultPanes(page,'tts')
  await page.locator('.text-editor textarea').fill('分栏调整保留草稿。')
  await page.locator('.text-editor textarea').evaluate(e=>{(window as unknown as {textInput:Element}).textInput=e})
  await drag(page,130)
@@ -141,20 +142,20 @@ test('divider drag, independent durable preferences and reset preserve input nod
  await expect.poll(async()=>(await page.locator('#asr-input-pane').boundingBox())!.width).toBeCloseTo(width,0)
  await page.locator('.asr-settings .reset-settings').click()
  expect(await page.evaluate(key=>JSON.parse(localStorage.getItem(key)!),layoutKey)).toEqual(ratios)
- await page.locator('.workbench-reset-layout:visible').click();await equalPanes(page,'asr')
+ await page.locator('.workbench-reset-layout:visible').click();await defaultPanes(page,'asr')
  expect(await page.evaluate(key=>JSON.parse(localStorage.getItem(key)!).tts,layoutKey)).toBe(ratios.tts)
  expect(errors).toEqual([])
 })
 
 test('divider keyboard, minimum widths, cancellation and resize round trip',async({page})=>{
  const {errors}=await fixture(page)
- await page.goto('/#tts');await equalPanes(page,'tts')
+ await page.goto('/#tts');await defaultPanes(page,'tts')
  const divider=page.getByRole('separator')
  await divider.focus();await page.keyboard.press('Shift+ArrowRight')
  expect(Number(await divider.getAttribute('aria-valuenow'))).toBe(60)
  await page.keyboard.press('Home');expect((await page.locator('#tts-input-pane').boundingBox())!.width).toBeCloseTo(320,0)
  await page.keyboard.press('End');expect((await page.locator('#tts-settings-pane').boundingBox())!.width).toBeCloseTo(400,0)
- await divider.dblclick();await equalPanes(page,'tts')
+ await divider.dblclick();await defaultPanes(page,'tts')
  await divider.focus();await page.keyboard.press('ArrowLeft')
  expect(Number(await divider.getAttribute('aria-valuenow'))).toBe(48)
  const before=await page.evaluate(key=>localStorage.getItem(key),layoutKey)
@@ -178,7 +179,7 @@ test('divider keyboard, minimum widths, cancellation and resize round trip',asyn
 for(const stored of ['{bad json','{"asr":null,"tts":2}'])test(`invalid stored layout uses equal panes: ${stored}`,async({page})=>{
  await page.addInitScript(({key,value})=>localStorage.setItem(key,value),{key:layoutKey,value:stored})
  const {errors}=await fixture(page)
- await page.goto('/#asr');await equalPanes(page,'asr')
+ await page.goto('/#asr');await defaultPanes(page,'asr')
  await drag(page,-60)
  expect((await page.locator('#asr-input-pane').boundingBox())!.width).toBeLessThan(650)
  expect(errors).toEqual([])
@@ -187,10 +188,10 @@ for(const stored of ['{bad json','{"asr":null,"tts":2}'])test(`invalid stored la
 test('layout storage failure keeps resizing usable',async({page})=>{
  await page.addInitScript(key=>{const set=Storage.prototype.setItem;Storage.prototype.setItem=function(name,value){if(name===key)throw new DOMException('Storage unavailable','SecurityError');set.call(this,name,value)}},layoutKey)
  const {errors}=await fixture(page)
- await page.goto('/#tts');await equalPanes(page,'tts')
+ await page.goto('/#tts');await defaultPanes(page,'tts')
  await drag(page,-80)
  expect((await page.locator('#tts-input-pane').boundingBox())!.width).toBeLessThan(650)
- await page.locator('.workbench-reset-layout:visible').click();await equalPanes(page,'tts')
+ await page.locator('.workbench-reset-layout:visible').click();await defaultPanes(page,'tts')
  expect(errors).toEqual([])
 })
 
@@ -199,7 +200,7 @@ test('resizing preserves video source, playback position and selected region',as
  const python=path.join(root,process.platform==='win32'?'.runtime/api/Scripts/python.exe':'.runtime/api/bin/python')
  execFileSync(python,['-c',"from pathlib import Path; from tests.test_video_transcription import video_file; import sys; p=Path(sys.argv[1]); p.parent.mkdir(parents=True,exist_ok=True); video_file(p)",video],{cwd:root,env:{...process.env,AUDIO_INTEL_LOAD_ENV:'0',AUDIO_INTEL_DATA_DIR:'tmp/pc-layout-video/data'}})
  const {errors}=await fixture(page)
- await page.goto('/#asr');await equalPanes(page,'asr')
+ await page.goto('/#asr');await defaultPanes(page,'asr')
  await page.getByRole('tab',{name:'新建视频转写',exact:true}).click()
  await page.locator('input[type=file]').setInputFiles(video)
  const preview=page.locator('.video-region-media video')
@@ -222,7 +223,7 @@ test('resizing preserves video source, playback position and selected region',as
 test('resizing a clone workspace preserves person, sample and reference interval',async({page})=>{
  await page.addInitScript(()=>localStorage.setItem('audio-intel:tts-reference-ranges:v1',JSON.stringify({'sample-0':{start:3,end:8}})))
  const {errors}=await fixture(page)
- await page.goto('/#tts');await equalPanes(page,'tts')
+ await page.goto('/#tts');await defaultPanes(page,'tts')
  await page.getByRole('tab',{name:'声音克隆',exact:true}).click()
  await page.getByRole('tab',{name:'声纹库',exact:true}).click()
  await expect(page.getByLabel('TTS 声纹样本')).toHaveValue('sample-0')

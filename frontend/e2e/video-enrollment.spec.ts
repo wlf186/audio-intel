@@ -163,5 +163,7 @@ test('task change discards enrollment UI while an accepted request finishes',asy
  const response=page.waitForResponse(r=>r.url().endsWith('/samples/from-asr'));release();await response
  await expect(page.getByText('已加入 1 个声纹样本。',{exact:true})).toHaveCount(0)
  await page.locator('.video-section').first().getByRole('button',{name:'加入声纹库'}).click()
- await expect(page.getByRole('dialog').getByRole('checkbox',{checked:true})).toHaveCount(0)
+ await expect(page.getByRole('dialog').getByRole('checkbox',{checked:true})).toHaveCount(1)
+ await expect(page.getByRole('dialog').getByRole('checkbox').first()).toBeChecked()
+ await expect(page.getByRole('dialog').getByRole('checkbox').nth(1)).not.toBeChecked()
 })
