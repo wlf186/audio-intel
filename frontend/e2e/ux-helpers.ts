@@ -1,6 +1,7 @@
 import {expect,type Page} from './fixtures'
 
 export async function openTranscriptExport(page:Page){
+ await expect(page.locator('.transcript-export')).toBeVisible()
  const trigger=page.locator('.export-mobile-trigger')
  if(await trigger.isVisible())await trigger.click()
 }

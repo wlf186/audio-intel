@@ -89,6 +89,26 @@ for(const width of [1440,390])test(`group management and partial batch deletion 
  expect(errors).toEqual([])
 })
 
+test('mobile export helper waits for the selected result before opening controls @timing',async({page,responseGate})=>{
+ const {errors}=await setup(page)
+ await page.setViewportSize({width:390,height:900})
+ const gate=responseGate()
+ await page.route('**/api/v1/jobs/export-fixture',async route=>{await gate.hold();return route.fallback()})
+ await page.goto('/#asr')
+ await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+ await gate.arrived
+ let opened=false
+ const opening=openTranscriptExport(page).then(()=>{opened=true})
+ await expect(page.getByText('正在加载转写结果',{exact:true})).toBeVisible()
+ expect(opened).toBe(false)
+ gate.release()
+ await opening
+ await expect(page.locator('.transcript-export-modal')).toBeVisible()
+ await expect(page.getByRole('checkbox',{name:'脱敏导出',exact:true})).toBeChecked()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+ expect(errors).toEqual([])
+})
+
 test('ASR group preferences migrate, persist, retry and never expand a stale selection',async({page})=>{
  const {state,errors}=await setup(page)
  await page.addInitScript(()=>{if(!localStorage.getItem('group-migration-seeded')){localStorage.setItem('audio-intel:asr-preferences:v3',JSON.stringify({language:'English',useVoiceprints:true}));localStorage.setItem('group-migration-seeded','1')}})
