@@ -150,15 +150,24 @@ for(const width of [1440,390])test(`summary SSE stays idle and task details load
  expect(errors.filter(message=>message.includes('503 (Service Unavailable)'))).toHaveLength(1)
 })
 
-test('local API docs load offline and execute the health probe',async({page,baseURL})=>{
+test('local API docs load offline and execute the health probe',{tag:'@timing'},async({page,baseURL,responseGate})=>{
  const errors:string[]=[]
  const external:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  page.on('request',request=>{if(new URL(request.url()).origin!==new URL(baseURL!).origin)external.push(request.url())})
+ const schemaGate=responseGate()
+ await page.route('**/openapi.json',async route=>{await schemaGate.hold();await route.continue()})
+ const schemaResponse=page.waitForResponse(response=>new URL(response.url()).pathname==='/openapi.json')
  await page.goto('/docs')
+ await schemaGate.arrived
  await expect(page).toHaveTitle(/Sandevistan/)
  await expect(page.locator('.swagger-ui')).toBeVisible()
+ await expect(page.getByText('快速开始 / Quick start')).toHaveCount(0)
+ schemaGate.release()
+ const schema=await schemaResponse
+ expect(schema.ok()).toBe(true)
+ expect(await schema.finished()).toBeNull()
  await expect(page.getByText('快速开始 / Quick start')).toBeVisible()
  const firstTag=page.locator('.opblock-tag-section').first()
  await firstTag.scrollIntoViewIfNeeded()
