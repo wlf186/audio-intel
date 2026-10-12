@@ -107,6 +107,16 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## v0.1.32 声纹库布局与工作台交互优化
+
+从正式发布的 v0.1.31 或已部署的后续工作台开发源码升级：**数据迁移：无**，无需额外升级备份，不改写数据库、历史任务、音视频或声纹样本。模型、依赖锁和公共 API 契约不变。重建前端，并按上面的本地部署流程刷新原运行的 API、ASR/TTS supervisor 和 executor。更早版本必须覆盖中间升级要求；从 v0.1.30 跨版本升级仍需下节的 schema v13 → v14 SQLite 一致快照，无需复制媒体文件。
+
+桌面声纹库改为等宽人员管理与样本详情两栏，分别滚动。分组操作集中在“分组管理”菜单，搜索和新建人员单独成行，勾选后才显示底部批量操作；样本表单按详情区宽度排列，调整窗口保留表单和播放器。窄屏保留人员列表与独立详情，返回时恢复筛选和位置；未提交样本保存在页面内存，离开或切换人员时受到丢弃确认保护，刷新不恢复文件。新建人员默认当前筛选分组，全部人员视图默认“未分组”。
+
+本版同时交付 v0.1.31 之后的工作台修复：ASR 新用户桌面布局默认 35/65，已有比例继续生效；音视频阅读恢复任务、视图、位置、加载数量及逐句筛选，编辑刷新后保留附近阅读位置；窄屏导出统一到弹窗，时间输入与视频声纹入库步骤更清晰。新增 `audio-intel:workspace-session:v1` sessionStorage 保存当前页签的导航记录，刷新和切页保留，关闭页签、退出登录或鉴权失效清除；资料库替换只清除人员导航。原有 localStorage 布局、导出设置和 ASR 参数的保存周期不变。详见[工作台指南](WORKSPACES.md)和[资料库指南](LIBRARY.md)。
+
+English: From released v0.1.31 or subsequent workspace-development source, **no data migration or additional upgrade backup** is required. Historical database records, jobs and media are not rewritten; models, dependency locks and public API contracts are unchanged. Rebuild the frontend and refresh all originally running API, supervisor and executor processes. Earlier upgrades must cover intervening requirements; from v0.1.30, the v13 → v14 database-only migration below still requires a consistent SQLite snapshot without copying media. Desktop voiceprints use equal, independently scrolling panes with grouped management actions and selection-only batch controls; responsive sample forms preserve mounted inputs and players. Narrow screens restore person navigation and protect in-memory drafts, whose file bytes do not survive reload. New people default to the filtered group, or Ungrouped in the all-people view. This release also delivers workspace/reader, mobile export, time-input and enrollment improvements since v0.1.31. New current-tab `audio-intel:workspace-session:v1` sessionStorage retains navigation across reloads, clears on tab closure/logout/auth invalidation, and clears only person navigation on library replacement. Existing localStorage preference lifetimes and saved desktop ratios remain effective; new ASR layouts default to 35/65.
+
 ## v0.1.31 声纹分组与脱敏导出
 
 从 v0.1.30 升级：**数据迁移：仅数据库**，schema v13 → v14 新增声纹分组及人员归属表，既有人员进入“未分组”。首次启动前仅需 SQLite 一致快照，不复制视频、音频或历史任务文件；完整验收通过后必须清理本次临时升级备份。更早版本需覆盖中间升级要求。模型和依赖锁不变，重建前端并刷新原运行的全部服务及执行器。
