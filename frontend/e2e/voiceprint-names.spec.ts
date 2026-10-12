@@ -57,7 +57,7 @@ async function workspace(page:Page){
 }
 
 for(const width of [1440,390]){
- test(`voiceprint name conflicts stay in dialogs and renamed samples reach cloning at ${width}px`,async({page})=>{
+ test(`voiceprint name conflicts stay in dialogs and renamed samples reach cloning at ${width}px`,{tag:'@timing'},async({page,responseGate})=>{
   await page.setViewportSize({width,height:width===390?844:900})
   const {people,errors,expectedConflicts}=await workspace(page)
   await page.goto('/#voiceprints')
@@ -91,10 +91,26 @@ for(const width of [1440,390]){
   await expect(page.getByRole('button',{name:'重命名 安静会议室录音',exact:true})).toBeVisible()
   await page.getByRole('button',{name:'重命名 正在分析的录音',exact:true}).click()
   await rename.getByLabel('样本名称').fill('待分析会议录音')
+  const gate=responseGate()
+  await page.route('**/api/v1/voiceprints/people',async route=>{
+   if(route.request().method()!=='GET')return route.fallback()
+   await gate.hold()
+   return route.fulfill({json:{items:people}})
+  })
   await rename.getByRole('button',{name:'重命名样本',exact:true}).click()
   await expect(rename).toHaveCount(0)
+  await gate.arrived
   expect(people[0].samples[2].name).toBe('待分析会议录音')
-  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'语音合成'}).click()
+  const renamedPending=page.getByRole('button',{name:'重命名 待分析会议录音',exact:true})
+  await expect(page.getByRole('button',{name:'重命名 正在分析的录音',exact:true})).toBeDisabled()
+  const ttsNavigation=page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'语音合成'})
+  await ttsNavigation.click()
+  await expect(page).toHaveURL(/#library\/voiceprints\/p1$/)
+  await expect(page.getByRole('status')).toContainText('请等待当前操作完成后再离开')
+  gate.release()
+  await expect(renamedPending).toBeEnabled()
+  await ttsNavigation.click()
+  await expect(page).toHaveURL(/#tts$/)
   await expandTtsSettings(page)
  await page.getByRole('tab',{name:'声音克隆'}).click()
   await page.getByRole('tab',{name:'声纹库',exact:true}).click()
