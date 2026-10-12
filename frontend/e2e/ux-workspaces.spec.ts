@@ -52,7 +52,7 @@ for(const width of [1440,390]){
   await page.getByRole('button',{name:'新建人员',exact:true}).click();const dialog=page.getByRole('dialog')
   await expect(dialog.getByLabel('所属分组')).toHaveValue('film');await dialog.getByLabel('名字（必填）').fill('新同事');await dialog.getByRole('button',{name:'保存人员',exact:true}).click();await expect(dialog).toHaveCount(0)
   expect(state.created[0]).toMatchObject({group_id:'film',name:'新同事'})
-  if(width===390){await expect(page.locator('.samples-panel h2')).toBeInViewport();await page.getByRole('button',{name:'返回人员列表',exact:true}).click()}
+  if(width===390){await expect(page.locator('.samples-panel h2')).toBeInViewport();await page.screenshot({path:info.outputPath('person-detail.png')});await page.getByRole('button',{name:'返回人员列表',exact:true}).click()}
   await expect(page.getByLabel('人员分组',{exact:true})).toHaveValue('film')
   await page.getByLabel('搜索姓名或备注').fill('曾');await expect(page.locator('.person-row')).toHaveCount(1);await page.locator('.person-row').click()
   await expect(page).toHaveURL(/#library\/voiceprints\/person-44$/)
@@ -65,7 +65,8 @@ for(const width of [1440,390]){
   await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click();await expect(page.locator('.video-section').first()).toBeVisible()
   await page.getByRole('button',{name:'编辑分段',exact:true}).click();await page.getByRole('button',{name:'更换截图',exact:true}).first().click()
   const dialog=page.getByRole('dialog');await dialog.getByRole('spinbutton').fill('-1');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeDisabled()
-  await dialog.getByLabel('时间（时:分:秒）').fill('00:00:00.500');await expect(dialog.getByRole('spinbutton')).toHaveValue('0.5');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeEnabled();await dialog.getByRole('button',{name:'取消',exact:true}).click()
+  await dialog.getByLabel('时间（时:分:秒）').fill('00:00:00.500');await expect(dialog.getByRole('spinbutton')).toHaveValue('0.5');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeEnabled();await dialog.getByRole('spinbutton').fill('2');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeDisabled();await dialog.getByRole('spinbutton').fill('0');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeEnabled();await dialog.getByRole('button',{name:'取消',exact:true}).click()
+  await page.getByRole('button',{name:'拆分此段',exact:true}).first().click();await dialog.getByRole('spinbutton').fill('0');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeDisabled();await dialog.getByRole('spinbutton').fill('2');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeDisabled();await dialog.getByRole('button',{name:'取消',exact:true}).click()
   await page.locator('.video-section').nth(4).getByRole('button',{name:'加入声纹库',exact:true}).click()
   await expect(page.getByRole('dialog').getByRole('checkbox',{name:'选择片段 5',exact:true})).toBeChecked()
   expect(state.imports).toHaveLength(0);expect(errors).toEqual([])
@@ -145,4 +146,15 @@ test('logout clears navigation but keeps independent export and layout preferenc
  await page.getByRole('button',{name:'退出本地会话',exact:true}).click();await expect(page.getByRole('heading',{name:'访问验证'})).toBeVisible()
  expect(await page.evaluate(()=>sessionStorage.getItem('audio-intel:workspace-session:v1'))).toBeNull()
  expect(await page.evaluate(()=>({layout:localStorage.getItem('audio-intel:workbench-layout:v1'),exports:localStorage.getItem('audio-intel:transcript-export:v1')}))).toEqual(stored);expect(errors).toEqual([])
+})
+
+test('browser back waits for draft confirmation and cancellation restores the URL @timing',async({page})=>{
+ await page.setViewportSize({width:390,height:844})
+ const {errors}=await uxFixture(page)
+ await page.goto('/#asr');await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'资料库',exact:true}).click();await page.locator('.person-row').first().click();await page.locator('.add-sample-toggle').click()
+ await page.locator('.sample-input-panel input[type=file]').setInputFiles({name:'draft.wav',mimeType:'audio/wav',buffer:Buffer.from('RIFF-draft')})
+ await page.goBack();await expect(page).toHaveURL(/#library\/voiceprints$/)
+ await page.goBack();const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible();await expect(page).toHaveURL(/#library\/voiceprints$/)
+ await dialog.locator('.modal-actions').getByRole('button',{name:'取消',exact:true}).click();await expect(dialog).toHaveCount(0);await expect(page).toHaveURL(/#library\/voiceprints$/)
+ await page.goBack();await expect(dialog).toBeVisible();await dialog.getByRole('button',{name:'放弃并继续',exact:true}).click();await expect(page).toHaveURL(/#asr$/);await expect(page.getByRole('heading',{name:'音视频转写',exact:true})).toBeVisible();expect(errors).toEqual([])
 })
