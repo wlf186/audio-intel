@@ -26,7 +26,10 @@ export function AppShell({page,setPage,children,health,systemError,connectionErr
  useEffect(()=>{
   const label=t(`shell.pages.${page}.full`)
   document.title=`${label} · Sandevistan-Audio`
-  const frame=requestAnimationFrame(()=>mainRef.current?.focus({preventScroll:true}))
+  const frame=requestAnimationFrame(()=>{
+   const main=mainRef.current
+   if(main&&!main.contains(document.activeElement))main.focus({preventScroll:true})
+  })
   return()=>cancelAnimationFrame(frame)
  },[page,t])
  const phase=systemPhase(health,systemError)

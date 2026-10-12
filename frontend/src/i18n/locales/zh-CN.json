@@ -660,7 +660,7 @@
   "workspaceSplit": {
     "resize": "调整输入区与参数区宽度",
     "ratio": "输入区 {{left}}%，参数区 {{right}}%",
-    "help": "拖动调整宽度；方向键微调，Shift 加快调整，Home/End 调至边界；双击恢复均分。",
+    "help": "拖动调整宽度；方向键微调，Shift 加快调整，Home/End 调至边界；双击恢复当前模块默认比例。",
     "reset": "恢复默认布局",
     "changeFile": "更换文件",
     "playbackPosition": "播放位置（秒）",

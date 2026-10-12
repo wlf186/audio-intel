@@ -670,7 +670,7 @@
   "workspaceSplit": {
     "resize": "Resize input and settings panes",
     "ratio": "Input {{left}}%, settings {{right}}%",
-    "help": "Drag to resize; use arrow keys, Shift for larger steps, and Home/End for limits. Double-click to reset to equal widths.",
+    "help": "Drag to resize; use arrow keys, Shift for larger steps, and Home/End for limits. Double-click to restore the module default.",
     "reset": "Restore default layout",
     "changeFile": "Change file",
     "playbackPosition": "Playback position (seconds)",

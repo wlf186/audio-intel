@@ -176,7 +176,7 @@ test('divider keyboard, minimum widths, cancellation and resize round trip',asyn
  expect(errors).toEqual([])
 })
 
-for(const stored of ['{bad json','{"asr":null,"tts":2}'])test(`invalid stored layout uses equal panes: ${stored}`,async({page})=>{
+for(const stored of ['{bad json','{"asr":null,"tts":2}'])test(`invalid stored layout uses module defaults: ${stored}`,async({page})=>{
  await page.addInitScript(({key,value})=>localStorage.setItem(key,value),{key:layoutKey,value:stored})
  const {errors}=await fixture(page)
  await page.goto('/#asr');await defaultPanes(page,'asr')
@@ -316,5 +316,15 @@ test('mobile controls and tooltip remain reachable without horizontal overflow',
  expect(await page.locator('.tts-settings button:visible,.tts-settings select:visible').evaluateAll(items=>items.filter(e=>e.getBoundingClientRect().height<44).map(e=>e.textContent))).toEqual([])
  await page.evaluate(()=>{(document.activeElement as HTMLElement)?.blur();window.scrollTo(0,0);document.querySelector('#main-content')?.scrollTo(0,0)})
  await page.screenshot({path:'/tmp/pc-layout-final-mobile-tts.png',fullPage:true})
+ expect(errors).toEqual([])
+})
+
+test('pending page focus preserves an already focused workspace control @timing',async({page})=>{
+ const {errors}=await fixture(page)
+ await page.clock.install({time:new Date('2026-01-01T00:00:00Z')});await page.clock.pauseAt(new Date('2026-01-01T00:01:00Z'))
+ await page.goto('/#tts');await defaultPanes(page,'tts')
+ const divider=page.getByRole('separator');await divider.focus()
+ await page.clock.runFor(32);await expect(divider).toBeFocused()
+ await page.keyboard.press('Home');await expect.poll(async()=>(await page.locator('#tts-input-pane').boundingBox())!.width).toBeCloseTo(320,0)
  expect(errors).toEqual([])
 })

@@ -229,6 +229,7 @@ h1{text-shadow:none}
 .library-file-picker input{width:100%;max-width:100%;min-height:44px;overflow:hidden}
 .library-file-picker input::file-selector-button{min-height:44px;border:1px solid var(--line);background:var(--panel-3);color:var(--text);margin-right:8px;padding:8px;font:inherit}
 .people-panel small,.sample-list article>small,.device-hint,.job-meta,.model-list small,.worker-list small{font-size:12px}
+.result-identity>span:nth-child(2),.segment-time,.segments .speaker b,.speaker-identity small,.video-scene-time,.video-paragraph-time,.video-enrollment-row label b,.sample-head>span,.audio-card small{font-size:12px}
 @media(max-width:1023px){
  .library-content .voiceprint-page{height:100%;min-height:0;overflow:hidden}
  .library-content .voiceprint-layout{display:block;min-height:0;flex:1;overflow:hidden;border:0}
