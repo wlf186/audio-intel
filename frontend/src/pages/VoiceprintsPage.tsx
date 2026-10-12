@@ -130,7 +130,7 @@ export function VoiceprintsPage({
   useEffect(()=>{if(openAfterSave&&!busy){setOpenAfterSave(undefined);onOpenPerson(openAfterSave)}},[openAfterSave,busy,onOpenPerson])
   useEffect(()=>{if(detailId){setSelectedId(detailId);if(compact)detailHeading.current?.focus({preventScroll:true})}else document.querySelectorAll<HTMLAudioElement>('.samples-panel audio').forEach(audio=>audio.pause())},[detailId,compact,selected?.id])
   useEffect(()=>{savePeopleSession({groupId:groupFilter,query:peopleQuery,selectedId})},[groupFilter,peopleQuery,selectedId])
-  useEffect(()=>{if(selectAll.current)selectAll.current.indeterminate=checked.size>0&&!visiblePeople.every(person=>checked.has(person.id))},[checked,visiblePeople])
+  useEffect(()=>{if(selectAll.current)selectAll.current.indeterminate=checked.size>0&&!visiblePeople.every(person=>checked.has(person.id))},[checked,visiblePeople,state])
   useEffect(()=>{if(state==='ready'&&selectedId&&!detailId&&!people.some(person=>person.id===selectedId)&&savedPerson?.id!==selectedId)setSelectedId('')},[people,state,selectedId,detailId,savedPerson])
   const selectedModel=asrModels.find(item=>item.id===model)||asrModels.find(item=>item.default)
   const modelGpu=selectedModel?.compute_devices.find(item=>item.id==='gpu')
@@ -323,18 +323,17 @@ export function VoiceprintsPage({
       ) : null}
       <div className="voiceprint-layout">
         <aside className="people-panel">
-          <label className="people-search"><span><Search size={16}/>{t('workspaceUx.searchPeople')}</span><input type="search" value={peopleQuery} disabled={busy||microphoneActive} onChange={event=>{setPeopleQuery(event.target.value);setChecked(new Set());savePeopleSession({query:event.target.value,scrollTop:0,alphabetScrollTop:0})}}/></label>
           <VoiceprintGroups groups={groups} state={groupsState} value={groupFilter} onChange={id=>{if(dirtySample)setLeaveAction(()=>()=>{discardDraft();changeGroup(id)});else changeGroup(id)}} refresh={refreshGroups} onChanged={refresh} disabled={busy||microphoneActive}/>
-          <button className="create-person-button" disabled={state!=='ready'||busy||microphoneActive} onClick={openCreate}>
-            <Plus size={17}/>{t('voiceprints.newPerson')}
-          </button>
+          <div className="people-toolbar">
+            <label className="people-search"><span className="voiceprint-toolbar-label">{t('workspaceUx.searchPeople')}</span><Search size={16} aria-hidden="true"/><input type="search" placeholder={t('workspaceUx.searchPeople')} value={peopleQuery} disabled={busy||microphoneActive} onChange={event=>{setPeopleQuery(event.target.value);setChecked(new Set());savePeopleSession({query:event.target.value,scrollTop:0,alphabetScrollTop:0})}}/></label>
+            <button className="primary create-person-button" disabled={state!=='ready'||busy||microphoneActive} onClick={openCreate}>
+              <Plus size={17}/>{t('voiceprints.newPerson')}
+            </button>
+          </div>
           <ResourceStatePanel state={state} loadingLabel={t('voiceprints.loadingPeople')} errorLabel={t('voiceprints.loadFailed')} retry={()=>void refresh().catch(()=>{})}/>
-          {state==='ready'&&visiblePeople.length?<div className="voiceprint-batch-controls">
-            <label className="batch-select-all"><input ref={selectAll} type="checkbox" checked={visiblePeople.every(person=>checked.has(person.id))} disabled={busy||microphoneActive} onChange={event=>setChecked(event.target.checked?new Set(visiblePeople.map(person=>person.id)):new Set())}/>{t('voiceprintGroups.selectAll')}</label>
-            <span>{t('voiceprintGroups.selectedCount',{count:checked.size})}</span>
-            {checked.size?<><select aria-label={t('voiceprintGroups.moveTo')} value={moveGroup} disabled={busy||groupsState!=='ready'} onChange={event=>setMoveGroup(event.target.value)}>{groupsState==='ready'?groups.map(group=><option key={group.id} value={group.id}>{groupLabel(group,t('voiceprintGroups.ungrouped'))}</option>):null}</select>
-            <button className="button" disabled={busy||microphoneActive||!checked.size||groupsState!=='ready'} onClick={moveSelected}>{t('voiceprintGroups.move')}</button>
-            <button className="button danger-action" disabled={busy||microphoneActive||!checked.size} onClick={()=>setConfirmBatchDelete(true)}>{t('voiceprintGroups.deletePeople')}</button></>:null}
+          {state==='ready'?<div className="people-list-heading">
+            <label className="batch-select-all"><input ref={selectAll} type="checkbox" checked={visiblePeople.length>0&&visiblePeople.every(person=>checked.has(person.id))} disabled={busy||microphoneActive||!visiblePeople.length} onChange={event=>setChecked(event.target.checked?new Set(visiblePeople.map(person=>person.id)):new Set())}/>{t('voiceprintGroups.selectAll')}</label>
+            <span>{t('voiceprintGroups.visibleCount',{count:visiblePeople.length})}</span>
           </div>:null}
           {state==='ready'&&visiblePeople.length ? (
             <PeopleIndex people={visiblePeople} positionKey={`${groupFilter}:${peopleQuery}`} shown={!compact||!detailId} scrollTop={readPeopleSession().scrollTop} alphabetScrollTop={readPeopleSession().alphabetScrollTop} onPositionChange={(scrollTop,alphabetScrollTop)=>savePeopleSession({scrollTop,alphabetScrollTop})}>{person => (
@@ -349,12 +348,17 @@ export function VoiceprintsPage({
                 <span>
                   <b>{person.name}</b>
                   {person.note?<em>{person.note}</em>:null}
-                  <small>{t('voiceprints.sampleCount',{count:person.sample_count})}</small>
-                  <small>{t(person.include_in_hotword_library?'voiceprints.hotwordIncludedLabel':'voiceprints.hotwordExcludedLabel')}</small>
+                  <small className="person-metadata"><span>{t('voiceprints.sampleCount',{count:person.sample_count})}</span><span>{t(person.include_in_hotword_library?'voiceprints.hotwordIncludedLabel':'voiceprints.hotwordExcludedLabel')}</span></small>
                 </span>
               </button></div>
             )}</PeopleIndex>
           ) : state==='ready'?<p className="people-empty" role="status">{t(peopleQuery?'workspaceUx.noPeopleMatches':groupFilter?'workspaceUx.emptyGroup':'workspaceUx.emptyLibrary')}</p>:null}
+          {state==='ready'&&checked.size>0?<div className="voiceprint-batch-controls" role="group" aria-label={t('voiceprintGroups.batchActions')}>
+            <div className="batch-selection-summary"><span role="status">{t('voiceprintGroups.selectedCount',{count:checked.size})}</span><button className="button" disabled={busy||microphoneActive} onClick={()=>{setChecked(new Set());selectAll.current?.focus()}}>{t('voiceprintGroups.clearSelection')}</button></div>
+            <select aria-label={t('voiceprintGroups.moveTo')} value={moveGroup} disabled={busy||microphoneActive||groupsState!=='ready'} onChange={event=>setMoveGroup(event.target.value)}>{groupsState==='ready'?groups.map(group=><option key={group.id} value={group.id}>{groupLabel(group,t('voiceprintGroups.ungrouped'))}</option>):null}</select>
+            <button className="button" disabled={busy||microphoneActive||groupsState!=='ready'} onClick={moveSelected}>{t('voiceprintGroups.move')}</button>
+            <button className="button danger-action" disabled={busy||microphoneActive} onClick={()=>setConfirmBatchDelete(true)}>{t('voiceprintGroups.deletePeople')}</button>
+          </div>:null}
         </aside>
         <section className="samples-panel">
           {detailId?<button className="button mobile-person-back" onClick={onBack}><ArrowLeft size={16}/>{t('workspaceUx.backPeople')}</button>:null}
@@ -636,7 +640,7 @@ export function VoiceprintsPage({
                             ? formatTime(sample.duration)
                             : t('voiceprints.waitingAnalysis')}
                         </span>
-                        <button className="icon-button" disabled={busy} aria-label={t('voiceprintNames.renameNamed',{name:voiceprintSampleName(sample,selected.samples,t)})} onClick={()=>{setRenamingSample(sample);setSampleName(voiceprintSampleName(sample,selected.samples,t));setRenameError('')}}><Pencil/></button>
+                        <div className="sample-head-actions"><button className="icon-button" disabled={busy} aria-label={t('voiceprintNames.renameNamed',{name:voiceprintSampleName(sample,selected.samples,t)})} onClick={()=>{setRenamingSample(sample);setSampleName(voiceprintSampleName(sample,selected.samples,t));setRenameError('')}}><Pencil/></button>
                         <button
                           className="icon-button danger"
                           aria-label={t('voiceprints.deleteSampleNamed',{id:sample.id})}
@@ -645,6 +649,7 @@ export function VoiceprintsPage({
                         >
                           <Trash2 />
                         </button>
+                        </div>
                       </div>
                       {sample.audio_url ? (
                         <audio controls preload="none" src={sample.audio_url} />

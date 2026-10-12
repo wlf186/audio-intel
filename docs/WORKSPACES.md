@@ -22,6 +22,10 @@ Video results use a compact seek bar with an optional waveform. Desktop frames s
 
 ## 分组与导出习惯 / Group and export preferences
 
+桌面声纹库采用等宽的人员管理区与样本详情区，两栏分别滚动。左侧先显示分组筛选与“分组管理”，再显示搜索与“新建人员”；分组新增、重命名及删除集中在管理菜单。列表表头显示当前筛选人数，勾选人员后底部才显示批量移动、删除及清除选择。窄屏继续使用列表与独立人员详情，管理菜单和批量操作均可触达。样本上传参数按详情区宽度排列，调整窗口不会重新挂载表单或播放器。布局整理不新增存储设置，也不改变现有导航、草稿和偏好的保存周期。
+
+English: Desktop voiceprints use equal-width, independently scrolling people and sample panes. Group filtering and Manage groups appear above search and New person; group creation, rename and deletion live in the management menu. The list header shows the filtered count, and selected people reveal a bottom bar for moving, deleting and clearing selection. Narrow screens retain separate list/detail views with reachable actions. Sample controls adapt to the detail pane's width without remounting forms or players. This layout adds no stored settings and preserves existing navigation, draft and preference lifetimes.
+
 声纹库在当前分组内提供批量勾选，切换视图清空勾选；新增人员默认当前筛选分组；全部人员视图默认“未分组”，新建和编辑时均可选择归属。ASR 的“选择分组”默认全部（包含之后新增分组），手动选择只记住指定 ID。加载失败可重试，失效 ID 移除后提示，全部失效时阻止提交，不能扩大到全部。localStorage ASR 偏好 v4 兼容迁移 v3/v2/v1；恢复参数默认和资料库替换恢复全部分组。
 
 转写下载的“脱敏导出”默认开启，规则每行 `原词=替换词`，最多 100 对，错误提示行号。独立 localStorage `audio-intel:transcript-export:v1` 长期保存开关和编辑内容，包括尚未修正的输入；刷新、重开、退出登录、资料库替换均保留。关闭开关停止姓名/备注处理和关键词替换，规则保留；“恢复默认导出设置”开启并清空规则。正文只替换明确关键词，音频和画面保持原样。
