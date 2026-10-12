@@ -25,7 +25,18 @@ export function useReaderBookmark(key:string,root:RefObject<HTMLDivElement|null>
   if(saved&&saved.query===options.query&&saved.speakerFilter===options.speakerFilter){
    const items=[...element.querySelectorAll<HTMLElement>('[data-reader-id]')]
    const anchor=items.find(item=>item.dataset.readerId===saved.anchorId)||items.find(item=>Number(item.dataset.readerTime)>=saved.time)||items.at(-1)
-   if(anchor)element.scrollTop+=anchor.getBoundingClientRect().top-element.getBoundingClientRect().top-saved.offset
+   if(anchor){
+    // Lay out deferred rows before measuring the anchor. Their intrinsic estimates
+    // can differ from the rendered height after a view has been remounted.
+    const deferred=items.filter(item=>getComputedStyle(item).contentVisibility==='auto')
+    for(const item of deferred)item.style.contentVisibility='visible'
+    const align=()=>{element.scrollTop+=anchor.getBoundingClientRect().top-element.getBoundingClientRect().top-saved.offset}
+    align()
+    if(deferred.length){
+     const frame=requestAnimationFrame(()=>{for(const item of deferred)item.style.removeProperty('content-visibility');align();restore.current=false})
+     return()=>{cancelAnimationFrame(frame);for(const item of deferred)item.style.removeProperty('content-visibility')}
+    }
+   }
    else element.scrollTop=saved.scrollTop
   }else element.scrollTop=0
   restore.current=false

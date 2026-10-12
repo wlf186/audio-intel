@@ -185,10 +185,15 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const [uploadProgress,setUploadProgress]=useState<UploadProgress>()
   const [mediaError, setMediaError] = useState('')
   const [mediaLoading, setMediaLoading] = useState(true)
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(()=>readReaderBookmark(`${selectedJobId}:segments`)?.query||'')
   const deferredQuery = useDeferredValue(query)
-  const [speakerFilter, setSpeakerFilter] = useState('all')
-  const [visibleSegmentCount, setVisibleSegmentCount] = useState(segmentBatchSize)
+  const [speakerFilter, setSpeakerFilter] = useState(()=>readReaderBookmark(`${selectedJobId}:segments`)?.speakerFilter||'all')
+  const [visibleSegmentCount, setVisibleSegmentCount] = useState(()=>readReaderBookmark(`${selectedJobId}:segments`)?.visibleCount||segmentBatchSize)
+  const [readerJobId,setReaderJobId]=useState(selectedJobId)
+  if(readerJobId!==selectedJobId){
+    const bookmark=readReaderBookmark(`${selectedJobId}:segments`)
+    setReaderJobId(selectedJobId);setQuery(bookmark?.query||'');setSpeakerFilter(bookmark?.speakerFilter||'all');setVisibleSegmentCount(bookmark?.visibleCount||segmentBatchSize)
+  }
   const [selectedSegments, setSelectedSegments] = useState<Set<number>>(() => new Set())
   const [renameSpeaker, setRenameSpeaker] = useState<{
     id: string
@@ -343,10 +348,6 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     setMediaError('')
     setMediaLoading(true)
     setSelectedSegments(new Set())
-    const bookmark=selectedSummary?readReaderBookmark(`${selectedSummary.id}:segments`):undefined
-    setSpeakerFilter(bookmark?.speakerFilter||'all')
-    setQuery(bookmark?.query||'')
-    setVisibleSegmentCount(bookmark?.visibleCount||segmentBatchSize)
     setResultError('')
     setResultNotice('')
   }, [selectedSummary?.id])

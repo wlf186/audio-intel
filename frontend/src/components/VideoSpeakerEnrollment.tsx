@@ -78,7 +78,7 @@ export function VideoSpeakerEnrollment({job,speakerId,initialSegmentIds=[],peopl
     {visible<segments.length?<button className="button" onClick={()=>setVisible(value=>value+40)}>{t('asr.results.loadMore')}</button>:null}
    </div>
    <div className="modal-actions"><span>{t('asr.results.selectedSegments',{count:selectedIds.length,speaker:speaker?.label||speakerId})}</span><button className="primary" disabled={peopleState!=='ready'||!selectedIds.length} onClick={next}>{t('video.choosePerson')}</button></div>
-  </>:<>
+  </>:<><div className="modal-scroll-body">
    <p>{t('asr.library.help',{count:selectedIds.length,speaker:speaker?.label||speakerId})}</p>
    {ambiguous?<p>{t('voiceprintNames.ambiguousPerson')}</p>:null}
    <label>{t('asr.library.person')}<select disabled={busy||peopleState!=='ready'} value={personId} onChange={event=>setPersonId(event.target.value)}><option value="">{t('asr.library.newPerson')}</option>{ambiguous?<option value="__choose__" disabled>{t('voiceprintNames.choosePerson')}</option>:null}{peopleState==='ready'?people.map(person=><option value={person.id} key={person.id}>{voiceprintPersonLabel(person)}</option>):null}</select></label>
@@ -88,6 +88,7 @@ export function VideoSpeakerEnrollment({job,speakerId,initialSegmentIds=[],peopl
     <label className="toggle-label person-hotword-toggle"><input type="checkbox" disabled={busy} checked={hotword} onChange={event=>setHotword(event.target.checked)}/><span>{t('voiceprints.addToHotwords')}</span><small>{t('voiceprints.addToHotwordsHelp')}</small></label>
    </>:null}
    {!selectedIds.length?<p role="alert">{t('video.selectionUnavailable')}</p>:null}
+   </div>
    <div className="modal-actions"><button className="button" disabled={busy} onClick={()=>{setError('');setStep('select')}}>{t('video.backToSamples')}</button><button className="primary" disabled={busy||peopleState!=='ready'||!selectedIds.length||personId==='__choose__'||(!personId&&!name.trim())||(Boolean(personId)&&!people.some(person=>person.id===personId))} onClick={()=>void submit()}>{t(busy?'voiceprints.saving':'asr.library.confirm')}</button></div>
   </>}
  </Modal>

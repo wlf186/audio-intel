@@ -20,10 +20,12 @@ export async function openSampleForm(page:Page){
 export async function assertReachable(page:Page,width:number){
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  const clipped=await page.locator('button:visible,select:visible,summary:visible,a:visible').evaluateAll(elements=>elements.filter(element=>{
-  if(element.matches(':disabled')||element.closest('[inert]'))return false
+  const dialog=[...document.querySelectorAll('dialog[open]')].at(-1)
+  if(element.matches(':disabled')||element.closest('[inert]')||(dialog&&!dialog.contains(element)))return false
   const rect=element.getBoundingClientRect()
   if(rect.bottom<=0||rect.top>=innerHeight||rect.width===0)return false
   if(rect.left<-.5||rect.right>innerWidth+.5)return true
+  if(innerWidth===390&&(rect.width<44||rect.height<44))return true
   let parent=element.parentElement
   while(parent){
    const style=getComputedStyle(parent),box=parent.getBoundingClientRect()

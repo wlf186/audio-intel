@@ -122,11 +122,11 @@ export function VoiceprintsPage({
     if(!busy&&!dirtySample){registerNavigationGuard(undefined);return}
     registerNavigationGuard((proceed,destination)=>{
       if(busy){setNotice(t('workspaceUx.finishAction'));return}
-      if(destination==='#library/voiceprints'&&!microphoneActive){proceed();return}
+      if((destination==='#library/voiceprints'||destination===`#library/voiceprints/${encodeURIComponent(selected?.id||'')}`)&&!microphoneActive){proceed();return}
       setLeaveAction(()=>proceed)
     })
     return()=>registerNavigationGuard(undefined)
-  },[busy,dirtySample,microphoneActive,registerNavigationGuard,t])
+  },[busy,dirtySample,microphoneActive,selected?.id,registerNavigationGuard,t])
   useEffect(()=>{if(openAfterSave&&!busy){setOpenAfterSave(undefined);onOpenPerson(openAfterSave)}},[openAfterSave,busy,onOpenPerson])
   useEffect(()=>{if(detailId){setSelectedId(detailId);if(compact)detailHeading.current?.focus({preventScroll:true})}else document.querySelectorAll<HTMLAudioElement>('.samples-panel audio').forEach(audio=>audio.pause())},[detailId,compact,selected?.id])
   useEffect(()=>{savePeopleSession({groupId:groupFilter,query:peopleQuery,selectedId})},[groupFilter,peopleQuery,selectedId])

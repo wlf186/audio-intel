@@ -191,6 +191,8 @@ h1{text-shadow:none}
 .button.danger-action:hover{background:#260c0e}
 .button:disabled{opacity:.5;cursor:not-allowed}
 .app-shell>header .cert-help-button{width:44px;min-width:44px}
+.app-shell>header .logout{width:44px;min-width:44px;min-height:44px}
+.video-speaker{min-width:44px;min-height:44px}
 .asr-workspace .player-row>.waveform-toggle{min-width:44px}
 .library-heading{justify-content:space-between}
 .library-tool-menu-panel{display:grid;gap:10px}
