@@ -90,6 +90,8 @@ for(const width of [1440,390])test(`segment filters and deep position survive re
  await expect.poll(async()=>Math.abs(await offset()-bookmark.offset)).toBeLessThanOrEqual(2)
  await page.reload();await expect(search).toHaveValue('阅读');await expect(root.locator('article')).toHaveCount(60)
  await expect.poll(async()=>Math.abs(await offset()-bookmark.offset)).toBeLessThanOrEqual(2)
+ await search.fill('第 60 段');await expect(root.locator('article')).toHaveCount(1)
+ await search.fill('');await expect(root.locator('article')).toHaveCount(40);await expect(root).toHaveJSProperty('scrollTop',0)
  expect(errors).toEqual([])
 })
 

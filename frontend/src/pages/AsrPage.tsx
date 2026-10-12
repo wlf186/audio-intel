@@ -21,7 +21,7 @@ import { visibleWorkspaceJobs } from '../lib/jobs'
 import { computeUnavailableReason, voiceprintPersonLabel, speakerIdentity, hotwordListDisplayName } from '../lib/presentation'
 import { SubmissionProgress } from '../components/SubmissionProgress'
 import { useTranslation } from 'react-i18next'
-import {checkpointWorkspace,readAsrSession,saveAsrSession,readReaderBookmark} from '../lib/workspaceSession'
+import {checkpointWorkspace,readAsrSession,saveAsrSession,readReaderBookmark,saveReaderBookmark} from '../lib/workspaceSession'
 import {useReaderBookmark} from '../hooks/useReaderBookmark'
 import type { TFunction } from 'i18next'
 const segmentBatchSize=40
@@ -187,6 +187,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const [mediaLoading, setMediaLoading] = useState(true)
   const [query, setQuery] = useState(()=>readReaderBookmark(`${selectedJobId}:segments`)?.query||'')
   const deferredQuery = useDeferredValue(query)
+  const segmentFilterGeneration=useRef(0)
   const [speakerFilter, setSpeakerFilter] = useState(()=>readReaderBookmark(`${selectedJobId}:segments`)?.speakerFilter||'all')
   const [visibleSegmentCount, setVisibleSegmentCount] = useState(()=>readReaderBookmark(`${selectedJobId}:segments`)?.visibleCount||segmentBatchSize)
   const [readerJobId,setReaderJobId]=useState(selectedJobId)
@@ -232,7 +233,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const detail = selectedSummary ? jobDetails[selectedSummary.id] : undefined
   const selected = detail?.job
   const result = selected?.result
-  useReaderBookmark(selectedSummary?`${selectedSummary.id}:segments`:'',segmentList,{active:view==='results'&&!videoReading||view==='results'&&!result?.video,ready:Boolean(result),visibleCount:visibleSegmentCount,query:deferredQuery.trim().toLocaleLowerCase(),speakerFilter})
+  useReaderBookmark(selectedSummary?`${selectedSummary.id}:segments`:'',segmentList,{active:view==='results'&&!videoReading||view==='results'&&!result?.video,ready:Boolean(result)&&query===deferredQuery,visibleCount:visibleSegmentCount,query:deferredQuery.trim().toLocaleLowerCase(),speakerFilter})
   const speakerById = useMemo(() => new Map((result?.speakers || []).map((speaker) => [speaker.id, speaker])), [result?.speakers])
   const alignmentDowngraded = Boolean(selected?.request.language === 'Auto' && selected.request.align === true && result?.timestamp_precision === 'segment' && result.language && !alignerLanguages.includes(result.language))
   const duration = result?.duration || 0
@@ -351,7 +352,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     setResultError('')
     setResultNotice('')
   }, [selectedSummary?.id])
-  useEffect(() => {const bookmark=selectedSummary?readReaderBookmark(`${selectedSummary.id}:segments`):undefined;setVisibleSegmentCount(bookmark?.query===normalizedQuery&&bookmark?.speakerFilter===speakerFilter?bookmark.visibleCount:segmentBatchSize)}, [normalizedQuery, selectedSummary?.id, speakerFilter])
+
   useEffect(() => {
     if (activeSegmentIndex < visibleSegmentCount) return
     setVisibleSegmentCount(Math.ceil((activeSegmentIndex + 1) / segmentBatchSize) * segmentBatchSize)
@@ -360,11 +361,13 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   useEffect(() => {
     const root = segmentList.current
     const target = loadMoreSentinel.current
-    if (view !== 'results' || !root || !target || visibleSegmentCount >= segments.length) return
-    const observer = new IntersectionObserver((entries) => {if(entries.some((entry) => entry.isIntersecting))loadMoreSegments()}, {root,rootMargin:'0px 0px 360px'})
+    if (view !== 'results' || query!==deferredQuery || !root || !target || visibleSegmentCount >= segments.length) return
+    let active=true
+    const generation=segmentFilterGeneration.current
+    const observer = new IntersectionObserver((entries) => {if(active&&generation===segmentFilterGeneration.current&&entries.some((entry) => entry.isIntersecting))loadMoreSegments()}, {root,rootMargin:'0px 0px 360px'})
     observer.observe(target)
-    return () => observer.disconnect()
-  }, [loadMoreSegments, segments.length, visibleSegmentCount, view, videoReading])
+    return () => {active=false;observer.disconnect()}
+  }, [loadMoreSegments, segments.length, visibleSegmentCount, view, videoReading,query,deferredQuery])
   useEffect(() => {
     if (!revealRequest) return
     setView('results')
@@ -487,7 +490,14 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       }),
     [],
   )
+  const resetSegmentFilter=(nextQuery:string,nextSpeaker:string)=>{
+    if(nextQuery.trim().toLocaleLowerCase()===query.trim().toLocaleLowerCase()&&nextSpeaker===speakerFilter)return
+    checkpointWorkspace();segmentFilterGeneration.current++
+    if(selectedSummary)saveReaderBookmark(`${selectedSummary.id}:segments`,{anchorId:'',time:0,offset:0,scrollTop:0,visibleCount:segmentBatchSize,query:nextQuery.trim().toLocaleLowerCase(),speakerFilter:nextSpeaker})
+    setVisibleSegmentCount(segmentBatchSize)
+  }
   const changeSpeakerFilter = (next: string) => {
+    resetSegmentFilter(query,next)
     if (selectionSpeaker && next !== 'all' && next !== selectionSpeaker) setSelectedSegments(new Set())
     setSpeakerFilter(next)
   }
@@ -807,7 +817,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
             {result.video&&videoReading?<VideoTranscript key={selected.id} job={selected} currentTime={currentTime} toolbar={videoToolbar} editing={videoEditing} onEditingChange={setVideoEditing} onUpdated={onJobResultUpdated} onSeek={seconds=>{stopAt.current=undefined;seekWord(seconds)}} onEnroll={(speakerId,segmentIds)=>{audio.current?.pause();setVideoEnrollment({jobId:selected.id,speakerId,segmentIds})}} onRename={id=>{const segment=result.segments?.find(item=>item.speaker===id);if(segment)openRename(segment)}}/>:<>
             <div className="transcript-tools">
               <Search size={18} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('asr.results.search')} />
+              <input value={query} onChange={(event) => {resetSegmentFilter(event.target.value,speakerFilter);setQuery(event.target.value)}} placeholder={t('asr.results.search')} />
               <select aria-label={t('asr.results.filterSpeaker')} value={speakerFilter} onChange={(event) => changeSpeakerFilter(event.target.value)}>
                 <option value="all">{t('asr.results.allSpeakers')}</option>
                 {result.speakers?.map((speaker) => (
