@@ -31,6 +31,7 @@ from . import __version__, reference_ranges
 from .document_api import capabilities as document_capabilities
 from .video_api import capabilities as video_capabilities
 from .config import settings
+from .asr_enhancement import capabilities as enhancement_capabilities, request_mode
 from .asr_speakers import merge_speakers, persist_speaker_result, speaker_identity, speaker_update_lock
 from .deployment import deployment_metadata
 from .gpu import COMPUTE_DEVICES, cached_gpu_snapshot, gpu_snapshot
@@ -417,6 +418,13 @@ def replay_tts_library_job(operation: str, key: str, request: dict[str, Any]) ->
     return existing
 
 
+def validate_audio_enhancement(value: str | None, existing: dict[str, Any] | None = None) -> str:
+    try:
+        return request_mode(value, existing)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+
+
 def idempotent_job(
     kind: str,
     display_name: str,
@@ -437,6 +445,10 @@ def idempotent_job(
         ignored_fields.add("voiceprint_sample_id")
     if operation == "submit_tts_sequence":
         ignored_fields.add("voiceprint_references")
+    if kind == "asr" and request_data.get("audio_enhancement") == "off":
+        previous = find_idempotent_job(operation, idempotency_key_hash(idempotency_key))
+        if previous is not None and "audio_enhancement" not in previous["request"]:
+            ignored_fields.add("audio_enhancement")
     identity = tts_library_identity(operation, request_data)
     try:
         return create_job_idempotent(
@@ -1261,6 +1273,7 @@ def create_app() -> FastAPI:
                 **video_capabilities(settings),
                 "compute_devices": default_capability["compute_devices"],
                 "single_task_acceleration": {"supported": True, "default": SINGLE_TASK_ACCELERATION_DEFAULT},
+                "audio_enhancement": enhancement_capabilities(settings),
                 "hotword_library": {
                     "supported": True,
                     "max_lists": MAX_HOTWORD_LISTS,
@@ -1465,6 +1478,7 @@ def create_app() -> FastAPI:
         compute_device: str = Form(default_device, description="cpu 或 gpu；省略时使用部署默认值且无静默回退 / cpu or gpu; omission uses the deployment default and there is no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         use_voiceprint_library: bool = Form(True, description="用声纹库匹配并命名说话人 / Match and label speakers from the voiceprint library"),
         voiceprint_group_ids: str | None = Form(None, description="JSON 分组 ID 数组；省略使用全部，提交时固定人员范围 / JSON group ID array; omission selects all, eligible people are fixed at submission"),
+        audio_enhancement: str | None = Form(None, description="auto 自动降噪与弱人声增益，off 关闭；新任务默认 auto / Automatic noise suppression and quiet-speech gain; new jobs default to auto", json_schema_extra={"enum": ["auto", "off"], "default": "auto"}),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="启用质量中性的单任务自动批处理 / Enable quality-neutral single-job auto-batching"),
         idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
@@ -1481,6 +1495,7 @@ def create_app() -> FastAPI:
         hotword_data = await run_in_threadpool(
             hotword_request_data, context, hotword_list_ids, existing,
         )
+        audio_enhancement = validate_audio_enhancement(audio_enhancement, existing)
         voiceprint_data = await run_in_threadpool(voiceprint_scope_data, voiceprint_group_ids, use_voiceprint_library and diarize, existing)
         job_id = uuid.uuid4().hex
         original_name = safe_filename(file.filename or "audio.bin")
@@ -1504,6 +1519,7 @@ def create_app() -> FastAPI:
             "align": align, "context": context, "export_formats": formats, "compute_device": compute_device,
             "compute_device_name": compute_device_name, "use_voiceprint_library": use_voiceprint_library,
             "accelerate_single_task": accelerate_single_task,
+            "audio_enhancement": audio_enhancement,
             **hotword_data, **voiceprint_data,
         }
         job, replayed = idempotent_job(
@@ -3033,6 +3049,7 @@ def add_openai_routes(app: FastAPI) -> None:
         compute_device: str = Form(default_device, description="cpu 或 gpu；省略时使用部署默认值且无静默回退 / cpu or gpu; omission uses the deployment default and there is no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         use_voiceprint_library: bool = Form(True, description="匹配声纹库 / Match voiceprint library"),
         voiceprint_group_ids: str | None = Form(None, description="JSON 分组 ID 数组；省略使用全部，提交时固定人员范围 / JSON group ID array; omission selects all, eligible people are fixed at submission"),
+        audio_enhancement: str | None = Form(None, description="auto 自动降噪与弱人声增益，off 关闭；新任务默认 auto / Automatic noise suppression and quiet-speech gain; new jobs default to auto", json_schema_extra={"enum": ["auto", "off"], "default": "auto"}),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
         idempotency_key: str | None = Header(None, alias="Idempotency-Key", description=OPTIONAL_IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
@@ -3054,6 +3071,7 @@ def add_openai_routes(app: FastAPI) -> None:
         hotword_data = await run_in_threadpool(
             hotword_request_data, prompt, hotword_list_ids, existing,
         )
+        audio_enhancement = validate_audio_enhancement(audio_enhancement, existing)
         voiceprint_data = await run_in_threadpool(voiceprint_scope_data, voiceprint_group_ids, use_voiceprint_library and diarize, existing)
         try:
             speakers = None if speaker_count == "auto" else int(speaker_count)
@@ -3072,6 +3090,7 @@ def add_openai_routes(app: FastAPI) -> None:
             "export_formats": ["json", "srt", "vtt", "txt"], "compute_device": compute_device,
             "compute_device_name": compute_device_name, "use_voiceprint_library": use_voiceprint_library,
             "accelerate_single_task": accelerate_single_task,
+            "audio_enhancement": audio_enhancement,
             **hotword_data, **voiceprint_data,
         }
         replayed = False

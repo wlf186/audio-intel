@@ -133,8 +133,10 @@ def test_video_end_to_end_edit_pdf_and_idempotency(client,local,tmp_path):
     response=client.post('/api/v1/asr/video-jobs',json=body,headers=headers)
     assert response.status_code==202,response.text
     job=response.json();assert job['purpose']=='video_transcription'
+    assert job['request']['audio_enhancement']=='auto'
     assert client.post('/api/v1/asr/video-jobs',json=body,headers=headers).status_code==200
     assert client.post('/api/v1/asr/video-jobs',json={**body,'align':False},headers=headers).status_code==409
+    assert client.post('/api/v1/asr/video-jobs',json={**body,'audio_enhancement':'off'},headers=headers).status_code==409
     assert not (local.jobs_dir/job['id']/'input/video.partial').exists()
     claimed=db.claim_job('asr','video-test-worker')
     assert claimed['id']==job['id']
@@ -311,3 +313,26 @@ def test_pdf_resource_budget(tmp_path,monkeypatch):
     monkeypatch.setattr(transcript_pdf,'_max_text_chars',2)
     with pytest.raises(ValueError,match='budget'):
         transcript_pdf.render('large',{'segments':[{'text':'too long'}]},tmp_path)
+
+
+def test_video_enhancement_historical_replay_and_invalid_mode(client, local, tmp_path):
+    item = upload(client, video_file(tmp_path / 'historical.mp4'))
+    body = {'upload_id': item['id'], 'compute_device': 'cpu', 'use_voiceprint_library': False}
+    headers = {'Idempotency-Key': 'historical-video-enhancement-01'}
+    first = client.post('/api/v1/asr/video-jobs', json=body, headers=headers)
+    assert first.status_code == 202
+    job = db.get_job(first.json()['id'])
+    request = job['request']
+    request.pop('audio_enhancement')
+    request['video_caller'].pop('audio_enhancement')
+    with db.connect() as connection:
+        connection.execute('UPDATE jobs SET request_json=? WHERE id=?', (json.dumps(request), job['id']))
+        connection.execute('UPDATE job_idempotency SET request_hash=? WHERE job_id=?',
+                           (api.request_fingerprint(request['video_caller']), job['id']))
+    before = db.get_job(job['id'])
+    replay = client.post('/api/v1/asr/video-jobs', json=body, headers=headers)
+    assert replay.status_code == 200
+    assert db.get_job(job['id']) == before
+    assert 'audio_enhancement' not in replay.json()['request']
+    assert client.post('/api/v1/asr/video-jobs', json={**body, 'audio_enhancement': 'auto'}, headers=headers).status_code == 409
+    assert client.post('/api/v1/asr/video-jobs', json={**body, 'audio_enhancement': 'invalid'}, headers=headers).status_code == 422

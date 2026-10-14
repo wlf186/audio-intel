@@ -73,6 +73,7 @@ Transcription results support entering speaker names and optional notes manually
 
 ### Why it is different
 
+- **Automatic speech enhancement.** Local noise suppression and quiet-speech gain preserve all speakers, with original/enhanced playback comparison. See the [enhancement contract](docs/ASR_ENHANCEMENT.md).
 - **Local after setup.** Model revisions are pinned and runtime loading is forced offline; inputs, results, voices, the database, and logs stay in project-controlled directories.
 - **Careful process isolation.** ASR and TTS use separate, incompatible Python environments and reusable supervised executors. Cancellation reaches a terminal state only after the complete task process tree exits.
 - **Model-aware controls.** The UI and API expose only controls supported by the selected Qwen checkpoint and voice mode instead of silently ignoring unsupported input.

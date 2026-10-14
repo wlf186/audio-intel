@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,13 @@ def model_manifest() -> list[dict[str, Any]]:
 
 def models_for(target: str) -> list[dict[str, Any]]:
     return [item for item in model_manifest() if target == "all" or target in item["targets"]]
+
+
+def asr_enhancement_model() -> dict[str, Any]:
+    models = [item for item in models_for("asr") if item.get("role") == "asr_enhancement"]
+    if len(models) != 1:
+        raise RuntimeError("The manifest must declare one ASR enhancement model")
+    return models[0]
 
 
 def asr_models() -> list[dict[str, Any]]:
@@ -110,6 +118,13 @@ def model_installation(models_dir: Path, model: dict[str, Any]) -> dict[str, Any
         name for name in model.get("required_files", [])
         if not (directory / name).is_file() or (directory / name).stat().st_size == 0
     ]
+    for name, expected in model.get("sha256", {}).items():
+        path = directory / name
+        if name not in missing_files and path.is_file():
+            with path.open("rb") as handle:
+                actual = hashlib.file_digest(handle, "sha256").hexdigest()
+            if actual != expected:
+                missing_files.append(name)
     if not marker.is_file():
         state = "missing"
         actual_revision = None
@@ -134,4 +149,7 @@ def model_installation(models_dir: Path, model: dict[str, Any]) -> dict[str, Any
 
 
 def target_ready(models_dir: Path, target: str) -> bool:
-    return all(model_installation(models_dir, model)["installed"] for model in models_for(target))
+    # Enhancement is optional: its own capability requires the exact revision
+    # and checksum; a missing enhancer must not disable ordinary transcription.
+    return all(model_installation(models_dir, model)["installed"] for model in models_for(target)
+               if model.get("role") != "asr_enhancement")

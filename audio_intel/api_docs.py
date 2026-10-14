@@ -15,6 +15,11 @@ API_DESCRIPTION = r"""
 
 本页、`/openapi.json`、Swagger 代码/样式/图标、数据和模型推理均由本机提供；运行期间不访问 CDN、在线校验器或模型云服务。 / This page, its assets, data, and inference stay local at runtime.
 
+ASR 音频、视频及兼容转写支持 `audio_enhancement=auto|off`，新任务默认 `auto`。自动模式保守压制环境噪音并提升较小人声，保留全部交谈者；干净且音量充足的片段旁路。`GET /api/v1/capabilities` 的 `asr.audio_enhancement` 公布可用状态；任务详情的同名字段记录实际增强、旁路或回退。增强版为独立、受保护且支持 Range 的音频产物，原音保留。缺失增强模型时使用原音并记录原因；历史请求缺少该字段时按关闭解释，幂等重放和重试保留原语义。声纹导入与克隆参考分析不启用增强。
+
+Audio, video and compatible ASR accept `audio_enhancement=auto|off`; new jobs default to `auto`. Automatic processing conservatively suppresses noise and lifts quiet speech while preserving all speakers. Clean, audible sections bypass processing. Read `asr.audio_enhancement` from capabilities; job detail/results record applied, bypassed or fallback status and enhanced playback. The original remains available. A missing enhancer falls back to original audio with a recorded reason. Historical requests without this field remain disabled on replay/retry. Voiceprint imports and clone-reference analysis are excluded.
+
+
 服务入口自动读取仓库根目录 `.env`，外部已导出的环境变量优先；这不会把配置导出回客户端 shell。Swagger 使用当前访问源和相对 `/openapi.json`。复制到终端的 Bash/Python/JavaScript 示例默认访问 `http://127.0.0.1:20810`；自定义端口或 HTTPS 时，先在客户端设置实际 `AUDIO_INTEL_BASE_URL`（例如 `http://127.0.0.1:20815`），鉴权开启时从原有凭据来源另行提供 `AUDIO_INTEL_API_KEY`。用 `service.sh status` / `service.cmd status` 查看实际运行端点。
 
 Service entrypoints automatically load the project-root `.env`, with exported environment variables taking precedence; this does not export settings back to client shells. Swagger uses the current origin and relative `/openapi.json`. Copied Bash/Python/JavaScript examples default to `http://127.0.0.1:20810`. For a custom port or HTTPS, set the actual `AUDIO_INTEL_BASE_URL` in the client environment (for example `http://127.0.0.1:20815`) and provide `AUDIO_INTEL_API_KEY` separately from your existing credential source when authentication is enabled. Inspect the running endpoint with `service.sh status` / `service.cmd status`.

@@ -156,6 +156,28 @@
       "device": "CPU FP32 / GPU BF16",
       "license": "Apache-2.0",
       "license_url": "https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign/blob/5ecdb67327fd37bb2e042aab12ff7391903235d3/README.md"
+    },
+    {
+      "name": "GTCRN-DNS3",
+      "role": "asr_enhancement",
+      "provider": "github",
+      "repository": "Xiaobin-Rong/gtcrn",
+      "revision": "502ebfab64da7c4a9af78dcb9c6ceef1ebb01c73",
+      "required_files": [
+        "model_trained_on_dns3.tar"
+      ],
+      "source_files": {
+        "model_trained_on_dns3.tar": "checkpoints/model_trained_on_dns3.tar"
+      },
+      "sha256": {
+        "model_trained_on_dns3.tar": "a630d992cf792daf4ce2bb5bcf9c4d389f740a8f09c6e0971184697fe6371b79"
+      },
+      "targets": [
+        "asr"
+      ],
+      "device": "CPU · FP32",
+      "license": "MIT",
+      "license_url": "https://raw.githubusercontent.com/Xiaobin-Rong/gtcrn/502ebfab64da7c4a9af78dcb9c6ceef1ebb01c73/LICENSE"
     }
   ]
 }

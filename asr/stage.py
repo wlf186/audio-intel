@@ -324,16 +324,44 @@ def align(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def enhance(payload: dict[str, Any]) -> dict[str, Any]:
+    from .enhancement import enhance_file, enhanced_speech_regions
+    from audio_intel.model_registry import asr_enhancement_model
+
+    model = asr_enhancement_model()
+    def report(current: int, total: int) -> None:
+        _progress(payload, "audio_enhancement", math.ceil(current / 16000), math.ceil(total / 16000),
+                  stage_progress=current / max(total, 1), unit="media_second")
+    try:
+        result = enhance_file(Path(payload["input_path"]), Path(payload["enhanced_path"]),
+                              payload["speech_regions"], report)
+        if result["status"] == "applied":
+            def vad_progress(current: int, total: int) -> None:
+                _progress(payload, "audio_enhancement_vad", math.ceil(current / 16000), math.ceil(total / 16000),
+                          stage_progress=current / max(total, 1), unit="media_second")
+            result["speech_regions"] = enhanced_speech_regions(Path(payload["enhanced_path"]), vad_progress)
+        seconds = math.ceil(result.get("input_samples", 0) / 16000)
+        _progress(payload, "audio_enhancement_vad" if result["status"] == "applied" else "audio_enhancement",
+                  seconds, seconds, stage_progress=1.0, unit="media_second")
+        return result
+    except (OSError, ValueError, RuntimeError) as exc:
+        Path(payload["enhanced_path"]).unlink(missing_ok=True)
+        return {"mode": "auto", "status": "fallback", "reason": "model_unavailable" if isinstance(exc, FileNotFoundError)
+                else "resource_unavailable" if isinstance(exc, OSError) else "invalid_output" if isinstance(exc, ValueError)
+                else "inference_failed", "model": model["name"], "model_revision": model["revision"],
+                "compute_device": "cpu"}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("operation", choices=("transcribe", "align"))
+    parser.add_argument("operation", choices=("transcribe", "align", "enhance"))
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     payload = json.loads(args.input.read_text(encoding="utf-8"))
-    result = transcribe(payload) if args.operation == "transcribe" else align(payload)
+    result = {"transcribe": transcribe, "align": align, "enhance": enhance}[args.operation](payload)
     args.output.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
 
 

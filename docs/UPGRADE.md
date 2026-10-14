@@ -107,6 +107,14 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## 开发版本：本地 ASR 人声增强
+
+从 v0.1.32 升级本次增强变更：**数据迁移：无**，无需额外升级备份。历史任务、请求、媒体和声纹不改写；新增任务默认自动增强，旧请求缺少字段时继续按关闭处理。新增可选 GTCRN DNS3 模型由 manifest 固定 revision 和 checksum，运行时 CPU 离线处理；原 ASR/TTS、Python 和依赖锁保持不变。
+
+运行 `./service.sh setup asr`（Windows：`service.cmd setup asr`）准备增强模型，重建前端，然后按本页维护流程刷新原来运行的 API、supervisor 和 executor。模型暂未安装时基础 ASR 仍可用，自动模式记录回退。增强回放额外保存一份 16 kHz PCM WAV，约每小时 115 MB；纯旁路任务不增加该文件，随任务清理。ASR 设置沿用现有 localStorage 生命周期，草稿与 sessionStorage 清理规则不变。详见[人声增强契约](ASR_ENHANCEMENT.md)。
+
+English: No data migration, historical rewrite or additional upgrade backup. Install the optional pinned enhancer with setup asr, rebuild the frontend and refresh all previously running components. New jobs default to automatic processing; historical missing fields preserve disabled behavior. An applied job retains a separate enhanced WAV (about 115 MB/hour), while bypassed jobs do not. Existing storage lifetimes and dependency pins are unchanged.
+
 ## v0.1.32 声纹库布局与工作台交互优化
 
 从正式发布的 v0.1.31 或已部署的后续工作台开发源码升级：**数据迁移：无**，无需额外升级备份，不改写数据库、历史任务、音视频或声纹样本。模型、依赖锁和公共 API 契约不变。重建前端，并按上面的本地部署流程刷新原运行的 API、ASR/TTS supervisor 和 executor。更早版本必须覆盖中间升级要求；从 v0.1.30 跨版本升级仍需下节的 schema v13 → v14 SQLite 一致快照，无需复制媒体文件。

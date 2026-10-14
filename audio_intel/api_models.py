@@ -244,7 +244,37 @@ class VideoCapability(PublicModel):
     scene_editing: bool
 
 
+class AsrEnhancementCapability(PublicModel):
+    supported: bool
+    available: bool
+    default: Literal["auto"]
+    modes: list[Literal["auto", "off"]]
+    model: str
+    model_revision: str
+    compute_device: Literal["cpu"]
+    preserves_all_speakers: bool
+    enhanced_playback: bool
+
+
+class AsrEnhancementResult(PublicModel):
+    mode: Literal["auto", "off"]
+    status: Literal["off", "bypassed", "applied", "fallback"]
+    reason: str
+    model: str | None = None
+    model_revision: str | None = None
+    compute_device: Literal["cpu"] | None = None
+    max_gain_db: float | None = None
+    denoised_seconds: float | None = None
+    gain_seconds: float | None = None
+    wet_ratio: float | None = None
+    elapsed_seconds: float | None = None
+    input_samples: int | None = None
+    playback_url: str | None = None
+    waveform: list[float] | None = None
+
+
 class AsrCapability(PublicModel):
+    audio_enhancement: AsrEnhancementCapability
     audio_formats: list[str]
     concise_pdf: bool
     video: VideoCapability
@@ -601,6 +631,7 @@ class VideoAnalysisResponse(PublicModel):
 
 
 class JobResultResponse(PublicModel):
+    audio_enhancement: AsrEnhancementResult | None = Field(None, description="本地 ASR 增强的实际状态；历史缺失不表示已增强 / Actual local ASR enhancement state; absence does not imply processing")
     video: VideoAnalysisResponse | None = Field(None, description="视频画面与原始自动分段快照 / Video sections and original automatic-section snapshot")
     playback_url: str | None = Field(None, description="与 ASR 时间戳一致的受保护 PCM WAV 播放地址；历史任务可能缺失 / Protected PCM WAV playback matching the ASR timeline; may be absent in historical jobs")
     generation_guard: TtsGenerationGuardResponse | None = Field(None, description="仅实际执行保护的 TTS 任务返回；历史缺失不表示检查通过 / Only guarded TTS runs return this; absence does not imply validation")

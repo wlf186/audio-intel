@@ -121,12 +121,19 @@ def combine_vad(segments: list[dict[str, float]], duration: float, target: float
     return split
 
 
-def write_chunks(audio: Any, rate: int, chunks: list[dict[str, float]], directory: Path) -> list[dict[str, Any]]:
+def write_chunks(audio: Any, rate: int, chunks: list[dict[str, float]], directory: Path,
+                 *, source: Path | None = None) -> list[dict[str, Any]]:
     directory.mkdir(parents=True, exist_ok=True)
     output = []
     for index, chunk in enumerate(chunks):
         path = directory / f"chunk-{index:04d}.wav"
-        samples = audio[int(chunk["start"] * rate):int(chunk["end"] * rate)]
+        if source is not None:
+            import soundfile as sf
+            with sf.SoundFile(source) as reader:
+                reader.seek(int(chunk["start"] * rate))
+                samples = reader.read(int(chunk["end"] * rate) - int(chunk["start"] * rate), dtype="float32")
+        else:
+            samples = audio[int(chunk["start"] * rate):int(chunk["end"] * rate)]
         if settings.mock_mode:
             with wave.open(str(path), "wb") as handle:
                 handle.setnchannels(1); handle.setsampwidth(2); handle.setframerate(rate)
@@ -858,7 +865,38 @@ def process_job(context: JobContext) -> dict[str, Any]:
         vad = [{"start": 0.0, "end": duration}]
     else:
         vad = run_vad(audio, rate)
-    chunks = write_chunks(audio, rate, combine_vad(vad, duration), context.work_dir / "chunks")
+    enhancement = None
+    enhanced = context.work_dir / "enhanced.wav"
+    if request.get("purpose") not in {"tts_clone_reference", "voiceprint_import"}:
+        mode = request.get("audio_enhancement", "off")
+        enhancement = {"mode": mode, "status": "off", "reason": "disabled"}
+        if mode == "auto":
+            if settings.mock_mode:
+                enhancement = {"mode": mode, "status": "bypassed", "reason": "mock_mode"}
+            else:
+                context.progress(.11, "audio_enhancement")
+                def enhancement_progress(snapshot: dict[str, Any]) -> None:
+                    ratio = float(snapshot.get("stage_progress") or 0)
+                    vad_phase = snapshot.get("stage") == "audio_enhancement_vad"
+                    value = .173 + .007 * ratio if vad_phase else .11 + .063 * ratio
+                    context.progress(value, "audio_enhancement_vad" if vad_phase else "audio_enhancement",
+                                     int(snapshot["completed"]), int(snapshot["total"]),
+                                     stage_progress=ratio, unit="media_second")
+                try:
+                    enhancement = run_stage("enhance", {
+                        "input_path": str(normalized), "enhanced_path": str(enhanced),
+                        "speech_regions": vad,
+                    }, context.work_dir, enhancement_progress)
+                except (subprocess.CalledProcessError, OSError, ValueError):
+                    enhanced.unlink(missing_ok=True)
+                    enhancement = {"mode": mode, "status": "fallback", "reason": "stage_failed"}
+                if enhancement.get("status") == "applied":
+                    from .enhancement import merge_regions
+                    vad = merge_regions(vad, enhancement.pop("speech_regions", []))
+    if enhancement and enhancement.get("status") == "applied":
+        chunks = write_chunks(audio, rate, combine_vad(vad, duration), context.work_dir / "chunks", source=enhanced)
+    else:
+        chunks = write_chunks(audio, rate, combine_vad(vad, duration), context.work_dir / "chunks")
     acceleration_enabled = bool(request.get("accelerate_single_task", False))
     hardware_acceleration = resolve_acceleration(acceleration_enabled, compute_device)
     acceleration = resolve_acceleration(
@@ -1049,6 +1087,12 @@ def process_job(context: JobContext) -> dict[str, Any]:
             ],
         },
     })
+    if enhancement is not None:
+        if enhancement.get("status") == "applied":
+            target = context.output_dir / "enhanced.wav"
+            shutil.move(str(enhanced), str(target))
+            enhancement["playback_url"] = f"/api/v1/jobs/{context.job_id}/artifacts/enhanced.wav"
+        result["audio_enhancement"] = enhancement
     try:
         result["waveform"] = waveform_peaks(audio, 240)
     except Exception:
@@ -1063,6 +1107,10 @@ def process_job(context: JobContext) -> dict[str, Any]:
     else:
         result["playback_url"] = save_playback_audio(context.job_id, normalized)
     result = write_asr_exports(context.job_id, result, request.get("export_formats", ["json", "srt", "vtt", "txt"]))
+    if enhancement is not None and enhancement.get("status") == "applied":
+        target = context.output_dir / "enhanced.wav"
+        result.setdefault("artifacts", []).append({"name": target.name, "path": str(target),
+            "mime_type": "audio/wav", "size_bytes": target.stat().st_size})
     if request.get("purpose") == "voiceprint_import":
         _finalize_voiceprint_import(request, normalized, result)
     elif request.get("purpose") == "tts_clone_reference":

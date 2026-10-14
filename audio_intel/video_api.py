@@ -96,6 +96,7 @@ class VideoJobRequest(StrictModel):
     use_voiceprint_library: bool = True
     voiceprint_group_ids: list[str] | None = Field(None, description="所选声纹分组；省略全部，提交时固定人员范围 / Selected voiceprint groups; omission selects all, eligible people are snapshotted")
     accelerate_single_task: bool = True
+    audio_enhancement: Literal['auto', 'off'] | None = Field(None, description='新任务默认 auto，off 关闭 / New jobs default to auto; off disables enhancement', json_schema_extra={'default': 'auto'})
     video_roi: VideoRegion | None = None
 
 
@@ -291,9 +292,12 @@ def register(app: Any, api: Any) -> None:
             caller.pop('voiceprint_group_ids', None)
         else:
             caller['voiceprint_group_ids'] = sorted(set(body.voiceprint_group_ids))
-        fingerprint = api.request_fingerprint(caller)
         async with upload_lock(body.upload_id):
             old = await run_in_threadpool(db.find_idempotent_job, 'submit_video', api.idempotency_key_hash(key))
+            caller['audio_enhancement'] = api.validate_audio_enhancement(body.audio_enhancement, old)
+            if old and 'audio_enhancement' not in old['request'].get('video_caller', {}) and caller['audio_enhancement'] == 'off':
+                caller.pop('audio_enhancement')
+            fingerprint = api.request_fingerprint(caller)
             if old:
                 if old['request'].get('video_caller') != caller:
                     raise HTTPException(409, 'Idempotency-Key conflict')

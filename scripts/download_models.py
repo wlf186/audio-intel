@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import hashlib
+import urllib.request
 from pathlib import Path
 import sys
 
@@ -38,6 +40,31 @@ def modelscope(repo: str, directory: str, revision: str) -> None:
     temporary.replace(marker)
 
 
+def github(model: dict) -> None:
+    """Download only manifest-owned files from an immutable GitHub commit."""
+    target = MODELS / model["name"]
+    target.mkdir(parents=True, exist_ok=True)
+    for name in model["required_files"]:
+        url = f"https://raw.githubusercontent.com/{model['repository']}/{model['revision']}/{model['source_files'][name]}"
+        path = target / name
+        partial = path.with_suffix(path.suffix + ".partial")
+        digest = hashlib.sha256()
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response, partial.open("wb") as output:
+                while block := response.read(1024 * 1024):
+                    digest.update(block)
+                    output.write(block)
+            if digest.hexdigest() != model["sha256"][name]:
+                raise RuntimeError(f"Checksum mismatch for {model['name']}/{name}")
+            partial.replace(path)
+        finally:
+            partial.unlink(missing_ok=True)
+    marker = target / ".complete"
+    partial = marker.with_suffix(".partial")
+    partial.write_text(model["revision"] + "\n", encoding="utf-8")
+    partial.replace(marker)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("target", choices=("all", "asr", "tts"), nargs="?", default="all")
@@ -52,8 +79,11 @@ def main() -> None:
             continue
         if installation["state"] != "missing":
             print(f"[models] {model['name']}: repairing {installation['state']}")
-        downloader = hf if model["provider"] == "huggingface" else modelscope
-        downloader(model["repository"], model["name"], model["revision"])
+        if model["provider"] == "github":
+            github(model)
+        else:
+            downloader = hf if model["provider"] == "huggingface" else modelscope
+            downloader(model["repository"], model["name"], model["revision"])
 
 
 if __name__ == "__main__":

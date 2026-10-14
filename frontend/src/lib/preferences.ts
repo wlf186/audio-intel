@@ -1,13 +1,13 @@
 import type {ComputeDevice} from './types'
 
-export type AsrPreferences={model:string;language:string;speakerCount:string;align:boolean;useVoiceprints:boolean;computeDevice:ComputeDevice;accelerateSingleTask:boolean;hotwordListIds:string[];voiceprintGroupMode:'all'|'selected';voiceprintGroupIds:string[]}
+export type AsrPreferences={model:string;language:string;speakerCount:string;align:boolean;useVoiceprints:boolean;computeDevice:ComputeDevice;accelerateSingleTask:boolean;audioEnhancement:'auto'|'off';hotwordListIds:string[];voiceprintGroupMode:'all'|'selected';voiceprintGroupIds:string[]}
 export type TtsPreferences={model:string;mode:'preset'|'inline_clone'|'voice_design';cloneSource:'upload'|'voiceprint';speaker:string;language:string;computeDevice:ComputeDevice;personId:string;sampleId:string;accelerateSingleTask:boolean}
 export type TtsContent={text:string;instruct:string;refText:string;refLanguage:string;refJobId:string}
 
 export const asrPreferencesKey='audio-intel:asr-preferences:v4'
 export const ttsPreferencesKey='audio-intel:tts-preferences:v2'
 export const ttsContentKey='audio-intel:tts-content:v2'
-export const defaultAsrPreferences:AsrPreferences={model:'qwen3-asr-0.6b',language:'Auto',speakerCount:'auto',align:true,useVoiceprints:true,computeDevice:'gpu',accelerateSingleTask:true,hotwordListIds:[],voiceprintGroupMode:'all',voiceprintGroupIds:[]}
+export const defaultAsrPreferences:AsrPreferences={model:'qwen3-asr-0.6b',language:'Auto',speakerCount:'auto',align:true,useVoiceprints:true,computeDevice:'gpu',accelerateSingleTask:true,audioEnhancement:'auto',hotwordListIds:[],voiceprintGroupMode:'all',voiceprintGroupIds:[]}
 export const defaultTtsPreferences:TtsPreferences={model:'qwen3-tts-0.6b',mode:'preset',cloneSource:'upload',speaker:'Vivian',language:'Auto',computeDevice:'gpu',personId:'',sampleId:'',accelerateSingleTask:true}
 export const defaultTtsContent:TtsContent={text:'',instruct:'',refText:'',refLanguage:'Auto',refJobId:''}
 export const publicAlignerLanguages=['Chinese','English','Cantonese','French','German','Italian','Japanese','Korean','Portuguese','Russian','Spanish']
@@ -38,6 +38,7 @@ function normalizeAsr(value:Record<string,unknown>,maxSpeakers:number,defaultDev
   speakerCount:speaker==='auto'||Number.isInteger(speakerNumber)&&speakerNumber>=1&&speakerNumber<=maxSpeakers?speaker:'auto',
   align:bool(value.align,defaultAsrPreferences.align),useVoiceprints:bool(value.useVoiceprints,defaultAsrPreferences.useVoiceprints),
   computeDevice:device(value.computeDevice,defaultDevice),accelerateSingleTask:bool(value.accelerateSingleTask,defaultAsrPreferences.accelerateSingleTask),
+  audioEnhancement:value.audioEnhancement==='off'?'off':'auto',
   hotwordListIds:stringList(value.hotwordListIds),voiceprintGroupMode:value.voiceprintGroupMode==='selected'?'selected':'all',voiceprintGroupIds:stringList(value.voiceprintGroupIds),
  }
 }

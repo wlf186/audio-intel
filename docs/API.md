@@ -640,3 +640,13 @@ print("Replacement backup:", receipt.get("backup_url"))
 ```
 
 `GET /api/v1/voiceprints/people` returns required `sort_initial` (A–Z or #) and full-pinyin/Latin ordered people; `/api/v1/tts/voices` uses the same ordering. The frontend passes that order through clone, document TTS, ASR rename/enrollment and video enrollment pickers. System hotword term order and historical speaker snapshots are unchanged.
+## ASR speech enhancement / ASR 人声增强
+
+Audio ASR and OpenAI-compatible transcription accept multipart
+`audio_enhancement=auto|off`; video job submissions accept the same JSON property.
+New requests default to `auto`. Capability discovery uses
+`asr.audio_enhancement` from `GET /api/v1/capabilities`.
+The optional result field of the same name records actual processing, bypass,
+or fallback and provides enhanced playback when applied. Original audio remains
+available. Historical requests without the field retain the disabled behavior,
+including replay and retry. See the [processing and validation contract](ASR_ENHANCEMENT.md).

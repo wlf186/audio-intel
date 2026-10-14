@@ -122,6 +122,7 @@ type Props = {
   defaultComputeDevice: ComputeDevice
   maxSpeakers: number
   maxUploadBytes?: number
+  enhancementAvailable?: boolean
   videoCapability?: VideoCapability
   audioFormats?: string[]
   asrLanguages?: string[]
@@ -141,7 +142,7 @@ type Props = {
   onRevealHandled: (token: number) => void
 }
 
-export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, restoreState, restoreError, restoreSelected, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, videoCapability, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, voiceprintGroups, voiceprintGroupsState, refreshVoiceprintGroups, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
+export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, restoreState, restoreError, restoreSelected, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, enhancementAvailable, videoCapability, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, voiceprintGroups, voiceprintGroupsState, refreshVoiceprintGroups, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const { t, i18n } = useTranslation()
   const [view, setView] = useState<'create'|'video'|'results'>(()=>readAsrSession().view)
   const [compact, setCompact] = useState(()=>matchMedia('(max-width: 1023px)').matches)
@@ -185,6 +186,8 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const [uploadProgress,setUploadProgress]=useState<UploadProgress>()
   const [mediaError, setMediaError] = useState('')
   const [mediaLoading, setMediaLoading] = useState(true)
+  const [enhancedPlayback,setEnhancedPlayback]=useState(false)
+  const pendingAudioSwitch=useRef<{time:number;playing:boolean}|undefined>(undefined)
   const [query, setQuery] = useState(()=>readReaderBookmark(`${selectedJobId}:segments`)?.query||'')
   const deferredQuery = useDeferredValue(query)
   const segmentFilterGeneration=useRef(0)
@@ -233,6 +236,8 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const detail = selectedSummary ? jobDetails[selectedSummary.id] : undefined
   const selected = detail?.job
   const result = selected?.result
+  const enhancedAudio=result?.audio_enhancement?.playback_url
+  const playbackUrl=enhancedPlayback&&enhancedAudio?enhancedAudio:result?.playback_url||selected?.source_url||(selected?sourceUrl(selected.id):undefined)
   useReaderBookmark(selectedSummary?`${selectedSummary.id}:segments`:'',segmentList,{active:view==='results'&&!videoReading||view==='results'&&!result?.video,ready:Boolean(result)&&query===deferredQuery,visibleCount:visibleSegmentCount,query:deferredQuery.trim().toLocaleLowerCase(),speakerFilter})
   const speakerById = useMemo(() => new Map((result?.speakers || []).map((speaker) => [speaker.id, speaker])), [result?.speakers])
   const alignmentDowngraded = Boolean(selected?.request.language === 'Auto' && selected.request.align === true && result?.timestamp_precision === 'segment' && result.language && !alignerLanguages.includes(result.language))
@@ -333,7 +338,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     const saved=loadVideoResume();setResume(saved)
     if(!saved)return
     const p=saved.params
-    setPreferences(current=>({...current,model:String(p.model||current.model),language:String(p.language||'Auto'),speakerCount:p.speaker_count?String(p.speaker_count):'auto',align:p.align!==false,useVoiceprints:p.use_voiceprint_library!==false,computeDevice:p.compute_device==='cpu'?'cpu':'gpu',accelerateSingleTask:p.accelerate_single_task!==false,hotwordListIds:Array.isArray(p.hotword_list_ids)?p.hotword_list_ids as string[]:[],voiceprintGroupMode:Array.isArray(p.voiceprint_group_ids)?'selected':'all',voiceprintGroupIds:Array.isArray(p.voiceprint_group_ids)?p.voiceprint_group_ids as string[]:[]}))
+    setPreferences(current=>({...current,model:String(p.model||current.model),language:String(p.language||'Auto'),speakerCount:p.speaker_count?String(p.speaker_count):'auto',align:p.align!==false,useVoiceprints:p.use_voiceprint_library!==false,computeDevice:p.compute_device==='cpu'?'cpu':'gpu',accelerateSingleTask:p.accelerate_single_task!==false,audioEnhancement:p.audio_enhancement==='auto'?'auto':'off',hotwordListIds:Array.isArray(p.hotword_list_ids)?p.hotword_list_ids as string[]:[],voiceprintGroupMode:Array.isArray(p.voiceprint_group_ids)?'selected':'all',voiceprintGroupIds:Array.isArray(p.voiceprint_group_ids)?p.voiceprint_group_ids as string[]:[]}))
     setVideoRoi(p.video_roi as VideoRegion|undefined)
   },[isVideoTab])
   useEffect(() => {
@@ -344,6 +349,8 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       player.load()
     }
     stopAt.current = undefined
+    pendingAudioSwitch.current=undefined
+    setEnhancedPlayback(false)
     setCurrentTime(0)
     setPlaying(false)
     setMediaError('')
@@ -417,8 +424,9 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       data.set('export_formats', 'json,srt,vtt,txt')
       data.set('compute_device', effectiveComputeDevice)
       data.set('accelerate_single_task', String(accelerateSingleTask))
+      data.set('audio_enhancement',preferences.audioEnhancement)
       if (selectedHotwordIds.size) data.set('hotword_list_ids', [...selectedHotwordIds].join(','))
-      const job = isVideoTab?await submitVideo(file,{model,language,speaker_count:speakers==='auto'?null:Number(speakers),diarize:true,align,use_voiceprint_library:useVoiceprints,...(manualGroups?{voiceprint_group_ids:preferences.voiceprintGroupIds}:{}),compute_device:effectiveComputeDevice,accelerate_single_task:accelerateSingleTask,hotword_list_ids:[...selectedHotwordIds],video_roi:videoRoi||null},{signal:controller.signal,onProgress:setUploadProgress}):await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
+      const job = isVideoTab?await submitVideo(file,{model,language,speaker_count:speakers==='auto'?null:Number(speakers),diarize:true,align,use_voiceprint_library:useVoiceprints,...(manualGroups?{voiceprint_group_ids:preferences.voiceprintGroupIds}:{}),compute_device:effectiveComputeDevice,accelerate_single_task:accelerateSingleTask,audio_enhancement:preferences.audioEnhancement,hotword_list_ids:[...selectedHotwordIds],video_roi:videoRoi||null},{signal:controller.signal,onProgress:setUploadProgress}):await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
       onJobSubmitted(job)
       setLastSubmitted(job)
       onSelect(job)
@@ -434,6 +442,12 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       setUploadProgress(undefined)
       setBusy(false)
     }
+  }
+  const switchAudio = (enhanced:boolean) => {
+    if(enhanced===enhancedPlayback||!audio.current||!enhancedAudio)return
+    pendingAudioSwitch.current={time:audio.current.currentTime,playing:!audio.current.paused}
+    audio.current.pause()
+    setMediaError('');setMediaLoading(true);setEnhancedPlayback(enhanced)
   }
   const play = async () => {
     const player = audio.current
@@ -664,6 +678,15 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           </select>
         </label>
         {computeDevice === 'gpu' && effectiveComputeDevice === 'cpu' ? <small id="asr-device-warning" className="device-hint asr-device-warning">{computeUnavailableReason(gpuCapability,t)}</small> : null}
+        <label>
+          {t('asr.enhancement.label')}
+          <select aria-label={t('asr.enhancement.label')} aria-describedby="asr-enhancement-help" value={preferences.audioEnhancement} onChange={event=>updatePreference('audioEnhancement',event.target.value as 'auto'|'off')}>
+            <option value="auto">{t('asr.enhancement.auto')}</option>
+            <option value="off">{t('asr.enhancement.off')}</option>
+          </select>
+          <small id="asr-enhancement-help">{t('asr.enhancement.help')}</small>
+          {preferences.audioEnhancement==='auto'&&enhancementAvailable===false?<small role="status">{t('asr.enhancement.unavailable')}</small>:null}
+        </label>
         <div className="asr-options">
         <div className="asr-voiceprint-toggle"><label className="toggle-label">
           <input type="checkbox" checked={useVoiceprints} onChange={(event) => updatePreference('useVoiceprints', event.target.checked)} />
@@ -758,14 +781,21 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               ref={audio}
               className="sr-only"
               preload={view==='results'?'metadata':'none'}
-              src={result.playback_url || selected.source_url || sourceUrl(selected.id)}
+              src={playbackUrl}
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
               onEnded={() => setPlaying(false)}
               onLoadStart={() => { setMediaLoading(true); setMediaError('') }}
-              onLoadedMetadata={() => setMediaLoading(false)}
-              onError={() => { setMediaLoading(false); setMediaError(t('asr.results.playbackError')) }}
+              onLoadedMetadata={event => {
+                const player=event.currentTarget
+                if(player.currentSrc!==new URL(playbackUrl!,location.href).href)return
+                setMediaLoading(false)
+                const pending=pendingAudioSwitch.current
+                if(pending){pendingAudioSwitch.current=undefined;player.currentTime=Math.min(pending.time,player.duration);setCurrentTime(player.currentTime);if(pending.playing)void player.play().catch(()=>setMediaError(t('asr.results.playbackError')))}
+              }}
+              onError={() => { pendingAudioSwitch.current=undefined;setMediaLoading(false); setMediaError(t('asr.results.playbackError')) }}
               onTimeUpdate={(event) => {
+                if(pendingAudioSwitch.current)return
                 const value = event.currentTarget.currentTime
                 setCurrentTime(value)
                 if (stopAt.current !== undefined && value >= stopAt.current - 0.03) {
@@ -774,8 +804,13 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
                 }
               }}
             />
+            {enhancedAudio?<div className="asr-enhancement-row" role="group" aria-label={t('asr.enhancement.label')}>
+              <button type="button" className="button" aria-pressed={!enhancedPlayback} disabled={Boolean(pendingAudioSwitch.current)} onClick={()=>switchAudio(false)}>{t('asr.enhancement.original')}</button>
+              <button type="button" className="button" aria-pressed={enhancedPlayback} disabled={Boolean(pendingAudioSwitch.current)} onClick={()=>switchAudio(true)}>{t('asr.enhancement.enhanced')}</button>
+              <a className="button" href={enhancedAudio} download>{t('asr.enhancement.download')}</a>
+            </div>:result.audio_enhancement?.mode==='auto'?<p className="asr-enhancement-status" role="status">{t(result.audio_enhancement.status==='fallback'?'asr.enhancement.fallback':'asr.enhancement.bypassed')}</p>:null}
             <div className="wave-area" hidden={Boolean(result.video)&&!videoWaveform}>
-              <Waveform peaks={result.waveform} currentTime={currentTime} duration={duration} onSeek={seek} />
+              <Waveform peaks={enhancedPlayback?result.audio_enhancement?.waveform:result.waveform} currentTime={currentTime} duration={duration} onSeek={seek} />
               <div className="time-ruler">
                 <span>00:00</span>
                 <span>{formatTime(duration / 2, false)}</span>
