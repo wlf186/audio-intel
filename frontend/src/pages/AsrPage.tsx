@@ -12,6 +12,7 @@ import {VideoRegionPicker} from '../components/VideoRegionPicker'
 import {submitVideo,loadVideoResume,discardVideoUpload,type VideoCapability,type VideoRegion} from '../lib/videoUpload'
 import { ResourceStatePanel } from '../components/ResourceStatePanel'
 import { Waveform } from '../components/Waveform'
+import { EnhancedWaveform } from '../components/EnhancedWaveform'
 import { JobMini } from '../components/JobMini'
 import { Modal } from '../components/Modal'
 import { InfoTooltip } from '../components/InfoTooltip'
@@ -678,26 +679,26 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           </select>
         </label>
         {computeDevice === 'gpu' && effectiveComputeDevice === 'cpu' ? <small id="asr-device-warning" className="device-hint asr-device-warning">{computeUnavailableReason(gpuCapability,t)}</small> : null}
-        <label>
-          {t('asr.enhancement.label')}
-          <select aria-label={t('asr.enhancement.label')} aria-describedby="asr-enhancement-help" value={preferences.audioEnhancement} onChange={event=>updatePreference('audioEnhancement',event.target.value as 'auto'|'off')}>
-            <option value="auto">{t('asr.enhancement.auto')}</option>
-            <option value="off">{t('asr.enhancement.off')}</option>
-          </select>
-          <small id="asr-enhancement-help">{t('asr.enhancement.help')}</small>
-          {preferences.audioEnhancement==='auto'&&enhancementAvailable===false?<small role="status">{t('asr.enhancement.unavailable')}</small>:null}
-        </label>
         <div className="asr-options">
         <div className="asr-voiceprint-toggle"><label className="toggle-label">
           <input type="checkbox" checked={useVoiceprints} onChange={(event) => updatePreference('useVoiceprints', event.target.checked)} />
           <span>{t('asr.voiceprints.label')}</span>
         </label><InfoTooltip id="asr-voiceprints-help" label={t('asr.voiceprints.label')} text={t('asr.voiceprints.help')}/><button className="button voiceprint-scope-button" aria-label={t('voiceprintGroups.scopeButton')} title={t('voiceprintGroups.scopeButton')} disabled={!useVoiceprints} onClick={()=>setGroupsOpen(true)}><Layers size={16}/>{t('workspaceUx.changeScope')}</button></div>
+        <div className="asr-processing-toggles">
         <div className="acceleration-control">
           <label>
             <input type="checkbox" checked={accelerateSingleTask} onChange={(event) => updatePreference('accelerateSingleTask', event.target.checked)} />
             <span>{t('asr.acceleration')}</span>
           </label>
           <InfoTooltip id="asr-acceleration-help" text={t('asr.accelerationHelp')} />
+        </div>
+        <div className="acceleration-control asr-enhancement-control">
+          <label>
+            <input type="checkbox" aria-label={t('asr.enhancement.label')} checked={preferences.audioEnhancement==='auto'} onChange={event=>updatePreference('audioEnhancement',event.target.checked?'auto':'off')}/>
+            <span>{t('asr.enhancement.label')}{enhancementAvailable===false?<small>{t('asr.enhancement.unavailableShort')}</small>:null}</span>
+          </label>
+          <InfoTooltip id="asr-enhancement-help" label={t('asr.enhancement.helpLabel')} text={`${enhancementAvailable===false?t('asr.enhancement.unavailable')+' ':''}${t('asr.enhancement.help')}`}/>
+        </div>
         </div>
         {useVoiceprints?<small className="voiceprint-scope-summary">{scopeLabel}</small>:null}
         </div>
@@ -808,9 +809,9 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               <button type="button" className="button" aria-pressed={!enhancedPlayback} disabled={Boolean(pendingAudioSwitch.current)} onClick={()=>switchAudio(false)}>{t('asr.enhancement.original')}</button>
               <button type="button" className="button" aria-pressed={enhancedPlayback} disabled={Boolean(pendingAudioSwitch.current)} onClick={()=>switchAudio(true)}>{t('asr.enhancement.enhanced')}</button>
               <a className="button" href={enhancedAudio} download>{t('asr.enhancement.download')}</a>
-            </div>:result.audio_enhancement?.mode==='auto'?<p className="asr-enhancement-status" role="status">{t(result.audio_enhancement.status==='fallback'?'asr.enhancement.fallback':'asr.enhancement.bypassed')}</p>:null}
+            </div>:result.audio_enhancement?.mode==='auto'?<p className="asr-enhancement-status" role="note">{t(result.audio_enhancement.status==='fallback'?'asr.enhancement.fallback':'asr.enhancement.bypassed')}</p>:null}
             <div className="wave-area" hidden={Boolean(result.video)&&!videoWaveform}>
-              <Waveform peaks={enhancedPlayback?result.audio_enhancement?.waveform:result.waveform} currentTime={currentTime} duration={duration} onSeek={seek} />
+              {enhancedPlayback&&enhancedAudio?<EnhancedWaveform key={enhancedAudio} src={enhancedAudio} peaks={result.audio_enhancement?.waveform} currentTime={currentTime} duration={duration} onSeek={seek}/>:<Waveform peaks={result.waveform} currentTime={currentTime} duration={duration} onSeek={seek} />}
               <div className="time-ruler">
                 <span>00:00</span>
                 <span>{formatTime(duration / 2, false)}</span>

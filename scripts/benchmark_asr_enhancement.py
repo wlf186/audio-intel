@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +81,7 @@ def main() -> None:
                     _stop_stage_process(child)
     cases = json.loads(args.cases_json.read_text(encoding="utf-8")) if args.cases_json else []
     if args.job_id:
-        with sqlite3.connect(settings.database_path.resolve().as_uri() + "?mode=ro", uri=True) as db:
+        with closing(sqlite3.connect(settings.database_path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
             for index, jid in enumerate(args.job_id):
                 row = db.execute("SELECT request_json,result_json FROM jobs WHERE id=? AND kind='asr'", (jid,)).fetchone()
                 if row is None:

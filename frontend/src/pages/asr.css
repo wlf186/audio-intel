@@ -168,3 +168,13 @@
 .asr-enhancement-row .button{min-width:44px;min-height:44px}
 .asr-enhancement-row [aria-pressed=true]{border-color:var(--cyan);color:var(--cyan)}
 .asr-enhancement-status{font-size:12px;color:var(--muted)}
+
+.waveform-resource{border:0;margin:0;padding:0;min-width:0}
+
+.asr-processing-toggles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.asr-options:has(.asr-processing-toggles){row-gap:4px}
+.asr-processing-toggles .acceleration-control{gap:4px;min-width:0;margin-top:8px}
+.asr-settings-body .asr-processing-toggles label{flex:1;min-width:0;font-size:12px;gap:6px}
+.asr-processing-toggles input{flex-shrink:0}
+.asr-processing-toggles label span{min-width:0;overflow-wrap:anywhere}
+.asr-processing-toggles label small{display:block;font-size:10px;color:var(--muted)}

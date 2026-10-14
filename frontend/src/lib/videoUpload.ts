@@ -7,7 +7,14 @@ export type VideoRegion={x:number;y:number;width:number;height:number}
 export type VideoCapability={supported:boolean;formats:string[];max_upload_bytes:number;chunk_bytes:number;upload_idle_seconds:number;upload_lifetime_seconds:number;max_scenes:number;scene_editing:boolean}
 type Upload={id:string;name:string;size_bytes:number;offset:number;expires_at:number;chunk_bytes:number;job_id:string|null;chunks:Array<{offset:number;size_bytes:number;sha256:string}>}
 type Resume={id?:string;name:string;size:number;createKey:string;jobKey:string;params:Record<string,unknown>}
-export function loadVideoResume():Resume|undefined{try{return JSON.parse(sessionStorage.getItem(videoResumeKey)||'null')||undefined}catch{return undefined}}
+export function loadVideoResume():Resume|undefined{
+ try{
+  const saved:Resume|null=JSON.parse(sessionStorage.getItem(videoResumeKey)||'null')
+  if(!saved)return undefined
+  // Resume the submitted settings of uploads created before enhancement existed.
+  return {...saved,params:{...saved.params,audio_enhancement:saved.params.audio_enhancement??'off'}}
+ }catch{return undefined}
+}
 function saveResume(value:Resume){sessionStorage.setItem(videoResumeKey,JSON.stringify(value))}
 export async function discardVideoUpload(){const saved=loadVideoResume();if(saved?.id){try{await request(`/api/v1/asr/video-uploads/${saved.id}`,{method:'DELETE'})}catch(error){if(!(error instanceof HttpError)||![404,410].includes(error.status))throw error}};sessionStorage.removeItem(videoResumeKey)}
 function chunkRequest(url:string,block:Blob,offset:number,checksum:string,total:number,options:SubmissionOptions):Promise<Upload>{

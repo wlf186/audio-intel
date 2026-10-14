@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import io
 from dataclasses import replace
 from pathlib import Path
 
@@ -15,14 +16,20 @@ from audio_intel.asr_enhancement import request_mode
 from audio_intel.config import settings
 from audio_intel.model_registry import model_installation
 from asr import enhancement, pipeline
+from scripts import download_models
 
 
-@pytest.fixture
-def local(tmp_path, monkeypatch):
+@pytest.fixture(params=["full", "cpu"])
+def local(tmp_path, monkeypatch, request):
     value = replace(settings, data_dir=tmp_path / "data", temp_dir=tmp_path / "tmp",
-                    mock_mode=True, api_key="enhancement-test", min_free_disk_bytes=0)
+                    mock_mode=True, api_key="enhancement-test", min_free_disk_bytes=0,
+                    deployment_profile=request.param)
     for module in (api, db, worker, pipeline, enhancement):
         monkeypatch.setattr(module, "settings", value)
+    hardware = {"name": "Fixture GPU", "memory_used_mib": 0, "memory_free_mib": 16000,
+                "memory_total_mib": 16000, "utilization": 0}
+    monkeypatch.setattr(api, "gpu_snapshot", lambda *_: hardware)
+    monkeypatch.setattr(api, "cached_gpu_snapshot", lambda *_args, **_kwargs: hardware)
     return value
 
 
@@ -147,6 +154,57 @@ def test_model_marker_and_checksum_are_both_required(tmp_path):
     assert model_installation(tmp_path, model)["installed"]
     (folder / "weights").write_bytes(b"corrupt")
     assert model_installation(tmp_path, model)["state"] == "incomplete"
+
+
+def test_unreadable_enhancement_weights_leave_base_service_available(tmp_path, monkeypatch):
+    folder = tmp_path / "Enhancer"
+    folder.mkdir()
+    (folder / "weights").write_bytes(b"correct")
+    (folder / ".complete").write_text("pinned", encoding="utf-8")
+    model = {"name": "Enhancer", "revision": "pinned", "required_files": ["weights"],
+             "sha256": {"weights": hashlib.sha256(b"correct").hexdigest()}}
+    original = Path.open
+    def unreadable(path, *args, **kwargs):
+        if path == folder / "weights":
+            raise PermissionError("Fixture file lock")
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "open", unreadable)
+    assert model_installation(tmp_path, model)["state"] == "incomplete"
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_pinned_enhancer_download_validates_bytes_before_installing(tmp_path, monkeypatch, valid):
+    model = {"name": "Enhancer", "repository": "fixture/model", "revision": "immutable",
+             "required_files": ["weights.tar"], "source_files": {"weights.tar": "checkpoints/weights.tar"},
+             "sha256": {"weights.tar": hashlib.sha256(b"correct").hexdigest()}}
+    urls = []
+    def download(url, **kwargs):
+        urls.append(url)
+        return io.BytesIO(b"correct" if valid else b"corrupt")
+    monkeypatch.setattr(download_models, "MODELS", tmp_path)
+    monkeypatch.setattr(download_models.urllib.request, "urlopen", download)
+    if valid:
+        download_models.github(model)
+        assert model_installation(tmp_path, model)["installed"]
+    else:
+        with pytest.raises(RuntimeError, match="Checksum mismatch"):
+            download_models.github(model)
+        assert not (tmp_path / "Enhancer/.complete").exists()
+        assert not (tmp_path / "Enhancer/weights.tar").exists()
+    assert urls == ["https://raw.githubusercontent.com/fixture/model/immutable/checkpoints/weights.tar"]
+    assert not list((tmp_path / "Enhancer").glob("*.partial"))
+
+
+def test_streamed_boundary_blend_respects_peak_ceiling(local, tmp_path):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    samples = (.003 * np.sin(np.arange(31 * 16000) * .1)).astype(np.float32)
+    samples[30 * 16000] = .98
+    sf.write(source, samples, 16000, subtype="PCM_16")
+    enhancement.enhance_file(source, target, [{"start": 0, "end": 31}],
+                            lambda *_: None, denoiser=lambda x: x)
+    output, _ = sf.read(target, dtype="float32")
+    assert len(output) == len(samples)
+    assert np.max(np.abs(output)) <= enhancement.CEILING + 1e-6
 
 
 def test_enhanced_playback_is_separate_authenticated_and_range_capable(local, monkeypatch):

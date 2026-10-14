@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import socket
+import subprocess
 import sys
 from pathlib import Path
 
@@ -37,6 +38,17 @@ def main() -> None:
         if event == "socket.connect" and values[0].family in {socket.AF_INET, socket.AF_INET6}:
             raise RuntimeError("Network disabled during fixture generation")
     sys.addaudithook(forbid_network)
+    if args.device == "gpu" and os.environ.get("AUDIO_INTEL_ENHANCEMENT_FIXTURE_LEASE") != "1":
+        from audio_intel.gpu import gpu_lease
+        from asr.pipeline import _stop_stage_process
+        with gpu_lease():
+            child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]],
+                env={**os.environ, "AUDIO_INTEL_ENHANCEMENT_FIXTURE_LEASE": "1"})
+            try:
+                raise SystemExit(child.wait())
+            finally:
+                if child.poll() is None:
+                    _stop_stage_process(child)
     import numpy as np
     import soundfile as sf
     import torch

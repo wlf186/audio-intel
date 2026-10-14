@@ -10,11 +10,12 @@ function wave(amplitude:number){
  for(let i=44;i<b.length;i+=2)b.writeInt16LE(Math.round(Math.sin(i/15)*amplitude*32767),i)
  return b
 }
-async function fixture(page:Page){
+async function fixture(page:Page,withPeaks=true){
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text())})
  const now=new Date().toISOString()
  const job:Job={id:'enhancement-fixture',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'公开增强测试.wav',created_at:now,request:{compute_device:'cpu',audio_enhancement:'auto'},result:{duration:5,language:'Chinese',timestamp_precision:'segment',playback_url:'/api/v1/jobs/enhancement-fixture/playback',waveform:Array(240).fill(.08),segments:[{id:0,start:0,end:5,speaker:'Speaker_0',speaker_label:'测试人声',text:'公开的回放测试文字。'}],speakers:[{id:'Speaker_0',label:'测试人声'}],audio_enhancement:{mode:'auto',status:'applied',reason:'quiet_speech',playback_url:'/api/v1/jobs/enhancement-fixture/artifacts/enhanced.wav',waveform:Array(240).fill(.7)},artifacts:[]}}
  const state={submission:''}
+ if(!withPeaks)delete job.result!.audio_enhancement!.waveform
  await page.route('**/api/v1/**',async route=>{
   const url=new URL(route.request().url());const pathname=url.pathname
   if(pathname==='/api/v1/capabilities'){const body=await capabilitiesFor(page);body.events={...body.events,sse:false};return route.fulfill({json:body})}
@@ -35,6 +36,26 @@ async function fixture(page:Page){
  await page.goto('/#asr')
  return {errors,state}
 }
+test('enhanced waveform loads, shows a failure and retries without fabricated peaks',async({page,responseGate})=>{
+ const {errors}=await fixture(page,false)
+ const gate=responseGate()
+ let attempt=0
+ await page.route('**/artifacts/enhanced.wav/waveform',async route=>{
+  attempt++
+  if(attempt===1){await gate.hold();return route.fulfill({status:200,contentType:'application/json',body:'invalid-json'})}
+  return route.fulfill({json:{waveform:Array(240).fill(.7),duration:5}})
+ })
+ await showAsrResults(page)
+ await page.getByRole('group',{name:'人声增强',exact:true}).getByRole('button',{name:'增强音',exact:true}).click()
+ await expect(page.locator('.waveform-resource [role=status]')).toBeVisible()
+ await expect(page.locator('.wave-area canvas')).toHaveCount(0)
+ gate.release()
+ await expect(page.locator('.waveform-resource [role=alert]')).toBeVisible()
+ await page.locator('.waveform-resource').getByRole('button').click()
+ await expect(page.locator('.wave-area canvas')).toBeVisible()
+ expect(attempt).toBe(2)
+ expect(errors).toEqual([])
+})
 for(const width of [1440,390]){
  test(`ASR enhanced playback preserves position and playback at ${width}px`,async({page})=>{
   await page.setViewportSize({width,height:900})
@@ -72,11 +93,11 @@ for(const width of [1440,390]){
   const {errors,state}=await fixture(page)
   if(width===390){await page.locator('.asr-settings-toggle').click();await page.locator('.asr-advanced-toggle').click()}
   const select=page.getByLabel('人声增强',{exact:true})
-  await expect(select).toHaveValue('auto')
-  await select.selectOption('off')
+  await expect(select).toBeChecked()
+  await select.uncheck()
   await page.reload()
   if(width===390){await page.locator('.asr-settings-toggle').click();await page.locator('.asr-advanced-toggle').click()}
-  await expect(select).toHaveValue('off')
+  await expect(select).not.toBeChecked()
   await page.locator('input[type=file]').setInputFiles({name:'public.wav',mimeType:'audio/wav',buffer:wave(.05)})
   const accepted=page.waitForResponse(r=>r.url().endsWith('/api/v1/asr/jobs')&&r.request().method()==='POST')
   await page.getByRole('button',{name:'开始转写',exact:true}).click()

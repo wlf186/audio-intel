@@ -121,8 +121,11 @@ def model_installation(models_dir: Path, model: dict[str, Any]) -> dict[str, Any
     for name, expected in model.get("sha256", {}).items():
         path = directory / name
         if name not in missing_files and path.is_file():
-            with path.open("rb") as handle:
-                actual = hashlib.file_digest(handle, "sha256").hexdigest()
+            try:
+                with path.open("rb") as handle:
+                    actual = hashlib.file_digest(handle, "sha256").hexdigest()
+            except OSError:
+                actual = None
             if actual != expected:
                 missing_files.append(name)
     if not marker.is_file():

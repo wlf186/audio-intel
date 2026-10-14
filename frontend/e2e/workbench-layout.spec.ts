@@ -300,11 +300,12 @@ test('mobile controls and tooltip remain reachable without horizontal overflow',
  await expect(page.locator('.asr-settings .notice')).toHaveCount(0)
  await expect(page.locator('#asr-device-warning')).toBeVisible()
  await expect(page.getByLabel('ASR 计算设备')).toHaveValue('cpu')
- const help=page.locator('.asr-settings-body .acceleration-control .info-tooltip button')
- await help.focus();await expect(page.getByRole('tooltip')).toBeVisible()
- const tooltip=(await page.getByRole('tooltip').boundingBox())!
- expect(tooltip.x).toBeGreaterThanOrEqual(0);expect(tooltip.x+tooltip.width).toBeLessThanOrEqual(390)
- await page.keyboard.press('Escape');await expect(page.getByRole('tooltip')).toHaveCount(0)
+ for(const help of await page.locator('.asr-settings-body .acceleration-control .info-tooltip button').all()){
+  await help.focus();await expect(page.getByRole('tooltip')).toBeVisible()
+  const tooltip=(await page.getByRole('tooltip').boundingBox())!
+  expect(tooltip.x).toBeGreaterThanOrEqual(0);expect(tooltip.x+tooltip.width).toBeLessThanOrEqual(390)
+  await page.keyboard.press('Escape');await expect(page.getByRole('tooltip')).toHaveCount(0)
+ }
  await noOverflow(page,390)
  expect(await page.locator('.asr-create button:visible,.asr-create select:visible').evaluateAll(items=>items.filter(e=>e.getBoundingClientRect().height<44).map(e=>e.textContent))).toEqual([])
  await page.evaluate(()=>{(document.activeElement as HTMLElement)?.blur();window.scrollTo(0,0);document.querySelector('#main-content')?.scrollTo(0,0)})

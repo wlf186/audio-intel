@@ -110,10 +110,14 @@ test('video upload pauses, survives reload, resumes and explicitly discards',asy
  await page.getByRole('button',{name:'暂停上传',exact:true}).click()
  release();await page.unroute('**/api/v1/asr/video-uploads/*',handler)
  await expect(page.locator('.video-resume')).toBeVisible()
+ // A pre-enhancement upload resumes the original off setting after an upgrade.
+ await page.evaluate(()=>{const key='audio-intel:video-upload:v1';const saved=JSON.parse(sessionStorage.getItem(key)!);delete saved.params.audio_enhancement;sessionStorage.setItem(key,JSON.stringify(saved))})
  await page.reload();await page.getByRole('tab',{name:'新建视频转写',exact:true}).click()
  await expect(page.locator('.video-resume')).toContainText('lecture.webm')
  await page.locator('input[type=file]').setInputFiles(videoPath)
+ const resumed=page.waitForRequest(request=>request.method()==='POST'&&request.url().endsWith('/api/v1/asr/video-jobs'))
  await page.getByRole('button',{name:'开始转写',exact:true}).click()
+ expect((await resumed).postDataJSON().audio_enhancement).toBe('off')
  await expect(page.getByRole('button',{name:'查看本次任务'})).toBeVisible({timeout:30000})
  expect(await page.evaluate(()=>sessionStorage.getItem('audio-intel:video-upload:v1'))).toBeNull()
  // A separate idle session is cleaned immediately through the accessible dialog.

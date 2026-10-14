@@ -178,6 +178,7 @@ def enhance_file(source: Path, target: Path, regions: list[dict[str, float]],
                             core[:margin] = raw_core[:margin] * (1 - ramp) + core[:margin] * ramp
                         if end < total:
                             core[-margin:] = core[-margin:] * (1 - ramp) + raw_core[-margin:] * ramp
+                        core = np.clip(core, -CEILING, CEILING)
                     writer.write(core)
                     seconds = (end - start) / RATE
                     if stats["denoised"]:
