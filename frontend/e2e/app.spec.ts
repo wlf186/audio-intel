@@ -1238,7 +1238,7 @@ test('API key login and logout use an ephemeral browser session',async({page})=>
  const expectedModels=(await systemFor(page)).models
  expect(expectedModels.length).toBeGreaterThan(0)
  await expect(page.locator('.model-list>div')).toHaveCount(expectedModels.length)
- for(const model of expectedModels)await expect(page.locator('.model-list')).toContainText(model.name)
+ for(const model of expectedModels)await expect(page.locator('.model-list').getByText(model.name,{exact:true})).toHaveCount(1)
  await expect(page.locator('nav').getByRole('button',{name:/系统状态/})).toBeFocused()
  await page.screenshot({path:'/tmp/audio-intel-authenticated-system.png',fullPage:false})
  expect(submittedAuthorization).toBe('Bearer browser-secret')
