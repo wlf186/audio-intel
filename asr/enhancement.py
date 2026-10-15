@@ -20,7 +20,10 @@ MAX_GAIN_DB = 24.0
 CEILING = 10 ** (-1 / 20)
 NOISE_RATIO_THRESHOLD = 0.12
 WET_RATIO = 0.5
-PROCESSING_VERSION = 3
+PROCESSING_VERSION = 4
+GAIN_CONTEXT_FRAMES = 150
+GAIN_HOLD_FRAMES = 100
+GAIN_SLEW_DB_PER_SECOND = 3.0
 CROSSFADE_SAMPLES = 800
 SPEECH_HEAD_SECONDS = .2
 SPEECH_TAIL_SECONDS = .4
@@ -78,6 +81,7 @@ def load_denoiser() -> Callable[[Any], Any]:
 
 def enhance_block(audio: Any, denoised: Any, speech: Any, *, wet_ratio: float = WET_RATIO,
                   enable_gain: bool = True) -> tuple[Any, dict[str, Any]]:
+    """Shared denoising; per-block gain is retained only for legacy diagnostics."""
     import numpy as np
 
     if len(denoised) != len(audio) or not np.isfinite(denoised).all():
@@ -136,7 +140,7 @@ def enhance_block(audio: Any, denoised: Any, speech: Any, *, wet_ratio: float = 
     return output, {"denoised": noisy, "gain_db": applied_gain, "noise_ratio": noise_ratio}
 
 
-def enhance_file(source: Path, target: Path, regions: list[dict[str, float]],
+def _enhance_file_legacy(source: Path, target: Path, regions: list[dict[str, float]],
                  report: Callable[[int, int], None], *, denoiser: Callable | None = None,
                  wet_ratio: float = WET_RATIO, enable_gain: bool = True,
                  include_waveform: bool = True) -> dict[str, Any]:
@@ -148,7 +152,7 @@ def enhance_file(source: Path, target: Path, regions: list[dict[str, float]],
     metadata: dict[str, Any] = {"mode": "auto", "status": "bypassed", "reason": "clean",
         "model": model["name"], "model_revision": model["revision"], "compute_device": "cpu",
         "max_gain_db": 0.0, "denoised_seconds": 0.0, "gain_seconds": 0.0,
-        "wet_ratio": wet_ratio, "processing_version": PROCESSING_VERSION}
+        "wet_ratio": wet_ratio, "processing_version": 3}
     noisy_regions: list[dict[str, float]] = []
     temporary = target.with_suffix(".partial.wav")
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -215,6 +219,152 @@ def enhance_file(source: Path, target: Path, regions: list[dict[str, float]],
         return metadata
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _signal_profile(source: Path, mixed: Path, regions: list[dict[str, float]],
+                    report: Callable[[int, int], None]) -> tuple[Any, Any, Any]:
+    """Only 20 ms energy/peak observations are retained, never the full waveform."""
+    import numpy as np
+    import soundfile as sf
+
+    with sf.SoundFile(source) as original, sf.SoundFile(mixed) as reader:
+        total = len(reader)
+        frames = math.ceil(total / FRAME_SAMPLES)
+        rms, peaks = np.zeros(frames), np.zeros(frames)
+        supported = np.zeros(frames, dtype=bool)
+        for region in regions:
+            begin = max(0, math.floor(region["start"] * RATE / FRAME_SAMPLES))
+            end = min(frames, math.ceil(region["end"] * RATE / FRAME_SAMPLES))
+            if end > begin:
+                supported[begin:end] = True
+        for start in range(0, total, BLOCK_SECONDS * RATE):
+            audio = reader.read(BLOCK_SECONDS * RATE, dtype="float32")
+            raw = original.read(len(audio), dtype="float32")
+            count = math.ceil(len(audio) / FRAME_SAMPLES)
+            values = np.pad(audio, (0, count * FRAME_SAMPLES - len(audio))).reshape(-1, FRAME_SAMPLES)
+            raw_values = np.pad(raw, (0, count * FRAME_SAMPLES - len(raw))).reshape(-1, FRAME_SAMPLES)
+            sl = slice(start // FRAME_SAMPLES, start // FRAME_SAMPLES + count)
+            rms[sl] = np.sqrt(np.mean(values.astype(np.float64) ** 2, axis=1))
+            peaks[sl] = np.max(np.abs(values), axis=1)
+            supported[sl] &= np.sqrt(np.mean(raw_values.astype(np.float64) ** 2, axis=1)) > 1e-4
+            report(min(total, start + len(audio)), total)
+    return rms, peaks, supported
+
+
+def _continuous_gain_db(rms: Any, peaks: Any, supported: Any,
+                        report: Callable[[int, int], None]) -> Any:
+    """Offline, peak-safe gain with a file-wide 3 dB/s continuity bound."""
+    import numpy as np
+
+    count = len(rms)
+    if not count:
+        return np.zeros(0)
+    desired = np.zeros(count)
+    radius = GAIN_CONTEXT_FRAMES
+    padded = np.pad(np.where(supported, rms, np.nan), (radius, radius), constant_values=np.nan)
+    # Tile quantiles: a multi-hour task must not materialize its full window matrix.
+    tile = BLOCK_SECONDS * RATE // FRAME_SAMPLES
+    evidence = np.zeros(count, dtype=bool)
+    for start in range(0, count, tile):
+        end = min(count, start + tile)
+        windows = np.lib.stride_tricks.sliding_window_view(padded[start:end + 2 * radius], 2 * radius + 1)
+        valid = np.count_nonzero(np.isfinite(windows), axis=1) >= 10
+        level = np.zeros(end - start)
+        level[valid] = 20 * np.log10(np.maximum(np.nanquantile(windows[valid], .7, axis=1), 1e-10))
+        knee = np.clip((-27.0 - level) / 6.0, 0, 1)
+        desired[start:end] = np.where(valid, knee * knee * (3 - 2 * knee)
+                                      * np.clip(TARGET_RMS_DBFS - level, 0, MAX_GAIN_DB), 0)
+        evidence[start:end] = valid & supported[start:end]
+        report(end, count)
+    # A short pause holds the last estimate; longer gaps release gently to unity.
+    positions = np.arange(count)
+    last = np.maximum.accumulate(np.where(evidence, positions, -1))
+    hold = desired[np.maximum(last, 0)]
+    step = GAIN_SLEW_DB_PER_SECOND * FRAME_SAMPLES / RATE
+    release = np.maximum(0, hold - step * np.maximum(0, positions - last - GAIN_HOLD_FRAMES))
+    desired = np.where(evidence, desired, np.where(last >= 0, release, 0))
+    # Adjacent-frame peaks also bound interpolation between frame centres.
+    nearby_peaks = np.maximum.reduce([peaks, np.r_[peaks[0], peaks[:-1]], np.r_[peaks[1:], peaks[-1]]])
+    ceiling = np.maximum(0, 20 * np.log10(CEILING / np.maximum(nearby_peaks, 1e-10)))
+    upper = np.minimum(desired, ceiling)
+    distance = positions * step
+    # The greatest slope-bounded curve below all desired/peak limits. Both sweeps
+    # span file boundaries, so a loud word cannot trigger a fast limiter duck.
+    forward = np.minimum.accumulate(upper - distance) + distance
+    gain_db = (np.minimum.accumulate(forward[::-1] - distance) + distance)[::-1]
+    gain_db = np.clip(gain_db, 0, MAX_GAIN_DB)
+    gain_db[gain_db < 1e-10] = 0
+    if np.max(gain_db) <= .01:
+        gain_db[:] = 0
+    return gain_db
+
+
+def enhance_file(source: Path, target: Path, regions: list[dict[str, float]],
+                 report: Callable[[int, int], None], *, denoiser: Callable | None = None,
+                 wet_ratio: float = WET_RATIO, enable_gain: bool = True,
+                 include_waveform: bool = True, gain_policy: str = "continuous") -> dict[str, Any]:
+    import numpy as np
+    import soundfile as sf
+
+    if gain_policy not in {"continuous", "legacy"}:
+        raise ValueError("Unknown internal gain policy")
+    if gain_policy == "legacy" or not enable_gain:
+        result = _enhance_file_legacy(source, target, regions, report, denoiser=denoiser,
+            wet_ratio=wet_ratio, enable_gain=enable_gain, include_waveform=include_waveform)
+        result["processing_version"] = 3 if gain_policy == "legacy" else PROCESSING_VERSION
+        return result
+    started = time.monotonic()
+    mixed = target.with_suffix(".mix.wav")
+    temporary = target.with_suffix(".partial.wav")
+    complete = False
+    try:
+        with sf.SoundFile(source) as reader:
+            total = len(reader)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if shutil.disk_usage(target.parent).free < settings.min_free_disk_bytes + total * 4 + 8192:
+            raise OSError("Insufficient disk space for two-pass enhancement")
+        result = _enhance_file_legacy(source, mixed, regions,
+            lambda n, size: report(n, size * 4), denoiser=denoiser,
+            wet_ratio=wet_ratio, enable_gain=False, include_waveform=False)
+        base = mixed if result["status"] == "applied" else source
+        rms, peaks, supported = _signal_profile(source, base, regions,
+            lambda n, _: report(total + n, total * 4))
+        gain_db = _continuous_gain_db(rms, peaks, supported,
+            lambda n, size: report(2 * total + min(total, n * FRAME_SAMPLES), total * 4))
+        result.update(processing_version=PROCESSING_VERSION, max_gain_db=0.0)
+        if np.max(gain_db, initial=0) > .01:
+            frame_times = np.arange(len(gain_db)) * FRAME_SAMPLES + FRAME_SAMPLES / 2
+            with sf.SoundFile(base) as reader, sf.SoundFile(temporary, "w", samplerate=RATE,
+                    channels=1, subtype="PCM_16") as writer:
+                for start in range(0, total, BLOCK_SECONDS * RATE):
+                    audio = reader.read(BLOCK_SECONDS * RATE, dtype="float32")
+                    positions = np.arange(start, start + len(audio))
+                    db = np.interp(positions, frame_times, gain_db)
+                    if np.any(db > 0):
+                        audio = np.clip(audio * (10 ** (db / 20)), -CEILING, CEILING)
+                    writer.write(audio)
+                    if np.max(db, initial=0) > .01:
+                        result["gain_seconds"] += len(audio) / RATE
+                    result["max_gain_db"] = max(result["max_gain_db"], float(np.max(db, initial=0)))
+                    report(3 * total + start + len(audio), total * 4)
+            temporary.replace(target)
+            result.update(status="applied", reason="noise_and_gain" if result["denoised_seconds"] else "quiet_speech")
+        elif base == mixed:
+            mixed.replace(target)
+            report(total * 4, total * 4)
+        else:
+            report(total * 4, total * 4)
+        if include_waveform and result["status"] == "applied":
+            result["waveform"] = _waveform(target)
+        result["elapsed_seconds"] = round(time.monotonic() - started, 3)
+        complete = True
+        return result
+    finally:
+        mixed.unlink(missing_ok=True)
+        mixed.with_suffix(".partial.wav").unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
+        if not complete:
+            target.unlink(missing_ok=True)
 
 
 def _waveform(path: Path) -> list[float]:
@@ -315,18 +465,20 @@ def enhance_audio(source: Path, target: Path, regions: list[dict[str, float]],
                   report: Callable[[int, int], None], vad_report: Callable[[int, int], None],
                   pause_report: Callable[[int, int], None], *, denoiser: Callable | None = None,
                   wet_ratio: float = WET_RATIO, enable_gain: bool = True,
-                  enable_pauses: bool = False, speech_detector: Callable | None = None) -> dict[str, Any]:
+                  enable_pauses: bool = False, speech_detector: Callable | None = None,
+                  gain_policy: str = "continuous") -> dict[str, Any]:
     """Enhance without VAD volume gating; policy 2 is diagnostic opt-in only."""
     from audio_intel.worker import JobCancelled
 
     completed = False
     try:
         result = enhance_file(source, target, regions, report, denoiser=denoiser,
-                              wet_ratio=wet_ratio, enable_gain=enable_gain, include_waveform=False)
+                              wet_ratio=wet_ratio, enable_gain=enable_gain, include_waveform=False,
+                              gain_policy="legacy" if enable_pauses else gain_policy)
         noisy = result.pop("_noisy_regions")
         # Missed quiet speech must not switch the full signal between 0 and -6 dB.
         # Keep the retired gate solely for paired local diagnostic comparisons.
-        result.update(processing_version=2 if enable_pauses else PROCESSING_VERSION,
+        result.update(processing_version=2 if enable_pauses else result["processing_version"],
                       pause_attenuated_seconds=0.0, max_pause_attenuation_db=0.0,
                       pause_suppression_reason="bypassed" if enable_pauses else "disabled_for_naturalness")
         if result["status"] == "applied":

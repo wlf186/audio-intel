@@ -25,21 +25,29 @@ disable the base ASR models: automatic mode falls back to original audio and
 records that outcome in the job detail.
 
 Models are evaluated in bounded blocks with context. The current conservative
-mix retains 50% original signal. Speech gain targets −24 dBFS RMS, activates only
-below −30 dBFS, is capped at +24 dB, and uses smoothing plus a local −1 dBFS peak
-ceiling on processed blocks. Untouched blocks retain original samples and peaks.
+mix retains 50% original signal. Speech gain targets −24 dBFS RMS, is capped at
++24 dB, and uses a cubic soft transition from −33 to −27 dBFS instead of a hard
+−30 dBFS switch. Processed blocks have a −1 dBFS peak ceiling; untouched blocks
+retain original samples and peaks.
 These are internal controls, not public sampling or volume parameters.
-Processing policy 3 keeps these gain controls and removes the VAD-driven full-band
-pause attenuation introduced in policy 2. A missed quiet phrase could otherwise
-receive the 6 dB pause reduction, then recover as detection resumed, causing audible
-pumping or a strained voice. No VAD-controlled pause gate runs in automatic mode.
+Processing policy 4 first produces the existing GTCRN mix, then estimates a
+continuous gain curve using the 70th-percentile speech RMS in six-second centred
+windows. Estimates update every 20 ms. Peak limits and forward/backward constraints
+bound gain changes to 3 dB/s across the whole file, including processing boundaries.
+Short gaps hold the previous estimate for two seconds; longer gaps release gently
+to unity gain. VAD supplies statistics without directly gating signal volume.
+Policy 3 removed policy 2's pause gate but retained per-second gain decisions,
+which could still cause substantial within-phrase background-level changes.
 A failed second VAD retains base enhancement and the original speech regions.
 Adjacent processed blocks crossfade over 50 ms, avoiding a return to raw noise at
 each 30-second boundary. Untouched files still bypass sample-exactly.
 
-处理策略 3 撤下策略 2 按人声检测结果切换整段音量的间隙衰减，保留原有人声增益和
-50% GTCRN 混合。人声漏检不再触发额外压低整段音量；背景声可能比策略 2 更连续、
-更明显。平均响度和识别误差不能充分反映憋气感，仍需本地听感对比。
+处理策略 4 保留原有响度目标与 50% GTCRN 混合，将逐秒增益改为跨块连续增益。
+6 秒上下文估计和每秒最多 3 dB 的变化限制，减少背景声跟随词句突然起落；保留自然轻重，
+不逐词拉齐音量。平均响度和识别误差不能充分反映憋气感，仍需本地、响度匹配的听感对比。
+基础混音与最终输出分两遍写入，预检两份 PCM WAV 的临时空间，约每小时 230 MB；
+中间文件在完成、取消和失败后清理，最终产物数量不变。能量统计按 20 ms 帧保存并分块
+计算上下文，模型与音频读取仍使用有界块。阶段进度累计各遍实际处理的工作量。
 The original and enhanced VAD intervals are merged without changing the existing
 ASR chunk-combination rules. Speaker clustering and voiceprint embeddings use
 original audio. Enhancement preserves sample count and the video time origin.
@@ -62,12 +70,12 @@ each operation, not exact voiced duration. `elapsed_seconds` measures the
 enhancement function, excluding subsequent VAD and other task stages. A changed
 transcript alone does not establish improved recognition accuracy.
 
-Optional `processing_version=3`, `pause_attenuated_seconds`,
+Optional `processing_version=4`, `pause_attenuated_seconds`,
 `max_pause_attenuation_db` and `pause_suppression_reason` identify actual processing.
 Pause duration counts samples receiving attenuation, not exact non-speech time;
-the maximum is a positive dB reduction. Policy 3 reports both attenuation fields
-as zero and the reason `disabled_for_naturalness`. Historical policy-2 results
-remain valid; missing fields do not imply successful pause suppression. Timing
+the maximum is a positive dB reduction. Policy 4 reports both attenuation fields
+as zero and the reason `disabled_for_naturalness`. Historical policy-2/3 results
+remain valid; policy 3 does not imply continuous gain. Missing fields do not imply successful pause suppression. Timing
 includes signal processing and excludes VAD.
 
 增强参数纳入幂等比较：同一 key 不能切换增强模式。历史请求缺少该字段时按关闭解释，
@@ -117,10 +125,11 @@ For extended controls, reuse public speech without another TTS call:
   --output-dir testdata/real/asr-enhancement-extended
 ```
 
-Benchmark `auto`, `no_pauses` and `mix50` use policy 3 without pause gating.
+Benchmark `auto`, `no_pauses` and `mix50` use policy 4 without pause gating.
 `mix60`, `mix65` and `mix75` compare stronger mixing without gating; `pause_gate`
-explicitly reproduces retired policy 2 for local diagnosis only. It is not a public
-request mode. Save a frozen
+explicitly reproduces retired policy 2, and `legacy_gain` reproduces policy 3's
+GTCRN mix with per-second gain. Both are local diagnostics, not public request
+modes. Save a frozen
 pre-change baseline first; `--baseline-report` reuses its original transcription
 only when model, device, cases, durations and normalized audio match. Compare CER
 to that baseline where trusted references exist, and match speech loudness for listening.
@@ -134,7 +143,7 @@ error in the original noisy control, so production retains 50%. The overlapping
 speaker control has no trusted ordered transcript and is not included in CER.
 Transient-dominated gaps received little reduction. Subsequent listening feedback
 reported audible pumping despite those aggregate measurements. Policy 3 therefore
-removes the pause gate; the old pause-reduction numbers do not describe the current
+removed the pause gate; policy 4 additionally replaces per-second gain. The old pause-reduction numbers do not describe the current
 default or establish subjective listening quality or noise removal during speech.
 
 Reports, media and transcripts must stay under ignored `logs/`, `tmp/` or

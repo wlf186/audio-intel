@@ -69,14 +69,19 @@ rules; original audio supplies CAM++ and voiceprints. Sample count, video time
 origin and ASR model/precision are preserved. Clone-reference analysis and
 voiceprint imports are excluded.
 
-Processing policy 3 removes policy 2's VAD-driven full-band pause gate: missed
-quiet speech could receive its 6 dB reduction and cause audible pumping. Gain,
-50% GTCRN mixing and the second VAD union for ASR remain. A second-VAD failure
+Processing policy 4 separates the existing 50% GTCRN mix from file-wide gain.
+Six-second centred speech RMS estimates, a soft activation knee and peak-safe
+forward/backward limits bound gain changes to 3 dB/s. Short gaps hold estimates;
+long gaps release gently to unity. Compact 20 ms statistics and tiled quantiles
+avoid full-waveform or full-spectrogram buffering. The two WAV passes preflight
+temporary space and clean all intermediates on success, failure or cancellation.
+Policy 3 removed policy 2's pause gate but retained per-second gain decisions.
+The second VAD union for ASR remains. A second-VAD failure
 retains base enhancement and original speech regions. Adjacent processed blocks
 crossfade over 50 ms. The final
 waveform is generated after all signal changes. Optional policy/attenuation
 diagnostics report zero pause attenuation and `disabled_for_naturalness`; historical
-policy-2 results stay readable. Global summaries and SSE stay unchanged.
+policy-2/3 results stay readable. Global summaries and SSE stay unchanged.
 
 Applied results declare a separate authenticated `enhanced.wav` and waveform.
 Original playback remains the default; track switching preserves position and play

@@ -31,10 +31,10 @@ Audio, video and compatible ASR accept `audio_enhancement=auto|off`; new jobs de
 `playback_url`，使用普通鉴权产物接口并支持 Range；追加 `/waveform` 可读取波形。结果
 字段可选，旧任务缺失不表示增强成功。`gain_seconds`、`denoised_seconds` 是处理块覆盖
 秒数，`elapsed_seconds` 不含后续 VAD 和其他任务阶段。并非所有任务都有增强产物。
-处理策略 3 保留原有增益与 GTCRN 混合，不再按人声检测结果切换整段音量，避免漏检轻声时
-出现憋气感。可选 `processing_version`、`pause_attenuated_seconds`、
+处理策略 4 保留 GTCRN 混合与响度目标，使用 6 秒人声上下文和跨块连续增益，最大变化为
+每秒 3 dB，避免逐秒增益切换带动背景声起伏。可选 `processing_version`、`pause_attenuated_seconds`、
 `max_pause_attenuation_db` 和 `pause_suppression_reason` 记录实际策略及衰减；
-策略 3 的衰减量为零，原因为 `disabled_for_naturalness`；历史缺失不表示执行过间隙抑制。
+策略 4 的间隙衰减量为零，原因为 `disabled_for_naturalness`；历史缺失不表示执行过间隙抑制。
 `elapsed_seconds` 包含信号处理，不含 VAD。
 
 Enhancement always runs locally on CPU FP32 independently of the requested ASR
@@ -44,11 +44,11 @@ result field is optional for historical jobs. Block coverage seconds are not
 exact voiced duration, and enhancement time excludes subsequent VAD and other
 task stages. Model unavailability does not disable base ASR. Background speakers
 and severe reverberation may remain; a changed transcript is not an accuracy score.
-Processing policy 3 preserves gain and GTCRN mixing without VAD-driven full-band
-volume gating, avoiding attenuation of missed quiet speech. Optional `processing_version`,
+Processing policy 4 preserves GTCRN mixing and the loudness target, using six-second
+speech context and continuous gain bounded to 3 dB/s across blocks. Optional `processing_version`,
 `pause_attenuated_seconds`, `max_pause_attenuation_db` and
 `pause_suppression_reason` describe actual processing; historical absence does not
-imply pause suppression. Policy 3 reports zero pause attenuation and
+imply pause suppression. Policy 4 reports zero pause attenuation and
 `disabled_for_naturalness`. Signal-processing time excludes VAD.
 
 
@@ -1094,7 +1094,7 @@ for _status, _reason, _mode in (
     if _status == "applied":
         _enhancement.update(max_gain_db=12.0, denoised_seconds=3.2, gain_seconds=3.2,
                             wet_ratio=0.5, elapsed_seconds=0.2, input_samples=51200,
-                            processing_version=3, pause_attenuated_seconds=0.0,
+                            processing_version=4, pause_attenuated_seconds=0.0,
                             max_pause_attenuation_db=0.0, pause_suppression_reason="disabled_for_naturalness",
                             playback_url="/api/v1/jobs/asr_example/artifacts/enhanced.wav",
                             waveform=[0.1, 0.4, 0.2])

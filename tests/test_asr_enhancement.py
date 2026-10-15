@@ -127,7 +127,7 @@ def test_streaming_length_progress_cleanup_and_cancel(local, tmp_path):
         lambda current, total: progress.append((current, total)), denoiser=lambda x: x)
     assert result["status"] == "applied"
     assert sf.info(target).frames == len(samples)
-    assert progress[-1] == (len(samples), len(samples))
+    assert progress[-1] == (4 * len(samples), 4 * len(samples))
     assert all(a[0] < b[0] for a, b in zip(progress, progress[1:]))
     assert result["waveform"]
     assert not target.with_suffix(".partial.wav").exists()
@@ -230,6 +230,100 @@ def test_whole_clean_file_bypasses_sample_exactly_across_blocks(local, tmp_path)
     assert not target.with_suffix(".partial.wav").exists()
 
 
+def test_continuous_gain_keeps_constant_background_from_ducking_with_each_word(local, tmp_path):
+    source = tmp_path / "source.wav"
+    rate = 16000
+    t = np.arange(22 * rate) / rate
+    # A known background carrier lets us measure pumping independently of speech.
+    amplitude = np.where((t >= 5) & (t < 17) & (t.astype(int) % 2 == 0), .045, .004)
+    audio = amplitude * np.sin(2 * np.pi * 220 * t) + .0007 * np.sin(2 * np.pi * 3500 * t)
+    sf.write(source, audio, rate, subtype="PCM_16")
+    changes = {}
+    for policy in ("legacy", "continuous"):
+        target = tmp_path / f"{policy}.wav"
+        result = enhancement.enhance_file(source, target, [{"start": 0., "end": 22.}],
+            lambda *_: None, denoiser=lambda x: x, gain_policy=policy)
+        assert result["status"] == "applied" and result["max_gain_db"] > 6
+        output, _ = sf.read(target, dtype="float32")
+        frames = output.reshape(-1, 1600)
+        carrier = np.sin(2 * np.pi * 3500 * np.arange(1600) / rate)
+        floor = np.abs(2 * np.mean(frames * carrier, axis=1))
+        level = 20 * np.log10(np.maximum(floor, 1e-10))
+        changes[policy] = float(np.max(np.abs(level[3:] - level[:-3])))
+        assert len(output) == len(audio)
+    assert changes["legacy"] > 6  # Reproduces the reported within-phrase artifact.
+    assert changes["continuous"] < 1.05
+
+
+@pytest.mark.parametrize("phase", [1, 2, 3, 4])
+def test_two_pass_cancellation_closes_all_files_and_removes_intermediates(local, tmp_path, phase):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    total = 9 * 16000
+    sf.write(source, .003 * np.sin(np.arange(total) * .1), 16000, subtype="PCM_16")
+    def cancel(completed, work):
+        assert work == total * 4
+        if completed >= phase * total:
+            raise worker.JobCancelled("Public multi-pass cancellation fixture")
+    with pytest.raises(worker.JobCancelled):
+        enhancement.enhance_file(source, target, [{"start": 0., "end": 9.}], cancel,
+                                 denoiser=lambda x: x * .5)
+    assert list(tmp_path.glob("*.wav")) == [source]
+    source.unlink()  # Native Windows also verifies no reader is left open.
+
+
+def test_quiet_audio_without_reliable_speech_never_gets_automatic_gain(local, tmp_path):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    sf.write(source, .002 * np.sin(np.arange(32000) * .1), 16000, subtype="PCM_16")
+    before = source.read_bytes()
+    result = enhancement.enhance_file(source, target, [], lambda *_: None, denoiser=lambda x: x)
+    assert result["status"] == "bypassed" and result["max_gain_db"] == 0
+    assert source.read_bytes() == before and list(tmp_path.glob("*.wav")) == [source]
+
+
+def test_two_pass_disk_budget_checked_before_model_inference(local, tmp_path, monkeypatch):
+    from collections import namedtuple
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    total = 16000
+    sf.write(source, np.full(total, .002), 16000, subtype="PCM_16")
+    usage = namedtuple("Usage", "total used free")
+    monkeypatch.setattr(enhancement.shutil, "disk_usage", lambda _: usage(10**9, 0, total * 3 + 8192))
+    def unexpected(_):
+        pytest.fail("Model must not run without room for both temporary WAVs")
+    with pytest.raises(OSError, match="two-pass"):
+        enhancement.enhance_file(source, target, [], lambda *_: None, denoiser=unexpected)
+    assert list(tmp_path.glob("*.wav")) == [source]
+
+
+def test_continuous_gain_does_not_restart_at_processing_boundaries(local, tmp_path):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    audio = .003 * np.sin(np.arange(62 * 16000 + 123) * .1)
+    sf.write(source, audio, 16000, subtype="PCM_16")
+    enhancement.enhance_file(source, target, [{"start": 0., "end": 63.}],
+                             lambda *_: None, denoiser=lambda x: x)
+    original, _ = sf.read(source, dtype="float32")
+    output, _ = sf.read(target, dtype="float32")
+    assert len(output) == len(original)
+    # Uniform quiet speech has one stable gain, including 30/60 s and the short tail.
+    assert np.max(np.abs(output - original * 10 ** (24 / 20))) < 4e-5
+
+
+def test_final_replace_failure_removes_both_passes_without_touching_source(local, tmp_path, monkeypatch):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    sf.write(source, .003 * np.sin(np.arange(32000) * .1), 16000, subtype="PCM_16")
+    before = source.read_bytes()
+    replace_path = Path.replace
+    def locked(path, destination):
+        if destination == target:
+            raise PermissionError("Public locked destination fixture")
+        return replace_path(path, destination)
+    monkeypatch.setattr(Path, "replace", locked)
+    with pytest.raises(PermissionError):
+        enhancement.enhance_file(source, target, [{"start": 0., "end": 2.}],
+                                 lambda *_: None, denoiser=lambda x: x * .5)
+    assert list(tmp_path.glob("*.wav")) == [source] and source.read_bytes() == before
+    source.unlink()
+
+
 def test_pause_suppression_protects_both_vad_passes_and_bounds_noise(local, tmp_path):
     path = tmp_path / "enhanced.wav"
     audio = np.full(6 * 16000, .05, np.float32)
@@ -291,7 +385,7 @@ def test_auto_keeps_missed_quiet_speech_without_vad_volume_switches(local, tmp_p
             lambda *_: None, unexpected_pause_pass, denoiser=lambda x: x * .5,
             enable_gain=False, speech_detector=lambda *_: detected)
         outputs.append(sf.read(target, dtype="float32")[0])
-        assert result["processing_version"] == 3
+        assert result["processing_version"] == 4
         assert result["pause_attenuated_seconds"] == 0
         assert result["max_pause_attenuation_db"] == 0
         assert result["pause_suppression_reason"] == "disabled_for_naturalness"

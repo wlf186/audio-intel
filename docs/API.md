@@ -687,8 +687,8 @@ semantics remain, bypass retains no extra WAV, and global summaries/SSE omit det
 `gain_seconds`/`denoised_seconds` cover processing blocks, not exact voiced duration.
 `elapsed_seconds` measures enhancement, excluding subsequent VAD and other stages.
 
-处理策略 3 保留现有人声增益和 50% GTCRN 混合，撤下策略 2 按人声检测结果切换整段
-音量的间隙衰减，避免轻声漏检造成音量起伏。两次人声检测的并集仍用于 ASR 分段。
+处理策略 4 保留人声响度目标和 50% GTCRN 混合，使用 6 秒人声上下文与跨块连续增益，
+最大变化每秒 3 dB，避免逐秒增益判断带动背景声起落。两次人声检测的并集仍用于 ASR 分段。
 新结果可包含下列可选字段，旧任务缺失时不表示已执行新策略：
 
 | Field / 字段 | Meaning / 含义 |
@@ -698,10 +698,10 @@ semantics remain, bypass retains no extra WAV, and global summaries/SSE omit det
 | `max_pause_attenuation_db` | Maximum applied reduction, positive dB / 实际最大衰减量，正数 dB |
 | `pause_suppression_reason` | Applied/skipped reason; tolerate future values / 执行或跳过原因，客户端应兼容未知值 |
 
-Policy 3 preserves quiet-speech gain, 50% GTCRN mixing, sample count and media
-clock. It removes the VAD-driven full-band gate that could attenuate missed quiet
-speech in policy 2. New policy-3 results report zero for both pause attenuation
-fields and `disabled_for_naturalness`. Historical policy-2 diagnostics remain
+Policy 4 preserves the loudness target, 50% GTCRN mixing, sample count and media
+clock. Six-second speech context and peak-safe continuous gain bounded to 3 dB/s
+replace per-second gain decisions. New policy-4 results report zero for both pause
+attenuation fields and `disabled_for_naturalness`. Historical policy-2/3 diagnostics remain
 valid, including `applied`, `no_speech`, `no_noise`, `no_long_pauses`,
 `vad_unavailable`, and `bypassed`. A second-VAD failure retains base enhancement
 and original speech regions. `elapsed_seconds` includes signal processing and
