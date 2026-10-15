@@ -642,11 +642,77 @@ print("Replacement backup:", receipt.get("backup_url"))
 `GET /api/v1/voiceprints/people` returns required `sort_initial` (A–Z or #) and full-pinyin/Latin ordered people; `/api/v1/tts/voices` uses the same ordering. The frontend passes that order through clone, document TTS, ASR rename/enrollment and video enrollment pickers. System hotword term order and historical speaker snapshots are unchanged.
 ## ASR speech enhancement / ASR 人声增强
 
-Audio ASR and OpenAI-compatible transcription accept multipart
-`audio_enhancement=auto|off`; video job submissions accept the same JSON property.
-New requests default to `auto`. Capability discovery uses
-`asr.audio_enhancement` from `GET /api/v1/capabilities`.
-The optional result field of the same name records actual processing, bypass,
-or fallback and provides enhanced playback when applied. Original audio remains
-available. Historical requests without the field retain the disabled behavior,
-including replay and retry. See the [processing and validation contract](ASR_ENHANCEMENT.md).
+新音频、视频及 OpenAI 兼容转写默认 `audio_enhancement=auto`，显式 `off` 关闭。
+增强使用本地 CPU FP32，与 ASR 的 CPU/GPU 选择独立；保留全部交谈者，干净且音量
+充足的片段旁路。声纹导入和克隆参考分析不启用增强。
+
+New audio, video and compatible transcription requests default to `auto`; `off`
+opts out. Enhancement runs locally on CPU FP32 independently of ASR device choice,
+preserves conversation speakers, and bypasses clean audible blocks. Voiceprint
+imports and clone-reference analysis are excluded.
+
+| Endpoint | Input / 输入 |
+| --- | --- |
+| `POST /api/v1/asr/jobs` | multipart `audio_enhancement=auto\|off` |
+| `POST /api/v1/asr/video-jobs` | JSON `audio_enhancement: "auto"` or `"off"` |
+| `POST /v1/audio/transcriptions` | multipart `audio_enhancement=auto\|off` |
+
+`GET /api/v1/capabilities` 的 `asr.audio_enhancement` 返回 `supported`、`available`、
+`default`、`modes`、固定模型及 revision、`compute_device=cpu` 和回放能力。
+`available=false` 时基础 ASR 仍可用，自动模式记录回退。非法模式返回 `422`。
+
+Capabilities expose support, availability, default/modes, pinned model
+identity/revision, CPU execution and enhanced-playback support. An unavailable
+enhancer leaves base ASR usable with a recorded fallback. Invalid modes return `422`.
+
+| Result `status` | Meaning / 含义 |
+| --- | --- |
+| `off` | Saved request disables enhancement / 保存的请求关闭增强 |
+| `bypassed` | No processing needed; original used / 无需增强，使用原音 |
+| `applied` | Enhanced input for transcription/alignment / 转写及对齐使用增强音 |
+| `fallback` | Failure/unavailable model; reason recorded, original used / 增强失败或不可用，记录原因后使用原音 |
+
+详情及结果中的 `audio_enhancement` 可选；缺失的历史结果不表示增强成功。
+客户端应保留对未知 `reason` 的兼容。实际增强时返回 `playback_url` 与可选 `waveform`，
+并声明独立 `enhanced.wav` 产物。该 URL 使用普通 Bearer/浏览器会话鉴权，支持
+`Range`；追加 `/waveform` 获取波形。原 `/playback` 和源文件语义不变，纯旁路不存
+额外 WAV。全局任务列表及 SSE 不包含增强详情或媒体结果。
+
+Job detail/results optionally include `audio_enhancement`; absence in history
+does not imply processing. Tolerate future reason strings. Only applied results
+offer a separate authenticated Range-capable enhanced artifact and optional peaks;
+append `/waveform` to its URL to fetch peaks lazily. Original playback/source
+semantics remain, bypass retains no extra WAV, and global summaries/SSE omit detail.
+`max_gain_db` is gain in dB; `input_samples` is preserved sample count.
+`gain_seconds`/`denoised_seconds` cover processing blocks, not exact voiced duration.
+`elapsed_seconds` measures enhancement, excluding subsequent VAD and other stages.
+
+同一幂等键改变增强模式返回 `409`。重放旧请求时省略字段仍返回原任务，旧请求没有
+该字段按 `off` 解释；失败／取消重试保留保存的模式。历史请求、结果和媒体不自动改写。
+
+Changing mode with the same idempotency key returns `409`. Omitting the field when
+replaying a historical request preserves its original off semantics. Retry uses
+the persisted mode; historical requests/results/media are never backfilled.
+
+```bash
+BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
+AUTH=(); if [[ -n "${AUDIO_INTEL_API_KEY:-}" ]]; then AUTH=(-H "Authorization: Bearer $AUDIO_INTEL_API_KEY"); fi
+REQUEST_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
+# Native asynchronous ASR, explicit automatic enhancement.
+curl --fail-with-body -sS "${AUTH[@]}" -H "Idempotency-Key: $REQUEST_KEY" \
+  -F file=@meeting.wav -F compute_device=cpu -F audio_enhancement=auto "$BASE_URL/api/v1/asr/jobs"
+# Compatible synchronous transcription, explicit opt-out.
+curl --fail-with-body -sS "${AUTH[@]}" -F file=@meeting.wav \
+  -F model=qwen3-asr-0.6b -F compute_device=cpu -F audio_enhancement=off "$BASE_URL/v1/audio/transcriptions"
+# Use an upload ID from the completed video-upload workflow described above.
+VIDEO_UPLOAD_ID=${VIDEO_UPLOAD_ID:?Set a completed video upload ID}
+VIDEO_REQUEST_KEY=$(python3 -c 'import uuid; print(uuid.uuid4())')
+jq -n --arg upload_id "$VIDEO_UPLOAD_ID" \
+  '{upload_id:$upload_id,compute_device:"cpu",audio_enhancement:"auto"}' | \
+  curl --fail-with-body -sS "${AUTH[@]}" -H "Idempotency-Key: $VIDEO_REQUEST_KEY" \
+    -H 'Content-Type: application/json' --data-binary @- "$BASE_URL/api/v1/asr/video-jobs"
+```
+
+See the [processing and validation contract](ASR_ENHANCEMENT.md). Background
+speakers and severe reverberation can remain; text agreement, listening level and
+non-speech energy changes do not establish accuracy without a trusted transcript.

@@ -5,7 +5,7 @@
 | 环境 | 关键版本 | 用途 |
 |---|---|---|
 | api | Python 3.12、FastAPI 0.141.1、Uvicorn 0.52.4、pypdf 6.19.0 | API、队列管理、文档解析、测试与前端托管 |
-| asr | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-asr 0.0.6、Transformers 4.57.6 | ASR、ForcedAligner、VAD、说话人分离 |
+| asr | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-asr 0.0.6、Transformers 4.57.6 | ASR、ForcedAligner、VAD、CPU 人声增强、说话人分离 |
 | tts | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-tts 0.1.1、Transformers 4.57.3 | 0.6B/1.7B Base、CustomVoice 与 VoiceDesign 推理 |
 | aligner | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-asr 0.0.6、Transformers 4.57.6 | TTS 默认参考截取及手动声纹区间的按需对齐 |
 
@@ -20,6 +20,15 @@ ASR、TTS 和 aligner 各有 full 与 `-cpu` 两套哈希锁。full 使用固定
 新增 0.6B/1.7B 模型大小或 Base、CustomVoice、VoiceDesign checkpoint 不等于新增 Python 包依赖：模型身份和 revision 由 `audio_intel/model_manifest.json` 固定。只要直接依赖清单未改变，就不应仅因增加 checkpoint 而重新生成哈希锁。
 
 ## 锁文件
+
+GTCRN-DNS3 由 manifest 固定上游 commit、checkpoint 和 SHA-256，使用现有
+ASR 环境的 Torch/NumPy 在 CPU FP32 运行，不增加依赖或环境。适配后的推理代码与
+MIT 许可随源码提供，权重只在 setup 下载；运行期要求 revision 标记和 checksum
+同时匹配。详见[人声增强](ASR_ENHANCEMENT.md)和[第三方声明](../THIRD_PARTY_NOTICES.md)。
+
+GTCRN-DNS3 uses existing ASR Torch/NumPy on CPU FP32, with no new package or
+environment. The manifest pins its commit and checksum; MIT inference code ships
+in source, while weights download at setup and are verified for runtime readiness.
 
 根目录 `requirements-*.txt` 是人工维护的直接依赖；`requirements-lock/{linux,windows}/` 是 Python 3.12、x86_64 的完整哈希锁。安装器使用 `uv pip sync --require-hashes --strict`，并根据 `.runtime/deployment-profile` 为模型环境选择 CUDA 13.0 或官方 CPU Torch backend。
 

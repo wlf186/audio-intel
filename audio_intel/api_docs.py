@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from .model_registry import asr_models, tts_models
+from .model_registry import asr_enhancement_model, asr_models, tts_models
 
 
 API_DESCRIPTION = r"""
@@ -18,6 +18,27 @@ API_DESCRIPTION = r"""
 ASR 音频、视频及兼容转写支持 `audio_enhancement=auto|off`，新任务默认 `auto`。自动模式保守压制环境噪音并提升较小人声，保留全部交谈者；干净且音量充足的片段旁路。`GET /api/v1/capabilities` 的 `asr.audio_enhancement` 公布可用状态；任务详情的同名字段记录实际增强、旁路或回退。增强版为独立、受保护且支持 Range 的音频产物，原音保留。缺失增强模型时使用原音并记录原因；历史请求缺少该字段时按关闭解释，幂等重放和重试保留原语义。声纹导入与克隆参考分析不启用增强。
 
 Audio, video and compatible ASR accept `audio_enhancement=auto|off`; new jobs default to `auto`. Automatic processing conservatively suppresses noise and lifts quiet speech while preserving all speakers. Clean, audible sections bypass processing. Read `asr.audio_enhancement` from capabilities; job detail/results record applied, bypassed or fallback status and enhanced playback. The original remains available. A missing enhancer falls back to original audio with a recorded reason. Historical requests without this field remain disabled on replay/retry. Voiceprint imports and clone-reference analysis are excluded.
+
+| 模式／状态 / Mode or status | 行为 / Behavior |
+| --- | --- |
+| `auto` / `off` | 请求模式；新任务默认自动处理，可明确关闭 / Request modes; new requests default to automatic processing and may opt out |
+| `off` | 按保存的请求关闭增强 / Disabled by the persisted request |
+| `bypassed` | 无需增强，继续使用原音 / Processing unnecessary; use original audio |
+| `applied` | 转写与对齐使用增强音，原音保留给说话人识别和回放 / Enhanced input for ASR/alignment; original retained for diarization/playback |
+| `fallback` | 模型缺失或增强失败，记录原因并使用原音 / Model unavailable or enhancement failed; record reason and use original audio |
+
+增强始终在 CPU FP32 本地运行，与请求的 ASR CPU/GPU 设备独立。仅 `applied` 提供增强
+`playback_url`，使用普通鉴权产物接口并支持 Range；追加 `/waveform` 可读取波形。结果
+字段可选，旧任务缺失不表示增强成功。`gain_seconds`、`denoised_seconds` 是处理块覆盖
+秒数，`elapsed_seconds` 不含后续 VAD 和其他任务阶段。并非所有任务都有增强产物。
+
+Enhancement always runs locally on CPU FP32 independently of the requested ASR
+device. Only applied results provide enhanced `playback_url`, through the normal
+authenticated Range-capable artifact route; append `/waveform` for peaks. The
+result field is optional for historical jobs. Block coverage seconds are not
+exact voiced duration, and enhancement time excludes subsequent VAD and other
+task stages. Model unavailability does not disable base ASR. Background speakers
+and severe reverberation may remain; a changed transcript is not an accuracy score.
 
 
 服务入口自动读取仓库根目录 `.env`，外部已导出的环境变量优先；这不会把配置导出回客户端 shell。Swagger 使用当前访问源和相对 `/openapi.json`。复制到终端的 Bash/Python/JavaScript 示例默认访问 `http://127.0.0.1:20810`；自定义端口或 HTTPS 时，先在客户端设置实际 `AUDIO_INTEL_BASE_URL`（例如 `http://127.0.0.1:20815`），鉴权开启时从原有凭据来源另行提供 `AUDIO_INTEL_API_KEY`。用 `service.sh status` / `service.cmd status` 查看实际运行端点。
@@ -179,7 +200,7 @@ while :; do
   HTTP_STATUS=$(curl -sS -o "$TMP_DIR/job.json" -w '%{http_code}' "${AUTH[@]}" \
     -H "Idempotency-Key: $IDEMPOTENCY_KEY" -F file=@meeting.wav \
     -F model=qwen3-asr-0.6b -F hotword_list_ids="$HOTWORD_LIST_ID" \
-    -F language=Auto -F speaker_count=auto -F compute_device=gpu \
+    -F language=Auto -F speaker_count=auto -F compute_device=gpu -F audio_enhancement=auto \
     "$BASE_URL/api/v1/asr/jobs")
   [[ "$HTTP_STATUS" == 200 || "$HTTP_STATUS" == 202 ]] && break
   if [[ "$HTTP_STATUS" == 429 ]]; then sleep "$(jq -r '.retry_after_seconds // 1' "$TMP_DIR/job.json")"; continue; fi
@@ -286,7 +307,7 @@ with httpx.Client(base_url=base_url, headers=headers, timeout=120) as client:
     with open("meeting.wav", "rb") as audio:
         response = client.post(
             "/api/v1/asr/jobs", headers={"Idempotency-Key": idempotency_key},
-            files={"file": audio}, data={"language": "Auto"},
+            files={"file": audio}, data={"language": "Auto", "audio_enhancement": "auto"},
         )
         response.raise_for_status()
         job = response.json()
@@ -1024,6 +1045,17 @@ REQUEST_EXAMPLES: dict[tuple[str, str], dict[str, dict[str, Any]]] = {
     },
 }
 
+# Both modes are explicit executable request examples; omitted-field examples remain
+# to document the default and legacy compatibility paths.
+for _path in ("/api/v1/asr/jobs", "/v1/audio/transcriptions"):
+    for _mode in ("auto", "off"):
+        REQUEST_EXAMPLES[(_path, "post")][f"enhancement_{_mode}"] = {
+            "summary": f"人声增强模式 / Speech enhancement: {_mode}",
+            "value": {"file": "meeting.wav", "model": "qwen3-asr-0.6b",
+                      "compute_device": "cpu", "audio_enhancement": _mode},
+        }
+
+
 JOB_EXAMPLES = {
     "queued": {"summary": "排队 / Queued", "value": {"id": "0123456789abcdef0123456789abcdef", "kind": "tts", "state": "queued", "progress": 0, "stage": "queued", "display_name": "语音合成", "request": {"text": "你好", "compute_device": "gpu"}, "created_at": "2026-08-27T12:00:00+00:00", "compute_device": "gpu", "compute_device_name": "NVIDIA GPU", "status_url": "/api/v1/jobs/0123456789abcdef0123456789abcdef", "queue": {"scope": "tts", "position": 2, "depth": 4, "capacity": 5, "waiting_for": "worker"}, "poll_after_seconds": 2}},
     "running": {"summary": "运行与细粒度进度 / Running with fine progress", "value": {"id": "0123456789abcdef0123456789abcdef", "kind": "tts", "state": "running", "progress": 0.53, "stage": "synthesis", "display_name": "语音合成", "request": {"text": "你好", "compute_device": "gpu"}, "created_at": "2026-08-27T12:00:00+00:00", "started_at": "2026-08-27T12:00:02+00:00", "compute_device": "gpu", "compute_device_name": "NVIDIA GPU", "progress_detail": {"stage_code": "synthesis", "stage_progress": 0.4, "basis": "estimated", "current": 1, "total": 3, "unit": "text_chunk", "activity": {"sequence": 2, "current": 41, "total": 90, "unit": "codec_frame", "basis": "estimated", "updated_at": "2026-08-27T12:00:10+00:00"}}, "poll_after_seconds": 1}},
@@ -1037,6 +1069,27 @@ RESULT_EXAMPLES = {
 
 
 RESULT_EXAMPLES["asr"]["value"]["playback_url"] = "/api/v1/jobs/asr_example/playback"
+
+for _status, _reason, _mode in (
+    ("off", "disabled", "off"), ("bypassed", "clean", "auto"),
+    ("applied", "noise_and_gain", "auto"), ("fallback", "model_unavailable", "auto"),
+):
+    _enhancement = {"mode": _mode, "status": _status, "reason": _reason}
+    if _status in {"applied", "fallback"}:
+        _definition = asr_enhancement_model()
+        _enhancement.update(model=_definition["name"], model_revision=_definition["revision"], compute_device="cpu")
+    _result = deepcopy(RESULT_EXAMPLES["asr"]["value"])
+    _result["audio_enhancement"] = _enhancement
+    if _status == "applied":
+        _enhancement.update(max_gain_db=12.0, denoised_seconds=3.2, gain_seconds=3.2,
+                            wet_ratio=0.5, elapsed_seconds=0.2, input_samples=51200,
+                            playback_url="/api/v1/jobs/asr_example/artifacts/enhanced.wav",
+                            waveform=[0.1, 0.4, 0.2])
+        _result["artifacts"] = [{"name": "enhanced.wav", "path": "data/jobs/asr_example/output/enhanced.wav",
+                                 "mime_type": "audio/wav", "size_bytes": 102444}]
+    RESULT_EXAMPLES[f"asr_enhancement_{_status}"] = {
+        "summary": f"人声增强状态 / Speech enhancement: {_status}", "value": _result,
+    }
 
 RESULT_EXAMPLES["tts"]["value"]["generation_guard"] = {
     "version": 1, "checked_chunks": 1, "retried_chunks": 0,
@@ -1147,11 +1200,16 @@ def _capabilities_example() -> dict[str, Any]:
             "controls": controls, "checkpoints": checkpoints,
         })
 
+    enhancer = asr_enhancement_model()
     default_asr = next(item for item in asr_entries if item["default"])
     default_tts = next(item for item in tts_entries if item["default"])
     return {
         "services": ["asr", "tts"], "offline": True,
+        "deployment": {"profile": "full", "default_compute_device": "gpu", "gpu_runtime_installed": True},
         "asr": {
+            "audio_enhancement": {"supported": True, "available": True, "default": "auto",
+                "modes": ["auto", "off"], "model": enhancer["name"], "model_revision": enhancer["revision"],
+                "compute_device": "cpu", "preserves_all_speakers": True, "enhanced_playback": True},
             "audio_formats": ["wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff"], "concise_pdf": True,
             "video": {"supported": True, "formats": ["mp4", "m4v", "mov", "mkv", "webm", "avi", "mpeg", "mpg", "ts"],
                       "max_upload_bytes": 26843545600, "chunk_bytes": 33554432, "upload_idle_seconds": 86400,
@@ -1215,7 +1273,7 @@ REQUEST_EXAMPLES.update({
     },
     ("/api/v1/asr/video-uploads", "post"): {"lecture": {"summary": "创建上传 / Create upload", "value": {"name": "lecture.mp4", "size_bytes": 33554432}}},
     ("/api/v1/asr/video-jobs", "post"): {"lecture": {"summary": "替换为已完成上传的 ID / Replace with a completed upload ID", "value": {
-        "upload_id": VIDEO_UPLOAD_EXAMPLE["id"], "language": "Auto", "compute_device": "cpu", "hotword_list_ids": [],
+        "upload_id": VIDEO_UPLOAD_EXAMPLE["id"], "language": "Auto", "compute_device": "cpu", "hotword_list_ids": [], "audio_enhancement": "auto",
         "video_roi": {"x": 0.0, "y": 0.0, "width": 0.8, "height": 1.0},
     }}},
     ("/api/v1/jobs/{job_id}/video-scenes", "patch"): {
@@ -1225,6 +1283,11 @@ REQUEST_EXAMPLES.update({
                               ("boundary", "调整结束时间 / Move boundary"), ("frame", "更换截图 / Replace frame"), ("restore", "恢复自动分段 / Restore automatic sections")]
     },
 })
+REQUEST_EXAMPLES[("/api/v1/asr/video-jobs", "post")]["enhancement_off"] = {
+    "summary": "关闭视频人声增强 / Disable video speech enhancement",
+    "value": {**REQUEST_EXAMPLES[("/api/v1/asr/video-jobs", "post")]["lecture"]["value"],
+              "audio_enhancement": "off"},
+}
 RESULT_EXAMPLES["asr_video"] = {"summary": "视频图文转写 / Illustrated video transcript", "value": {
     **RESULT_EXAMPLES["asr"]["value"], "video": {"contract_version": 1, "revision": 1, "duration": 3.2,
         "time_origin": 0.0, "roi": None, "detector": "ffmpeg_scdet_phash_stability",

@@ -10,6 +10,7 @@ Original code and documentation in this repository are licensed under Apache-2.0
 | Qwen3-TTS 12Hz 0.6B Base / CustomVoice | <https://huggingface.co/collections/Qwen/qwen3-tts> | Apache-2.0 |
 | Qwen3-TTS 12Hz 1.7B Base / CustomVoice / VoiceDesign | <https://huggingface.co/collections/Qwen/qwen3-tts> | Apache-2.0 |
 | FSMN-VAD | <https://modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch> | Apache-2.0 model card |
+| GTCRN inference code / GTCRN-DNS3 checkpoint | [Xiaobin-Rong/gtcrn, pinned source](https://github.com/Xiaobin-Rong/gtcrn/tree/502ebfab64da7c4a9af78dcb9c6ceef1ebb01c73) | MIT; [included license](asr/licenses/GTCRN-MIT.txt), copyright 2024 Rong Xiaobin |
 | CAM++ | <https://www.modelscope.cn/models/iic/speech_campplus_sv_zh-cn_16k-common> | Apache-2.0 model card |
 | FunASR toolkit | <https://github.com/modelscope/FunASR> | MIT; model weights have separate terms |
 | ModelScope SDK | <https://github.com/modelscope/modelscope> | Apache-2.0 |
@@ -27,6 +28,14 @@ Users must review the current upstream model cards and licenses before use or re
 This table identifies the principal direct runtime components; it is not a complete transitive software bill of materials. The exact resolved Python dependency inventory is recorded in `requirements-lock/`, and the exact frontend inventory and integrity hashes are recorded in `frontend/pnpm-lock.yaml`. See `docs/DEPENDENCIES.md` for the maintenance and security-audit policy.
 
 ## Distribution boundary
+
+`asr/gtcrn.py` contains adapted GTCRN inference code at the pinned upstream commit
+above. The MIT license and copyright notice are retained in
+`asr/licenses/GTCRN-MIT.txt`. The adaptation uses Torch reshaping instead of einops
+and omits upstream benchmark code, introducing no Python dependency. The DNS3
+checkpoint is downloaded separately and is not redistributed in this repository;
+`audio_intel/model_manifest.json` pins its revision and SHA-256. See the
+[speech enhancement guide](docs/ASR_ENHANCEMENT.md).
 
 The project currently publishes source-only releases. It does not publish container images, prebuilt Python runtimes, model bundles, or compiled frontend distributions. Dependency lock files describe what the setup process resolves; they are not a statement that every locked package is redistributed by the project.
 

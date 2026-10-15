@@ -542,3 +542,52 @@ def test_video_binary_contracts_and_examples(tmp_path, monkeypatch):
     media = paths['/api/v1/asr/video-uploads/{upload_id}']['patch']['requestBody']['content']['application/octet-stream']
     assert media['schema']['format'] == 'binary'
     assert 'example' not in media and 'examples' not in media
+
+
+def test_speech_enhancement_openapi_contract_and_examples(tmp_path, monkeypatch) -> None:
+    from audio_intel.api_docs import CAPABILITIES_EXAMPLE, RESULT_EXAMPLES
+    from audio_intel.api_models import AsrEnhancementCapability, CapabilitiesResponse, JobResultResponse
+    from audio_intel.model_registry import asr_enhancement_model
+
+    local = docs_settings(tmp_path)
+    monkeypatch.setattr(api_module, "settings", local)
+    monkeypatch.setattr(db_module, "settings", local)
+    schema = api_module.create_app().openapi()
+    schemas = schema["components"]["schemas"]
+    for path in ("/api/v1/asr/jobs", "/api/v1/asr/video-jobs", "/v1/audio/transcriptions"):
+        operation = schema["paths"][path]["post"]
+        media_type = "application/json" if "video-jobs" in path else "multipart/form-data"
+        body = operation["requestBody"]["content"][media_type]
+        contract = schemas[body["schema"]["$ref"].rsplit("/", 1)[-1]]
+        field = contract["properties"]["audio_enhancement"]
+        assert "audio_enhancement" not in contract.get("required", [])
+        assert field["default"] == "auto"
+        assert any(set(part.get("enum", [])) == {"auto", "off"}
+                   for part in [field, *field.get("anyOf", [])])
+        modes = {example["value"].get("audio_enhancement") for example in body["examples"].values()}
+        assert {"auto", "off"} <= modes
+
+    CapabilitiesResponse.model_validate(CAPABILITIES_EXAMPLE)
+    capability = CAPABILITIES_EXAMPLE["asr"]["audio_enhancement"]
+    assert AsrEnhancementCapability.model_validate(capability).model_dump() == capability
+    model = asr_enhancement_model()
+    assert (capability["model"], capability["model_revision"]) == (model["name"], model["revision"])
+    assert capability["default"] == "auto" and capability["compute_device"] == "cpu"
+    assert "audio_enhancement" not in schemas["JobResultResponse"].get("required", [])
+    assert "audio_enhancement" not in RESULT_EXAMPLES["asr"]["value"]
+    for component in ("AsrEnhancementCapability", "AsrEnhancementResult"):
+        assert all(" / " in prop.get("description", "") for prop in schemas[component]["properties"].values())
+    result_examples = schema["paths"]["/api/v1/jobs/{job_id}/result"]["get"]["responses"]["200"]["content"]["application/json"]["examples"]
+    for status in ("off", "bypassed", "applied", "fallback"):
+        example = RESULT_EXAMPLES[f"asr_enhancement_{status}"]
+        assert result_examples[f"asr_enhancement_{status}"] == example
+        value = example["value"]
+        assert JobResultResponse.model_validate(value).model_dump(exclude_unset=True) == value
+        enhancement = value["audio_enhancement"]
+        assert enhancement["status"] == status
+        if status == "applied":
+            assert enhancement["playback_url"] != value["playback_url"]
+            assert enhancement["input_samples"] == round(value["duration"] * 16000)
+            assert any(artifact["name"] == "enhanced.wav" for artifact in value["artifacts"])
+        else:
+            assert "playback_url" not in enhancement

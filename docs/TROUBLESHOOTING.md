@@ -40,6 +40,24 @@ curl -I https://modelscope.cn
 
 安装脚本会对首次 pnpm 获取自动重试三次，模型下载器支持续传；模型目录只有成功后才会写入 `.complete` revision 标记。不要手工创建标记。若单个模型确认损坏，将对应 `models/<模型名>` 目录移动到备份位置后重新执行 `setup asr` 或 `setup tts`。
 
+## 人声增强不可用或效果不合适
+
+查看 `GET /api/v1/capabilities` 的 `asr.audio_enhancement.available` 和任务详情的
+`audio_enhancement.status/reason`。模型缺失、revision/checksum 不匹配或资源不足时，
+自动模式使用原音并记录回退，基础 ASR 仍可用；按维护流程停止服务后执行
+`setup asr`（Windows 使用 `service.cmd setup asr`）修复模型，不手工填写 `.complete`。
+CPU-only 配置同样支持增强。取消任务仍等待完整进程树退出。
+
+背景中的其他人声或较强混响可能保留；若增强不适合某段录音，新提交时关闭“人声增强”
+或传 `audio_enhancement=off`。历史任务的重试保留原模式，改模式需新提交。
+结果默认播放原音，只有实际增强时才提供增强音轨。参见[人声增强指南](ASR_ENHANCEMENT.md)。
+
+Check capability availability and the per-job status/reason. An unavailable or
+invalid enhancer falls back to original audio without disabling base ASR. Repair
+models with `setup asr` while stopped, following the maintenance workflow. CPU-only
+deployments support enhancement too. Other speakers/reverberation may remain;
+submit a new job with `off` when preferred. Retry preserves the persisted mode.
+
 ## GPU 不可用或显存不足
 
 - `nvidia-smi` 必须成功，驱动需兼容安装的 PyTorch CUDA 13.0 wheel。

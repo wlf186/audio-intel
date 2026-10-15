@@ -11,7 +11,7 @@ The project deliberately uses four Python environments:
 | Boundary | Responsibility |
 | --- | --- |
 | `api` | FastAPI gateway, React assets, SQLite queues, admission, SSE, capabilities, and cleanup |
-| `asr` | VAD, speaker diarization, Qwen3-ASR, and ASR worker execution |
+| `asr` | VAD, CPU speech enhancement, speaker diarization, Qwen3-ASR, and ASR worker execution |
 | `tts` | Qwen3-TTS preset, clone, and VoiceDesign execution |
 | `aligner` | Internal forced alignment for automatic and manual TTS reference ranges |
 
@@ -45,11 +45,35 @@ Cancellation first offers a short cooperative exit window. If required, the work
 ```text
 audio input
   → FSMN-VAD on CPU
-  → CAM++ speaker embeddings and clustering on CPU
-  → Qwen3-ASR 0.6B or 1.7B on CPU/GPU
-  → ForcedAligner on the ASR device when supported
+  → optional GTCRN denoising + quiet-speech gain on CPU
+  → union of original and enhanced VAD regions
+  ├─ original audio → CAM++ speaker embeddings and clustering on CPU
+  └─ enhanced audio when applied, otherwise original
+       → Qwen3-ASR 0.6B or 1.7B on CPU/GPU
+       → ForcedAligner on the ASR device when supported
   → speaker turns + JSON/SRT/VTT/TXT
 ```
+
+### Speech enhancement
+
+New audio, video and compatible transcription submissions default to
+`audio_enhancement=auto`; `off` preserves the former recognition input. The pinned
+GTCRN-DNS3 checkpoint runs in a separate CPU FP32 stage child within the existing
+ASR process tree, using bounded blocks and context. It uses the ASR environment,
+with no additional worker or package. Missing weights, invalid output and resource
+failures fall back to original audio and record the outcome.
+
+Automatic processing retains 50% original signal and smooths upward gain for quiet
+speech. Clean, audible blocks bypass processing. The VAD union uses existing chunk
+rules; original audio supplies CAM++ and voiceprints. Sample count, video time
+origin and ASR model/precision are preserved. Clone-reference analysis and
+voiceprint imports are excluded.
+
+Applied results declare a separate authenticated `enhanced.wav` and waveform.
+Original playback remains the default; track switching preserves position and play
+state. Entirely bypassed tasks retain no additional WAV. Historical requests
+without the field remain off on replay/retry; existing media/results are not
+rewritten. See the [enhancement contract](ASR_ENHANCEMENT.md).
 
 ### Languages and timestamps
 
@@ -98,7 +122,7 @@ ASR and TTS default to GPU at submission time in the recommended full deployment
 
 - CPU uses FP32.
 - GPU uses BF16 without quantization.
-- ASR VAD and CAM++ always remain on CPU; the main ASR model and ForcedAligner follow the selected device.
+- ASR VAD, GTCRN enhancement and CAM++ always remain on CPU; the main ASR model and ForcedAligner follow the selected device.
 
 GPU qualification is model-scoped and based on total memory reported by `nvidia-smi`, with a 256 MiB tolerance for nominal hardware/driver reserve:
 
@@ -203,7 +227,7 @@ Library reference ranges use `audio-intel:tts-reference-ranges:v1` localStorage,
 
 ## Video transcription and reading exports
 
-Video uploads use durable sequential offsets and chunk hashes (schema v12), with one append-only input file and same-filesystem rename on submission. Unfinished upload reservations reduce shared disk admission; they expire independently of completed tasks. `purpose=video_transcription` runs in the existing ASR supervisor/executor, preserving cancellation and queue ownership. Video PTS and audio PTS share a time origin. Sampled frames stay in memory; only representative JPEGs are retained, alongside one normalized playback WAV. Manual scene revisions and speaker edits share the task's edit lock and reader lease. Full scene/result data never enters global job summaries or SSE.
+Video uploads use durable sequential offsets and chunk hashes (schema v12), with one append-only input file and same-filesystem rename on submission. Unfinished upload reservations reduce shared disk admission; they expire independently of completed tasks. `purpose=video_transcription` runs in the existing ASR supervisor/executor, preserving cancellation and queue ownership. Video PTS and audio PTS share a time origin. Sampled frames stay in memory; only representative JPEGs are retained, alongside the original normalized playback WAV and a separate enhanced WAV only when applied. Manual scene revisions and speaker edits share the task's edit lock and reader lease. Full scene/result data never enters global job summaries or SSE.
 
 Concise PDF is a protected, on-demand API export, with a bounded in-memory cache and one renderer. It uses the same paragraph/scene mapping as the browser's illustrated reading view. See [video contracts, resource limits and storage lifetime](VIDEO_TRANSCRIPTION.md).
 

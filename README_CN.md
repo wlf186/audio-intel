@@ -73,6 +73,7 @@ ASR 使用固定的“新建音频转写 / 新建视频转写 / 任务与结果�
 
 ### 与普通模型演示的区别
 
+- **自动人声增强。** GTCRN 降噪与轻声增益在本地 CPU 运行，保留全部交谈者。新转写默认自动处理，干净且音量充足的片段直接旁路，实际增强后支持原音／增强音回放对比和下载。详见[人声增强指南](docs/ASR_ENHANCEMENT.md)。
 - **安装后本地运行。** 模型 revision 固定，运行期强制离线加载；输入、结果、声音、数据库和日志均位于项目可控目录。
 - **严谨的进程隔离。** ASR 与 TTS 使用互不兼容的独立环境和可复用受监督执行器；完整任务进程树退出后，取消任务才进入终态。
 - **模型感知控制。** UI 与 API 只暴露所选 Qwen checkpoint 和声音模式真正支持的控制项，不静默忽略无效参数。
@@ -169,7 +170,9 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
         │
         ├── SQLite WAL ASR 队列 ── ASR 监督器
         │       └── 可复用任务执行器
-        │           VAD → 说话人分离 → Qwen3-ASR → 强制对齐
+        │           VAD → 可选 CPU 增强与两次 VAD 合并
+        │           ├── 原音 → 说话人分离
+        │           └── 识别音频 → Qwen3-ASR → 强制对齐
         │           └── PDF / JSON / SRT / VTT / TXT
         │
         └── SQLite WAL TTS 队列 ── TTS 监督器
@@ -234,6 +237,7 @@ curl --fail-with-body -sS \
 | [文档 TTS](docs/DOCUMENT_TTS.md) | 文档导入、分段、合成、API 示例和流式下载 |
 | [资料库迁移](docs/LIBRARY.md) | 声纹与热词完整 ZIP 导出导入、合并/替换、拼音排序和 A–Z 索引 |
 | [工作台布局](docs/WORKSPACES.md) | PC 可拖动分栏、分别记住布局、紧凑资料库和视频图文阅读 |
+| [人声增强](docs/ASR_ENHANCEMENT.md) | 离线降噪、轻声增益、回放对比、API 控制与配对验证 |
 | [API](docs/API.md) | 原生异步与 OpenAI 兼容使用契约 |
 | [架构与能力](docs/ARCHITECTURE.md) | 管线、模型、设备、加速、队列、进度和取消 |
 | [局域网 HTTPS](docs/HTTPS.md) | 项目 CA、证书信任、SAN 更新和指纹核对 |

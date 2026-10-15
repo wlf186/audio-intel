@@ -245,36 +245,36 @@ class VideoCapability(PublicModel):
 
 
 class AsrEnhancementCapability(PublicModel):
-    supported: bool
-    available: bool
-    default: Literal["auto"]
-    modes: list[Literal["auto", "off"]]
-    model: str
-    model_revision: str
-    compute_device: Literal["cpu"]
-    preserves_all_speakers: bool
-    enhanced_playback: bool
+    supported: bool = Field(description="是否支持本地人声增强 / Whether local speech enhancement is supported")
+    available: bool = Field(description="固定增强模型当前是否可用；不可用时回退原音 / Whether the pinned enhancer is available; otherwise use original audio")
+    default: Literal["auto"] = Field(description="新任务省略参数时的模式 / Mode for new requests omitting the parameter")
+    modes: list[Literal["auto", "off"]] = Field(description="允许的请求模式 / Accepted request modes")
+    model: str = Field(description="manifest 中的增强模型身份 / Enhancer identity from the manifest")
+    model_revision: str = Field(description="固定增强模型 revision / Pinned enhancement model revision")
+    compute_device: Literal["cpu"] = Field(description="增强始终在 CPU 运行，与 ASR 设备独立 / Enhancement always runs on CPU independently of the ASR device")
+    preserves_all_speakers: bool = Field(description="保留交谈参与者，不做目标说话人提取 / Preserve conversation speakers without target-speaker extraction")
+    enhanced_playback: bool = Field(description="实际增强后是否支持独立回放 / Whether applied results support separate enhanced playback")
 
 
 class AsrEnhancementResult(PublicModel):
-    mode: Literal["auto", "off"]
-    status: Literal["off", "bypassed", "applied", "fallback"]
-    reason: str
-    model: str | None = None
-    model_revision: str | None = None
-    compute_device: Literal["cpu"] | None = None
-    max_gain_db: float | None = None
-    denoised_seconds: float | None = None
-    gain_seconds: float | None = None
-    wet_ratio: float | None = None
-    elapsed_seconds: float | None = None
-    input_samples: int | None = None
-    playback_url: str | None = None
-    waveform: list[float] | None = None
+    mode: Literal["auto", "off"] = Field(description="任务实际保存的请求模式 / Persisted request mode")
+    status: Literal["off", "bypassed", "applied", "fallback"] = Field(description="关闭、无需处理、已增强或回退原音 / Disabled, bypassed, applied or fallback to original audio")
+    reason: str = Field(description="实际处理原因；客户端保留未知值的兼容性 / Outcome reason; clients must tolerate future reason values")
+    model: str | None = Field(None, description="使用或尝试加载的增强模型 / Enhancer used or attempted")
+    model_revision: str | None = Field(None, description="增强模型固定 revision / Pinned enhancement model revision")
+    compute_device: Literal["cpu"] | None = Field(None, description="增强执行设备，不代表 ASR 设备 / Enhancement device, independently of ASR")
+    max_gain_db: float | None = Field(None, description="最大应用向上增益，dB / Maximum applied upward gain in dB")
+    denoised_seconds: float | None = Field(None, description="发生降噪的处理块覆盖秒数 / Seconds covered by blocks applying denoising")
+    gain_seconds: float | None = Field(None, description="发生增益的处理块覆盖秒数，不是精确语音时长 / Seconds covered by gain blocks, not exact voiced duration")
+    wet_ratio: float | None = Field(None, description="降噪结果混音占比 / Denoised signal mix ratio")
+    elapsed_seconds: float | None = Field(None, description="增强函数耗时，非整任务耗时；不含后续 VAD / Enhancement function time, excluding subsequent VAD and other task stages")
+    input_samples: int | None = Field(None, description="归一化输入采样数；处理保持不变 / Normalized input sample count, preserved by processing")
+    playback_url: str | None = Field(None, description="实际增强时返回的独立受保护音轨，支持 Range / Separate authenticated enhanced track for applied results, with Range support")
+    waveform: list[float] | None = Field(None, description="增强音轨波形；缺失时可通过产物波形接口延迟获取 / Enhanced waveform; fetch lazily through the artifact waveform route when absent")
 
 
 class AsrCapability(PublicModel):
-    audio_enhancement: AsrEnhancementCapability
+    audio_enhancement: AsrEnhancementCapability = Field(description="本地 ASR 人声增强能力与模型可用性 / Local ASR speech enhancement capability and model availability")
     audio_formats: list[str]
     concise_pdf: bool
     video: VideoCapability

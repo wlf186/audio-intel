@@ -32,6 +32,21 @@ English: Desktop voiceprints use equal-width, independently scrolling people and
 
 English: ASR v4 preferences migrate older settings and persist either all future groups or explicit IDs. Invalid choices never widen scope. Library replacement resets group selection to all. New people default to the filtered group, or Ungrouped in the all-people view; creation/editing can choose a group. Export v1 preferences independently persist toggle/editor contents across logout and replacement; reset enables redaction and clears rules. Disabling redaction disables every transformation without losing the rules. Loading/error/retry states remain explicit.
 
+## 人声增强与回放 / Speech enhancement and playback
+
+音频／视频设置默认勾选“人声增强”（`auto`），取消勾选为 `off`。偏好沿用 ASR v4
+localStorage 生命周期，不新增存储键或改变草稿清理规则。旧版未完成视频上传恢复原先
+的关闭设置。结果默认播放原音；实际增强的任务提供增强音回放和下载，切换保留播放
+位置及状态，波形随音轨更新，波形失败可重试。旁路／回退有实际状态说明，历史任务
+不补生成增强音。详见[人声增强指南](ASR_ENHANCEMENT.md)。
+
+Audio/video settings enable Speech enhancement (`auto`) by default; unchecking
+selects `off`. The existing ASR v4 localStorage lifetime and draft-clearing rules
+remain. Legacy paused video uploads resume with their original off setting.
+Results initially play original audio; applied jobs offer enhanced playback and
+download with position, play state and waveform following track changes. Waveform
+failures can be retried; bypass/fallback are shown and historical jobs are not backfilled.
+
 ## 阅读与人员导航 / Reading and person navigation
 
 窄屏声纹库使用人员列表与独立详情，点击人员进入 `#library/voiceprints/<id>`。返回按钮和浏览器后退恢复筛选、搜索、列表位置及字母索引位置；桌面仍同时显示两栏。详情优先展示已有样本，点击“添加样本”展开上传／录音表单。返回列表保留当前未提交文件或录音；切换人员、离开声纹库或切换分组时提示确认丢弃，正在录音或提交时受到保护。文件内容只保存在当前挂载页面的内存中，刷新不恢复未提交文件。

@@ -34,15 +34,28 @@ Media PTS provides a shared audio/video origin; delayed audio is padded with sil
 
 Results support merge-next, split, boundary adjustment, replacement images and restoration of automatic sections. Revision checks prevent overwriting another client's edits; on conflict, close the editor and reload sections. Original detailed text and speaker snapshots remain accessible.
 
+## 人声增强 / Speech enhancement
+
+视频任务在 `/api/v1/asr/video-jobs` JSON 中接受 `audio_enhancement=auto|off`，
+新任务默认 `auto`。上传与断点校验不处理媒体；增强在现有 ASR 任务的 CPU 子阶段运行，
+保留采样数、视频时间原点和说话人识别的原音输入。默认回放原音，实际增强后可切换或
+下载独立增强音。旧版上传恢复原设置，历史任务不补生成。详见[人声增强](ASR_ENHANCEMENT.md)。
+
+Video JSON accepts `audio_enhancement=auto|off`, defaulting to `auto`. Upload/resume
+verification does not process media. The existing ASR task enhances on CPU while
+preserving sample count, video time origin and original audio for diarization.
+Applied results offer an enhanced track; original playback remains the default.
+Legacy uploads retain their settings, and historical jobs are not backfilled.
+
 ## PDF 与磁盘 / PDF and disk use
 
 音频提供主操作「导出简洁 PDF」，次级「明细与字幕」保留 JSON、TXT、SRT、VTT。简洁 PDF 将相同 speaker ID 的相邻发言合并为一段，保留第一句开始与最后一句结束时间，不删改口头语、不做总结；同名但不同 ID 的说话人不会误合并。视频也支持 JSON、TXT、SRT、VTT，并提供图文简洁 PDF，按画面分段，画面下展示相应讨论。PDF 内嵌本地简体中文字体，无云服务或系统字体依赖。
 
 Audio offers a primary concise PDF action and a secondary details/subtitles menu. Adjacent speech with the same speaker ID merges with its combined time range; words and disfluencies are preserved. Equal names with different IDs do not merge. Video offers illustrated concise PDF, with images followed by their discussion. A bundled Chinese font keeps PDF rendering offline.
 
-上传直接顺序追加到一份文件，校验并 fsync 后才确认偏移；不创建分片文件再拼接、不预分配 25 GiB，不在重试时重写已确认数据。提交时同盘重命名。画面分析只保存最终代表 JPEG，不保存抽样帧序列。只生成一份归一化音频供推理与回放复用；临时目录和数据目录在同一文件系统时完成阶段直接移动，否则跨盘移动需一次复制。失败/取消后的工作目录由现有 worker 清理。PDF 按需在内存生成，单渲染并发、64 MiB LRU 缓存（5 分钟）；单份 PDF 输入上限为 400 万文本字符、128 MiB JPEG，超过返回 413 并提示拆分。预览最多两个解码器且不写磁盘。修改截图后清理不再被当前/原始分段引用的图片，删除任务清理其输入与结果。
+上传直接顺序追加到一份文件，校验并 fsync 后才确认偏移；不创建分片文件再拼接、不预分配 25 GiB，不在重试时重写已确认数据。提交时同盘重命名。画面分析只保存最终代表 JPEG，不保存抽样帧序列。原音复用一份归一化 WAV；实际应用人声增强时另存一份增强 WAV，约每小时 115 MB，旁路时不增加；临时目录和数据目录在同一文件系统时完成阶段直接移动，否则跨盘移动需一次复制。失败/取消后的工作目录由现有 worker 清理。PDF 按需在内存生成，单渲染并发、64 MiB LRU 缓存（5 分钟）；单份 PDF 输入上限为 400 万文本字符、128 MiB JPEG，超过返回 413 并提示拆分。预览最多两个解码器且不写磁盘。修改截图后清理不再被当前/原始分段引用的图片，删除任务清理其输入与结果。
 
-Uploads append to one file and are acknowledged only after checksum verification and fsync: no chunk concatenation, full-size preallocation or acknowledged-byte rewrite. Submission renames on the same filesystem. Only final JPEG representatives are written; sampled frames stay in memory. One normalized audio file serves inference and playback. Keep temporary and data directories on the same filesystem for rename-only completion; crossing filesystems requires one copy. Existing worker cleanup removes failed/cancelled working directories. PDFs render on demand in memory, with one renderer and a 64 MiB, five-minute LRU. PDF inputs are limited to 4 million text characters and 128 MiB of JPEGs; larger exports return 413 with a split-source hint. At most two preview decoders run, without writing images. Unreferenced edited images are removed, and task deletion removes owned inputs/results.
+Uploads append to one file and are acknowledged only after checksum verification and fsync: no chunk concatenation, full-size preallocation or acknowledged-byte rewrite. Submission renames on the same filesystem. Only final JPEG representatives are written; sampled frames stay in memory. One normalized WAV preserves original playback; applied enhancement retains a separate WAV (about 115 MB/hour), while bypass adds no file. Keep temporary and data directories on the same filesystem for rename-only completion; crossing filesystems requires one copy. Existing worker cleanup removes failed/cancelled working directories. PDFs render on demand in memory, with one renderer and a 64 MiB, five-minute LRU. PDF inputs are limited to 4 million text characters and 128 MiB of JPEGs; larger exports return 413 with a split-source hint. At most two preview decoders run, without writing images. Unreferenced edited images are removed, and task deletion removes owned inputs/results.
 
 算法选择参考：[FFmpeg scdet](https://ffmpeg.org/ffmpeg-filters.html#scdet)、[PySceneDetect 检测器](https://www.scenedetect.com/docs/api/detectors.html)。后者提供内容/自适应切镜，但不直接判断 PPT 的同页动画，因此本实现复用现有 FFmpeg，加上面向幻灯片的比较，避免增加 OpenCV/模型运行时。
 

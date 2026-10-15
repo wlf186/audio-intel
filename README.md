@@ -73,7 +73,7 @@ Transcription results support entering speaker names and optional notes manually
 
 ### Why it is different
 
-- **Automatic speech enhancement.** Local noise suppression and quiet-speech gain preserve all speakers, with original/enhanced playback comparison. See the [enhancement contract](docs/ASR_ENHANCEMENT.md).
+- **Automatic speech enhancement.** GTCRN noise suppression and quiet-speech gain run locally on CPU and preserve all speakers. New transcriptions default to automatic processing; clean, audible sections bypass it. Applied jobs offer original/enhanced playback and download. See the [enhancement contract](docs/ASR_ENHANCEMENT.md).
 - **Local after setup.** Model revisions are pinned and runtime loading is forced offline; inputs, results, voices, the database, and logs stay in project-controlled directories.
 - **Careful process isolation.** ASR and TTS use separate, incompatible Python environments and reusable supervised executors. Cancellation reaches a terminal state only after the complete task process tree exits.
 - **Model-aware controls.** The UI and API expose only controls supported by the selected Qwen checkpoint and voice mode instead of silently ignoring unsupported input.
@@ -170,7 +170,9 @@ See the [Linux installation guide](docs/INSTALL.md) or [native Windows guide](do
         │
         ├── SQLite WAL ASR queue ── ASR supervisor
         │       └── reusable task executor
-        │           VAD → diarization → Qwen3-ASR → forced alignment
+        │           VAD → optional CPU enhancement + VAD union
+        │           ├── original audio → speaker diarization
+        │           └── recognition audio → Qwen3-ASR → forced alignment
         │           └── PDF / JSON / SRT / VTT / TXT
         │
         └── SQLite WAL TTS queue ── TTS supervisor
@@ -233,6 +235,7 @@ Add `Authorization: Bearer $AUDIO_INTEL_API_KEY` when authentication is configur
 | [Document TTS](docs/DOCUMENT_TTS.md) | Import, segmentation, synthesis, API examples, and streaming downloads |
 | [Library transfer](docs/LIBRARY.md) | Voiceprints and hotwords, full ZIP transfer, merge/replacement, pinyin sorting and A–Z index |
 | [Workspace layout](docs/WORKSPACES.md) | Resizable desktop panes, independent layout preferences, compact library and video reading |
+| [Speech enhancement](docs/ASR_ENHANCEMENT.md) | Offline denoising, quiet-speech gain, playback comparison, API controls and paired validation |
 | [API](docs/API.md) | Native asynchronous and OpenAI-compatible usage contracts |
 | [Architecture and capabilities](docs/ARCHITECTURE.md) | Pipelines, models, devices, acceleration, queues, progress, and cancellation |
 | [Local HTTPS](docs/HTTPS.md) | Project CA, certificate trust, SAN renewal, and fingerprint verification |

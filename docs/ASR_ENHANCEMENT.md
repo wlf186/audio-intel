@@ -27,7 +27,8 @@ records that outcome in the job detail.
 Models are evaluated in bounded blocks with context. The current conservative
 mix retains 50% original signal. Speech gain targets −24 dBFS RMS, activates only
 below −30 dBFS, is capped at +24 dB, and uses smoothing plus a local −1 dBFS peak
-ceiling. These are internal controls, not public sampling or volume parameters.
+ceiling on processed blocks. Untouched blocks retain original samples and peaks.
+These are internal controls, not public sampling or volume parameters.
 The original and enhanced VAD intervals are merged without changing the existing
 ASR chunk-combination rules. Speaker clustering and voiceprint embeddings use
 original audio. Enhancement preserves sample count and the video time origin.
@@ -44,6 +45,11 @@ original audio. Enhancement preserves sample count and the video time origin.
 - Original `/playback` and source downloads retain their meaning. `enhanced.wav`
   is a separate authenticated artifact with Range support and normal task purge.
   No extra audio file is retained when the entire task is bypassed.
+
+`gain_seconds` and `denoised_seconds` report the coverage of blocks that applied
+each operation, not exact voiced duration. `elapsed_seconds` measures the
+enhancement function, excluding subsequent VAD and other task stages. A changed
+transcript alone does not establish improved recognition accuracy.
 
 增强参数纳入幂等比较：同一 key 不能切换增强模式。历史请求缺少该字段时按关闭解释，
 省略字段重放旧请求仍返回原任务；旧失败/取消任务重试保留原请求。不会自动改写历史媒体、
