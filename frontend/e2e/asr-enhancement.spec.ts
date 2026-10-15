@@ -10,11 +10,14 @@ function wave(amplitude:number){
  for(let i=44;i<b.length;i+=2)b.writeInt16LE(Math.round(Math.sin(i/15)*amplitude*32767),i)
  return b
 }
-async function fixture(page:Page,withPeaks=true){
+async function fixture(page:Page,withPeaks=true,partial=false){
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text())})
  const now=new Date().toISOString()
  const job:Job={id:'enhancement-fixture',kind:'asr',state:'succeeded',stage:'completed',progress:1,display_name:'公开增强测试.wav',created_at:now,request:{compute_device:'cpu',audio_enhancement:'auto'},result:{duration:5,language:'Chinese',timestamp_precision:'segment',playback_url:'/api/v1/jobs/enhancement-fixture/playback',waveform:Array(240).fill(.08),segments:[{id:0,start:0,end:5,speaker:'Speaker_0',speaker_label:'测试人声',text:'公开的回放测试文字。'}],speakers:[{id:'Speaker_0',label:'测试人声'}],audio_enhancement:{mode:'auto',status:'applied',reason:'quiet_speech',playback_url:'/api/v1/jobs/enhancement-fixture/artifacts/enhanced.wav',waveform:Array(240).fill(.7)},artifacts:[]}}
  const state={submission:''}
+ if(partial)Object.assign(job.result!.audio_enhancement!,{processing_version:5,reason:'partial_fallback',
+  speech_enhancement:{enabled:true,status:'applied',reason:'quiet_speech'},
+  background_denoise:{enabled:true,status:'fallback',reason:'model_unavailable'}})
  if(!withPeaks)delete job.result!.audio_enhancement!.waveform
  await page.route('**/api/v1/**',async route=>{
   const url=new URL(route.request().url());const pathname=url.pathname
@@ -140,5 +143,13 @@ test('legacy disabled preference migrates to both controls off',async({page})=>{
  await expect(page.getByLabel('人声增强',{exact:true})).not.toBeChecked()
  await expect(page.getByLabel('背景降噪',{exact:true})).not.toBeChecked()
  expect(await page.evaluate(()=>localStorage.getItem('audio-intel:asr-preferences:v4'))).toBeNull()
+ expect(errors).toEqual([])
+})
+test('partial processing shows each outcome while retaining enhanced playback',async({page})=>{
+ const {errors}=await fixture(page,true,true)
+ await showAsrResults(page)
+ await expect(page.getByText('人声增强：已应用',{exact:true})).toBeVisible()
+ await expect(page.getByText('背景降噪：未完成，已回退',{exact:true})).toBeVisible()
+ await expect(page.getByRole('button',{name:'增强音',exact:true})).toBeVisible()
  expect(errors).toEqual([])
 })

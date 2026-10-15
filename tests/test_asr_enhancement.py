@@ -187,6 +187,22 @@ def test_gain_failure_preserves_successful_denoising(local, tmp_path, monkeypatc
     assert not list(tmp_path.glob("*.denoise.wav"))
 
 
+def test_split_default_preserves_policy4_signal_across_processing_boundary(local, tmp_path):
+    source = tmp_path / "source.wav"
+    count = 16000 * 31 + 113
+    audio = .002 * np.sin(np.arange(count) * .1)
+    audio[16000 * 30] = .94
+    sf.write(source, audio, 16000, subtype="PCM_16")
+    regions = [{"start": 0., "end": count / 16000}]
+    old, new = tmp_path / "old.wav", tmp_path / "new.wav"
+    enhancement.enhance_audio(source, old, regions, lambda *_: None, lambda *_: None,
+        lambda *_: None, denoiser=lambda x: x*.25, speech_detector=lambda *_: [])
+    enhancement.enhance_independent(source, new, regions, lambda *_: None, lambda *_: None,
+        speech_enhancement=True, background_denoise=True, backend="gtcrn", denoiser=lambda x: x*.25,
+        speech_detector=lambda *_: [])
+    assert old.read_bytes() == new.read_bytes()
+
+
 @pytest.mark.parametrize("cancel_after", [0, 1, 2, 3])
 def test_split_cancellation_removes_all_intermediates(local, tmp_path, cancel_after):
     source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"

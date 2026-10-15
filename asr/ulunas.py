@@ -44,16 +44,16 @@ class ERB(nn.Module):
                                                     / (bins[i + 2] - bins[i+1] + 1e-12)
 
         erb_filters[-1, bins[-2]:bins[-1]+1] = 1- erb_filters[-2, bins[-2]:bins[-1]+1]
-        
+
         erb_filters = erb_filters[:, erb_subband_1:]
         return torch.from_numpy(np.abs(erb_filters))
-    
+
     def bm(self, x):
         """x: (B,C,T,F)"""
         x_low = x[..., :self.erb_subband_1]
         x_high = self.erb_fc(x[..., self.erb_subband_1:])
         return torch.cat([x_low, x_high], dim=-1)
-    
+
     def bs(self, x_erb):
         """x: (B,C,T,F_erb)"""
         x_erb_low = x_erb[..., :self.erb_subband_1]
@@ -68,7 +68,7 @@ class AffinePReLU(nn.Module):
         self.affine_bias = nn.Parameter(torch.zeros(channels, width))
         self.slope_weight = nn.Parameter(torch.empty(channels))
         nn.init.constant_(self.slope_weight, init)
-    
+
     def forward(self, x):
         y = self.affine_weight[None,:,None,:] * x + self.affine_bias[None,:,None,:]
         y = y + torch.where(x>0, x, self.slope_weight.view(1,-1,1,1) * x)
@@ -82,7 +82,7 @@ class FA(nn.Module):
 
         self.gru = nn.GRU(self.r, self.r, batch_first=True, bidirectional=True)
         self.fc = nn.Linear(2*self.r, self.r)
-        
+
         remainder = nfreq % self.r
         if remainder != 0:
             self.pad_len = self.r - remainder
@@ -102,9 +102,9 @@ class FA(nn.Module):
         x = x.reshape(B * T, self.H, self.r)
         x, _ = self.gru(x)  # (BT, H, 2C)
         x = self.fc(x)
-        
+
         x = x.reshape(B, T, self.H, self.r)
-        
+
         x = x.reshape(B, T, self.F_pad)  # (B, T, F)
 
         if self.pad_len > 0:
@@ -120,7 +120,7 @@ class cTFA(nn.Module):
         self.channels = channels
         self.ta_gru = nn.GRU(channels, channels*2, 1, batch_first=True)
         self.ta_fc = nn.Linear(channels*2, channels)
-        
+
         self.fa = FA(width)
 
     def forward(self, x):
@@ -129,17 +129,17 @@ class cTFA(nn.Module):
         at = self.ta_gru(zt.transpose(1,2))[0]
         at = self.ta_fc(at).transpose(1,2)  # (B,C,T)
         at = torch.sigmoid(at)
-        
+
         af = self.fa(x)
         af = torch.sigmoid(af)
-        
+
         return at[...,None] * x * af[:, None]
-    
+
 
 class Shuffle(nn.Module):
     def __init__(self):
         super().__init__()
-    
+
     def forward(self, x):
         """x: (B,2C,T,F)"""
         x1, x2 = torch.chunk(x, chunks=2, dim=1)
@@ -161,19 +161,19 @@ class XConvBlock(nn.Module):
         use_deconv: bool =False,
         is_last: bool=False,
     ):
-        super().__init__()  
+        super().__init__()
         self.g = groups
         if isinstance(kernel_size, int):
             kernel_size = [kernel_size, kernel_size]
         kt = kernel_size[0]
-        
+
         if use_deconv:
             pt = kt - 1
             conv_module = nn.ConvTranspose2d
         else:
             pt = 0
             conv_module = nn.Conv2d
-        
+
         pf = kernel_size[1]//2
 
         self.ops = nn.Sequential(
@@ -185,7 +185,7 @@ class XConvBlock(nn.Module):
             cTFA(out_channels, width),
             Shuffle() if (not is_last and groups==2) else nn.Identity()
         )
-    
+
     def forward(self, x):
         x = self.ops(x)
         return x
@@ -207,14 +207,14 @@ class XDWSBlock(nn.Module):
         if isinstance(kernel_size, int):
             kernel_size = [kernel_size, kernel_size]
         kt = kernel_size[0]
-        
+
         if use_deconv:
             pt = kt - 1
             conv_module = nn.ConvTranspose2d
         else:
             pt = 0
             conv_module = nn.Conv2d
-        
+
         pf = kernel_size[1]//2
 
         if stride == 2:
@@ -231,7 +231,7 @@ class XDWSBlock(nn.Module):
             AffinePReLU(out_channels, in_width),
             Shuffle() if groups==2 else nn.Identity()
         )
-        
+
         self.dconv = nn.Sequential(
             nn.ZeroPad2d([0, 0, kt - 1, 0]),
             conv_module(out_channels, out_channels, kernel_size,
@@ -239,9 +239,9 @@ class XDWSBlock(nn.Module):
             nn.BatchNorm2d(out_channels),
             AffinePReLU(out_channels, width) if not is_last else nn.Identity(),
             cTFA(out_channels, width)
-        )     
+        )
 
-        
+
     def forward(self, x):
         """x: (B, C, T, F)"""
         h = self.pconv(x)
@@ -266,14 +266,14 @@ class XMBBlocks(nn.Module):
         if isinstance(kernel_size, int):
             kernel_size = [kernel_size, kernel_size]
         kt = kernel_size[0]
-        
+
         if use_deconv:
             pt = kt - 1
             conv_module = nn.ConvTranspose2d
         else:
             pt = 0
             conv_module = nn.Conv2d
-        
+
         pf = kernel_size[1]//2
 
         if stride == 2:
@@ -296,7 +296,7 @@ class XMBBlocks(nn.Module):
                         stride=(1, stride), padding=(pt, pf), groups=out_channels),
             nn.BatchNorm2d(out_channels),
             AffinePReLU(out_channels, width)
-        )        
+        )
         self.pconv2 = nn.Sequential(
             nn.Conv2d(out_channels, out_channels, 1, groups=groups),
             nn.BatchNorm2d(out_channels),
@@ -309,14 +309,14 @@ class XMBBlocks(nn.Module):
         x = self.pconv1(x)
         x = self.dconv(x)
         x = self.pconv2(x)
-        
+
         if x.shape == input.shape:
             x = x + input
 
         x = self.shuffle(x)
 
         return x
-      
+
 
 class GRNN(nn.Module):
     """Grouped RNN"""
@@ -363,7 +363,7 @@ class DPGRNN(nn.Module):
         self.inter_rnn = GRNN(input_size=input_size, hidden_size=hidden_size, bidirectional=False)
         self.inter_fc = nn.Linear(hidden_size, input_size)
         self.inter_ln = nn.LayerNorm(((width, input_size)), eps=1e-8)
-    
+
     def forward(self, x):
         """x: (B, C, T, F)"""
         ## Intra RNN
@@ -377,16 +377,16 @@ class DPGRNN(nn.Module):
 
         ## Inter RNN
         x = intra_out.permute(0,2,1,3)  # (B,F,T,C)
-        inter_x = x.reshape(x.shape[0] * x.shape[1], x.shape[2], x.shape[3]) 
+        inter_x = x.reshape(x.shape[0] * x.shape[1], x.shape[2], x.shape[3])
         inter_x = self.inter_rnn(inter_x)[0]  # (B*F,T,C)
         inter_x = self.inter_fc(inter_x)      # (B*F,T,C)
         inter_x = inter_x.reshape(x.shape[0], self.width, -1, self.input_size) # (B,F,T,C)
         inter_x = inter_x.permute(0,2,1,3)   # (B,T,F,C)
-        inter_x = self.inter_ln(inter_x) 
+        inter_x = self.inter_ln(inter_x)
         inter_out = torch.add(intra_out, inter_x)
-        
+
         dual_out = inter_out.permute(0,3,1,2)  # (B,C,T,F)
-        
+
         return dual_out
 
 
@@ -408,11 +408,11 @@ class Encoder(nn.Module):
         for i in range(n_blocks):
             module = block_types[types[i]]
             out_channels = channels[i]
-            
+
             en_convs.append(module(in_channels, out_channels, widths[i],
                                    kernels[i], strides[i], groups=groups[i]))
             in_channels = out_channels
-            
+
         self.en_convs = nn.ModuleList(en_convs)
 
     def forward(self, x):
@@ -441,7 +441,7 @@ class Decoder(nn.Module):
         n_blocks = len(types)
         de_convs = []
         in_channels = channels[-1]
-        
+
         for i in range(n_blocks-1, 0, -1):
             module = block_types[types[i]]
             out_channels = channels[i-1]
@@ -452,7 +452,7 @@ class Decoder(nn.Module):
 
         module = block_types[types[0]]
         de_convs.append(module(in_channels, 1, final_width, kernels[0], strides[0], groups[0], use_deconv=True, is_last=True))
-        
+
         self.de_convs = nn.ModuleList(de_convs)
 
     def forward(self, x, en_outs):
@@ -478,22 +478,22 @@ class ULUNAS(nn.Module):
         channels=[12, 24, 24, 32, 16],
         kernels=[(3, 3), (2, 3), (2, 3), (1, 5), (1, 5)],
         widths=[65, 33, 33, 33, 33]
-        
+
     ):
         super().__init__()
         self.n_fft = n_fft
         self.hop_len = hop_len
         self.win_len = win_len
-        
+
         self.erb = ERB(erb_low, erb_high, nfft=n_fft, high_lim=8000, fs=16000)
 
         self.encoder = Encoder(types, channels, widths, kernels, strides, groups)
-        
+
         self.dpgrnn = nn.Sequential(
                 *[DPGRNN(channels[-1], widths[-1], channels[-1]) \
                     for i in range(2)]
             )
-        
+
         self.decoder = Decoder(types, channels, widths, kernels, strides, groups, final_width=erb_low+erb_high)
 
     def forward(self, input):
@@ -503,10 +503,10 @@ class ULUNAS(nn.Module):
         device = input.device
         assert input.ndim == 2  # mono input
         n_samples = input.shape[1]
-        
+
         stft_kwargs = {'n_fft': self.n_fft, 'hop_length': self.hop_len, 'win_length': self.win_len,
                        'window': torch.hann_window(self.win_len).to(device), 'onesided': True}
-        
+
         spec = torch.stft(input,  **stft_kwargs, return_complex=True)
         spec = torch.view_as_real(spec)  # (B,F,T,2)
 
@@ -514,19 +514,19 @@ class ULUNAS(nn.Module):
         feat = torch.log10(torch.norm(spec, dim=1, keepdim=True).clamp(1e-12))
 
         feat = self.erb.bm(feat)  # (B,4,T,129)
-        
+
         feat, en_outs = self.encoder(feat)
 
         feat = self.dpgrnn(feat) # (B,16,T,33)
 
         m_feat = self.decoder(feat, en_outs)
-        
+
         m = self.erb.bs(m_feat)
 
         spec_enh = spec * m
         spec_enh = spec_enh.permute(0,3,2,1)  # (B,F,T,2)
-        
+
         spec_enh = torch.complex(spec_enh[...,0], spec_enh[...,1])
         output = torch.istft(spec_enh, **stft_kwargs, length=n_samples)
-        
+
         return output
