@@ -317,6 +317,8 @@ def enhance_audio(source: Path, target: Path, regions: list[dict[str, float]],
                   wet_ratio: float = WET_RATIO, enable_gain: bool = True,
                   enable_pauses: bool = True, speech_detector: Callable | None = None) -> dict[str, Any]:
     """Shared production/benchmark order: enhancement, VAD union, protected pauses, waveform."""
+    from audio_intel.worker import JobCancelled
+
     completed = False
     try:
         result = enhance_file(source, target, regions, report, denoiser=denoiser,
@@ -329,6 +331,8 @@ def enhance_audio(source: Path, target: Path, regions: list[dict[str, float]],
             try:
                 detected = detector(target, vad_report)
                 combined = merge_regions(regions, detected)
+            except JobCancelled:
+                raise
             except (OSError, ValueError, RuntimeError):
                 combined = regions
                 result["pause_suppression_reason"] = "vad_unavailable"

@@ -122,6 +122,16 @@ pre-change baseline first; `--baseline-report` reuses its original transcription
 only when model, device, cases, durations and normalized audio match. Compare CER
 to that baseline where trusted references exist, and match speech loudness for listening.
 
+The policy-2 public comparison uses the four original controls and seven extended
+controls generated above. With Qwen3-ASR 1.7B on GPU, the ten cases with trusted
+ordered references retain the v0.1.33 CER at a 50% mix. Steady-noise safe pauses
+drop about 5.8–6 dB while speech-region RMS remains unchanged to measurement
+precision. Increasing the mix to 60%, 65% or diagnostic 75% adds one character
+error in the original noisy control, so production retains 50%. The overlapping
+speaker control has no trusted ordered transcript and is not included in CER.
+Transient-dominated gaps can receive little reduction; these results do not
+establish subjective listening quality or removal of noise during speech.
+
 Reports, media and transcripts must stay under ignored `logs/`, `tmp/` or
 `testdata/real/`. Standard output contains anonymous measurements, never private
 transcripts. Cases without trusted references report text agreement, not accuracy.

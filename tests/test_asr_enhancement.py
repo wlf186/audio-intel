@@ -309,6 +309,30 @@ def test_second_vad_failure_keeps_enhancement_but_skips_pause_attenuation(local,
     assert result["pause_attenuated_seconds"] == 0
 
 
+def test_second_vad_cancellation_propagates_and_removes_enhanced_file(local, tmp_path):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    sf.write(source, np.full(3 * 16000, .1, np.float32), 16000, subtype="PCM_16")
+    def cancelled(*_):
+        raise worker.JobCancelled("Public VAD cancellation fixture")
+    with pytest.raises(worker.JobCancelled):
+        enhancement.enhance_audio(source, target, [{"start": 0., "end": 1.}],
+            lambda *_: None, lambda *_: None, lambda *_: None, denoiser=lambda x: x * .5,
+            speech_detector=cancelled)
+    assert not target.exists()
+    assert not target.with_suffix(".partial.wav").exists()
+    assert not target.with_suffix(".pause.partial.wav").exists()
+
+
+def test_enhancement_stage_does_not_convert_cancellation_to_fallback(local, tmp_path, monkeypatch):
+    from asr import stage
+    def cancelled(*args, **kwargs):
+        raise worker.JobCancelled("Public stage cancellation fixture")
+    monkeypatch.setattr(enhancement, "enhance_audio", cancelled)
+    with pytest.raises(worker.JobCancelled):
+        stage.enhance({"input_path": str(tmp_path / "source.wav"),
+                       "enhanced_path": str(tmp_path / "enhanced.wav"), "speech_regions": []})
+
+
 def test_enhanced_playback_is_separate_authenticated_and_range_capable(local, monkeypatch):
     value = replace(local, mock_mode=False)
     for module in (api, db, worker, pipeline):

@@ -327,6 +327,7 @@ def align(payload: dict[str, Any]) -> dict[str, Any]:
 def enhance(payload: dict[str, Any]) -> dict[str, Any]:
     from .enhancement import enhance_audio
     from audio_intel.model_registry import asr_enhancement_model
+    from audio_intel.worker import JobCancelled
 
     model = asr_enhancement_model()
     def report(current: int, total: int) -> None:
@@ -342,6 +343,8 @@ def enhance(payload: dict[str, Any]) -> dict[str, Any]:
         result = enhance_audio(Path(payload["input_path"]), Path(payload["enhanced_path"]),
                                payload["speech_regions"], report, vad_progress, pause_progress)
         return result
+    except JobCancelled:
+        raise
     except (OSError, ValueError, RuntimeError) as exc:
         Path(payload["enhanced_path"]).unlink(missing_ok=True)
         return {"mode": "auto", "status": "fallback", "reason": "model_unavailable" if isinstance(exc, FileNotFoundError)
