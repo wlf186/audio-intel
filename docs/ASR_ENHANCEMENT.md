@@ -1,5 +1,64 @@
 # Local ASR speech enhancement / 本地 ASR 人声增强
 
+## Independent controls / 独立开关
+
+New submissions accept `speech_enhancement` and `background_denoise` booleans,
+both defaulting to `true`. The UI remembers each choice in the existing
+localStorage lifetime (schema v5); legacy v4 `auto` maps to both on and `off`
+to both off. Content/session draft clearing is unchanged. Saved video uploads
+retain their original parameters when resumed.
+
+| Speech gain / 人声增强 | Denoising / 背景降噪 | Processing / 处理 |
+| --- | --- | --- |
+| false | false | Original signal / 原音 |
+| true | false | Continuous upward gain, no denoiser loaded / 仅连续轻声增益 |
+| false | true | Denoising without speech gain / 仅降噪 |
+| true | true | Denoising followed by continuous gain / 先降噪再增强 |
+
+Policy 5 separates these operations and reports their individual
+`enabled`, `status` and `reason` under `audio_enhancement.speech_enhancement`
+and `.background_denoise`. Denoiser failure does not block gain; an applied
+result can have `reason=partial_fallback`. Always inspect both outcomes.
+Capabilities publish availability/defaults for each operation. Gain requires no
+extra model. Both operations run on local CPU independently of the ASR device.
+Original playback plus at most one processed track are retained.
+
+旧 `audio_enhancement=auto|off` 仍作为双开／双关的组合别名；不能与新字段混用，
+否则返回 422。新任务保存组合、策略版本和服务端选定的降噪后端，不能通过请求指定模型。
+重放省略字段时继承已保存值；改变开关返回 409。未保存独立开关的历史任务继续走旧处理链，
+历史缺少增强字段仍按关闭解释；不迁移既有任务、媒体或声纹。
+
+The legacy alias enables/disables both and cannot be mixed with independent
+fields (422). New jobs snapshot the effective controls, policy and server-selected
+backend. Replays inherit saved values; changed controls conflict (409). Historical
+requests retain their previous path on replay/retry; a missing legacy field means
+o enhancement. No persistent migration is performed.
+
+### Stronger-denoiser experiment / 更强降噪实验
+
+The default remains the validated 50% GTCRN mix with policy-4 continuous gain.
+Independent switches do not imply stronger suppression. A pinned
+[UL-UNAS DNS3](https://github.com/Xiaobin-Rong/ul-unas/tree/00f7c700da43d38347f30a6ccebd86fcbc798e07)
+candidate is included with its [MIT license](../asr/licenses/UL-UNAS-MIT.txt).
+It uses existing Torch/NumPy on CPU FP32, without extra Python dependencies.
+Setup downloads manifest-owned weights and verifies revision and SHA-256;
+runtime never downloads them. Native reshapes replace upstream einops and ISTFT
+explicitly preserves input length, including the tail.
+
+在 11 个公开控制样本、10 个可信文本参考的配对测试中，UL-UNAS 的 100% 与 75%
+配置均使两个噪音样本的 CER 相对当前方案上升，因此未通过“不降低识别准确率”的门槛，
+不作为日常默认，也不宣称已实现更强降噪。管理员实验可设置
+`AUDIO_INTEL_ASR_DENOISE_BACKEND=ulunas`；恢复 `gtcrn`（默认）即可回退。该变量仅在
+首次接受新任务时选择 manifest 模型；刷新 API 和 worker 后生效，已保存请求不改变。
+试听必须比较讲话期间的背景声和轻声字尾，不能只看停顿音量或平均响度。
+
+Both 100% and 75% UL-UNAS arms increased CER on two public noisy controls relative
+to the current baseline; they fail the no-regression gate and remain experimental.
+The administrator-only `AUDIO_INTEL_ASR_DENOISE_BACKEND=gtcrn|ulunas` selects the
+manifest model for new policy-5 requests (default `gtcrn`). Refresh service processes
+after changing it; persisted requests keep their backend. This is not a public
+model selector. Missing/invalid weights never disable base ASR or independent gain.
+
 New audio and video transcription requests default to `audio_enhancement=auto`.
 Use `off` to retain the previous recognition input. Automatic enhancement keeps
 all conversation speakers: it suppresses environmental noise and lifts quiet
@@ -92,8 +151,8 @@ includes signal processing and excludes VAD.
 
 The UI keeps the original audio selected initially and offers enhanced playback
 and download when available. Switching tracks preserves position and playback
-state, with the waveform following the selected track. The enhancement preference
-uses the existing ASR localStorage lifetime; draft and sessionStorage clearing
+state, with the waveform following the selected track. The two enhancement preferences
+use the existing ASR localStorage lifetime; draft and sessionStorage clearing
 rules remain unchanged. Historical results without the field imply no recorded
 enhancement, not successful processing.
 

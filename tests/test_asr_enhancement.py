@@ -12,7 +12,7 @@ import soundfile as sf
 from fastapi.testclient import TestClient
 
 from audio_intel import api, db, worker
-from audio_intel.asr_enhancement import request_mode
+from audio_intel.asr_enhancement import CONTROL_FIELDS, processing_key, request_controls, request_mode
 from audio_intel.config import settings
 from audio_intel.model_registry import model_installation
 from asr import enhancement, pipeline
@@ -50,6 +50,8 @@ def test_defaults_off_validation_and_historical_idempotent_replay(local):
                            files=files, data={"audio_enhancement": "strong"}).status_code == 422
         old_request = first.json()["request"].copy()
         old_request.pop("audio_enhancement")
+        for field in CONTROL_FIELDS:
+            old_request.pop(field, None)
         digest = hashlib.sha256(files["file"][1]).hexdigest()
         key = "enhancement-historical-01"
         old, _ = db.create_job_idempotent("asr", "public-fixture.wav", old_request, "a" * 32,
@@ -82,6 +84,121 @@ def test_openai_submission_defaults_and_opt_out(local, monkeypatch):
                 data={} if value is None else {"audio_enhancement": value})
             assert response.status_code == 200
             assert db.get_job(response.headers["X-Job-ID"])["request"]["audio_enhancement"] == (value or "auto")
+
+
+@pytest.mark.parametrize("gain,noise", [(False, False), (True, False), (False, True), (True, True)])
+def test_independent_controls_submission_replay_and_backend_snapshot(local, monkeypatch, gain, noise):
+    monkeypatch.setenv("AUDIO_INTEL_ASR_DENOISE_BACKEND", "gtcrn")
+    files = {"file": ("public.wav", b"RIFF-controls", "audio/wav")}
+    headers = {"Authorization": "Bearer enhancement-test", "Idempotency-Key": "split-controls-0001"}
+    with TestClient(api.create_app()) as client:
+        first = client.post("/api/v1/asr/jobs", files=files, headers=headers,
+                            data={"speech_enhancement": str(gain), "background_denoise": str(noise)})
+        assert first.status_code == 202
+        saved = first.json()["request"]
+        assert saved["speech_enhancement"] is gain and saved["background_denoise"] is noise
+        assert saved["enhancement_policy_version"] == 5 and saved["denoise_backend"] == "gtcrn"
+        monkeypatch.setenv("AUDIO_INTEL_ASR_DENOISE_BACKEND", "ulunas")
+        replay = client.post("/api/v1/asr/jobs", files=files, headers=headers)
+        assert replay.status_code == 200 and replay.json()["request"] == saved
+        assert client.post("/api/v1/asr/jobs", files=files, headers=headers,
+                           data={"background_denoise": str(not noise)}).status_code == 409
+        assert client.post("/api/v1/asr/jobs", files=files, headers=headers,
+                           data={"audio_enhancement": "auto", "speech_enhancement": "true"}).status_code == 422
+
+
+def test_legacy_enabled_controls_and_eta_cohorts():
+    old = {"request": {"audio_enhancement": "auto"}}
+    assert request_controls(None, None, None, old) == {"audio_enhancement": "auto"}
+    assert request_controls(None, True, True, old) == {"audio_enhancement": "auto"}
+    assert request_controls(None, None, None, {"request": {}}) == {"audio_enhancement": "off"}
+    assert processing_key({"speech_enhancement": True, "background_denoise": False}) != processing_key(
+        {"speech_enhancement": False, "background_denoise": True})
+
+
+@pytest.mark.parametrize("gain,noise", [(False, False), (True, False), (False, True), (True, True)])
+def test_openai_independent_controls(local, monkeypatch, gain, noise):
+    async def complete(job_id, **_):
+        db.finish_job(job_id, "succeeded", result_json={"text": "public fixture"})
+        return db.get_job(job_id)
+    monkeypatch.setattr(api, "wait_for_job", complete)
+    with TestClient(api.create_app(), headers={"Authorization": "Bearer enhancement-test"}) as client:
+        response = client.post("/v1/audio/transcriptions",
+            files={"file": ("public.wav", b"RIFF-controls", "audio/wav")},
+            data={"speech_enhancement": str(gain), "background_denoise": str(noise)})
+        assert response.status_code == 200
+        request = db.get_job(response.headers["X-Job-ID"])["request"]
+        assert request["speech_enhancement"] is gain and request["background_denoise"] is noise
+
+
+@pytest.mark.parametrize("gain,noise", [(False, False), (True, False), (False, True), (True, True)])
+def test_independent_signal_paths_and_cleanup(local, tmp_path, monkeypatch, gain, noise):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    audio = (.002 * np.sin(np.arange(64000) * .1)).astype(np.float32)
+    sf.write(source, audio, 16000, subtype="PCM_16")
+    calls = []
+    def load(backend):
+        calls.append(backend)
+        return lambda x: x * .25
+    monkeypatch.setattr(enhancement, "load_background_denoiser", load)
+    result = enhancement.enhance_independent(source, target, [{"start": 0., "end": 4.}],
+        lambda *_: None, lambda *_: None, speech_enhancement=gain, background_denoise=noise,
+        backend="gtcrn", speech_detector=lambda *_: [])
+    assert bool(calls) is noise
+    assert (result["speech_enhancement"]["status"] == "applied") is gain
+    assert (result["background_denoise"]["status"] == "applied") is noise
+    assert target.exists() is (gain or noise)
+    if target.exists():
+        assert sf.info(target).frames == len(audio)
+    assert not list(tmp_path.glob("*.partial.wav")) and not list(tmp_path.glob("*.denoise.wav"))
+
+
+def test_denoiser_failure_keeps_independent_gain(local, tmp_path, monkeypatch):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    sf.write(source, .002 * np.sin(np.arange(64000) * .1), 16000, subtype="PCM_16")
+    def unavailable(*_):
+        raise FileNotFoundError("missing pinned denoiser")
+    monkeypatch.setattr(enhancement, "load_background_denoiser", unavailable)
+    result = enhancement.enhance_independent(source, target, [{"start": 0., "end": 4.}],
+        lambda *_: None, lambda *_: None, speech_enhancement=True, background_denoise=True,
+        speech_detector=lambda *_: [])
+    assert result["status"] == "applied" and result["reason"] == "partial_fallback"
+    assert result["speech_enhancement"]["status"] == "applied"
+    assert result["background_denoise"]["reason"] == "model_unavailable"
+    assert target.is_file() and result["max_gain_db"] > 0
+
+
+def test_gain_failure_preserves_successful_denoising(local, tmp_path, monkeypatch):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    sf.write(source, .002 * np.sin(np.arange(64000) * .1), 16000, subtype="PCM_16")
+    original = enhancement.enhance_file
+    def fail_gain(*args, **kwargs):
+        if kwargs.get("enable_denoise") is False:
+            raise OSError("fixture gain failure")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(enhancement, "enhance_file", fail_gain)
+    result = enhancement.enhance_independent(source, target, [{"start": 0., "end": 4.}],
+        lambda *_: None, lambda *_: None, speech_enhancement=True, background_denoise=True,
+        denoiser=lambda x: x*.25, speech_detector=lambda *_: [])
+    assert result["status"] == "applied" and result["reason"] == "partial_fallback"
+    assert result["speech_enhancement"]["status"] == "fallback"
+    assert result["background_denoise"]["status"] == "applied"
+    assert target.is_file() and sf.info(target).frames == 64000
+    assert not list(tmp_path.glob("*.denoise.wav"))
+
+
+@pytest.mark.parametrize("cancel_after", [0, 1, 2, 3])
+def test_split_cancellation_removes_all_intermediates(local, tmp_path, cancel_after):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    sf.write(source, .002 * np.sin(np.arange(64000) * .1), 16000, subtype="PCM_16")
+    def report(n, total):
+        if n >= 64000 * cancel_after:
+            raise worker.JobCancelled()
+    with pytest.raises(worker.JobCancelled):
+        enhancement.enhance_independent(source, target, [{"start": 0., "end": 4.}], report,
+            lambda *_: None, speech_enhancement=True, background_denoise=True,
+            denoiser=lambda x: x * .25, speech_detector=lambda *_: [])
+    assert list(tmp_path.glob("*.wav")) == [source]
 
 
 def test_clean_and_silent_signals_bypass_exactly():

@@ -325,11 +325,12 @@ def align(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def enhance(payload: dict[str, Any]) -> dict[str, Any]:
-    from .enhancement import enhance_audio
-    from audio_intel.model_registry import asr_enhancement_model
+    from .enhancement import enhance_audio, enhance_independent
+    from audio_intel.model_registry import asr_denoise_model, asr_enhancement_model
     from audio_intel.worker import JobCancelled
 
-    model = asr_enhancement_model()
+    model = (asr_denoise_model(payload["denoise_backend"]) if payload.get("enhancement_policy_version") == 5
+             and payload["background_denoise"] else asr_enhancement_model())
     def report(current: int, total: int) -> None:
         _progress(payload, "audio_enhancement", math.ceil(current / 16000), math.ceil(total / 16000),
                   stage_progress=current / max(total, 1), unit="media_second")
@@ -340,6 +341,11 @@ def enhance(payload: dict[str, Any]) -> dict[str, Any]:
         def pause_progress(current: int, total: int) -> None:
             _progress(payload, "audio_enhancement_pauses", math.ceil(current / 16000), math.ceil(total / 16000),
                       stage_progress=current / max(total, 1), unit="media_second")
+        if payload.get("enhancement_policy_version") == 5:
+            return enhance_independent(Path(payload["input_path"]), Path(payload["enhanced_path"]),
+                payload["speech_regions"], report, vad_progress,
+                speech_enhancement=bool(payload["speech_enhancement"]),
+                background_denoise=bool(payload["background_denoise"]), backend=payload["denoise_backend"])
         result = enhance_audio(Path(payload["input_path"]), Path(payload["enhanced_path"]),
                                payload["speech_regions"], report, vad_progress, pause_progress,
                                gain_policy="legacy" if os.getenv("AUDIO_INTEL_ASR_CONTINUOUS_GAIN", "1").strip().lower()
@@ -349,10 +355,19 @@ def enhance(payload: dict[str, Any]) -> dict[str, Any]:
         raise
     except (OSError, ValueError, RuntimeError) as exc:
         Path(payload["enhanced_path"]).unlink(missing_ok=True)
-        return {"mode": "auto", "status": "fallback", "reason": "model_unavailable" if isinstance(exc, FileNotFoundError)
+        result = {"mode": "auto", "status": "fallback", "reason": "model_unavailable" if isinstance(exc, FileNotFoundError)
                 else "resource_unavailable" if isinstance(exc, OSError) else "invalid_output" if isinstance(exc, ValueError)
                 else "inference_failed", "model": model["name"], "model_revision": model["revision"],
                 "compute_device": "cpu"}
+        if payload.get("enhancement_policy_version") == 5:
+            result.update(processing_version=5, **{key: {"enabled": payload[key],
+                "status": "fallback" if payload[key] else "off",
+                "reason": result["reason"] if payload[key] else "disabled"}
+                for key in ("speech_enhancement", "background_denoise")})
+            if not payload["background_denoise"]:
+                result.pop("model")
+                result.pop("model_revision")
+        return result
 
 
 def main() -> None:

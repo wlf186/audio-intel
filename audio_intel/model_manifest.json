@@ -178,6 +178,20 @@
       "device": "CPU · FP32",
       "license": "MIT",
       "license_url": "https://raw.githubusercontent.com/Xiaobin-Rong/gtcrn/502ebfab64da7c4a9af78dcb9c6ceef1ebb01c73/LICENSE"
+    },
+    {
+      "name": "UL-UNAS-DNS3",
+      "role": "asr_background_denoise",
+      "provider": "github",
+      "repository": "Xiaobin-Rong/ul-unas",
+      "revision": "00f7c700da43d38347f30a6ccebd86fcbc798e07",
+      "required_files": ["model_trained_on_dns3.tar"],
+      "source_files": {"model_trained_on_dns3.tar": "checkpoints/model_trained_on_dns3.tar"},
+      "sha256": {"model_trained_on_dns3.tar": "9a0656bf8e88d36865792d3065fed9bc33d5ab85e11ae3a1ae085b928fdb49a8"},
+      "targets": ["asr"],
+      "device": "CPU · FP32",
+      "license": "MIT",
+      "license_url": "https://raw.githubusercontent.com/Xiaobin-Rong/ul-unas/00f7c700da43d38347f30a6ccebd86fcbc798e07/LICENSE"
     }
   ]
 }

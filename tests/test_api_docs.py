@@ -561,7 +561,13 @@ def test_speech_enhancement_openapi_contract_and_examples(tmp_path, monkeypatch)
         contract = schemas[body["schema"]["$ref"].rsplit("/", 1)[-1]]
         field = contract["properties"]["audio_enhancement"]
         assert "audio_enhancement" not in contract.get("required", [])
-        assert field["default"] == "auto"
+        assert field["deprecated"] is True
+        for control in ("speech_enhancement", "background_denoise"):
+            assert contract["properties"][control]["default"] is True
+            assert control not in contract.get("required", [])
+        combinations = {(item["value"]["speech_enhancement"], item["value"]["background_denoise"])
+                        for item in body["examples"].values() if "speech_enhancement" in item["value"]}
+        assert combinations == {(False, False), (True, False), (False, True), (True, True)}
         assert any(set(part.get("enum", [])) == {"auto", "off"}
                    for part in [field, *field.get("anyOf", [])])
         modes = {example["value"].get("audio_enhancement") for example in body["examples"].values()}
@@ -596,6 +602,9 @@ def test_speech_enhancement_openapi_contract_and_examples(tmp_path, monkeypatch)
         else:
             assert "playback_url" not in enhancement
     historical = dict(RESULT_EXAMPLES["asr_enhancement_applied"]["value"])
+    partial = RESULT_EXAMPLES["asr_independent_partial"]["value"]
+    assert JobResultResponse.model_validate(partial).model_dump(exclude_unset=True) == partial
+    assert partial["audio_enhancement"]["processing_version"] == 5
     historical["audio_enhancement"] = {**historical["audio_enhancement"],
         "processing_version": 2, "pause_attenuated_seconds": .4,
         "max_pause_attenuation_db": 6., "pause_suppression_reason": "applied"}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .asr_enhancement import processing_key
+
 import math
 import re
 from datetime import datetime, timedelta, timezone
@@ -111,7 +113,7 @@ def _cohort(job: dict[str, Any]) -> tuple[Any, ...]:
         model = resolve_asr_model(request.get("model")) or default_asr_model()
         return common + (
             model["public_id"], bool(request.get("diarize")), bool(request.get("align")),
-            request.get("audio_enhancement", "off"),
+            processing_key(request),
         )
     model = resolve_tts_model(request.get("model")) or default_tts_model()
     if request.get("purpose") == "tts_document":
@@ -159,7 +161,7 @@ def _duration_range(job: dict[str, Any], context: dict[str, Any]) -> tuple[float
                     resolve_asr_model((item.get("request") or {}).get("model"))
                     or default_asr_model()
                 )["public_id"] == model["public_id"]
-                and (item.get("request") or {}).get("audio_enhancement", "off") == request.get("audio_enhancement", "off")
+                and processing_key(item.get("request") or {}) == processing_key(request)
             ]
         else:
             model = resolve_tts_model(request.get("model")) or default_tts_model()

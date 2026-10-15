@@ -27,6 +27,17 @@ def asr_enhancement_model() -> dict[str, Any]:
     return models[0]
 
 
+def asr_denoise_model(backend: str = "ulunas") -> dict[str, Any]:
+    if backend == "gtcrn":
+        return asr_enhancement_model()
+    if backend != "ulunas":
+        raise ValueError("Unknown ASR denoising backend")
+    models = [item for item in models_for("asr") if item.get("role") == "asr_background_denoise"]
+    if len(models) != 1:
+        raise RuntimeError("The manifest must declare one ASR background denoiser")
+    return models[0]
+
+
 def asr_models() -> list[dict[str, Any]]:
     return [item for item in models_for("asr") if item.get("public_id")]
 
@@ -155,4 +166,4 @@ def target_ready(models_dir: Path, target: str) -> bool:
     # Enhancement is optional: its own capability requires the exact revision
     # and checksum; a missing enhancer must not disable ordinary transcription.
     return all(model_installation(models_dir, model)["installed"] for model in models_for(target)
-               if model.get("role") != "asr_enhancement")
+               if model.get("role") not in {"asr_enhancement", "asr_background_denoise"})

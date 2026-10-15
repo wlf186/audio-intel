@@ -56,6 +56,23 @@ audio input
 
 ### Speech enhancement
 
+Policy 5 exposes independent `speech_enhancement` and `background_denoise`
+booleans, both on by default. It executes denoising before continuous gain and
+recovers each operation independently. Gain-only skips model loading. Results
+record both outcomes; aggregate `applied` can include a `partial_fallback`.
+Submission snapshots include effective controls, policy and manifest-selected
+backend; ETA cohorts distinguish these combinations. Historical requests without
+these controls retain the legacy path and fingerprints. The original audio still
+supplies speaker clustering and voiceprints. There is no database migration.
+
+The validated default remains GTCRN 50%. A pinned CPU FP32 UL-UNAS candidate
+has an independent optional manifest role and uses existing Torch/NumPy. Both
+UL-UNAS mix candidates failed public CER validation and are experimental; the
+administrator backend override does not modify persisted requests. Both denoisers
+are optional for base ASR readiness, with exact revision/checksum availability
+reported separately. No runtime network download or user model path is accepted.
+
+
 New audio, video and compatible transcription submissions default to
 `audio_enhancement=auto`; `off` preserves the former recognition input. The pinned
 GTCRN-DNS3 checkpoint runs in a separate CPU FP32 stage child within the existing

@@ -642,6 +642,35 @@ print("Replacement backup:", receipt.get("backup_url"))
 `GET /api/v1/voiceprints/people` returns required `sort_initial` (A–Z or #) and full-pinyin/Latin ordered people; `/api/v1/tts/voices` uses the same ordering. The frontend passes that order through clone, document TTS, ASR rename/enrollment and video enrollment pickers. System hotword term order and historical speaker snapshots are unchanged.
 ## ASR speech enhancement / ASR 人声增强
 
+独立布尔参数 `speech_enhancement`（人声增强）与 `background_denoise`（背景降噪）
+适用于下面三个入口，新任务均默认 `true`。音频及兼容入口使用 multipart 的 `true/false`，
+视频入口使用 JSON boolean。双开先降噪再平稳增益；仅增益不加载降噪模型。
+旧 `audio_enhancement=auto|off` 是双开／双关别名，与任一新字段混用返回 `422`。
+省略参数重放时继承已保存设置，改变任一开关返回 `409`；历史请求不自动升级处理链。
+
+Independent booleans `speech_enhancement` and `background_denoise` default to true
+on all three endpoints. Both enabled means denoise then continuous gain; gain
+alone loads no denoiser. The legacy alias cannot be combined with new fields (422).
+Replay inherits saved settings; changes conflict (409). Historical requests retain
+their previous processing path.
+
+Capabilities add `asr.audio_enhancement.speech_enhancement` and
+`.background_denoise`, each with `supported/available/default`. Policy-5 detail/results
+add the same two objects with `enabled/status/reason`; denoising also identifies
+the actual model/revision/mix. Failure is independent: `status=applied` with
+`reason=partial_fallback` can mean gain succeeded while denoising failed.
+Global job lists and SSE remain summary-only. The validated GTCRN mix remains the
+default; the stronger UL-UNAS candidate failed public CER validation. See the
+[enhancement guide](ASR_ENHANCEMENT.md#independent-controls--独立开关).
+
+```bash
+BASE_URL="${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}"
+API_KEY="${AUDIO_INTEL_API_KEY:?Set AUDIO_INTEL_API_KEY}"
+curl -H "Authorization: Bearer $API_KEY" -H "Idempotency-Key: independent-gain-001" \
+  -F file=@meeting.wav -F speech_enhancement=true -F background_denoise=false \
+  "$BASE_URL/api/v1/asr/jobs"
+```
+
 新音频、视频及 OpenAI 兼容转写默认 `audio_enhancement=auto`，显式 `off` 关闭。
 增强使用本地 CPU FP32，与 ASR 的 CPU/GPU 选择独立；保留全部交谈者，干净且音量
 充足的片段旁路。声纹导入和克隆参考分析不启用增强。

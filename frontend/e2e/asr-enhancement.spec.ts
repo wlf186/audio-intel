@@ -98,12 +98,47 @@ for(const width of [1440,390]){
   await page.reload()
   if(width===390){await page.locator('.asr-settings-toggle').click();await page.locator('.asr-advanced-toggle').click()}
   await expect(select).not.toBeChecked()
+  await expect(page.getByLabel('背景降噪',{exact:true})).toBeChecked()
+  for(const control of [select,page.getByLabel('背景降噪',{exact:true})]){
+   const box=await control.locator('..').boundingBox();expect(box!.height).toBeGreaterThanOrEqual(44);expect(box!.x+box!.width).toBeLessThanOrEqual(width)
+  }
   await page.locator('input[type=file]').setInputFiles({name:'public.wav',mimeType:'audio/wav',buffer:wave(.05)})
   const accepted=page.waitForResponse(r=>r.url().endsWith('/api/v1/asr/jobs')&&r.request().method()==='POST')
   await page.getByRole('button',{name:'开始转写',exact:true}).click()
   expect((await accepted).status()).toBe(202)
-  expect(state.submission).toMatch(/name="audio_enhancement"\r\n\r\noff/)
+  expect(state.submission).toMatch(/name="speech_enhancement"\r\n\r\nfalse/)
+  expect(state.submission).toMatch(/name="background_denoise"\r\n\r\ntrue/)
+  expect(state.submission).not.toContain('name="audio_enhancement"')
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
   expect(errors).toEqual([])
  })
 }
+
+for(const [gain,noise] of [[false,false],[true,false],[false,true],[true,true]]){
+ test(`independent audio controls submit gain=${gain} noise=${noise}`,async({page})=>{
+  const {errors,state}=await fixture(page)
+  await page.getByLabel('人声增强',{exact:true}).setChecked(gain)
+  await page.getByLabel('背景降噪',{exact:true}).setChecked(noise)
+  await page.locator('input[type=file]').setInputFiles({name:'public.wav',mimeType:'audio/wav',buffer:wave(.05)})
+  const accepted=page.waitForResponse(r=>r.url().endsWith('/api/v1/asr/jobs')&&r.request().method()==='POST')
+  await page.getByRole('button',{name:'开始转写',exact:true}).click()
+  expect((await accepted).status()).toBe(202)
+  expect(state.submission).toContain(`name="speech_enhancement"\r\n\r\n${gain}`)
+  expect(state.submission).toContain(`name="background_denoise"\r\n\r\n${noise}`)
+  expect(state.submission).not.toContain('name="audio_enhancement"')
+  expect(errors).toEqual([])
+ })
+}
+test('legacy disabled preference migrates to both controls off',async({page})=>{
+ await page.addInitScript(()=>{
+  if(!localStorage.getItem('migration-fixture')){
+   localStorage.setItem('audio-intel:asr-preferences:v4',JSON.stringify({audioEnhancement:'off'}))
+   localStorage.setItem('migration-fixture','1')
+  }
+ })
+ const {errors}=await fixture(page)
+ await expect(page.getByLabel('人声增强',{exact:true})).not.toBeChecked()
+ await expect(page.getByLabel('背景降噪',{exact:true})).not.toBeChecked()
+ expect(await page.evaluate(()=>localStorage.getItem('audio-intel:asr-preferences:v4'))).toBeNull()
+ expect(errors).toEqual([])
+})

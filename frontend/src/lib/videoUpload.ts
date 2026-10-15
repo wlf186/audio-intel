@@ -12,7 +12,7 @@ export function loadVideoResume():Resume|undefined{
   const saved:Resume|null=JSON.parse(sessionStorage.getItem(videoResumeKey)||'null')
   if(!saved)return undefined
   // Resume the submitted settings of uploads created before enhancement existed.
-  return {...saved,params:{...saved.params,audio_enhancement:saved.params.audio_enhancement??'off'}}
+  return typeof saved.params.speech_enhancement==='boolean'||typeof saved.params.background_denoise==='boolean'?saved:{...saved,params:{...saved.params,audio_enhancement:saved.params.audio_enhancement??'off'}}
  }catch{return undefined}
 }
 function saveResume(value:Resume){sessionStorage.setItem(videoResumeKey,JSON.stringify(value))}

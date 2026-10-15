@@ -79,6 +79,16 @@ English: Choose the smallest necessary upgrade backup scope: no extra backup wit
 
 ## Local development and deployment
 
+ASR independent controls (policy 5) require no database/media migration. New
+requests snapshot both flags and the server-selected denoiser; historical retries
+retain the legacy path. The validated default is GTCRN. The experimental
+`AUDIO_INTEL_ASR_DENOISE_BACKEND=ulunas` override requires refreshed API, supervisors
+and executors; restore `gtcrn` to roll back new submissions. Check each operation's
+result and actual model, not only aggregate applied status. Browser preferences
+migrate from v4 to v5 with their existing lifetime; saved video uploads keep their
+original settings. See the [enhancement guide](ASR_ENHANCEMENT.md).
+
+
 ### 单目录工作约定
 
 本机开发期间可以停止日常服务；继续使用同一份源码、运行环境和模型，无需创建第二套部署。以下流程适用于本机代码更新和开发/发版收尾，纯只读检查不触发启停。

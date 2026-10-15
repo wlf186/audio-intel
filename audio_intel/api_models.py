@@ -244,6 +244,24 @@ class VideoCapability(PublicModel):
     scene_editing: bool
 
 
+class AsrAudioControlCapability(PublicModel):
+    supported: bool
+    available: bool
+    default: bool
+    model: str | None = None
+    model_revision: str | None = None
+
+
+class AsrAudioControlResult(PublicModel):
+    enabled: bool
+    status: Literal["off", "bypassed", "applied", "fallback"]
+    reason: str
+    model: str | None = None
+    model_revision: str | None = None
+    wet_ratio: float | None = None
+    max_gain_db: float | None = None
+
+
 class AsrEnhancementCapability(PublicModel):
     supported: bool = Field(description="是否支持本地人声增强 / Whether local speech enhancement is supported")
     available: bool = Field(description="固定增强模型当前是否可用；不可用时回退原音 / Whether the pinned enhancer is available; otherwise use original audio")
@@ -254,6 +272,8 @@ class AsrEnhancementCapability(PublicModel):
     compute_device: Literal["cpu"] = Field(description="增强始终在 CPU 运行，与 ASR 设备独立 / Enhancement always runs on CPU independently of the ASR device")
     preserves_all_speakers: bool = Field(description="保留交谈参与者，不做目标说话人提取 / Preserve conversation speakers without target-speaker extraction")
     enhanced_playback: bool = Field(description="实际增强后是否支持独立回放 / Whether applied results support separate enhanced playback")
+    speech_enhancement: AsrAudioControlCapability | None = Field(None, description="独立轻声增益能力 / Independent quiet-speech gain")
+    background_denoise: AsrAudioControlCapability | None = Field(None, description="独立背景降噪能力 / Independent background denoising")
 
 
 class AsrEnhancementResult(PublicModel):
@@ -275,6 +295,8 @@ class AsrEnhancementResult(PublicModel):
     input_samples: int | None = Field(None, description="归一化输入采样数；处理保持不变 / Normalized input sample count, preserved by processing")
     playback_url: str | None = Field(None, description="实际增强时返回的独立受保护音轨，支持 Range / Separate authenticated enhanced track for applied results, with Range support")
     waveform: list[float] | None = Field(None, description="增强音轨波形；缺失时可通过产物波形接口延迟获取 / Enhanced waveform; fetch lazily through the artifact waveform route when absent")
+    speech_enhancement: AsrAudioControlResult | None = Field(None, description="增益实际结果；历史缺失不推断成功 / Actual gain outcome; absent in history is unknown")
+    background_denoise: AsrAudioControlResult | None = Field(None, description="降噪实际结果；失败不阻断独立增益 / Actual denoising outcome; failure does not disable independent gain")
 
 
 class AsrCapability(PublicModel):

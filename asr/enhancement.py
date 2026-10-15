@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from audio_intel.config import settings
-from audio_intel.model_registry import asr_enhancement_model, model_installation
+from audio_intel.model_registry import asr_denoise_model, asr_enhancement_model, model_installation
 
 
 RATE = 16000
@@ -75,6 +75,35 @@ def load_denoiser() -> Callable[[Any], Any]:
             enhanced = torch.istft(torch.view_as_complex(output.contiguous()), 512, 256, 512,
                                   window, length=len(audio)).numpy() / gain
         return enhanced
+
+    return denoise
+
+
+def load_background_denoiser(backend: str) -> Callable[[Any], Any]:
+    if backend == "gtcrn":
+        return load_denoiser()
+    import numpy as np
+    import torch
+    from .ulunas import ULUNAS
+
+    definition = asr_denoise_model(backend)
+    if not model_installation(settings.models_dir, definition)["installed"]:
+        raise FileNotFoundError("Background denoiser revision or checksum is unavailable")
+    torch.set_num_threads(2)
+    model = ULUNAS().eval()
+    path = settings.models_dir / definition["name"] / definition["required_files"][0]
+    model.load_state_dict(torch.load(path, map_location="cpu", weights_only=True)["model"])
+
+    def denoise(audio: Any) -> Any:
+        if len(audio) < 512:
+            return audio.copy()
+        rms = float(np.sqrt(np.mean(audio.astype(np.float64) ** 2)))
+        peak = float(np.max(np.abs(audio)))
+        scale = min(10 ** (MAX_GAIN_DB / 20), max(1.0, .063 / max(rms, 1e-10)),
+                    max(1.0, .7 / max(peak, 1e-10)))
+        with torch.inference_mode():
+            tensor = torch.from_numpy(np.ascontiguousarray(audio * scale, dtype=np.float32))
+            return model(tensor[None])[0].numpy() / scale
 
     return denoise
 
@@ -302,12 +331,15 @@ def _continuous_gain_db(rms: Any, peaks: Any, supported: Any,
 def enhance_file(source: Path, target: Path, regions: list[dict[str, float]],
                  report: Callable[[int, int], None], *, denoiser: Callable | None = None,
                  wet_ratio: float = WET_RATIO, enable_gain: bool = True,
-                 include_waveform: bool = True, gain_policy: str = "continuous") -> dict[str, Any]:
+                 include_waveform: bool = True, gain_policy: str = "continuous",
+                 enable_denoise: bool = True, profile_source: Path | None = None) -> dict[str, Any]:
     import numpy as np
     import soundfile as sf
 
     if gain_policy not in {"continuous", "legacy"}:
         raise ValueError("Unknown internal gain policy")
+    if not enable_denoise:
+        denoiser = lambda x: x
     if gain_policy == "legacy" or not enable_gain:
         result = _enhance_file_legacy(source, target, regions, report, denoiser=denoiser,
             wet_ratio=wet_ratio, enable_gain=enable_gain, include_waveform=include_waveform)
@@ -319,18 +351,27 @@ def enhance_file(source: Path, target: Path, regions: list[dict[str, float]],
     complete = False
     try:
         with sf.SoundFile(source) as reader:
+            if reader.samplerate != RATE or reader.channels != 1:
+                raise ValueError("Enhancement requires normalized 16 kHz mono audio")
             total = len(reader)
         target.parent.mkdir(parents=True, exist_ok=True)
-        if shutil.disk_usage(target.parent).free < settings.min_free_disk_bytes + total * 4 + 8192:
+        if shutil.disk_usage(target.parent).free < settings.min_free_disk_bytes + total * (4 if enable_denoise else 2) + 8192:
             raise OSError("Insufficient disk space for two-pass enhancement")
-        result = _enhance_file_legacy(source, mixed, regions,
-            lambda n, size: report(n, size * 4), denoiser=denoiser,
-            wet_ratio=wet_ratio, enable_gain=False, include_waveform=False)
-        base = mixed if result["status"] == "applied" else source
-        rms, peaks, supported = _signal_profile(source, base, regions,
-            lambda n, _: report(total + n, total * 4))
+        offset = total if enable_denoise else 0
+        work = offset + total * 3
+        if enable_denoise:
+            result = _enhance_file_legacy(source, mixed, regions,
+                lambda n, size: report(n, size * 4), denoiser=denoiser,
+                wet_ratio=wet_ratio, enable_gain=False, include_waveform=False)
+        else:
+            result = {"mode": "auto", "status": "bypassed", "reason": "audible_speech",
+                      "input_samples": total, "max_gain_db": 0.0, "gain_seconds": 0.0,
+                      "denoised_seconds": 0.0, "_noisy_regions": []}
+        base = mixed if enable_denoise and result["status"] == "applied" else source
+        rms, peaks, supported = _signal_profile(profile_source or source, base, regions,
+            lambda n, _: report(offset + n, work))
         gain_db = _continuous_gain_db(rms, peaks, supported,
-            lambda n, size: report(2 * total + min(total, n * FRAME_SAMPLES), total * 4))
+            lambda n, size: report(offset + total + min(total, n * FRAME_SAMPLES), work))
         result.update(processing_version=PROCESSING_VERSION, max_gain_db=0.0)
         if np.max(gain_db, initial=0) > .01:
             frame_times = np.arange(len(gain_db)) * FRAME_SAMPLES + FRAME_SAMPLES / 2
@@ -346,14 +387,14 @@ def enhance_file(source: Path, target: Path, regions: list[dict[str, float]],
                     if np.max(db, initial=0) > .01:
                         result["gain_seconds"] += len(audio) / RATE
                     result["max_gain_db"] = max(result["max_gain_db"], float(np.max(db, initial=0)))
-                    report(3 * total + start + len(audio), total * 4)
+                    report(offset + 2 * total + start + len(audio), work)
             temporary.replace(target)
             result.update(status="applied", reason="noise_and_gain" if result["denoised_seconds"] else "quiet_speech")
         elif base == mixed:
             mixed.replace(target)
-            report(total * 4, total * 4)
+            report(work, work)
         else:
-            report(total * 4, total * 4)
+            report(work, work)
         if include_waveform and result["status"] == "applied":
             result["waveform"] = _waveform(target)
         result["elapsed_seconds"] = round(time.monotonic() - started, 3)
@@ -505,6 +546,106 @@ def enhance_audio(source: Path, target: Path, regions: list[dict[str, float]],
         completed = True
         return result
     finally:
+        if not completed:
+            target.unlink(missing_ok=True)
+
+
+def enhance_independent(source: Path, target: Path, regions: list[dict[str, float]],
+                        report: Callable[[int, int], None], vad_report: Callable[[int, int], None], *,
+                        speech_enhancement: bool, background_denoise: bool,
+                        backend: str = "gtcrn", wet_ratio: float | None = None,
+                        denoiser: Callable | None = None, speech_detector: Callable | None = None) -> dict[str, Any]:
+    """Policy 5: independently recoverable denoising followed by continuous gain."""
+    import soundfile as sf
+    from audio_intel.worker import JobCancelled
+
+    def failure(exc: Exception) -> str:
+        return ("model_unavailable" if isinstance(exc, FileNotFoundError) else
+                "resource_unavailable" if isinstance(exc, OSError) else
+                "invalid_output" if isinstance(exc, ValueError) else "inference_failed")
+
+    gain = {"enabled": speech_enhancement, "status": "off", "reason": "disabled"}
+    noise = {"enabled": background_denoise, "status": "off", "reason": "disabled"}
+    result: dict[str, Any] = {"mode": "auto" if speech_enhancement or background_denoise else "off",
+        "status": "off", "reason": "disabled", "processing_version": 5,
+        "speech_enhancement": gain, "background_denoise": noise, "compute_device": "cpu",
+        "max_gain_db": 0.0, "gain_seconds": 0.0, "denoised_seconds": 0.0,
+        "pause_attenuated_seconds": 0.0, "max_pause_attenuation_db": 0.0,
+        "pause_suppression_reason": "disabled_for_naturalness", "elapsed_seconds": 0.0}
+    if result["mode"] == "off":
+        return result
+    with sf.SoundFile(source) as reader:
+        if reader.samplerate != RATE or reader.channels != 1:
+            raise ValueError("Enhancement requires normalized 16 kHz mono audio")
+        total = len(reader)
+    result["input_samples"] = total
+    intermediate = target.with_suffix(".denoise.wav")
+    base = source
+    work = total * (int(background_denoise) + 3 * int(speech_enhancement))
+    completed = False
+    try:
+        if background_denoise:
+            definition = asr_denoise_model(backend)
+            ratio = wet_ratio if wet_ratio is not None else (1.0 if backend == "ulunas" else WET_RATIO)
+            noise.update(model=definition["name"], model_revision=definition["revision"], wet_ratio=ratio)
+            result.update(model=definition["name"], model_revision=definition["revision"], wet_ratio=ratio)
+            started = time.monotonic()
+            try:
+                report(0, work)
+                run = denoiser if denoiser is not None else load_background_denoiser(backend)
+                stats = enhance_file(source, intermediate, regions, lambda n, _: report(n, work),
+                    denoiser=run, wet_ratio=ratio, enable_gain=False, include_waveform=False)
+                noise.update(status=stats["status"], reason=stats["reason"])
+                result["denoised_seconds"] = stats["denoised_seconds"]
+                if stats["status"] == "applied":
+                    base = intermediate
+            except JobCancelled:
+                raise
+            except (OSError, ValueError, RuntimeError) as exc:
+                intermediate.unlink(missing_ok=True)
+                noise.update(status="fallback", reason=failure(exc))
+            result["elapsed_seconds"] += time.monotonic() - started
+        if speech_enhancement:
+            offset = total if background_denoise else 0
+            started = time.monotonic()
+            try:
+                report(offset, work)
+                stats = enhance_file(base, target, regions, lambda n, _: report(offset + n, work),
+                    enable_denoise=False, profile_source=source, include_waveform=False)
+                gain.update(status=stats["status"], reason=stats["reason"], max_gain_db=stats["max_gain_db"])
+                result.update(max_gain_db=stats["max_gain_db"], gain_seconds=stats["gain_seconds"])
+            except JobCancelled:
+                raise
+            except (OSError, ValueError, RuntimeError) as exc:
+                gain.update(status="fallback", reason=failure(exc))
+            result["elapsed_seconds"] += time.monotonic() - started
+        applied = gain["status"] == "applied" or noise["status"] == "applied"
+        fallback = gain["status"] == "fallback" or noise["status"] == "fallback"
+        if applied:
+            if gain["status"] != "applied":
+                intermediate.replace(target)
+            result.update(status="applied", reason="partial_fallback" if fallback else
+                          "noise_and_gain" if gain["status"] == noise["status"] == "applied" else
+                          "quiet_speech" if gain["status"] == "applied" else "noise")
+            try:
+                detected = (speech_detector or enhanced_speech_regions)(target, vad_report)
+                result["speech_regions"] = merge_regions(regions, detected)
+            except JobCancelled:
+                raise
+            except (OSError, ValueError, RuntimeError):
+                result["speech_regions"] = regions
+            started = time.monotonic()
+            result["waveform"] = _waveform(target)
+            result["elapsed_seconds"] += time.monotonic() - started
+        else:
+            result.update(status="fallback" if fallback else "bypassed",
+                          reason="partial_fallback" if fallback else "clean")
+        result["elapsed_seconds"] = round(result["elapsed_seconds"], 3)
+        report(work, work)
+        completed = True
+        return result
+    finally:
+        intermediate.unlink(missing_ok=True)
         if not completed:
             target.unlink(missing_ok=True)
 

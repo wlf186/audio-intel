@@ -124,6 +124,7 @@ type Props = {
   maxSpeakers: number
   maxUploadBytes?: number
   enhancementAvailable?: boolean
+  denoiseAvailable?: boolean
   videoCapability?: VideoCapability
   audioFormats?: string[]
   asrLanguages?: string[]
@@ -143,7 +144,7 @@ type Props = {
   onRevealHandled: (token: number) => void
 }
 
-export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, restoreState, restoreError, restoreSelected, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, enhancementAvailable, videoCapability, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, voiceprintGroups, voiceprintGroupsState, refreshVoiceprintGroups, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
+export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, restoreState, restoreError, restoreSelected, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, enhancementAvailable, denoiseAvailable, videoCapability, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, voiceprintGroups, voiceprintGroupsState, refreshVoiceprintGroups, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const { t, i18n } = useTranslation()
   const [view, setView] = useState<'create'|'video'|'results'>(()=>readAsrSession().view)
   const [compact, setCompact] = useState(()=>matchMedia('(max-width: 1023px)').matches)
@@ -339,7 +340,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     const saved=loadVideoResume();setResume(saved)
     if(!saved)return
     const p=saved.params
-    setPreferences(current=>({...current,model:String(p.model||current.model),language:String(p.language||'Auto'),speakerCount:p.speaker_count?String(p.speaker_count):'auto',align:p.align!==false,useVoiceprints:p.use_voiceprint_library!==false,computeDevice:p.compute_device==='cpu'?'cpu':'gpu',accelerateSingleTask:p.accelerate_single_task!==false,audioEnhancement:p.audio_enhancement==='auto'?'auto':'off',hotwordListIds:Array.isArray(p.hotword_list_ids)?p.hotword_list_ids as string[]:[],voiceprintGroupMode:Array.isArray(p.voiceprint_group_ids)?'selected':'all',voiceprintGroupIds:Array.isArray(p.voiceprint_group_ids)?p.voiceprint_group_ids as string[]:[]}))
+    setPreferences(current=>({...current,model:String(p.model||current.model),language:String(p.language||'Auto'),speakerCount:p.speaker_count?String(p.speaker_count):'auto',align:p.align!==false,useVoiceprints:p.use_voiceprint_library!==false,computeDevice:p.compute_device==='cpu'?'cpu':'gpu',accelerateSingleTask:p.accelerate_single_task!==false,speechEnhancement:typeof p.speech_enhancement==='boolean'?p.speech_enhancement:p.audio_enhancement==='auto',backgroundDenoise:typeof p.background_denoise==='boolean'?p.background_denoise:p.audio_enhancement==='auto',hotwordListIds:Array.isArray(p.hotword_list_ids)?p.hotword_list_ids as string[]:[],voiceprintGroupMode:Array.isArray(p.voiceprint_group_ids)?'selected':'all',voiceprintGroupIds:Array.isArray(p.voiceprint_group_ids)?p.voiceprint_group_ids as string[]:[]}))
     setVideoRoi(p.video_roi as VideoRegion|undefined)
   },[isVideoTab])
   useEffect(() => {
@@ -425,9 +426,10 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       data.set('export_formats', 'json,srt,vtt,txt')
       data.set('compute_device', effectiveComputeDevice)
       data.set('accelerate_single_task', String(accelerateSingleTask))
-      data.set('audio_enhancement',preferences.audioEnhancement)
+      data.set('speech_enhancement',String(preferences.speechEnhancement))
+      data.set('background_denoise',String(preferences.backgroundDenoise))
       if (selectedHotwordIds.size) data.set('hotword_list_ids', [...selectedHotwordIds].join(','))
-      const job = isVideoTab?await submitVideo(file,{model,language,speaker_count:speakers==='auto'?null:Number(speakers),diarize:true,align,use_voiceprint_library:useVoiceprints,...(manualGroups?{voiceprint_group_ids:preferences.voiceprintGroupIds}:{}),compute_device:effectiveComputeDevice,accelerate_single_task:accelerateSingleTask,audio_enhancement:preferences.audioEnhancement,hotword_list_ids:[...selectedHotwordIds],video_roi:videoRoi||null},{signal:controller.signal,onProgress:setUploadProgress}):await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
+      const job = isVideoTab?await submitVideo(file,{model,language,speaker_count:speakers==='auto'?null:Number(speakers),diarize:true,align,use_voiceprint_library:useVoiceprints,...(manualGroups?{voiceprint_group_ids:preferences.voiceprintGroupIds}:{}),compute_device:effectiveComputeDevice,accelerate_single_task:accelerateSingleTask,speech_enhancement:preferences.speechEnhancement,background_denoise:preferences.backgroundDenoise,hotword_list_ids:[...selectedHotwordIds],video_roi:videoRoi||null},{signal:controller.signal,onProgress:setUploadProgress}):await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
       onJobSubmitted(job)
       setLastSubmitted(job)
       onSelect(job)
@@ -694,10 +696,17 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
         </div>
         <div className="acceleration-control asr-enhancement-control">
           <label>
-            <input type="checkbox" aria-label={t('asr.enhancement.label')} checked={preferences.audioEnhancement==='auto'} onChange={event=>updatePreference('audioEnhancement',event.target.checked?'auto':'off')}/>
+            <input type="checkbox" aria-label={t('asr.enhancement.label')} checked={preferences.speechEnhancement} onChange={event=>updatePreference('speechEnhancement',event.target.checked)}/>
             <span>{t('asr.enhancement.label')}{enhancementAvailable===false?<small>{t('asr.enhancement.unavailableShort')}</small>:null}</span>
           </label>
           <InfoTooltip id="asr-enhancement-help" label={t('asr.enhancement.helpLabel')} text={`${enhancementAvailable===false?t('asr.enhancement.unavailable')+' ':''}${t('asr.enhancement.help')}`}/>
+        </div>
+        <div className="acceleration-control asr-enhancement-control">
+          <label>
+            <input type="checkbox" aria-label={t('asr.enhancement.denoiseLabel')} checked={preferences.backgroundDenoise} onChange={event=>updatePreference('backgroundDenoise',event.target.checked)}/>
+            <span>{t('asr.enhancement.denoiseLabel')}{denoiseAvailable===false?<small>{t('asr.enhancement.unavailableShort')}</small>:null}</span>
+          </label>
+          <InfoTooltip id="asr-denoise-help" label={t('asr.enhancement.denoiseHelpLabel')} text={`${denoiseAvailable===false?t('asr.enhancement.denoiseUnavailable')+' ':''}${t('asr.enhancement.denoiseHelp')}`}/>
         </div>
         </div>
         {useVoiceprints?<small className="voiceprint-scope-summary">{scopeLabel}</small>:null}
@@ -810,6 +819,8 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               <button type="button" className="button" aria-pressed={enhancedPlayback} disabled={Boolean(pendingAudioSwitch.current)} onClick={()=>switchAudio(true)}>{t('asr.enhancement.enhanced')}</button>
               <a className="button" href={enhancedAudio} download>{t('asr.enhancement.download')}</a>
             </div>:result.audio_enhancement?.mode==='auto'?<p className="asr-enhancement-status" role="note">{t(result.audio_enhancement.status==='fallback'?'asr.enhancement.fallback':'asr.enhancement.bypassed')}</p>:null}
+            {result.audio_enhancement?.speech_enhancement?<p className="asr-enhancement-status" role="note">{t('asr.enhancement.gainStatus',{status:t(`asr.enhancement.status_${result.audio_enhancement.speech_enhancement.status}`)})}</p>:null}
+            {result.audio_enhancement?.background_denoise?<p className="asr-enhancement-status" role="note">{t('asr.enhancement.denoiseStatus',{status:t(`asr.enhancement.status_${result.audio_enhancement.background_denoise.status}`)})}</p>:null}
             <div className="wave-area" hidden={Boolean(result.video)&&!videoWaveform}>
               {enhancedPlayback&&enhancedAudio?<EnhancedWaveform key={enhancedAudio} src={enhancedAudio} peaks={result.audio_enhancement?.waveform} currentTime={currentTime} duration={duration} onSeek={seek}/>:<Waveform peaks={result.waveform} currentTime={currentTime} duration={duration} onSeek={seek} />}
               <div className="time-ruler">

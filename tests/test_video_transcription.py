@@ -315,6 +315,21 @@ def test_pdf_resource_budget(tmp_path,monkeypatch):
         transcript_pdf.render('large',{'segments':[{'text':'too long'}]},tmp_path)
 
 
+@pytest.mark.parametrize("gain,noise", [(False, False), (True, False), (False, True), (True, True)])
+def test_video_independent_controls(client, local, tmp_path, gain, noise):
+    item = upload(client, video_file(tmp_path / 'independent.mp4'))
+    body = {'upload_id': item['id'], 'compute_device': 'cpu', 'use_voiceprint_library': False,
+            'speech_enhancement': gain, 'background_denoise': noise}
+    headers = {'Idempotency-Key': 'independent-video-controls-01'}
+    first = client.post('/api/v1/asr/video-jobs', json=body, headers=headers)
+    assert first.status_code == 202
+    saved = first.json()['request']
+    assert saved['speech_enhancement'] is gain and saved['background_denoise'] is noise
+    assert client.post('/api/v1/asr/video-jobs', json=body, headers=headers).status_code == 200
+    assert client.post('/api/v1/asr/video-jobs', json={**body, 'background_denoise': not noise}, headers=headers).status_code == 409
+    assert client.post('/api/v1/asr/video-jobs', json={**body, 'audio_enhancement': 'auto'}, headers=headers).status_code == 422
+
+
 def test_video_enhancement_historical_replay_and_invalid_mode(client, local, tmp_path):
     item = upload(client, video_file(tmp_path / 'historical.mp4'))
     body = {'upload_id': item['id'], 'compute_device': 'cpu', 'use_voiceprint_library': False}
@@ -325,6 +340,9 @@ def test_video_enhancement_historical_replay_and_invalid_mode(client, local, tmp
     request = job['request']
     request.pop('audio_enhancement')
     request['video_caller'].pop('audio_enhancement')
+    for field in ('speech_enhancement', 'background_denoise', 'enhancement_policy_version', 'denoise_backend'):
+        request.pop(field, None)
+        request['video_caller'].pop(field, None)
     with db.connect() as connection:
         connection.execute('UPDATE jobs SET request_json=? WHERE id=?', (json.dumps(request), job['id']))
         connection.execute('UPDATE job_idempotency SET request_hash=? WHERE job_id=?',

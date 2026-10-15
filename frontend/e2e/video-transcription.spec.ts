@@ -111,7 +111,7 @@ test('video upload pauses, survives reload, resumes and explicitly discards',asy
  release();await page.unroute('**/api/v1/asr/video-uploads/*',handler)
  await expect(page.locator('.video-resume')).toBeVisible()
  // A pre-enhancement upload resumes the original off setting after an upgrade.
- await page.evaluate(()=>{const key='audio-intel:video-upload:v1';const saved=JSON.parse(sessionStorage.getItem(key)!);delete saved.params.audio_enhancement;sessionStorage.setItem(key,JSON.stringify(saved))})
+ await page.evaluate(()=>{const key='audio-intel:video-upload:v1';const saved=JSON.parse(sessionStorage.getItem(key)!);delete saved.params.audio_enhancement;delete saved.params.speech_enhancement;delete saved.params.background_denoise;sessionStorage.setItem(key,JSON.stringify(saved))})
  await page.reload();await page.getByRole('tab',{name:'新建视频转写',exact:true}).click()
  await expect(page.locator('.video-resume')).toContainText('lecture.webm')
  await page.locator('input[type=file]').setInputFiles(videoPath)

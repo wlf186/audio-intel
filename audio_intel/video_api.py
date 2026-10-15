@@ -96,7 +96,9 @@ class VideoJobRequest(StrictModel):
     use_voiceprint_library: bool = True
     voiceprint_group_ids: list[str] | None = Field(None, description="所选声纹分组；省略全部，提交时固定人员范围 / Selected voiceprint groups; omission selects all, eligible people are snapshotted")
     accelerate_single_task: bool = True
-    audio_enhancement: Literal['auto', 'off'] | None = Field(None, description='新任务默认 auto，off 关闭 / New jobs default to auto; off disables enhancement', json_schema_extra={'default': 'auto'})
+    audio_enhancement: Literal['auto', 'off'] | None = Field(None, description='旧组合别名；不能与独立开关混用 / Legacy combined alias; cannot mix with independent controls', json_schema_extra={'deprecated': True})
+    speech_enhancement: bool | None = Field(None, description='平稳提升轻声；默认开启 / Continuous quiet-speech gain; defaults to true', json_schema_extra={'default': True})
+    background_denoise: bool | None = Field(None, description='本地背景降噪；默认开启 / Local background denoising; defaults to true', json_schema_extra={'default': True})
     video_roi: VideoRegion | None = None
 
 
@@ -294,7 +296,9 @@ def register(app: Any, api: Any) -> None:
             caller['voiceprint_group_ids'] = sorted(set(body.voiceprint_group_ids))
         async with upload_lock(body.upload_id):
             old = await run_in_threadpool(db.find_idempotent_job, 'submit_video', api.idempotency_key_hash(key))
-            caller['audio_enhancement'] = api.validate_audio_enhancement(body.audio_enhancement, old)
+            caller.pop('speech_enhancement', None)
+            caller.pop('background_denoise', None)
+            caller.update(api.audio_enhancement_request(body.audio_enhancement, body.speech_enhancement, body.background_denoise, old))
             if old and 'audio_enhancement' not in old['request'].get('video_caller', {}) and caller['audio_enhancement'] == 'off':
                 caller.pop('audio_enhancement')
             fingerprint = api.request_fingerprint(caller)

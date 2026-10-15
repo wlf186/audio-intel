@@ -17,6 +17,10 @@ API_DESCRIPTION = r"""
 
 ASR 音频、视频及兼容转写支持 `audio_enhancement=auto|off`，新任务默认 `auto`。自动模式保守压制环境噪音并提升较小人声，保留全部交谈者；干净且音量充足的片段旁路。`GET /api/v1/capabilities` 的 `asr.audio_enhancement` 公布可用状态；任务详情的同名字段记录实际增强、旁路或回退。增强版为独立、受保护且支持 Range 的音频产物，原音保留。缺失增强模型时使用原音并记录原因；历史请求缺少该字段时按关闭解释，幂等重放和重试保留原语义。声纹导入与克隆参考分析不启用增强。
 
+推荐独立设置 `speech_enhancement=true|false`（人声增强）及 `background_denoise=true|false`（背景降噪），新任务两者默认开启。双开先降噪再平稳增益；仅增强不加载降噪模型，降噪失败仍可应用增益。旧 `audio_enhancement=auto|off` 为双开／双关别名，不能与新字段混用（422）。策略 5 在结果内分别返回 `speech_enhancement`、`background_denoise` 的 `enabled/status/reason`；部分失败时总状态可为 `applied`，原因 `partial_fallback`。历史请求沿用旧处理链，幂等重放和重试不自动升级。
+
+Prefer independent booleans `speech_enhancement` and `background_denoise`, both defaulting to true. Denoise precedes continuous gain. Gain alone loads no denoiser and remains available when denoising fails. The legacy `audio_enhancement=auto|off` alias enables/disables both; mixing old and new inputs returns 422. Policy 5 records each operation's enabled/status/reason. An applied result with `partial_fallback` means one operation failed. Historical requests retain their previous processing path on replay/retry.
+
 Audio, video and compatible ASR accept `audio_enhancement=auto|off`; new jobs default to `auto`. Automatic processing conservatively suppresses noise and lifts quiet speech while preserving all speakers. Clean, audible sections bypass processing. Read `asr.audio_enhancement` from capabilities; job detail/results record applied, bypassed or fallback status and enhanced playback. The original remains available. A missing enhancer falls back to original audio with a recorded reason. Historical requests without this field remain disabled on replay/retry. Voiceprint imports and clone-reference analysis are excluded.
 
 | 模式／状态 / Mode or status | 行为 / Behavior |
@@ -1059,6 +1063,12 @@ REQUEST_EXAMPLES: dict[tuple[str, str], dict[str, dict[str, Any]]] = {
 # Both modes are explicit executable request examples; omitted-field examples remain
 # to document the default and legacy compatibility paths.
 for _path in ("/api/v1/asr/jobs", "/v1/audio/transcriptions"):
+    for _gain, _noise in ((False, False), (True, False), (False, True), (True, True)):
+        REQUEST_EXAMPLES[(_path, "post")][f"audio_controls_{int(_gain)}_{int(_noise)}"] = {
+            "summary": f"人声增强 {_gain} / 背景降噪 {_noise} / Independent audio controls",
+            "value": {"file": "meeting.wav", "compute_device": "cpu",
+                      "speech_enhancement": _gain, "background_denoise": _noise},
+        }
     for _mode in ("auto", "off"):
         REQUEST_EXAMPLES[(_path, "post")][f"enhancement_{_mode}"] = {
             "summary": f"人声增强模式 / Speech enhancement: {_mode}",
@@ -1103,6 +1113,14 @@ for _status, _reason, _mode in (
     RESULT_EXAMPLES[f"asr_enhancement_{_status}"] = {
         "summary": f"人声增强状态 / Speech enhancement: {_status}", "value": _result,
     }
+
+_partial = deepcopy(RESULT_EXAMPLES["asr_enhancement_applied"]["value"])
+_partial["audio_enhancement"].update(processing_version=5, reason="partial_fallback",
+    denoised_seconds=0.0,
+    speech_enhancement={"enabled": True, "status": "applied", "reason": "quiet_speech", "max_gain_db": 12.0},
+    background_denoise={"enabled": True, "status": "fallback", "reason": "model_unavailable"})
+RESULT_EXAMPLES["asr_independent_partial"] = {
+    "summary": "增益成功、降噪回退 / Gain applied, denoising unavailable", "value": _partial}
 
 RESULT_EXAMPLES["tts"]["value"]["generation_guard"] = {
     "version": 1, "checked_chunks": 1, "retried_chunks": 0,
@@ -1222,7 +1240,11 @@ def _capabilities_example() -> dict[str, Any]:
         "asr": {
             "audio_enhancement": {"supported": True, "available": True, "default": "auto",
                 "modes": ["auto", "off"], "model": enhancer["name"], "model_revision": enhancer["revision"],
-                "compute_device": "cpu", "preserves_all_speakers": True, "enhanced_playback": True},
+                "compute_device": "cpu", "preserves_all_speakers": True, "enhanced_playback": True,
+                "speech_enhancement": {"supported": True, "available": True, "default": True,
+                    "model": None, "model_revision": None},
+                "background_denoise": {"supported": True, "available": True, "default": True,
+                    "model": enhancer["name"], "model_revision": enhancer["revision"]}},
             "audio_formats": ["wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff"], "concise_pdf": True,
             "video": {"supported": True, "formats": ["mp4", "m4v", "mov", "mkv", "webm", "avi", "mpeg", "mpg", "ts"],
                       "max_upload_bytes": 26843545600, "chunk_bytes": 33554432, "upload_idle_seconds": 86400,
@@ -1301,6 +1323,12 @@ REQUEST_EXAMPLES[("/api/v1/asr/video-jobs", "post")]["enhancement_off"] = {
     "value": {**REQUEST_EXAMPLES[("/api/v1/asr/video-jobs", "post")]["lecture"]["value"],
               "audio_enhancement": "off"},
 }
+for _gain, _noise in ((False, False), (True, False), (False, True), (True, True)):
+    REQUEST_EXAMPLES[("/api/v1/asr/video-jobs", "post")][f"audio_controls_{int(_gain)}_{int(_noise)}"] = {
+        "summary": f"人声增强 {_gain} / 背景降噪 {_noise} / Independent audio controls",
+        "value": {"upload_id": VIDEO_UPLOAD_EXAMPLE["id"], "compute_device": "cpu",
+                  "speech_enhancement": _gain, "background_denoise": _noise},
+    }
 RESULT_EXAMPLES["asr_video"] = {"summary": "视频图文转写 / Illustrated video transcript", "value": {
     **RESULT_EXAMPLES["asr"]["value"], "video": {"contract_version": 1, "revision": 1, "duration": 3.2,
         "time_origin": 0.0, "roi": None, "detector": "ffmpeg_scdet_phash_stability",
