@@ -341,7 +341,9 @@ def enhance(payload: dict[str, Any]) -> dict[str, Any]:
             _progress(payload, "audio_enhancement_pauses", math.ceil(current / 16000), math.ceil(total / 16000),
                       stage_progress=current / max(total, 1), unit="media_second")
         result = enhance_audio(Path(payload["input_path"]), Path(payload["enhanced_path"]),
-                               payload["speech_regions"], report, vad_progress, pause_progress)
+                               payload["speech_regions"], report, vad_progress, pause_progress,
+                               gain_policy="legacy" if os.getenv("AUDIO_INTEL_ASR_CONTINUOUS_GAIN", "1").strip().lower()
+                               in {"0", "false", "no", "off"} else "continuous")
         return result
     except JobCancelled:
         raise

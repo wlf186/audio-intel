@@ -455,6 +455,21 @@ def test_enhancement_stage_does_not_convert_cancellation_to_fallback(local, tmp_
                        "enhanced_path": str(tmp_path / "enhanced.wav"), "speech_regions": []})
 
 
+@pytest.mark.parametrize("value,version", [(None, 4), ("1", 4), ("0", 3), ("false", 3)])
+def test_stage_operational_rollback_preserves_actual_policy_metadata(tmp_path, monkeypatch, value, version):
+    from asr import stage
+    if value is None:
+        monkeypatch.delenv("AUDIO_INTEL_ASR_CONTINUOUS_GAIN", raising=False)
+    else:
+        monkeypatch.setenv("AUDIO_INTEL_ASR_CONTINUOUS_GAIN", value)
+    def enhanced(*args, gain_policy, **kwargs):
+        return {"processing_version": 3 if gain_policy == "legacy" else 4}
+    monkeypatch.setattr(enhancement, "enhance_audio", enhanced)
+    result = stage.enhance({"input_path": str(tmp_path / "source.wav"),
+                           "enhanced_path": str(tmp_path / "enhanced.wav"), "speech_regions": []})
+    assert result["processing_version"] == version
+
+
 def test_enhanced_playback_is_separate_authenticated_and_range_capable(local, monkeypatch):
     value = replace(local, mock_mode=False)
     for module in (api, db, worker, pipeline):

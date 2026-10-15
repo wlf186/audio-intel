@@ -120,6 +120,9 @@ GTCRN、ASR/TTS 模型、环境及依赖锁；`auto/off` 和存储生命周期�
 最终仍只保留原音和一份实际增强后的 WAV。历史策略 3 不代表执行过连续增益。
 跨更早版本升级须覆盖中间迁移要求。
 
+本地试听待验收时可临时设置 `AUDIO_INTEL_ASR_CONTINUOUS_GAIN=0`，刷新进程后维持
+策略 3；默认开启策略 4。移除临时覆盖后再次刷新进程，结果中的策略版本反映实际处理。
+
 English: From v0.1.33, this processing-policy update needs no data migration or
 additional upgrade backup. Model identities, environments, dependency locks,
 `auto/off`, historical media and browser-storage lifetimes are preserved. Rebuild
@@ -130,6 +133,9 @@ diagnostics report zero pause attenuation and `disabled_for_naturalness`. Allow
 space for two temporary PCM WAVs (about 230 MB/hour); intermediates are cleaned on
 success, failure and cancellation. Retained artifact count is unchanged. Existing task
 artifacts are not reprocessed. Cover intervening migrations for earlier releases.
+For a staged rollout awaiting local listening, `AUDIO_INTEL_ASR_CONTINUOUS_GAIN=0`
+temporarily retains policy 3 after a process refresh; remove the override and refresh
+again to use the default policy 4. Report the active policy separately from code validation.
 
 ## v0.1.33 本地 ASR 人声增强
 

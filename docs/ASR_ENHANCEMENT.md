@@ -52,6 +52,14 @@ The original and enhanced VAD intervals are merged without changing the existing
 ASR chunk-combination rules. Speaker clustering and voiceprint embeddings use
 original audio. Enhancement preserves sample count and the video time origin.
 
+For a controlled rollout or comparison, administrators may temporarily set
+`AUDIO_INTEL_ASR_CONTINUOUS_GAIN=0` and refresh the service processes to retain
+policy 3. The default is enabled (policy 4); this is an operational rollback,
+not a request parameter. Results report the policy actually used. Local benchmark
+`auto` explicitly evaluates policy 4 independently of this service override.
+本地试听验收尚未完成时，可用该开关恢复日常服务并暂留策略 3；确认听感后移除覆盖并刷新
+相关进程。不会改写既有任务，也不会将未试听的候选标记为听感通过。
+
 ## Request and result / 请求与结果
 
 - Audio ASR and `/v1/audio/transcriptions`: multipart field `audio_enhancement=auto|off`.
@@ -133,6 +141,11 @@ modes. Save a frozen
 pre-change baseline first; `--baseline-report` reuses its original transcription
 only when model, device, cases, durations and normalized audio match. Compare CER
 to that baseline where trusted references exist, and match speech loudness for listening.
+
+For timing-specific incidents in a long recording, process each complete audio arm
+first and then extract identical sample ranges for listening and ASR comparisons.
+Independently enhancing short excerpts resets model context and gain estimates;
+those outputs are not a matched baseline for a full-file result.
 
 The historical policy-2 public comparison used the four original controls and seven extended
 controls generated above. With Qwen3-ASR 1.7B on GPU, the ten cases with trusted
