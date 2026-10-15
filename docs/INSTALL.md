@@ -32,7 +32,7 @@ cd audio-intel
 curl -fsS http://127.0.0.1:20810/api/v1/health
 ```
 
-`setup all` 创建 `.runtime/api`、`.runtime/asr`、`.runtime/tts` 和 `.runtime/aligner`，构建 `frontend/dist`，并将模型下载到 `models/`。`setup asr/all` 下载固定 revision 的 Qwen3-ASR 0.6B 与 1.7B；`setup tts/all` 下载 Qwen3-TTS 0.6B/1.7B 的 Base、CustomVoice，以及 1.7B VoiceDesign。TTS 与 Qwen ASR 要求互斥的 Transformers 版本，因此默认截取及手动声纹区间所需的按需对齐使用独立 aligner 环境；不要把两个 Qwen 包装进同一环境。所有缓存和临时文件也留在仓库目录中。下载完成后，`service.sh start` 默认设置 Hugging Face 与 Transformers 离线模式。
+`setup all` 创建 `.runtime/api`、`.runtime/asr`、`.runtime/tts` 和 `.runtime/aligner`，构建 `frontend/dist`，并将模型下载到 `models/`。`setup asr/all` 下载固定 revision 的 Qwen3-ASR 0.6B／1.7B，以及 CPU 人声增强的 GTCRN-DNS3；`setup tts/all` 下载 Qwen3-TTS 0.6B/1.7B 的 Base、CustomVoice，以及 1.7B VoiceDesign。TTS 与 Qwen ASR 要求互斥的 Transformers 版本，因此默认截取及手动声纹区间所需的按需对齐使用独立 aligner 环境；不要把两个 Qwen 包装进同一环境。所有缓存和临时文件也留在仓库目录中。下载完成后，`service.sh start` 默认设置 Hugging Face 与 Transformers 离线模式。
 
 ### 可选 CPU-only 精简配置
 
@@ -131,3 +131,17 @@ git pull --ff-only
 数据库会在启动时自动迁移到 schema v14，既有任务、旧声音档案与声纹样本保持可读。v10 支持“姓名＋备注”组合唯一及样本重命名，既有样本保留升级前的编号名称。v9 保留完整姓名系统词表的稳定 ID，并新增可独立选择的去姓人名系统词表；完整兼容性说明见 [升级指南](UPGRADE.md)。
 
 音视频上传分别使用 `AUDIO_INTEL_MAX_UPLOAD_BYTES`（默认 4 GiB）与 `AUDIO_INTEL_MAX_VIDEO_UPLOAD_BYTES`（默认 25 GiB）。视频入口采用 32 MiB 顺序分片，反向代理需允许分片请求和正常超时；格式、实际大小及续传规则以 [音视频转写指南](VIDEO_TRANSCRIPTION.md) 和能力接口为准。
+
+## 人声增强模型下载 / Enhancement model download
+
+GTCRN-DNS3 使用 manifest 固定的 GitHub commit 和 SHA-256，setup 需要能够访问
+`raw.githubusercontent.com`；代理也需覆盖该域名。这个 checkpoint 使用完整下载及校验，
+中断或校验失败后重新下载，不复用 Qwen／ModelScope 的续传缓存。不要手工创建
+`.complete`。模型未准备好时基础 ASR 仍可用，自动增强记录回退；运行期始终从本地
+加载，不向下载源发送录音。增强使用现有 ASR 环境，不创建额外环境。
+
+GTCRN-DNS3 setup downloads the pinned checkpoint from `raw.githubusercontent.com`
+and verifies SHA-256. Include that host in proxy/network access. This small-file
+downloader retries by downloading the complete checkpoint, without the resumable
+Qwen/ModelScope cache. Runtime remains offline; missing enhancement weights leave
+base ASR available with a recorded fallback. See [speech enhancement](ASR_ENHANCEMENT.md).

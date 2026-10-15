@@ -157,10 +157,11 @@ New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
 Get-ChildItem Env: | Where-Object Name -Match 'proxy'
 Invoke-WebRequest -Method Head https://huggingface.co
 Invoke-WebRequest -Method Head https://modelscope.cn
+Invoke-WebRequest -Method Head https://raw.githubusercontent.com/Xiaobin-Rong/gtcrn/502ebfab64da7c4a9af78dcb9c6ceef1ebb01c73/LICENSE
 .\service.cmd setup all
 ```
 
-模型下载支持续传，只有下载完成才写入 `.complete`。不要手工创建该文件。避免把仓库放在实时同步目录；杀毒软件扫描大型权重时也可能显著拖慢下载和加载，仅在确认代码与模型来源可信后才考虑对项目的 `models`、`cache`、`.runtime` 做最小范围排除。
+Hugging Face／ModelScope 大模型下载支持续传。GTCRN-DNS3 经 GitHub 原始文件域名完整下载并校验 SHA-256，中断或校验失败后重新下载，不续传。只有下载和校验成功才写入匹配 revision 的 `.complete`。不要手工创建该文件。避免把仓库放在实时同步目录；杀毒软件扫描大型权重时也可能显著拖慢下载和加载，仅在确认代码与模型来源可信后才考虑对项目的 `models`、`cache`、`.runtime` 做最小范围排除。
 
 `.complete` 的内容必须等于项目模型清单中的 revision。空文件和旧 revision 都会被 doctor 标记，重新运行对应的 `setup asr` 或 `setup tts` 会校验并修复。
 
@@ -201,3 +202,15 @@ git pull --ff-only
 `setup tts` 同时维护独立的 `.runtime\aligner`，这是默认参考截取与手动声纹区间按需对齐所需的内部运行时，不是额外服务。更多版本与锁文件说明见 [依赖维护](DEPENDENCIES.md)。
 
 音频默认 4 GiB，视频默认 25 GiB，分别由 `AUDIO_INTEL_MAX_UPLOAD_BYTES` 和 `AUDIO_INTEL_MAX_VIDEO_UPLOAD_BYTES` 控制。Windows 视频客户端使用 `.runtime\api\Scripts\python.exe scripts\submit_video.py`，其 UTF-8 续传记录兼容跨次运行，PDF 临时文件关闭后才原子替换。完整格式、命令和恢复说明见 [音视频转写指南](VIDEO_TRANSCRIPTION.md)。
+
+### 本地人声增强 / Local speech enhancement
+
+`service.cmd setup asr` 同时准备 GTCRN-DNS3，沿用现有 ASR 环境并在 CPU FP32 运行，
+full 与 CPU-only 均支持，不安装额外服务或 Python 包。新音频／视频转写默认自动增强，
+可在界面关闭或传 `audio_enhancement=off`。权重可用性、旁路和回退按任务详情记录，
+原音保留；详见[人声增强指南](ASR_ENHANCEMENT.md)。
+
+`service.cmd setup asr` also prepares the pinned GTCRN-DNS3 model in the existing
+ASR runtime. Enhancement runs on CPU in both profiles, with no extra service or
+package. New transcriptions default to automatic enhancement with an opt-out;
+original audio and actual bypass/fallback outcomes remain available.

@@ -38,7 +38,7 @@ curl -I https://modelscope.cn
 - 若 CPU-only 部署显式请求 GPU，API 返回 `503 gpu_runtime_not_installed`；这不是显卡探测失败。需要 GPU 时停止服务、处理非终态任务，然后运行 `./service.sh setup all --profile full`（Windows 使用 `service.cmd`）。
 - 若启动提示 inference runtime profile mismatch，说明 `.runtime/deployment-profile` 与某个 Torch 环境不一致；不要手动混装依赖，重新执行 `setup all --profile <当前所需配置>`。
 
-安装脚本会对首次 pnpm 获取自动重试三次，模型下载器支持续传；模型目录只有成功后才会写入 `.complete` revision 标记。不要手工创建标记。若单个模型确认损坏，将对应 `models/<模型名>` 目录移动到备份位置后重新执行 `setup asr` 或 `setup tts`。
+安装脚本会对首次 pnpm 获取自动重试三次，Hugging Face／ModelScope 模型下载支持续传；GTCRN-DNS3 通过 `raw.githubusercontent.com` 完整下载并校验，中断或校验失败需重新下载，代理需覆盖该域名。模型目录只有成功后才会写入 `.complete` revision 标记。不要手工创建标记。若单个模型确认损坏，将对应 `models/<模型名>` 目录移动到备份位置后重新执行 `setup asr` 或 `setup tts`。
 
 ## 人声增强不可用或效果不合适
 
