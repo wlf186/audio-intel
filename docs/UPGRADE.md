@@ -107,24 +107,27 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
-## Unreleased: 保守背景噪音抑制
+## Unreleased: 背景降噪与人声自然度修正
 
 从 v0.1.33 升级本轮自动增强策略：**数据迁移：无**，无需额外升级备份。仍使用原有
-GTCRN、ASR/TTS 模型、环境及依赖锁；`auto/off` 和存储生命周期不变。策略 2 在两次
-人声检测并集及起止保护之外平滑衰减较长噪声间隙，保留当前人声增益；结果新增可选
-策略及衰减诊断字段，历史缺失不表示执行过新策略。既有任务、请求、媒体和声纹均不改写。
+GTCRN、ASR/TTS 模型、环境及依赖锁；`auto/off` 和存储生命周期不变。策略 3 撤下
+策略 2 的人声检测音量门控，避免轻声漏检造成憋气感，保留当前人声增益、50% 降噪混合
+及块间交叉渐变。结果保留可选策略及衰减诊断字段，策略 3 的间隙衰减为零，原因为
+`disabled_for_naturalness`。既有任务、请求、媒体和声纹均不改写；重新提交才使用新策略。
 
 更新源码并重建前端，再按本页维护流程刷新原来运行的 API、supervisor 和 executor。
-处理期间额外使用一份临时 WAV，取消、失败及完成后清理；最终仍只保留原音和一份
-实际增强后的 WAV。跨更早版本升级须覆盖中间迁移要求。
+默认处理不再创建间隙衰减用的额外临时 WAV，最终仍只保留原音和一份实际增强后的 WAV。
+跨更早版本升级须覆盖中间迁移要求。
 
 English: From v0.1.33, this processing-policy update needs no data migration or
 additional upgrade backup. Model identities, environments, dependency locks,
 `auto/off`, historical media and browser-storage lifetimes are preserved. Rebuild
-the frontend and refresh every originally running service process. Optional result
-diagnostics describe protected pause attenuation. One extra temporary WAV is
-cleaned up; retained artifact count is unchanged. Cover intervening migrations
-when upgrading from earlier releases.
+the frontend and refresh every originally running service process. Policy 3 removes
+policy 2's VAD-driven volume gate to avoid attenuation of missed quiet speech,
+preserving gain, mixing and processed crossfades. Optional diagnostics report zero
+pause attenuation and `disabled_for_naturalness`. The pause-pass temporary WAV is
+no longer created by default; retained artifact count is unchanged. Existing task
+artifacts are not reprocessed. Cover intervening migrations for earlier releases.
 
 ## v0.1.33 本地 ASR 人声增强
 

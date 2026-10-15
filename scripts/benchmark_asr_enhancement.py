@@ -65,7 +65,7 @@ def main() -> None:
     if not any(output.is_relative_to(ROOT / directory) for directory in ("logs", "tmp", "testdata/real")):
         parser.error("Reports and sensitive audio must stay in ignored local logs/, tmp/, or testdata/real/")
     modes = args.modes.split(",")
-    allowed = {"off", "gain_only", "denoise_only", "wet25", "auto", "wet75", "mix50", "mix60", "mix65", "mix75", "no_pauses"}
+    allowed = {"off", "gain_only", "denoise_only", "wet25", "auto", "wet75", "mix50", "mix60", "mix65", "mix75", "no_pauses", "pause_gate"}
     if modes[0] != "off" or not set(modes) <= allowed:
         parser.error("Modes must start with off and use the documented comparison modes")
     if args.device == "gpu" and os.environ.get("AUDIO_INTEL_ENHANCEMENT_BENCH_LEASE") != "1":
@@ -157,7 +157,7 @@ def main() -> None:
                 controls = {"wet_ratio": ratio} if ratio is not None else {}
                 metadata = enhance_audio(source, target, vad, lambda *_: None, lambda *_: None, lambda *_: None,
                     denoiser=(lambda x: x) if mode == "gain_only" else denoiser,
-                    enable_gain=mode != "denoise_only", enable_pauses=mode not in {"gain_only", "denoise_only", "no_pauses"},
+                    enable_gain=mode != "denoise_only", enable_pauses=mode == "pause_gate",
                     **controls)
                 if metadata["status"] != "applied":
                     target = source

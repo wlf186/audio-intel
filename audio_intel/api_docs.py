@@ -31,10 +31,11 @@ Audio, video and compatible ASR accept `audio_enhancement=auto|off`; new jobs de
 `playback_url`，使用普通鉴权产物接口并支持 Range；追加 `/waveform` 可读取波形。结果
 字段可选，旧任务缺失不表示增强成功。`gain_seconds`、`denoised_seconds` 是处理块覆盖
 秒数，`elapsed_seconds` 不含后续 VAD 和其他任务阶段。并非所有任务都有增强产物。
-处理策略 2 在两次人声检测的并集之外保守压低较长的噪声间隙，保留起止保护和渐变，
-不直接静音。可选 `processing_version`、`pause_attenuated_seconds`、
+处理策略 3 保留原有增益与 GTCRN 混合，不再按人声检测结果切换整段音量，避免漏检轻声时
+出现憋气感。可选 `processing_version`、`pause_attenuated_seconds`、
 `max_pause_attenuation_db` 和 `pause_suppression_reason` 记录实际策略及衰减；
-历史缺失不表示已执行间隙抑制。`elapsed_seconds` 包含信号处理，不含 VAD。
+策略 3 的衰减量为零，原因为 `disabled_for_naturalness`；历史缺失不表示执行过间隙抑制。
+`elapsed_seconds` 包含信号处理，不含 VAD。
 
 Enhancement always runs locally on CPU FP32 independently of the requested ASR
 device. Only applied results provide enhanced `playback_url`, through the normal
@@ -43,11 +44,12 @@ result field is optional for historical jobs. Block coverage seconds are not
 exact voiced duration, and enhancement time excludes subsequent VAD and other
 task stages. Model unavailability does not disable base ASR. Background speakers
 and severe reverberation may remain; a changed transcript is not an accuracy score.
-Processing policy 2 gently attenuates eligible noisy pauses outside the union of
-both VAD passes, with speech margins and fades. Optional `processing_version`,
+Processing policy 3 preserves gain and GTCRN mixing without VAD-driven full-band
+volume gating, avoiding attenuation of missed quiet speech. Optional `processing_version`,
 `pause_attenuated_seconds`, `max_pause_attenuation_db` and
 `pause_suppression_reason` describe actual processing; historical absence does not
-imply pause suppression. Signal-processing time includes this pass and excludes VAD.
+imply pause suppression. Policy 3 reports zero pause attenuation and
+`disabled_for_naturalness`. Signal-processing time excludes VAD.
 
 
 服务入口自动读取仓库根目录 `.env`，外部已导出的环境变量优先；这不会把配置导出回客户端 shell。Swagger 使用当前访问源和相对 `/openapi.json`。复制到终端的 Bash/Python/JavaScript 示例默认访问 `http://127.0.0.1:20810`；自定义端口或 HTTPS 时，先在客户端设置实际 `AUDIO_INTEL_BASE_URL`（例如 `http://127.0.0.1:20815`），鉴权开启时从原有凭据来源另行提供 `AUDIO_INTEL_API_KEY`。用 `service.sh status` / `service.cmd status` 查看实际运行端点。
@@ -1092,8 +1094,8 @@ for _status, _reason, _mode in (
     if _status == "applied":
         _enhancement.update(max_gain_db=12.0, denoised_seconds=3.2, gain_seconds=3.2,
                             wet_ratio=0.5, elapsed_seconds=0.2, input_samples=51200,
-                            processing_version=2, pause_attenuated_seconds=0.4,
-                            max_pause_attenuation_db=6.0, pause_suppression_reason="applied",
+                            processing_version=3, pause_attenuated_seconds=0.0,
+                            max_pause_attenuation_db=0.0, pause_suppression_reason="disabled_for_naturalness",
                             playback_url="/api/v1/jobs/asr_example/artifacts/enhanced.wav",
                             waveform=[0.1, 0.4, 0.2])
         _result["artifacts"] = [{"name": "enhanced.wav", "path": "data/jobs/asr_example/output/enhanced.wav",

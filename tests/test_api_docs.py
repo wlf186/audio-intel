@@ -586,12 +586,17 @@ def test_speech_enhancement_openapi_contract_and_examples(tmp_path, monkeypatch)
         enhancement = value["audio_enhancement"]
         assert enhancement["status"] == status
         if status == "applied":
-            assert enhancement["processing_version"] == 2
-            assert enhancement["pause_attenuated_seconds"] > 0
-            assert enhancement["max_pause_attenuation_db"] == 6
-            assert enhancement["pause_suppression_reason"] == "applied"
+            assert enhancement["processing_version"] == 3
+            assert enhancement["pause_attenuated_seconds"] == 0
+            assert enhancement["max_pause_attenuation_db"] == 0
+            assert enhancement["pause_suppression_reason"] == "disabled_for_naturalness"
             assert enhancement["playback_url"] != value["playback_url"]
             assert enhancement["input_samples"] == round(value["duration"] * 16000)
             assert any(artifact["name"] == "enhanced.wav" for artifact in value["artifacts"])
         else:
             assert "playback_url" not in enhancement
+    historical = dict(RESULT_EXAMPLES["asr_enhancement_applied"]["value"])
+    historical["audio_enhancement"] = {**historical["audio_enhancement"],
+        "processing_version": 2, "pause_attenuated_seconds": .4,
+        "max_pause_attenuation_db": 6., "pause_suppression_reason": "applied"}
+    assert JobResultResponse.model_validate(historical).model_dump(exclude_unset=True) == historical

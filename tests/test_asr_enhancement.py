@@ -275,7 +275,33 @@ def test_pause_cancellation_closes_handles_and_removes_temporary(local, tmp_path
     path.unlink()  # Also checks reader handles are closed on Windows.
 
 
-def test_full_enhancement_uses_final_waveform_and_keeps_quiet_detected_speech(local, tmp_path, monkeypatch):
+def test_auto_keeps_missed_quiet_speech_without_vad_volume_switches(local, tmp_path):
+    source = tmp_path / "source.wav"
+    audio = (.1 * np.sin(np.arange(5 * 16000) * .1)).astype(np.float32)
+    # Both detectors miss a quiet voiced phrase between two detected phrases.
+    audio[2 * 16000:3 * 16000] *= .1
+    sf.write(source, audio, 16000, subtype="PCM_16")
+    regions = [{"start": 0., "end": 1.}, {"start": 4., "end": 5.}]
+    def unexpected_pause_pass(*_):
+        pytest.fail("Automatic enhancement must not gate volume using VAD")
+    outputs = []
+    for name, detected in [("missed", regions), ("detected", [{"start": 0., "end": 5.}])]:
+        target = tmp_path / f"{name}.wav"
+        result = enhancement.enhance_audio(source, target, regions, lambda *_: None,
+            lambda *_: None, unexpected_pause_pass, denoiser=lambda x: x * .5,
+            enable_gain=False, speech_detector=lambda *_: detected)
+        outputs.append(sf.read(target, dtype="float32")[0])
+        assert result["processing_version"] == 3
+        assert result["pause_attenuated_seconds"] == 0
+        assert result["max_pause_attenuation_db"] == 0
+        assert result["pause_suppression_reason"] == "disabled_for_naturalness"
+        assert not target.with_suffix(".pause.partial.wav").exists()
+    expected, _ = sf.read(source, dtype="float32")
+    assert np.max(np.abs(outputs[0] - expected * .75)) < 4e-5
+    assert np.array_equal(outputs[0], outputs[1])
+
+
+def test_diagnostic_pause_gate_uses_final_waveform_and_keeps_quiet_detected_speech(local, tmp_path, monkeypatch):
     source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
     sf.write(source, np.full(5 * 16000, .1, np.float32), 16000, subtype="PCM_16")
     observed = []
@@ -286,7 +312,7 @@ def test_full_enhancement_uses_final_waveform_and_keeps_quiet_detected_speech(lo
     monkeypatch.setattr(enhancement, "_waveform", waveform)
     result = enhancement.enhance_audio(source, target, [{"start": 0., "end": 1.}],
         lambda *_: None, lambda *_: None, lambda *_: None, denoiser=lambda x: x * .5,
-        speech_detector=lambda *_: [{"start": 2., "end": 3.}])
+        speech_detector=lambda *_: [{"start": 2., "end": 3.}], enable_pauses=True)
     output, _ = sf.read(target, dtype="float32")
     assert np.min(output[int(1.8 * 16000):int(3.4 * 16000)]) > .074
     assert output[-8000] < .04
@@ -295,17 +321,19 @@ def test_full_enhancement_uses_final_waveform_and_keeps_quiet_detected_speech(lo
     assert "_noisy_regions" not in result
 
 
-def test_second_vad_failure_keeps_enhancement_but_skips_pause_attenuation(local, tmp_path):
+@pytest.mark.parametrize("enable_pauses", [False, True])
+def test_second_vad_failure_keeps_enhancement_but_skips_pause_attenuation(local, tmp_path, enable_pauses):
     source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
     sf.write(source, np.full(3 * 16000, .1, np.float32), 16000, subtype="PCM_16")
     def unavailable(*_):
         raise RuntimeError("Public detector failure fixture")
     result = enhancement.enhance_audio(source, target, [{"start": 0., "end": 1.}],
         lambda *_: None, lambda *_: None, lambda *_: None, denoiser=lambda x: x * .5,
-        speech_detector=unavailable)
+        speech_detector=unavailable, enable_pauses=enable_pauses)
     output, _ = sf.read(target, dtype="float32")
     assert np.min(output) > .074 and result["status"] == "applied"
-    assert result["pause_suppression_reason"] == "vad_unavailable"
+    assert result["pause_suppression_reason"] == ("vad_unavailable" if enable_pauses else "disabled_for_naturalness")
+    assert result["speech_regions"] == [{"start": 0., "end": 1.}]
     assert result["pause_attenuated_seconds"] == 0
 
 

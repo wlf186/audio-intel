@@ -20,7 +20,7 @@ MAX_GAIN_DB = 24.0
 CEILING = 10 ** (-1 / 20)
 NOISE_RATIO_THRESHOLD = 0.12
 WET_RATIO = 0.5
-PROCESSING_VERSION = 2
+PROCESSING_VERSION = 3
 CROSSFADE_SAMPLES = 800
 SPEECH_HEAD_SECONDS = .2
 SPEECH_TAIL_SECONDS = .4
@@ -315,8 +315,8 @@ def enhance_audio(source: Path, target: Path, regions: list[dict[str, float]],
                   report: Callable[[int, int], None], vad_report: Callable[[int, int], None],
                   pause_report: Callable[[int, int], None], *, denoiser: Callable | None = None,
                   wet_ratio: float = WET_RATIO, enable_gain: bool = True,
-                  enable_pauses: bool = True, speech_detector: Callable | None = None) -> dict[str, Any]:
-    """Shared production/benchmark order: enhancement, VAD union, protected pauses, waveform."""
+                  enable_pauses: bool = False, speech_detector: Callable | None = None) -> dict[str, Any]:
+    """Enhance without VAD volume gating; policy 2 is diagnostic opt-in only."""
     from audio_intel.worker import JobCancelled
 
     completed = False
@@ -324,8 +324,11 @@ def enhance_audio(source: Path, target: Path, regions: list[dict[str, float]],
         result = enhance_file(source, target, regions, report, denoiser=denoiser,
                               wet_ratio=wet_ratio, enable_gain=enable_gain, include_waveform=False)
         noisy = result.pop("_noisy_regions")
-        result.update(pause_attenuated_seconds=0.0, max_pause_attenuation_db=0.0,
-                      pause_suppression_reason="disabled" if not enable_pauses else "bypassed")
+        # Missed quiet speech must not switch the full signal between 0 and -6 dB.
+        # Keep the retired gate solely for paired local diagnostic comparisons.
+        result.update(processing_version=2 if enable_pauses else PROCESSING_VERSION,
+                      pause_attenuated_seconds=0.0, max_pause_attenuation_db=0.0,
+                      pause_suppression_reason="bypassed" if enable_pauses else "disabled_for_naturalness")
         if result["status"] == "applied":
             detector = speech_detector or enhanced_speech_regions
             try:
@@ -335,7 +338,8 @@ def enhance_audio(source: Path, target: Path, regions: list[dict[str, float]],
                 raise
             except (OSError, ValueError, RuntimeError):
                 combined = regions
-                result["pause_suppression_reason"] = "vad_unavailable"
+                if enable_pauses:
+                    result["pause_suppression_reason"] = "vad_unavailable"
             else:
                 if enable_pauses:
                     started = time.monotonic()
