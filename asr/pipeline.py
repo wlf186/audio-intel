@@ -877,9 +877,11 @@ def process_job(context: JobContext) -> dict[str, Any]:
                 context.progress(.11, "audio_enhancement")
                 def enhancement_progress(snapshot: dict[str, Any]) -> None:
                     ratio = float(snapshot.get("stage_progress") or 0)
-                    vad_phase = snapshot.get("stage") == "audio_enhancement_vad"
-                    value = .173 + .007 * ratio if vad_phase else .11 + .063 * ratio
-                    context.progress(value, "audio_enhancement_vad" if vad_phase else "audio_enhancement",
+                    stage = snapshot.get("stage")
+                    value = (.176 + .004 * ratio if stage == "audio_enhancement_pauses"
+                             else .17 + .006 * ratio if stage == "audio_enhancement_vad" else .11 + .06 * ratio)
+                    context.progress(value, stage if stage in {"audio_enhancement_vad", "audio_enhancement_pauses"}
+                                     else "audio_enhancement",
                                      int(snapshot["completed"]), int(snapshot["total"]),
                                      stage_progress=ratio, unit="media_second")
                 try:

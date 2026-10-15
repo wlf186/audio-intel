@@ -207,6 +207,108 @@ def test_streamed_boundary_blend_respects_peak_ceiling(local, tmp_path):
     assert np.max(np.abs(output)) <= enhancement.CEILING + 1e-6
 
 
+@pytest.mark.parametrize("extra", [123, 16000])
+def test_no_raw_noise_returns_at_processing_boundaries(local, tmp_path, extra):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    samples = np.full(30 * 16000 + extra, .2, np.float32)
+    sf.write(source, samples, 16000, subtype="PCM_16")
+    enhancement.enhance_file(source, target, [], lambda *_: None,
+                             denoiser=lambda x: np.zeros_like(x), enable_gain=False)
+    output, _ = sf.read(target, dtype="float32")
+    assert len(output) == len(samples)
+    # The old boundary ramp returned to raw .2 every thirty seconds.
+    assert np.max(np.abs(output - .1)) < 4e-5
+
+
+def test_whole_clean_file_bypasses_sample_exactly_across_blocks(local, tmp_path):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    audio = np.random.default_rng(17).normal(0, .1, 31 * 16000 + 43).astype(np.float32)
+    audio[30 * 16000] = .97
+    sf.write(source, audio, 16000, subtype="PCM_16")
+    result = enhancement.enhance_file(source, target, [], lambda *_: None, denoiser=lambda x: x)
+    assert result["status"] == "bypassed" and not target.exists()
+    assert not target.with_suffix(".partial.wav").exists()
+
+
+def test_pause_suppression_protects_both_vad_passes_and_bounds_noise(local, tmp_path):
+    path = tmp_path / "enhanced.wav"
+    audio = np.full(6 * 16000, .05, np.float32)
+    sf.write(path, audio, 16000, subtype="PCM_16")
+    original, _ = sf.read(path, dtype="float32")
+    speech = enhancement.merge_regions([{"start": 1., "end": 2.}], [{"start": 2.5, "end": 3.}])
+    progress = []
+    result = enhancement.suppress_pauses(path, speech, [{"start": 0., "end": 5.}],
+        lambda current, total: progress.append((current, total)))
+    output, _ = sf.read(path, dtype="float32")
+    assert np.array_equal(output[int(.8 * 16000):int(3.4 * 16000)], original[int(.8 * 16000):int(3.4 * 16000)])
+    assert np.array_equal(output[5 * 16000:], original[5 * 16000:])
+    assert np.max(np.abs(output[int(3.6 * 16000):int(4.8 * 16000)])) < .026
+    assert result["pause_suppression_reason"] == "applied"
+    assert result["max_pause_attenuation_db"] == 6
+    assert 2 < result["pause_attenuated_seconds"] < 3
+    assert progress[-1] == (len(audio), len(audio))
+    assert not path.with_suffix(".pause.partial.wav").exists()
+
+
+@pytest.mark.parametrize("speech,noise", [([], [{"start": 0., "end": 5.}]),
+    ([{"start": 1., "end": 2.}], []),
+    ([{"start": 0., "end": 1.}, {"start": 1.8, "end": 5.}], [{"start": 0., "end": 5.}])])
+def test_no_speech_no_noise_or_short_gap_never_attenuates(local, tmp_path, speech, noise):
+    path = tmp_path / "enhanced.wav"
+    sf.write(path, np.full(5 * 16000, .01, np.float32), 16000, subtype="PCM_16")
+    before = path.read_bytes()
+    result = enhancement.suppress_pauses(path, speech, noise, lambda *_: None)
+    assert path.read_bytes() == before and result["pause_attenuated_seconds"] == 0
+
+
+def test_pause_cancellation_closes_handles_and_removes_temporary(local, tmp_path):
+    path = tmp_path / "enhanced.wav"
+    sf.write(path, np.full(31 * 16000, .01, np.float32), 16000, subtype="PCM_16")
+    before = path.read_bytes()
+    def cancel(*_):
+        raise worker.JobCancelled("Public cancellation fixture")
+    with pytest.raises(worker.JobCancelled):
+        enhancement.suppress_pauses(path, [{"start": 0., "end": 1.}],
+                                    [{"start": 0., "end": 31.}], cancel)
+    assert path.read_bytes() == before
+    assert not path.with_suffix(".pause.partial.wav").exists()
+    path.unlink()  # Also checks reader handles are closed on Windows.
+
+
+def test_full_enhancement_uses_final_waveform_and_keeps_quiet_detected_speech(local, tmp_path, monkeypatch):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    sf.write(source, np.full(5 * 16000, .1, np.float32), 16000, subtype="PCM_16")
+    observed = []
+    def waveform(path):
+        audio, _ = sf.read(path, dtype="float32")
+        observed.append(float(audio[-8000]))
+        return [observed[-1]]
+    monkeypatch.setattr(enhancement, "_waveform", waveform)
+    result = enhancement.enhance_audio(source, target, [{"start": 0., "end": 1.}],
+        lambda *_: None, lambda *_: None, lambda *_: None, denoiser=lambda x: x * .5,
+        speech_detector=lambda *_: [{"start": 2., "end": 3.}])
+    output, _ = sf.read(target, dtype="float32")
+    assert np.min(output[int(1.8 * 16000):int(3.4 * 16000)]) > .074
+    assert output[-8000] < .04
+    assert result["waveform"] == observed and len(observed) == 1
+    assert result["processing_version"] == 2
+    assert "_noisy_regions" not in result
+
+
+def test_second_vad_failure_keeps_enhancement_but_skips_pause_attenuation(local, tmp_path):
+    source, target = tmp_path / "source.wav", tmp_path / "enhanced.wav"
+    sf.write(source, np.full(3 * 16000, .1, np.float32), 16000, subtype="PCM_16")
+    def unavailable(*_):
+        raise RuntimeError("Public detector failure fixture")
+    result = enhancement.enhance_audio(source, target, [{"start": 0., "end": 1.}],
+        lambda *_: None, lambda *_: None, lambda *_: None, denoiser=lambda x: x * .5,
+        speech_detector=unavailable)
+    output, _ = sf.read(target, dtype="float32")
+    assert np.min(output) > .074 and result["status"] == "applied"
+    assert result["pause_suppression_reason"] == "vad_unavailable"
+    assert result["pause_attenuated_seconds"] == 0
+
+
 def test_enhanced_playback_is_separate_authenticated_and_range_capable(local, monkeypatch):
     value = replace(local, mock_mode=False)
     for module in (api, db, worker, pipeline):

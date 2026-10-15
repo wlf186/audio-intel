@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -51,6 +52,7 @@ def main() -> None:
     parser.add_argument("--job-id", action="append", default=[], help="Read a historical job without modifying it")
     parser.add_argument("--full", action="store_true", help="Use complete job audio instead of representative excerpts")
     parser.add_argument("--fixed-vad", action="store_true", help="Isolate signal processing by holding original VAD boundaries fixed")
+    parser.add_argument("--baseline-report", type=Path, help="Frozen original/auto report with matching cases; reuse original transcription")
     parser.add_argument("--model", choices=[x["public_id"] for x in asr_models()], default="qwen3-asr-1.7b")
     parser.add_argument("--device", choices=["cpu", "gpu"], default=settings.default_compute_device)
     parser.add_argument("--modes", default="off,gain_only,denoise_only,wet25,auto,wet75")
@@ -63,7 +65,7 @@ def main() -> None:
     if not any(output.is_relative_to(ROOT / directory) for directory in ("logs", "tmp", "testdata/real")):
         parser.error("Reports and sensitive audio must stay in ignored local logs/, tmp/, or testdata/real/")
     modes = args.modes.split(",")
-    allowed = {"off", "gain_only", "denoise_only", "wet25", "auto", "wet75"}
+    allowed = {"off", "gain_only", "denoise_only", "wet25", "auto", "wet75", "mix50", "mix60", "mix65", "mix75", "no_pauses"}
     if modes[0] != "off" or not set(modes) <= allowed:
         parser.error("Modes must start with off and use the documented comparison modes")
     if args.device == "gpu" and os.environ.get("AUDIO_INTEL_ENHANCEMENT_BENCH_LEASE") != "1":
@@ -99,7 +101,7 @@ def main() -> None:
     import soundfile as sf
     import torch
     from qwen_asr import Qwen3ASRModel
-    from asr.enhancement import enhance_file, load_denoiser, enhanced_speech_regions, merge_regions
+    from asr.enhancement import enhance_audio, load_denoiser
     from asr.pipeline import decode_audio, run_vad, combine_vad
     from audio_intel.media import extract_audio_clip
 
@@ -111,6 +113,10 @@ def main() -> None:
         device_map="cpu" if args.device == "cpu" else "cuda:0", attn_implementation="sdpa",
         local_files_only=True, max_inference_batch_size=1, max_new_tokens=512)
     denoiser = load_denoiser()
+    frozen = json.loads(args.baseline_report.read_text(encoding="utf-8")) if args.baseline_report else None
+    if frozen:
+        if frozen["model"] != args.model or frozen["device"] != args.device or len(frozen["cases"]) != len(cases):
+            parser.error("Baseline model, device and cases must match")
     output.mkdir(parents=True, exist_ok=True)
     report: dict[str, Any] = {"model": args.model, "model_revision": selected["revision"],
                             "device": args.device, "network_disabled": True, "cases": []}
@@ -124,21 +130,39 @@ def main() -> None:
         else:
             audio, rate = decode_audio(Path(case["path"]), source)
         vad = run_vad(audio, rate)
+        frozen_case = frozen["cases"][index] if frozen else None
+        if frozen_case and (frozen_case["id"] != str(case.get("id", index + 1)) or
+                            abs(frozen_case["duration"] - len(audio) / rate) > 1 / rate):
+            raise ValueError("Frozen case identity or duration differs")
+        if frozen_case:
+            original = args.baseline_report.parent / f"case-{index + 1:03d}" / "original.wav"
+            with source.open("rb") as candidate, original.open("rb") as previous:
+                if hashlib.file_digest(candidate, "sha256").digest() != hashlib.file_digest(previous, "sha256").digest():
+                    raise ValueError("Frozen normalized audio differs")
         entry: dict[str, Any] = {"id": str(case.get("id", index + 1)), "duration": len(audio) / rate,
             "has_reference": "reference" in case, "modes": {}}
         baseline = ""
         for mode in modes:
+            if mode == "off" and frozen_case:
+                item = frozen_case["modes"]["off"].copy()
+                entry["modes"][mode] = item
+                baseline = item["text"]
+                continue
             target = source
             metadata = {"status": "off"}
             if mode != "off":
                 target = directory / (mode + ".wav")
-                metadata = enhance_file(source, target, vad, lambda *_: None,
+                ratio = {"wet25": .25, "wet75": .75, "mix50": .5, "mix60": .6,
+                         "mix65": .65, "mix75": .75}.get(mode)
+                controls = {"wet_ratio": ratio} if ratio is not None else {}
+                metadata = enhance_audio(source, target, vad, lambda *_: None, lambda *_: None, lambda *_: None,
                     denoiser=(lambda x: x) if mode == "gain_only" else denoiser,
-                    wet_ratio=.25 if mode == "wet25" else .75 if mode == "wet75" else .5,
-                    enable_gain=mode != "denoise_only")
+                    enable_gain=mode != "denoise_only", enable_pauses=mode not in {"gain_only", "denoise_only", "no_pauses"},
+                    **controls)
                 if metadata["status"] != "applied":
                     target = source
-            mode_vad = merge_regions(vad, enhanced_speech_regions(target)) if target != source and not args.fixed_vad else vad
+            enhanced_vad = metadata.pop("speech_regions", vad)
+            mode_vad = vad if args.fixed_vad else enhanced_vad
             mode_chunks = combine_vad(mode_vad, len(audio) / rate)
             started = time.monotonic()
             texts = []
@@ -160,6 +184,12 @@ def main() -> None:
                 "agreement_with_baseline": difflib.SequenceMatcher(None, text_units(baseline), text_units(text), autojunk=False).ratio()}
             if "reference" in case:
                 item["cer"] = character_error_rate(case["reference"], text)
+            if frozen_case:
+                current = frozen_case["modes"]["auto"]
+                item["agreement_with_current"] = difflib.SequenceMatcher(
+                    None, text_units(current["text"]), text_units(text), autojunk=False).ratio()
+                if "cer" in item and "cer" in current:
+                    item["cer_change_from_current"] = item["cer"] - current["cer"]
             entry["modes"][mode] = item
         report["cases"].append(entry)
         path = output / "report.json"

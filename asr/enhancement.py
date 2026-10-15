@@ -20,6 +20,13 @@ MAX_GAIN_DB = 24.0
 CEILING = 10 ** (-1 / 20)
 NOISE_RATIO_THRESHOLD = 0.12
 WET_RATIO = 0.5
+PROCESSING_VERSION = 2
+CROSSFADE_SAMPLES = 800
+SPEECH_HEAD_SECONDS = .2
+SPEECH_TAIL_SECONDS = .4
+MIN_PAUSE_SECONDS = .3
+PAUSE_RAMP_SECONDS = .1
+MAX_PAUSE_ATTENUATION_DB = 6.0
 
 
 def merge_regions(*groups: list[dict[str, float]]) -> list[dict[str, float]]:
@@ -131,7 +138,8 @@ def enhance_block(audio: Any, denoised: Any, speech: Any, *, wet_ratio: float = 
 
 def enhance_file(source: Path, target: Path, regions: list[dict[str, float]],
                  report: Callable[[int, int], None], *, denoiser: Callable | None = None,
-                 wet_ratio: float = WET_RATIO, enable_gain: bool = True) -> dict[str, Any]:
+                 wet_ratio: float = WET_RATIO, enable_gain: bool = True,
+                 include_waveform: bool = True) -> dict[str, Any]:
     import numpy as np
     import soundfile as sf
 
@@ -140,7 +148,8 @@ def enhance_file(source: Path, target: Path, regions: list[dict[str, float]],
     metadata: dict[str, Any] = {"mode": "auto", "status": "bypassed", "reason": "clean",
         "model": model["name"], "model_revision": model["revision"], "compute_device": "cpu",
         "max_gain_db": 0.0, "denoised_seconds": 0.0, "gain_seconds": 0.0,
-        "wet_ratio": wet_ratio}
+        "wet_ratio": wet_ratio, "processing_version": PROCESSING_VERSION}
+    noisy_regions: list[dict[str, float]] = []
     temporary = target.with_suffix(".partial.wav")
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -152,6 +161,8 @@ def enhance_file(source: Path, target: Path, regions: list[dict[str, float]],
                 raise OSError("Insufficient disk space for enhanced playback")
             run = denoiser if denoiser is not None else load_denoiser()
             metadata["input_samples"] = total
+            previous_tail = None
+            previous_changed = False
             with sf.SoundFile(temporary, "w", samplerate=RATE, channels=1, subtype="PCM_16") as writer:
                 for start in range(0, total, BLOCK_SECONDS * RATE):
                     end = min(total, start + BLOCK_SECONDS * RATE)
@@ -167,22 +178,29 @@ def enhance_file(source: Path, target: Path, regions: list[dict[str, float]],
                         if finish > begin:
                             mask[begin:finish] = True
                     processed, stats = enhance_block(original, denoised, mask, wet_ratio=wet_ratio, enable_gain=enable_gain)
-                    core = processed[start - left:end - left].copy()
-                    # Blend a short margin towards the original at processing
-                    # block boundaries, avoiding a discontinuity when modes change.
-                    margin = min(800, len(core) // 2)
-                    if margin and (stats["denoised"] or stats["gain_db"] > .01):
-                        raw_core = original[start - left:end - left]
-                        ramp = np.linspace(0, 1, margin, dtype=np.float32)
-                        if start:
-                            core[:margin] = raw_core[:margin] * (1 - ramp) + core[:margin] * ramp
-                        if end < total:
-                            core[-margin:] = core[-margin:] * (1 - ramp) + raw_core[-margin:] * ramp
-                        core = np.clip(core, -CEILING, CEILING)
-                    writer.write(core)
+                    changed = stats["denoised"] or stats["gain_db"] > .01
+                    begin_write = start
+                    half = CROSSFADE_SAMPLES // 2
+                    if previous_tail is not None:
+                        overlap_begin, overlap_end = start - half, min(total, start + half)
+                        head = processed[overlap_begin - left:overlap_end - left]
+                        if changed or previous_changed:
+                            ramp = np.linspace(0, 1, len(head), dtype=np.float32)
+                            overlap = np.clip(previous_tail * (1 - ramp) + head * ramp, -CEILING, CEILING)
+                        else:
+                            # Exact bypass, including original peaks and PCM samples.
+                            overlap = head
+                        writer.write(overlap)
+                        begin_write = overlap_end
+                    end_write = end - half if end < total else end
+                    writer.write(processed[begin_write - left:max(begin_write, end_write) - left])
+                    previous_tail = (processed[end - half - left:min(total, end + half) - left].copy()
+                                     if end < total else None)
+                    previous_changed = changed
                     seconds = (end - start) / RATE
                     if stats["denoised"]:
                         metadata["denoised_seconds"] += seconds
+                        noisy_regions.append({"start": start / RATE, "end": end / RATE})
                     if stats["gain_db"] > .01:
                         metadata["gain_seconds"] += seconds
                     metadata["max_gain_db"] = max(metadata["max_gain_db"], stats["gain_db"])
@@ -190,16 +208,145 @@ def enhance_file(source: Path, target: Path, regions: list[dict[str, float]],
             if metadata["denoised_seconds"] or metadata["gain_seconds"]:
                 metadata.update(status="applied", reason="noise_and_gain" if metadata["denoised_seconds"] and metadata["gain_seconds"] else "noise" if metadata["denoised_seconds"] else "quiet_speech")
                 temporary.replace(target)
-                # Optional waveform failure must never fail inference.
-                try:
-                    from audio_intel.waveforms import retrieve
-                    metadata["waveform"] = retrieve(target)["waveform"]
-                except Exception:
-                    metadata["waveform"] = []
+                if include_waveform:
+                    metadata["waveform"] = _waveform(target)
+        metadata["_noisy_regions"] = merge_regions(noisy_regions)
         metadata["elapsed_seconds"] = round(time.monotonic() - started, 3)
         return metadata
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _waveform(path: Path) -> list[float]:
+    # Waveform generation is optional; always call after the final signal pass.
+    try:
+        from audio_intel.waveforms import retrieve
+        return retrieve(path)["waveform"]
+    except Exception:
+        return []
+
+
+def pause_regions(regions: list[dict[str, float]], noisy_regions: list[dict[str, float]],
+                  duration: float) -> list[dict[str, float]]:
+    """Conservative gaps in the union of both VAD passes, restricted to noisy blocks."""
+    if not regions or not noisy_regions:
+        return []
+    protected = merge_regions([
+        {"start": max(0.0, float(item["start"]) - SPEECH_HEAD_SECONDS),
+         "end": min(duration, float(item["end"]) + SPEECH_TAIL_SECONDS)}
+        for item in regions
+        if math.isfinite(float(item["start"])) and math.isfinite(float(item["end"]))
+        and float(item["end"]) > float(item["start"])
+        and float(item["end"]) > 0 and float(item["start"]) < duration
+    ])
+    if not protected:
+        return []
+    gaps = []
+    cursor = 0.0
+    for item in protected:
+        if item["start"] > cursor:
+            gaps.append({"start": cursor, "end": item["start"]})
+        cursor = max(cursor, item["end"])
+    if cursor < duration:
+        gaps.append({"start": cursor, "end": duration})
+    pauses = []
+    for gap in gaps:
+        for noise in noisy_regions:
+            start, end = max(gap["start"], noise["start"]), min(gap["end"], noise["end"])
+            if end - start >= MIN_PAUSE_SECONDS - 1e-9:
+                pauses.append({"start": start, "end": end})
+    return merge_regions(pauses)
+
+
+def suppress_pauses(path: Path, regions: list[dict[str, float]], noisy_regions: list[dict[str, float]],
+                    report: Callable[[int, int], None]) -> dict[str, Any]:
+    import numpy as np
+    import soundfile as sf
+
+    stats = {"pause_attenuated_seconds": 0.0, "max_pause_attenuation_db": 0.0,
+             "pause_suppression_reason": "no_long_pauses" if regions and noisy_regions
+             else "no_speech" if not regions else "no_noise"}
+    temporary = path.with_suffix(".pause.partial.wav")
+    try:
+        with sf.SoundFile(path) as reader:
+            if reader.samplerate != RATE or reader.channels != 1:
+                raise ValueError("Pause suppression requires normalized mono audio")
+            total = len(reader)
+            pauses = pause_regions(regions, noisy_regions, total / RATE)
+            if not pauses:
+                report(total, total)
+                return stats
+            if shutil.disk_usage(path.parent).free < settings.min_free_disk_bytes + total * 2 + 4096:
+                raise OSError("Insufficient disk space for pause suppression")
+            intervals = [(round(x["start"] * RATE), round(x["end"] * RATE)) for x in pauses]
+            attenuated = 0
+            maximum = 0.0
+            with sf.SoundFile(temporary, "w", samplerate=RATE, channels=1, subtype="PCM_16") as writer:
+                for start in range(0, total, BLOCK_SECONDS * RATE):
+                    audio = reader.read(min(BLOCK_SECONDS * RATE, total - start), dtype="float32")
+                    attenuation = np.zeros(len(audio), dtype=np.float32)
+                    for begin, end in intervals:
+                        left, right = max(start, begin), min(start + len(audio), end)
+                        if left >= right:
+                            continue
+                        positions = np.arange(left, right, dtype=np.float64)
+                        fraction = np.minimum(np.minimum((positions - begin) / (PAUSE_RAMP_SECONDS * RATE),
+                                                         (end - 1 - positions) / (PAUSE_RAMP_SECONDS * RATE)), 1.0)
+                        curve = MAX_PAUSE_ATTENUATION_DB * (.5 - .5 * np.cos(np.pi * np.maximum(0, fraction)))
+                        attenuation[left - start:right - start] = curve
+                    changed = attenuation > 1e-6
+                    audio[changed] *= np.power(10.0, -attenuation[changed] / 20)
+                    if not np.isfinite(audio).all():
+                        raise ValueError("Invalid pause suppression output")
+                    attenuated += int(np.count_nonzero(changed))
+                    maximum = max(maximum, float(np.max(attenuation, initial=0)))
+                    writer.write(audio)
+                    report(start + len(audio), total)
+        # Close both handles before replacement, including on native Windows.
+        temporary.replace(path)
+        stats.update(pause_attenuated_seconds=attenuated / RATE, max_pause_attenuation_db=maximum,
+                     pause_suppression_reason="applied")
+        return stats
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def enhance_audio(source: Path, target: Path, regions: list[dict[str, float]],
+                  report: Callable[[int, int], None], vad_report: Callable[[int, int], None],
+                  pause_report: Callable[[int, int], None], *, denoiser: Callable | None = None,
+                  wet_ratio: float = WET_RATIO, enable_gain: bool = True,
+                  enable_pauses: bool = True, speech_detector: Callable | None = None) -> dict[str, Any]:
+    """Shared production/benchmark order: enhancement, VAD union, protected pauses, waveform."""
+    completed = False
+    try:
+        result = enhance_file(source, target, regions, report, denoiser=denoiser,
+                              wet_ratio=wet_ratio, enable_gain=enable_gain, include_waveform=False)
+        noisy = result.pop("_noisy_regions")
+        result.update(pause_attenuated_seconds=0.0, max_pause_attenuation_db=0.0,
+                      pause_suppression_reason="disabled" if not enable_pauses else "bypassed")
+        if result["status"] == "applied":
+            detector = speech_detector or enhanced_speech_regions
+            try:
+                detected = detector(target, vad_report)
+                combined = merge_regions(regions, detected)
+            except (OSError, ValueError, RuntimeError):
+                combined = regions
+                result["pause_suppression_reason"] = "vad_unavailable"
+            else:
+                if enable_pauses:
+                    started = time.monotonic()
+                    result.update(suppress_pauses(target, combined, noisy, pause_report))
+                    result["elapsed_seconds"] += time.monotonic() - started
+            result["speech_regions"] = combined
+            started = time.monotonic()
+            result["waveform"] = _waveform(target)
+            result["elapsed_seconds"] += time.monotonic() - started
+        result["elapsed_seconds"] = round(result["elapsed_seconds"], 3)
+        completed = True
+        return result
+    finally:
+        if not completed:
+            target.unlink(missing_ok=True)
 
 
 def enhanced_speech_regions(path: Path, report: Callable[[int, int], None] | None = None) -> list[dict[str, float]]:

@@ -69,6 +69,14 @@ rules; original audio supplies CAM++ and voiceprints. Sample count, video time
 origin and ASR model/precision are preserved. Clone-reference analysis and
 voiceprint imports are excluded.
 
+Processing policy 2 runs the second VAD before pause attenuation. It protects the
+union with 200 ms head/400 ms tail margins, and only attenuates remaining noisy
+gaps of at least 300 ms, with 100 ms fades and a 6 dB maximum reduction. Missing
+reliable speech skips this pass; a second-VAD failure retains base enhancement
+and records the skip. Adjacent processed blocks crossfade over 50 ms. The final
+waveform is generated after all signal changes. Optional policy/attenuation
+diagnostics remain in job detail/results; global summaries and SSE stay unchanged.
+
 Applied results declare a separate authenticated `enhanced.wav` and waveform.
 Original playback remains the default; track switching preserves position and play
 state. Entirely bypassed tasks retain no additional WAV. Historical requests

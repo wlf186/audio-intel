@@ -30,6 +30,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--device", choices=["cpu", "gpu"], default=settings.default_compute_device)
+    parser.add_argument("--speech-dir", type=Path, help="Reuse the three public phrase WAVs instead of generating speech")
+    parser.add_argument("--extended", action="store_true", help="Include long/short pauses, hum, transients and overlapping speakers")
     args = parser.parse_args()
     target = args.output_dir.resolve()
     if not target.is_relative_to(ROOT / "testdata/real"):
@@ -38,7 +40,7 @@ def main() -> None:
         if event == "socket.connect" and values[0].family in {socket.AF_INET, socket.AF_INET6}:
             raise RuntimeError("Network disabled during fixture generation")
     sys.addaudithook(forbid_network)
-    if args.device == "gpu" and os.environ.get("AUDIO_INTEL_ENHANCEMENT_FIXTURE_LEASE") != "1":
+    if not args.speech_dir and args.device == "gpu" and os.environ.get("AUDIO_INTEL_ENHANCEMENT_FIXTURE_LEASE") != "1":
         from audio_intel.gpu import gpu_lease
         from asr.pipeline import _stop_stage_process
         with gpu_lease():
@@ -55,18 +57,25 @@ def main() -> None:
     from scipy.signal import resample_poly, lfilter
     from tts.pipeline import load_model, _sequential_speech_decode
 
-    definition = resolve_tts_model("qwen3-tts-0.6b")
-    checkpoint = resolve_tts_checkpoint(definition, "preset")
-    if not model_installation(settings.models_dir, checkpoint)["installed"]:
-        raise RuntimeError("Pinned TTS preset model is unavailable")
-    torch.manual_seed(20810)
-    model = load_model(definition, "preset", args.device)
+    model = None
+    if not args.speech_dir:
+        definition = resolve_tts_model("qwen3-tts-0.6b")
+        checkpoint = resolve_tts_checkpoint(definition, "preset")
+        if not model_installation(settings.models_dir, checkpoint)["installed"]:
+            raise RuntimeError("Pinned TTS preset model is unavailable")
+        torch.manual_seed(20810)
+        model = load_model(definition, "preset", args.device)
     target.mkdir(parents=True, exist_ok=True)
     parts = []
     for index, (speaker, text) in enumerate(PHRASES):
-        with _sequential_speech_decode(model):
-            waves, rate = model.generate_custom_voice(text=text, language="Chinese", speaker=speaker, max_new_tokens=512)
-        audio = resample_poly(np.asarray(waves[0], np.float32), 16000, rate).astype(np.float32)
+        if args.speech_dir:
+            audio, rate = sf.read(args.speech_dir / f"phrase-{index + 1:02d}.wav", dtype="float32")
+            if rate != 16000 or audio.ndim != 1:
+                raise ValueError("Public phrase inputs must be normalized mono audio")
+        else:
+            with _sequential_speech_decode(model):
+                waves, rate = model.generate_custom_voice(text=text, language="Chinese", speaker=speaker, max_new_tokens=512)
+            audio = resample_poly(np.asarray(waves[0], np.float32), 16000, rate).astype(np.float32)
         if not len(audio) or not np.isfinite(audio).all():
             raise RuntimeError("Invalid fixture speech")
         rms, peak = float(np.sqrt(np.mean(audio.astype(np.float64) ** 2))), float(np.max(np.abs(audio)))
@@ -86,6 +95,51 @@ def main() -> None:
         path = target / (name + ".wav")
         sf.write(path, values, 16000, subtype="PCM_16")
         cases.append({"id": name, "path": str(path), "reference": "".join(text for _, text in PHRASES)})
+    if args.extended:
+        # Keep clean references and exact phrase ranges for signal/ASR measurements.
+        phrases = parts[::2]
+        speech = np.concatenate([np.zeros(32000, np.float32), phrases[0], np.zeros(48000, np.float32),
+                                 phrases[1], np.zeros(12800, np.float32), phrases[2], np.zeros(48000, np.float32)])
+        positions = []
+        cursor = 32000
+        for phrase, gap in zip(phrases, [48000, 12800, 48000], strict=True):
+            positions.append({"start": cursor / 16000, "end": (cursor + len(phrase)) / 16000})
+            cursor += len(phrase) + gap
+        generator = np.random.default_rng(20811)
+        hiss = lfilter([1], [1, -.65], generator.normal(size=len(speech))).astype(np.float32)
+        hiss /= max(float(np.sqrt(np.mean(hiss.astype(np.float64) ** 2))), 1e-10)
+        clock = np.arange(len(speech)) / 16000
+        hum = (np.sin(2 * np.pi * 50 * clock) + .3 * np.sin(2 * np.pi * 150 * clock)).astype(np.float32)
+        hum /= max(float(np.sqrt(np.mean(hum.astype(np.float64) ** 2))), 1e-10)
+        clicks = np.zeros(len(speech), np.float32)
+        for second in [1.2, 4.2, 9.1, 16.7, len(speech) / 16000 - 1.5]:
+            begin = int(second * 16000)
+            count = min(1600, len(clicks) - begin)
+            if count > 0:
+                clicks[begin:begin + count] += generator.normal(0, 1, count) * np.exp(-np.arange(count) / 180)
+        extended = {
+            "pauses_clean": (speech, speech),
+            "pauses_quiet": (speech * .04, speech * .04),
+            "pauses_noise": ((speech + hiss * .035) * .2, speech * .2),
+            "pauses_noise_quiet": ((speech + hiss * .035) * .04, speech * .04),
+            "hum": ((speech + hum * .035) * .2, speech * .2),
+            "transients": ((speech + hiss * .012 + clicks * .15) * .2, speech * .2),
+        }
+        # A second speaker overlaps the middle phrase; preservation is checked by
+        # clean-reference audio and local listening rather than an ordered text CER.
+        overlap = speech.copy()
+        begin = round(positions[1]["start"] * 16000)
+        count = min(len(phrases[0]), len(overlap) - begin)
+        overlap[begin:begin + count] += phrases[0][:count] * .6
+        extended["overlap_noise"] = ((overlap + hiss * .02) * .2, overlap * .2)
+        for name, (values, reference_audio) in extended.items():
+            path, reference_path = target / (name + ".wav"), target / (name + "-clean.wav")
+            sf.write(path, values, 16000, subtype="PCM_16")
+            sf.write(reference_path, reference_audio, 16000, subtype="PCM_16")
+            case = {"id": name, "path": str(path), "clean_path": str(reference_path), "speech_regions": positions}
+            if name != "overlap_noise":
+                case["reference"] = "".join(text for _, text in PHRASES)
+            cases.append(case)
     (target / "cases.json").write_text(json.dumps(cases, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"cases": len(cases), "duration_seconds": len(clean) / 16000, "cases_json": str(target / "cases.json")}))
 

@@ -325,7 +325,7 @@ def align(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def enhance(payload: dict[str, Any]) -> dict[str, Any]:
-    from .enhancement import enhance_file, enhanced_speech_regions
+    from .enhancement import enhance_audio
     from audio_intel.model_registry import asr_enhancement_model
 
     model = asr_enhancement_model()
@@ -333,16 +333,14 @@ def enhance(payload: dict[str, Any]) -> dict[str, Any]:
         _progress(payload, "audio_enhancement", math.ceil(current / 16000), math.ceil(total / 16000),
                   stage_progress=current / max(total, 1), unit="media_second")
     try:
-        result = enhance_file(Path(payload["input_path"]), Path(payload["enhanced_path"]),
-                              payload["speech_regions"], report)
-        if result["status"] == "applied":
-            def vad_progress(current: int, total: int) -> None:
-                _progress(payload, "audio_enhancement_vad", math.ceil(current / 16000), math.ceil(total / 16000),
-                          stage_progress=current / max(total, 1), unit="media_second")
-            result["speech_regions"] = enhanced_speech_regions(Path(payload["enhanced_path"]), vad_progress)
-        seconds = math.ceil(result.get("input_samples", 0) / 16000)
-        _progress(payload, "audio_enhancement_vad" if result["status"] == "applied" else "audio_enhancement",
-                  seconds, seconds, stage_progress=1.0, unit="media_second")
+        def vad_progress(current: int, total: int) -> None:
+            _progress(payload, "audio_enhancement_vad", math.ceil(current / 16000), math.ceil(total / 16000),
+                      stage_progress=current / max(total, 1), unit="media_second")
+        def pause_progress(current: int, total: int) -> None:
+            _progress(payload, "audio_enhancement_pauses", math.ceil(current / 16000), math.ceil(total / 16000),
+                      stage_progress=current / max(total, 1), unit="media_second")
+        result = enhance_audio(Path(payload["input_path"]), Path(payload["enhanced_path"]),
+                               payload["speech_regions"], report, vad_progress, pause_progress)
         return result
     except (OSError, ValueError, RuntimeError) as exc:
         Path(payload["enhanced_path"]).unlink(missing_ok=True)

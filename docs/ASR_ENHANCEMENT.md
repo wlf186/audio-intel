@@ -29,6 +29,18 @@ mix retains 50% original signal. Speech gain targets −24 dBFS RMS, activates o
 below −30 dBFS, is capped at +24 dB, and uses smoothing plus a local −1 dBFS peak
 ceiling on processed blocks. Untouched blocks retain original samples and peaks.
 These are internal controls, not public sampling or volume parameters.
+Processing policy 2 keeps these gain controls and protects the union of original
+and enhanced VAD regions before reducing noisy pauses. Speech has a 200 ms head
+and 400 ms tail margin. Remaining gaps shorter than 300 ms are untouched; eligible
+gaps inside denoised blocks receive 100 ms fades and at most 6 dB attenuation,
+never hard muting. No reliable speech or no noise means no pause attenuation.
+A failed second VAD retains base enhancement and records `vad_unavailable`.
+Adjacent processed blocks crossfade over 50 ms, avoiding a return to raw noise at
+each 30-second boundary. Untouched files still bypass sample-exactly.
+
+处理策略 2 保留现有增益目标，只在两次人声检测并集及起止保护区间之外平滑压低较长
+噪声间隙；保留轻声、辅音和交谈参与者。边界和 VAD 误差仍需本地对比验证，间隙音量
+下降不能视为说话期间真实信噪比提高，也不能单独证明识别准确率提高。
 The original and enhanced VAD intervals are merged without changing the existing
 ASR chunk-combination rules. Speaker clustering and voiceprint embeddings use
 original audio. Enhancement preserves sample count and the video time origin.
@@ -50,6 +62,12 @@ original audio. Enhancement preserves sample count and the video time origin.
 each operation, not exact voiced duration. `elapsed_seconds` measures the
 enhancement function, excluding subsequent VAD and other task stages. A changed
 transcript alone does not establish improved recognition accuracy.
+
+Optional `processing_version=2`, `pause_attenuated_seconds`,
+`max_pause_attenuation_db` and `pause_suppression_reason` identify actual processing.
+Pause duration counts samples receiving attenuation, not exact non-speech time;
+the maximum is a positive dB reduction. Old results lacking these fields do not
+imply successful pause suppression. Timing includes the signal pass and excludes VAD.
 
 增强参数纳入幂等比较：同一 key 不能切换增强模式。历史请求缺少该字段时按关闭解释，
 省略字段重放旧请求仍返回原任务；旧失败/取消任务重试保留原请求。不会自动改写历史媒体、
@@ -89,6 +107,20 @@ Use `--job-id ID` to inspect an existing task without changing it, optionally
 `--full` for complete audio. The default arms compare original, gain only,
 denoise only, and 25%, 50%, 75% enhanced mixes with gain. They use the production VAD union and ordered chunk rules; `--fixed-vad`
 keeps the original boundaries when isolating signal processing. Socket connections are blocked during analysis.
+
+For policy-2 calibration, generate extended public controls without another TTS call:
+
+```bash
+.runtime/tts/bin/python scripts/create_asr_enhancement_fixtures.py \
+  --speech-dir testdata/real/asr-enhancement --extended \
+  --output-dir testdata/real/asr-enhancement-extended
+```
+
+Benchmark modes `no_pauses`, `mix50`, `mix60`, `mix65` and diagnostic `mix75`
+separate base enhancement, pause suppression and stronger mixing. Save a frozen
+pre-change baseline first; `--baseline-report` reuses its original transcription
+only when model, device, cases, durations and normalized audio match. Compare CER
+to that baseline where trusted references exist, and match speech loudness for listening.
 
 Reports, media and transcripts must stay under ignored `logs/`, `tmp/` or
 `testdata/real/`. Standard output contains anonymous measurements, never private

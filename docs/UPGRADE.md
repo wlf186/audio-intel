@@ -107,6 +107,25 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## Unreleased: 保守背景噪音抑制
+
+从 v0.1.33 升级本轮自动增强策略：**数据迁移：无**，无需额外升级备份。仍使用原有
+GTCRN、ASR/TTS 模型、环境及依赖锁；`auto/off` 和存储生命周期不变。策略 2 在两次
+人声检测并集及起止保护之外平滑衰减较长噪声间隙，保留当前人声增益；结果新增可选
+策略及衰减诊断字段，历史缺失不表示执行过新策略。既有任务、请求、媒体和声纹均不改写。
+
+更新源码并重建前端，再按本页维护流程刷新原来运行的 API、supervisor 和 executor。
+处理期间额外使用一份临时 WAV，取消、失败及完成后清理；最终仍只保留原音和一份
+实际增强后的 WAV。跨更早版本升级须覆盖中间迁移要求。
+
+English: From v0.1.33, this processing-policy update needs no data migration or
+additional upgrade backup. Model identities, environments, dependency locks,
+`auto/off`, historical media and browser-storage lifetimes are preserved. Rebuild
+the frontend and refresh every originally running service process. Optional result
+diagnostics describe protected pause attenuation. One extra temporary WAV is
+cleaned up; retained artifact count is unchanged. Cover intervening migrations
+when upgrading from earlier releases.
+
 ## v0.1.33 本地 ASR 人声增强
 
 从 v0.1.32 升级本次增强变更：**数据迁移：无**，无需额外升级备份。历史任务、请求、媒体和声纹不改写；新增任务默认自动增强，旧请求缺少字段时继续按关闭处理。新增可选 GTCRN DNS3 模型由 manifest 固定 revision 和 checksum，运行时 CPU 离线处理；原 ASR/TTS、Python 和依赖锁保持不变。

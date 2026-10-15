@@ -687,6 +687,25 @@ semantics remain, bypass retains no extra WAV, and global summaries/SSE omit det
 `gain_seconds`/`denoised_seconds` cover processing blocks, not exact voiced duration.
 `elapsed_seconds` measures enhancement, excluding subsequent VAD and other stages.
 
+处理策略 2 保留现有人声增益，并在原音与增强音人声区间的并集之外保守衰减噪声间隙。
+检测失败时跳过间隙抑制并保留基础增强；没有可靠人声区间时不以整段静音代替检测。
+新结果可包含下列可选字段，旧任务缺失时不表示已执行新策略：
+
+| Field / 字段 | Meaning / 含义 |
+| --- | --- |
+| `processing_version` | Signal policy version, independent of model revision / 信号处理策略版本，与模型 revision 独立 |
+| `pause_attenuated_seconds` | Seconds actually attenuated, not exact non-speech duration / 实际衰减秒数，不是精确非语音时长 |
+| `max_pause_attenuation_db` | Maximum applied reduction, positive dB / 实际最大衰减量，正数 dB |
+| `pause_suppression_reason` | Applied/skipped reason; tolerate future values / 执行或跳过原因，客户端应兼容未知值 |
+
+Policy 2 protects 200 ms before and 400 ms after the union of original/enhanced
+speech regions. Only remaining noisy gaps of at least 300 ms are eligible, with
+100 ms fades and at most 6 dB attenuation. It preserves the quiet-speech gain,
+sample count and media clock. A second-VAD failure skips pause suppression while
+retaining base enhancement. Reasons include `applied`, `no_speech`, `no_noise`,
+`no_long_pauses`, `vad_unavailable`, and `bypassed`. `elapsed_seconds` includes
+signal processing and excludes VAD. The request still accepts only `auto|off`.
+
 同一幂等键改变增强模式返回 `409`。重放旧请求时省略字段仍返回原任务，旧请求没有
 该字段按 `off` 解释；失败／取消重试保留保存的模式。历史请求、结果和媒体不自动改写。
 
