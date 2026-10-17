@@ -1,12 +1,81 @@
-# Local ASR speech enhancement / 本地 ASR 人声增强
+# Local ASR audio enhancement / 本地 ASR 音频增强
+
+## Browser control / 网页总开关
+
+The audio and video forms expose one **Audio enhancement / 音频增强** switch,
+enabled by default. It submits `audio_enhancement=auto` to enable denoising followed
+by continuous speech gain, or `off` to disable both. Advanced settings let users
+adjust each strength and reset both to server defaults; the default waveform is unchanged.
+
+The stacked Processing options rows are visible when transcription settings are expanded, including on mobile.
+Saved strengths appear beside Adjust strengths, with custom values marked and zero shown as Skip.
+Switching off shows Use original audio and disables adjustments while retaining the saved values.
+Component availability is shown separately; a missing denoiser does not disable speech gain.
+
+ASR preferences retain their existing localStorage lifetime under schema v7. Published
+v0.1.33 schema v4 and development v6 combined preferences keep their value and receive server-default strengths.
+Migration from v5 enables the combined control if either independent control was
+enabled; both disabled stays off. The migrated v5 key is removed. Earlier combined
+`auto`/`off` preferences keep their value. Content/session draft clearing is
+unchanged. Paused video uploads retain their original submitted parameters,
+including historical independent combinations; the new switch does not rewrite
+their saved request. Historical task requests and results remain unchanged.
+
+网页音频、视频表单统一使用“音频增强”总开关，默认开启，同时控制背景降噪和人声增益。
+浏览器偏好升级到 v7：正式版 v0.1.33 的 v4 和开发版 v6 总开关保持原值并补入服务端默认强度；开发版 v5 两项任一开启则迁移为开启，均关闭则保持关闭；旧总开关的
+开启／关闭偏好保持原值，存储期限和草稿清理行为不变。暂停的视频上传仍使用原参数。
+
+### Processing options preview / 处理选项预览
+
+Screenshots use isolated mock jobs with synthetic audio; applied enhancement is a
+synthetic UI fixture, not inference-quality evidence. Reproduce with
+`scripts/capture_readme_assets.mjs` against a separately started local mock service;
+see the [development setup](../CONTRIBUTING.md#development-setup). Set
+`AUDIO_INTEL_CAPTURE_BASE_URL` to its URL. The script captures both locales at
+1440 px and 390 px, exercises the adjustment dialog, and checks console errors and overflow.
+
+| Locale / 语言 | Desktop / 桌面 | Mobile / 手机 |
+| --- | --- | --- |
+| 中文 | ![中文桌面处理选项](assets/enhancement/zh-CN/processing-1440.webp) | ![中文手机处理选项](assets/enhancement/zh-CN/processing-390.webp) |
+| English | ![Desktop processing options](assets/enhancement/en-US/processing-1440.webp) | ![Mobile processing options](assets/enhancement/en-US/processing-390.webp) |
+
+## Advanced strengths / 高级强度
+
+在“处理选项”开启总开关后，点击“调整参数”可打开“增强高级设置”，分别使用滑块或数值输入调整两项力度。有效修改立即保存，
+“一键恢复默认强度”只重置这两项，不改变模型、语言或其他 ASR 偏好。关闭总开关后保存的
+强度仍保留；暂停上传期间参数锁定。偏好仅影响新提交任务，不会重新处理已有结果。
+
+| API field / 参数 | Range / 范围 | GTCRN default / 默认 | Meaning / 含义 |
+| --- | --- | --- | --- |
+| `speech_enhancement_strength` | 0–2 (UI 0–200%) | 1 (100%) | Multiplier on desired dB gain before safety limits / 安全约束前的目标 dB 增益倍率 |
+| `background_denoise_strength` | 0–1 (UI 0–100%) | 0.5 (50%) | Denoised-signal mix on automatically selected blocks / 自动判定需降噪片段的湿声混合比例 |
+
+三种 ASR 入口均接受上述参数，音频及 OpenAI 兼容入口用 multipart，视频用 JSON。
+可与总开关或兼容布尔开关配合；总开关和布尔开关仍不能混用。范围外、非有限数返回 `422`。
+`0` 跳过对应操作（`bypassed / strength_zero`），降噪为 0 时不加载降噪模型；总开关 `off`
+始终关闭两项。干净片段仍自动旁路，不会因为调高强度而强制降噪。
+
+Capabilities are authoritative: each operation exposes `strength: {min,max,step,default,unit}`.
+The administrator's experimental UL-UNAS backend advertises a default mix of 1.0;
+the browser reads the server default, rather than assuming GTCRN. Default gain is 1.0.
+Higher settings can reduce naturalness or recognition accuracy. A 100% mix means
+fully wet audio on selected blocks, not removal of all background sounds. Gain
+keeps the +24 dB cap, 3 dB/s slope and −1 dBFS processed peak ceiling.
+
+Policy 6 snapshots both numeric strengths, including when enhancement is off; per-operation
+results optionally report `strength`. Replay inherits omitted strengths, and changed
+values return `409`. Historical policies ≤5 remain unchanged on replay/retry;
+supplying new numeric fields for a historical idempotency record returns `409` and
+requires a new key. ETA cohorts include strengths only for policy 6. Adding numeric strengths requires no database migration, historical waveform rewrite,
+model change or dependency change; the release also includes the experimental
+denoiser described below.
 
 ## Independent controls / 独立开关
 
-New submissions accept `speech_enhancement` and `background_denoise` booleans,
-both defaulting to `true`. The UI remembers each choice in the existing
-localStorage lifetime (schema v5); legacy v4 `auto` maps to both on and `off`
-to both off. Content/session draft clearing is unchanged. Saved video uploads
-retain their original parameters when resumed.
+API clients can continue to submit `speech_enhancement` and `background_denoise`
+booleans, both defaulting to `true`. These compatibility fields remain available
+for existing integrations and saved tasks. The browser and recommended API
+examples use the combined `audio_enhancement=auto|off` control.
 
 | Speech gain / 人声增强 | Denoising / 背景降噪 | Processing / 处理 |
 | --- | --- | --- |
@@ -23,12 +92,12 @@ Capabilities publish availability/defaults for each operation. Gain requires no
 extra model. Both operations run on local CPU independently of the ASR device.
 Original playback plus at most one processed track are retained.
 
-旧 `audio_enhancement=auto|off` 仍作为双开／双关的组合别名；不能与新字段混用，
+推荐总开关 `audio_enhancement=auto|off` 统一开启／关闭两项；不能与独立字段混用，
 否则返回 422。新任务保存组合、策略版本和服务端选定的降噪后端，不能通过请求指定模型。
 重放省略字段时继承已保存值；改变开关返回 409。未保存独立开关的历史任务继续走旧处理链，
 历史缺少增强字段仍按关闭解释；不迁移既有任务、媒体或声纹。
 
-The legacy alias enables/disables both and cannot be mixed with independent
+The recommended combined control enables/disables both and cannot be mixed with independent
 fields (422). New jobs snapshot the effective controls, policy and server-selected
 backend. Replays inherit saved values; changed controls conflict (409). Historical
 requests retain their previous path on replay/retry; a missing legacy field means
@@ -36,8 +105,8 @@ o enhancement. No persistent migration is performed.
 
 ### Stronger-denoiser experiment / 更强降噪实验
 
-The default remains the validated 50% GTCRN mix with policy-4 continuous gain.
-Independent switches do not imply stronger suppression. A pinned
+Current policy 6 retains the validated 50% GTCRN mix and continuous gain
+introduced in policy 4. Defaults retain the previous suppression; advanced overrides are optional. A pinned
 [UL-UNAS DNS3](https://github.com/Xiaobin-Rong/ul-unas/tree/00f7c700da43d38347f30a6ccebd86fcbc798e07)
 candidate is included with its [MIT license](../asr/licenses/UL-UNAS-MIT.txt).
 It uses existing Torch/NumPy on CPU FP32, without extra Python dependencies.
@@ -55,7 +124,7 @@ explicitly preserves input length, including the tail.
 Both 100% and 75% UL-UNAS arms increased CER on two public noisy controls relative
 to the current baseline; they fail the no-regression gate and remain experimental.
 The administrator-only `AUDIO_INTEL_ASR_DENOISE_BACKEND=gtcrn|ulunas` selects the
-manifest model for new policy-5 requests (default `gtcrn`). Refresh service processes
+manifest model for new policy-6 requests (default `gtcrn`). Refresh service processes
 after changing it; persisted requests keep their backend. This is not a public
 model selector. Missing/invalid weights never disable base ASR or independent gain.
 
@@ -72,7 +141,8 @@ severe reverberation can remain; missing recorded speech cannot be reconstructed
 ## Offline installation and processing / 离线安装与处理
 
 `./service.sh setup asr` (Windows: `service.cmd setup asr`) downloads the pinned
-GTCRN DNS3 checkpoint declared in `audio_intel/model_manifest.json`. Downloads
+GTCRN DNS3 and experimental UL-UNAS DNS3 checkpoints declared in
+`audio_intel/model_manifest.json`. Downloads
 use an immutable upstream commit and verify the weight checksum. Runtime loading
 requires the matching `.complete` revision and checksum and runs locally on CPU,
 independently of the selected ASR CPU/GPU device. No new inference environment,
@@ -80,16 +150,17 @@ Python dependency, cloud API, or model source is accepted from a request.
 
 The inference source is adapted from GTCRN under the [included MIT license](../asr/licenses/GTCRN-MIT.txt).
 Existing Torch, NumPy and Qwen pins are preserved. A missing enhancer does not
-disable the base ASR models: automatic mode falls back to original audio and
-records that outcome in the job detail.
+disable the base ASR models: current policy 6 skips unavailable denoising and still attempts speech gain.
+Only when neither operation produces usable enhanced audio does the task use
+original audio with aggregate `fallback`; inspect both operation results.
 
 Models are evaluated in bounded blocks with context. The current conservative
 mix retains 50% original signal. Speech gain targets −24 dBFS RMS, is capped at
 +24 dB, and uses a cubic soft transition from −33 to −27 dBFS instead of a hard
 −30 dBFS switch. Processed blocks have a −1 dBFS peak ceiling; untouched blocks
 retain original samples and peaks.
-These are internal controls, not public sampling or volume parameters.
-Processing policy 4 first produces the existing GTCRN mix, then estimates a
+These safety limits remain fixed; advanced strengths scale desired gain and denoising mix without changing them.
+Current policy 6 retains policy 4's continuous gain: after the GTCRN mix it estimates a
 continuous gain curve using the 70th-percentile speech RMS in six-second centred
 windows. Estimates update every 20 ms. Peak limits and forward/backward constraints
 bound gain changes to 3 dB/s across the whole file, including processing boundaries.
@@ -101,7 +172,8 @@ A failed second VAD retains base enhancement and the original speech regions.
 Adjacent processed blocks crossfade over 50 ms, avoiding a return to raw noise at
 each 30-second boundary. Untouched files still bypass sample-exactly.
 
-处理策略 4 保留原有响度目标与 50% GTCRN 混合，将逐秒增益改为跨块连续增益。
+当前策略 6 保留策略 4 引入的连续增益、原有响度目标与 50% GTCRN 混合；
+策略 4 将逐秒增益改为跨块连续增益，策略 5 增加逐项状态和独立恢复。
 6 秒上下文估计和每秒最多 3 dB 的变化限制，减少背景声跟随词句突然起落；保留自然轻重，
 不逐词拉齐音量。平均响度和识别误差不能充分反映憋气感，仍需本地、响度匹配的听感对比。
 基础混音与最终输出分两遍写入，预检两份 PCM WAV 的临时空间，约每小时 230 MB；
@@ -111,13 +183,17 @@ The original and enhanced VAD intervals are merged without changing the existing
 ASR chunk-combination rules. Speaker clustering and voiceprint embeddings use
 original audio. Enhancement preserves sample count and the video time origin.
 
-For a controlled rollout or comparison, administrators may temporarily set
-`AUDIO_INTEL_ASR_CONTINUOUS_GAIN=0` and refresh the service processes to retain
-policy 3. The default is enabled (policy 4); this is an operational rollback,
-not a request parameter. Results report the policy actually used. Local benchmark
-`auto` explicitly evaluates policy 4 independently of this service override.
-本地试听验收尚未完成时，可用该开关恢复日常服务并暂留策略 3；确认听感后移除覆盖并刷新
-相关进程。不会改写既有任务，也不会将未试听的候选标记为听感通过。
+The historical `AUDIO_INTEL_ASR_CONTINUOUS_GAIN=0` override applies only to
+legacy requests without `enhancement_policy_version` 5 or 6: it selects policy 3
+instead of policy 4 after process refresh. It does not roll policy-5/6 jobs
+back to policy 3. Historical saved requests are never upgraded by replay/retry.
+For current jobs, `audio_enhancement=off` disables enhancement; the administrator
+`AUDIO_INTEL_ASR_DENOISE_BACKEND=gtcrn` selects the validated denoiser for newly
+accepted policy-6 jobs after refreshing API, supervisors and executors.
+
+旧回退变量 `AUDIO_INTEL_ASR_CONTINUOUS_GAIN=0` 仅作用于未保存策略 5/6 的历史处理链，
+在刷新进程后选择策略 3；它不会把策略 5/6 任务回退到策略 3。历史请求重放／重试仍
+使用保存的处理语义。当前任务用总开关 `off` 关闭增强；降噪后端回退仅影响新提交任务。
 
 ## Request and result / 请求与结果
 
@@ -135,13 +211,16 @@ not a request parameter. Results report the policy actually used. Local benchmar
 `gain_seconds` and `denoised_seconds` report the coverage of blocks that applied
 each operation, not exact voiced duration. `elapsed_seconds` measures the
 enhancement function, excluding subsequent VAD and other task stages. A changed
-transcript alone does not establish improved recognition accuracy.
+transcript alone does not establish improved recognition accuracy. Enhancement
+progress in `media_second` accumulates work across processing passes; it is not
+the recording duration. Read `result.duration` for the audio duration.
 
-Optional `processing_version=4`, `pause_attenuated_seconds`,
+New tasks report `processing_version=6`; policies 4 and 5 are historical. Optional
+`pause_attenuated_seconds`,
 `max_pause_attenuation_db` and `pause_suppression_reason` identify actual processing.
 Pause duration counts samples receiving attenuation, not exact non-speech time;
-the maximum is a positive dB reduction. Policy 4 reports both attenuation fields
-as zero and the reason `disabled_for_naturalness`. Historical policy-2/3 results
+the maximum is a positive dB reduction. Policies 4, 5 and 6 report both attenuation
+fields as zero and the reason `disabled_for_naturalness`. Historical policy-2/3 results
 remain valid; policy 3 does not imply continuous gain. Missing fields do not imply successful pause suppression. Timing
 includes signal processing and excludes VAD.
 
@@ -151,10 +230,19 @@ includes signal processing and excludes VAD.
 
 The UI keeps the original audio selected initially and offers enhanced playback
 and download when available. Switching tracks preserves position and playback
-state, with the waveform following the selected track. The two enhancement preferences
-use the existing ASR localStorage lifetime; draft and sessionStorage clearing
+state, with the waveform following the selected track. The combined preference
+uses ASR v7 localStorage with its existing lifetime; draft and sessionStorage clearing
 rules remain unchanged. Historical results without the field imply no recorded
 enhancement, not successful processing.
+
+原音／增强音控件将“试听”分段选择与“下载原音／下载增强音”分组，手机上两组分行。
+下载原音提供播放器中未增强的 WAV（视频任务同样下载音轨 WAV），不改变试听音轨或进度。
+没有增强音时仅提供原音下载；历史任务未保留原音 WAV 时显示不可用，不自动补生成。
+
+Original/enhanced track selection is grouped separately from the two downloads; mobile uses two rows.
+Original download serves the saved unenhanced playback WAV, including the audio track of video jobs,
+without changing listening state. Jobs without enhanced audio offer only original download;
+historical jobs without a saved original WAV show an unavailable explanation and are not backfilled.
 
 ## Local paired validation / 本地配对验证
 
@@ -229,3 +317,26 @@ preservation, boundaries, clipping, full-length media clocks and added resources
 For clean audio, automatic bypass must preserve the existing decoded samples.
 Listen locally to both tracks; improved listening quality does not by itself
 establish improved recognition accuracy.
+
+### Policy-6 strength validation / 策略 6 力度验证
+
+The local 2026-10-17 paired run used the existing eleven public controls (ten with
+trusted ordered references), with network connections disabled. Default policy-6
+output matched the frozen pre-change implementation byte-for-byte on all eleven.
+With Qwen3-ASR 1.7B GPU, mean per-case CER was 0.115% for both previous and default
+strengths, 0.575% for weak (gain 0.5 / mix 0.25), and 0.230% for strong (2 / 1).
+The four original controls on 0.6B CPU gave 0.287%, 0.862% and 2.299% respectively.
+These small public controls demonstrate adjustable behavior and default parity;
+they do not establish a universally best strength or subjective listening quality.
+All arms preserved sample counts and finite audio; stronger settings retain the
+existing limits (PCM16 quantization allows at most one sample step at the ceiling).
+
+Reproduce the strength comparison using the public case JSON prepared above:
+
+```bash
+AUDIO_INTEL_LOAD_ENV=0 .runtime/asr/bin/python scripts/benchmark_asr_enhancement.py \
+  --cases-json testdata/real/asr-enhancement-public/cases.json \
+  --device gpu --model qwen3-asr-1.7b \
+  --modes off,split_both,strength_default,strength_weak,strength_strong \
+  --output-dir logs/enhancement-strength-validation
+```

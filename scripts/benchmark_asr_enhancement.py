@@ -66,7 +66,7 @@ def main() -> None:
         parser.error("Reports and sensitive audio must stay in ignored local logs/, tmp/, or testdata/real/")
     modes = args.modes.split(",")
     allowed = {"off", "gain_only", "denoise_only", "wet25", "auto", "wet75", "mix50", "mix60", "mix65", "mix75", "no_pauses", "pause_gate", "legacy_gain",
-               "ulunas100", "ulunas75", "ulunas_denoise", "split_gain", "split_both", "split_denoise", "gtcrn100"}
+               "ulunas100", "ulunas75", "ulunas_denoise", "split_gain", "split_both", "split_denoise", "gtcrn100", "strength_default", "strength_weak", "strength_strong"}
     if modes[0] != "off" or not set(modes) <= allowed:
         parser.error("Modes must start with off and use the documented comparison modes")
     if args.device == "gpu" and os.environ.get("AUDIO_INTEL_ENHANCEMENT_BENCH_LEASE") != "1":
@@ -156,12 +156,14 @@ def main() -> None:
                 ratio = {"wet25": .25, "wet75": .75, "mix50": .5, "mix60": .6,
                          "mix65": .65, "mix75": .75}.get(mode)
                 controls = {"wet_ratio": ratio} if ratio is not None else {}
-                if mode in {"ulunas100", "ulunas75", "ulunas_denoise", "split_gain", "split_both", "split_denoise", "gtcrn100"}:
+                if mode in {"ulunas100", "ulunas75", "ulunas_denoise", "split_gain", "split_both", "split_denoise", "gtcrn100", "strength_default", "strength_weak", "strength_strong"}:
                     from asr.enhancement import enhance_independent
+                    strengths = {"strength_default": (1.0, .5), "strength_weak": (.5, .25), "strength_strong": (2.0, 1.0)}
+                    controls = dict(zip(("speech_enhancement_strength", "background_denoise_strength"), strengths[mode])) if mode in strengths else {}
                     metadata = enhance_independent(source, target, vad, lambda *_: None, lambda *_: None,
                         speech_enhancement=mode not in {"ulunas_denoise", "split_denoise"}, background_denoise=mode != "split_gain",
-                        backend="gtcrn" if mode in {"gtcrn100", "split_both", "split_denoise", "split_gain"} else "ulunas",
-                        wet_ratio=.5 if mode in {"split_both", "split_denoise"} else .75 if mode == "ulunas75" else 1.0)
+                        backend="gtcrn" if mode in {"gtcrn100", "split_both", "split_denoise", "split_gain", *strengths} else "ulunas",
+                        wet_ratio=.5 if mode in {"split_both", "split_denoise"} else .75 if mode == "ulunas75" else 1.0, **controls)
                 else:
                     metadata = enhance_audio(source, target, vad, lambda *_: None, lambda *_: None, lambda *_: None,
                         denoiser=(lambda x: x) if mode == "gain_only" else denoiser,

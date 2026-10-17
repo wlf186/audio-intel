@@ -244,7 +244,16 @@ class VideoCapability(PublicModel):
     scene_editing: bool
 
 
+class AsrStrengthCapability(PublicModel):
+    min: float
+    max: float
+    step: float
+    default: float
+    unit: Literal["gain_db_multiplier", "mix_ratio"]
+
+
 class AsrAudioControlCapability(PublicModel):
+    strength: AsrStrengthCapability | None = None
     supported: bool
     available: bool
     default: bool
@@ -253,6 +262,7 @@ class AsrAudioControlCapability(PublicModel):
 
 
 class AsrAudioControlResult(PublicModel):
+    strength: float | None = None
     enabled: bool
     status: Literal["off", "bypassed", "applied", "fallback"]
     reason: str
@@ -264,10 +274,10 @@ class AsrAudioControlResult(PublicModel):
 
 class AsrEnhancementCapability(PublicModel):
     supported: bool = Field(description="是否支持本地人声增强 / Whether local speech enhancement is supported")
-    available: bool = Field(description="固定增强模型当前是否可用；不可用时回退原音 / Whether the pinned enhancer is available; otherwise use original audio")
+    available: bool = Field(description="所选降噪模型是否可用；增益可用性查看独立能力 / Whether the selected denoiser is available; inspect gain capability separately")
     default: Literal["auto"] = Field(description="新任务省略参数时的模式 / Mode for new requests omitting the parameter")
     modes: list[Literal["auto", "off"]] = Field(description="允许的请求模式 / Accepted request modes")
-    model: str = Field(description="manifest 中的增强模型身份 / Enhancer identity from the manifest")
+    model: str = Field(description="manifest 中所选降噪模型身份 / Selected denoiser identity from the manifest")
     model_revision: str = Field(description="固定增强模型 revision / Pinned enhancement model revision")
     compute_device: Literal["cpu"] = Field(description="增强始终在 CPU 运行，与 ASR 设备独立 / Enhancement always runs on CPU independently of the ASR device")
     preserves_all_speakers: bool = Field(description="保留交谈参与者，不做目标说话人提取 / Preserve conversation speakers without target-speaker extraction")

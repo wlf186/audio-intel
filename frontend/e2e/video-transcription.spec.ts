@@ -38,14 +38,38 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  await page.getByRole('button',{name:'框选 PPT 区域',exact:true}).click()
  await page.getByRole('button',{name:'使用全画面',exact:true}).click()
  await expandAsrAdvanced(page)
+ await page.getByRole('button',{name:'增强高级设置',exact:true}).click()
+ await page.getByRole('spinbutton',{name:'人声增益力度数值'}).fill('125')
+ await page.getByRole('spinbutton',{name:'降噪混合比例数值'}).fill('70')
+ await page.getByRole('button',{name:'完成',exact:true}).click()
+ await page.getByLabel('音频增强',{exact:true}).setChecked(width===1440)
  const accepted=page.waitForResponse(response=>response.url().endsWith('/api/v1/asr/video-jobs')&&response.request().method()==='POST')
  await page.getByRole('button',{name:'开始转写',exact:true}).click()
  const response=await accepted;expect(response.status()).toBe(202);const job=await response.json()
+ expect(response.request().postDataJSON().audio_enhancement).toBe(width===1440?'auto':'off')
+ expect(response.request().postDataJSON().speech_enhancement_strength).toBe(1.25)
+ expect(response.request().postDataJSON().background_denoise_strength).toBe(.7)
+ expect(job.request.speech_enhancement_strength).toBe(1.25)
+ expect(job.request.background_denoise_strength).toBe(.7)
+ expect(job.request.enhancement_policy_version).toBe(6)
+ expect(job.request.speech_enhancement).toBe(width===1440)
+ expect(job.request.background_denoise).toBe(width===1440)
  await expect.poll(async()=>{const result=await page.request.get(`/api/v1/jobs/${job.id}`);expect(result.ok()).toBe(true);return (await result.json()).state},{timeout:30000}).toBe('succeeded')
  await page.clock.runFor(5000)
  await expect(page.getByRole('button',{name:'查看本次任务'})).toBeVisible({timeout:30000})
  await page.getByRole('button',{name:'查看本次任务'}).click()
  await expect(page.locator('.video-section')).toHaveCount(2,{timeout:30000})
+ const originalDownload=page.waitForEvent('download')
+ await page.getByRole('link',{name:'下载原音',exact:true}).click()
+ const originalFile=await originalDownload
+ expect(originalFile.suggestedFilename()).toBe('lecture-original.wav')
+ expect(await originalFile.failure()).toBeNull()
+ const originalStream=await originalFile.createReadStream();if(!originalStream)throw new Error('Original audio download stream unavailable')
+ const originalChunks:Buffer[]=[];for await(const chunk of originalStream)originalChunks.push(Buffer.from(chunk))
+ const originalResponse=await page.request.get(`/api/v1/jobs/${job.id}/playback`)
+ expect(originalResponse.ok()).toBe(true)
+ expect(Buffer.concat(originalChunks)).toEqual(await originalResponse.body())
+
  await openTranscriptExport(page)
  if(width===390){await expect(page.locator('.transcript-export-modal select option')).toHaveCount(5);await closeTranscriptExport(page)}
  else{await page.getByRole('button',{name:'明细与字幕',exact:true}).click();await expect(page.locator('.transcript-export-details-panel button')).toHaveCount(4);await page.keyboard.press('Escape')}
@@ -95,7 +119,7 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  expect(errors).toEqual([])
 })
 
-test('video upload pauses, survives reload, resumes and explicitly discards',async({page})=>{
+for(const legacyIndependent of [false,true])test(`video upload pauses, survives reload, resumes and explicitly discards independent=${legacyIndependent}`,async({page})=>{
  test.setTimeout(60000)
  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message))
  await page.goto('/#asr')
@@ -110,14 +134,26 @@ test('video upload pauses, survives reload, resumes and explicitly discards',asy
  await page.getByRole('button',{name:'暂停上传',exact:true}).click()
  release();await page.unroute('**/api/v1/asr/video-uploads/*',handler)
  await expect(page.locator('.video-resume')).toBeVisible()
- // A pre-enhancement upload resumes the original off setting after an upgrade.
- await page.evaluate(()=>{const key='audio-intel:video-upload:v1';const saved=JSON.parse(sessionStorage.getItem(key)!);delete saved.params.audio_enhancement;delete saved.params.speech_enhancement;delete saved.params.background_denoise;sessionStorage.setItem(key,JSON.stringify(saved))})
+ // Both pre-enhancement and v5 mixed settings retain their original request.
+ await page.evaluate(independent=>{const key='audio-intel:video-upload:v1';const saved=JSON.parse(sessionStorage.getItem(key)!);delete saved.params.audio_enhancement;delete saved.params.speech_enhancement;delete saved.params.background_denoise;delete saved.params.speech_enhancement_strength;delete saved.params.background_denoise_strength;if(independent){saved.params.speech_enhancement=false;saved.params.background_denoise=true}sessionStorage.setItem(key,JSON.stringify(saved))},legacyIndependent)
  await page.reload();await page.getByRole('tab',{name:'新建视频转写',exact:true}).click()
  await expect(page.locator('.video-resume')).toContainText('lecture.webm')
+ await expandAsrAdvanced(page)
+ const enhancement=page.getByLabel('音频增强',{exact:true})
+ await expect(enhancement).toBeChecked({checked:legacyIndependent})
+ // Paused submissions lock their settings until resumed or explicitly discarded.
+ await expect(enhancement).toBeDisabled()
+ await expect(page.getByRole('button',{name:'增强高级设置',exact:true})).toBeDisabled()
  await page.locator('input[type=file]').setInputFiles(videoPath)
  const resumed=page.waitForRequest(request=>request.method()==='POST'&&request.url().endsWith('/api/v1/asr/video-jobs'))
  await page.getByRole('button',{name:'开始转写',exact:true}).click()
- expect((await resumed).postDataJSON().audio_enhancement).toBe('off')
+ const resumedParams=(await resumed).postDataJSON()
+ expect(resumedParams).not.toHaveProperty('speech_enhancement_strength')
+ expect(resumedParams).not.toHaveProperty('background_denoise_strength')
+ if(legacyIndependent){
+  expect(resumedParams.speech_enhancement).toBe(false);expect(resumedParams.background_denoise).toBe(true)
+  expect(resumedParams).not.toHaveProperty('audio_enhancement')
+ }else expect(resumedParams.audio_enhancement).toBe('off')
  await expect(page.getByRole('button',{name:'查看本次任务'})).toBeVisible({timeout:30000})
  expect(await page.evaluate(()=>sessionStorage.getItem('audio-intel:video-upload:v1'))).toBeNull()
  // A separate idle session is cleaned immediately through the accessible dialog.

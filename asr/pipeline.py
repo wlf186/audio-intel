@@ -870,16 +870,19 @@ def process_job(context: JobContext) -> dict[str, Any]:
     if request.get("purpose") not in {"tts_clone_reference", "voiceprint_import"}:
         mode = request.get("audio_enhancement", "off")
         enhancement = {"mode": mode, "status": "off", "reason": "disabled"}
-        if request.get("enhancement_policy_version") == 5:
-            enhancement.update(processing_version=5, **{
+        if request.get("enhancement_policy_version") in {5, 6}:
+            enhancement.update(processing_version=request["enhancement_policy_version"], **{
                 key: {"enabled": request[key], "status": "off", "reason": "disabled"}
                 for key in ("speech_enhancement", "background_denoise")})
+        if request.get("enhancement_policy_version") == 6:
+            for key in ("speech_enhancement", "background_denoise"):
+                enhancement[key]["strength"] = request[key + "_strength"]
         if mode == "auto":
             if settings.mock_mode:
-                enhancement.update(status="bypassed", reason="mock_mode")
+                enhancement.update(status="bypassed", reason="strength_zero" if request.get("speech_enhancement_strength") == request.get("background_denoise_strength") == 0 else "mock_mode")
                 for key in ("speech_enhancement", "background_denoise"):
                     if enhancement.get(key, {}).get("enabled"):
-                        enhancement[key].update(status="bypassed", reason="mock_mode")
+                        enhancement[key].update(status="bypassed", reason="strength_zero" if request.get(key + "_strength") == 0 else "mock_mode")
             else:
                 context.progress(.11, "audio_enhancement")
                 def enhancement_progress(snapshot: dict[str, Any]) -> None:
@@ -896,14 +899,16 @@ def process_job(context: JobContext) -> dict[str, Any]:
                         "input_path": str(normalized), "enhanced_path": str(enhanced),
                         "speech_regions": vad,
                         **{key: request[key] for key in ("speech_enhancement", "background_denoise",
-                            "enhancement_policy_version", "denoise_backend") if key in request},
+                            "enhancement_policy_version", "denoise_backend", "speech_enhancement_strength",
+                            "background_denoise_strength") if key in request},
                     }, context.work_dir, enhancement_progress)
                 except (subprocess.CalledProcessError, OSError, ValueError):
                     enhanced.unlink(missing_ok=True)
                     enhancement.update(status="fallback", reason="stage_failed")
                     for key in ("speech_enhancement", "background_denoise"):
                         if enhancement.get(key, {}).get("enabled"):
-                            enhancement[key].update(status="fallback", reason="stage_failed")
+                            enhancement[key].update(status="bypassed" if enhancement[key].get("strength") == 0 else "fallback",
+                                                    reason="strength_zero" if enhancement[key].get("strength") == 0 else "stage_failed")
                 if enhancement.get("status") == "applied":
                     from .enhancement import merge_regions
                     vad = merge_regions(vad, enhancement.pop("speech_regions", []))

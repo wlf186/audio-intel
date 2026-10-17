@@ -79,16 +79,6 @@ English: Choose the smallest necessary upgrade backup scope: no extra backup wit
 
 ## Local development and deployment
 
-ASR independent controls (policy 5) require no database/media migration. New
-requests snapshot both flags and the server-selected denoiser; historical retries
-retain the legacy path. The validated default is GTCRN. The experimental
-`AUDIO_INTEL_ASR_DENOISE_BACKEND=ulunas` override requires refreshed API, supervisors
-and executors; restore `gtcrn` to roll back new submissions. Check each operation's
-result and actual model, not only aggregate applied status. Browser preferences
-migrate from v4 to v5 with their existing lifetime; saved video uploads keep their
-original settings. See the [enhancement guide](ASR_ENHANCEMENT.md).
-
-
 ### 单目录工作约定
 
 本机开发期间可以停止日常服务；继续使用同一份源码、运行环境和模型，无需创建第二套部署。以下流程适用于本机代码更新和开发/发版收尾，纯只读检查不触发启停。
@@ -117,35 +107,95 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
-## Unreleased: 背景降噪与人声自然度修正
+## v0.1.34 音频增强、原音下载与处理选项
 
-从 v0.1.33 升级本轮自动增强策略：**数据迁移：无**，无需额外升级备份。仍使用原有
-GTCRN、ASR/TTS 模型、环境及依赖锁；`auto/off` 和存储生命周期不变。策略 4 保留
-响度目标与 50% 降噪混合，在策略 3 撤下间隙门控的基础上，将逐秒增益改为 6 秒上下文
-估计的跨块连续增益，每秒最多变化 3 dB。结果保留可选策略及衰减诊断字段，间隙衰减为零，原因为
-`disabled_for_naturalness`。既有任务、请求、媒体和声纹均不改写；重新提交才使用新策略。
+本轮还支持下载播放器中的原音 WAV（视频任务同样下载音轨）；试听切换与原音／增强音下载分组，手机分行显示。复用保存的文件，不补生成历史音轨；默认回放接口行为保持不变，仅新增 `download=true` 附件模式。
 
-更新源码并重建前端，再按本页维护流程刷新原来运行的 API、supervisor 和 executor。
-两遍处理预检两份临时 PCM WAV 的空间，约每小时 230 MB；完成、失败和取消后清理中间文件，
-最终仍只保留原音和一份实际增强后的 WAV。历史策略 3 不代表执行过连续增益。
-跨更早版本升级须覆盖中间迁移要求。
+Original playback WAV downloads are also available for audio/video jobs. Listening and download controls are grouped separately, stacking on mobile. Existing files are reused without historical backfill; the playback endpoint adds optional `download=true` while retaining its default behavior.
 
-本地试听待验收时可临时设置 `AUDIO_INTEL_ASR_CONTINUOUS_GAIN=0`，刷新进程后维持
-策略 3；默认开启策略 4。移除临时覆盖后再次刷新进程，结果中的策略版本反映实际处理。
+从 v0.1.33 升级：**数据迁移：无**，无需额外升级备份。Qwen ASR/TTS 模型、
+隔离环境和依赖锁不变；新增的实验性 UL-UNAS 模型见下文，GTCRN 仍为默认。
+历史任务、请求、媒体及声纹不改写，重放／重试沿用保存的语义。更早版本升级仍须覆盖
+中间迁移要求；跨 v0.1.30 的 v13 → v14 迁移只需停服后的 SQLite 一致快照，无需复制媒体。
 
-English: From v0.1.33, this processing-policy update needs no data migration or
-additional upgrade backup. Model identities, environments, dependency locks,
-`auto/off`, historical media and browser-storage lifetimes are preserved. Rebuild
-the frontend and refresh every originally running service process. Policy 4 replaces
-per-second gain with six-second context and peak-safe continuous gain bounded to
-3 dB/s, preserving the loudness target, mixing and processed crossfades. Optional
-diagnostics report zero pause attenuation and `disabled_for_naturalness`. Allow
-space for two temporary PCM WAVs (about 230 MB/hour); intermediates are cleaned on
-success, failure and cancellation. Retained artifact count is unchanged. Existing task
-artifacts are not reprocessed. Cover intervening migrations for earlier releases.
-For a staged rollout awaiting local listening, `AUDIO_INTEL_ASR_CONTINUOUS_GAIN=0`
-temporarily retains policy 3 after a process refresh; remove the override and refresh
-again to use the default policy 4. Report the active policy separately from code validation.
+网页音频／视频使用一个默认开启的“音频增强”总开关，API 推荐同一
+`audio_enhancement=auto|off`，不再标为废弃；独立参数继续兼容，不能与总开关混用。
+正式版 v0.1.33 的 ASR 浏览器偏好由 v4 迁移到 v7：保留原总开关的 `auto`/`off`，
+补入服务端默认力度。开发版 v5 的两项开关取任一开启为 `auto`、均关为 `off`；
+开发版 v6 保留总开关并补默认力度。存储期限、退出登录后的保留行为和草稿清理不变；
+TTS 偏好仍为 v2。暂停上传保留原参数，包括旧独立组合。
+
+当前新任务保存策略 6、两项有效开关、数值力度及服务端选定的降噪后端；保留 GTCRN 50% 混合和
+策略 4 引入的跨块连续增益（6 秒上下文、每秒最多变化 3 dB），不增加降噪强度。
+策略 3 已撤下策略 2 的间隙门控；策略 5 不再应用间隙门控，衰减诊断为零，原因为
+`disabled_for_naturalness`。降噪和增益分别恢复，降噪失败后仍可应用增益；检查逐项状态，
+不能把总状态 `applied` 与 `partial_fallback` 视为两项全部成功。
+
+`setup asr/all` 还会下载固定 revision/checksum 的实验性 UL-UNAS-DNS3。其 100% 和
+75% 混合未通过公开样本的识别准确率验证，不作为日常默认。管理员实验设置
+`AUDIO_INTEL_ASR_DENOISE_BACKEND=ulunas`；恢复 `gtcrn` 并刷新全部进程后影响新提交任务，
+不会改写已保存的请求。旧 `AUDIO_INTEL_ASR_CONTINUOUS_GAIN=0` 仅选择旧处理链的
+策略 3，不会把策略 5/6 任务回退为策略 3。
+
+按本页维护流程等待队列空闲，保留原配置，停止后更新；前端来源或版本变更时重建前端，
+仅文档元数据变更不需要重新 setup。刷新原来运行的 API、supervisor 与 executor，并
+验收真实端点、OpenAPI 和历史任务。两份临时 PCM WAV 约每小时 230 MB，完成、失败
+和取消后清理中间文件；最终仍保留原音及至多一份增强音。增强进度累计各遍处理量，
+不能当作录音时长；读取 `result.duration` 获取实际时长。
+
+English: Upgrading from v0.1.33 requires no database/media migration or extra
+upgrade backup. Qwen ASR/TTS checkpoints, environments and dependency locks remain
+unchanged; setup adds the experimental UL-UNAS checkpoint described below, with
+GTCRN still the default. Historical requests/results/media retain their saved semantics.
+Earlier upgrades must cover intervening migrations, including the v13 → v14
+database-only migration across v0.1.30: take a stopped SQLite snapshot, without copying media.
+
+Audio/video forms and recommended API examples use one combined
+`audio_enhancement=auto|off` control, enabled by default and no longer deprecated.
+Independent fields remain compatible and cannot be mixed with it. ASR localStorage
+migrates from published v0.1.33 schema v4 to v7, preserving the combined value and
+adding server-default strengths. Development v5 merges independent controls with
+OR semantics; v6 preserves the master value and acquires default strengths. Storage
+lifetime, sign-out persistence and draft clearing are unchanged. TTS preferences
+remain v2; paused uploads keep their saved parameters, including mixed combinations.
+
+New tasks use policy 6 with snapshotted controls, strengths and denoiser. The validated GTCRN
+50% mix and policy-4 continuous gain remain unchanged (six-second context, at most
+3 dB/s). Denoising and gain recover independently; inspect each operation when
+aggregate status is `applied` with `partial_fallback`. Pause attenuation remains
+zero with `disabled_for_naturalness`. The old continuous-gain override applies only
+to legacy requests and does not downgrade policy-5/6 jobs.
+
+Setup downloads the pinned experimental UL-UNAS checkpoint, but its 100%/75%
+candidates failed public CER validation; GTCRN remains the default. Administrator
+backend changes require refreshed API/supervisors/executors and affect new jobs
+only. Follow the maintenance/acceptance process above. Rebuild the frontend for
+frontend source/version changes; metadata-only edits need no setup. Allow about
+230 MB per audio hour for two temporary PCM WAVs; intermediates are cleaned and
+retained artifact count is unchanged. Enhancement progress accumulates work across
+passes; recording duration is `result.duration`.
+
+高级设置支持人声增益 0–200%（默认 100%）和 GTCRN 降噪混合 0–100%（默认 50%），
+实际默认值来自 capabilities。重置仅恢复两项力度；有效修改即时保存在 ASR v7 localStorage，
+v6 偏好保留总开关并补默认强度，存储期限不变。只影响新任务，暂停上传保持原参数。
+策略 6 保存力度并在逐项结果返回 `strength`；历史策略 ≤5 不改写、不升级，向旧幂等 key
+添加力度返回 409，需新 key。0 跳过对应项；总开关 off 仍关闭两项。
+
+Advanced settings expose independent gain/mix strengths and reset only those values.
+Capabilities define ranges/defaults. Valid changes persist immediately in ASR v7;
+v6 preferences keep the master value and acquire server defaults without changing lifetime.
+Policy 6 snapshots strengths; old requests and paused-upload snapshots retain their semantics.
+Adding strengths to a historical idempotency key conflicts (409). Higher values can affect
+naturalness or ASR accuracy; safety limits remain fixed and defaults preserve the waveform.
+
+处理选项直接展示上下排列的“单任务加速”和“音频增强”，支持点击标题、说明或键盘操作；
+显示已保存力度、自定义／跳过状态及逐项可用性，调整参数可恢复默认。TTS 文本／文档
+共用同一加速样式和偏好，未改变加速计算或质量设置。
+
+Processing options now show stacked acceleration/enhancement switches, saved strengths,
+custom/skip states and per-operation availability, with an adjustment/reset dialog.
+Text/document TTS share the acceleration row and preference. Acceleration behavior
+and quality settings remain unchanged. See [workspace behavior](WORKSPACES.md#处理选项--processing-options).
 
 ## v0.1.33 本地 ASR 人声增强
 

@@ -1,10 +1,11 @@
 import {mkdir,readFile,writeFile} from 'node:fs/promises'
 import {resolve} from 'node:path'
 import {existsSync} from 'node:fs'
-import {chromium} from '../frontend/node_modules/@playwright/test/index.mjs'
+import {chromium,expect} from '../frontend/node_modules/@playwright/test/index.mjs'
 
 const baseUrl=process.env.AUDIO_INTEL_CAPTURE_BASE_URL||'http://127.0.0.1:20910'
 const outputDir=resolve(process.argv[2]||'docs/assets/readme')
+const settingsOutputDir=resolve(process.env.AUDIO_INTEL_CAPTURE_SETTINGS_DIR||'docs/assets/enhancement')
 const localeStorageKey='audio-intel:ui-locale:v1'
 const captureLocales=[
  {
@@ -97,7 +98,10 @@ async function captureContext(browser,config,jobIds){
  await context.route('**/api/v1/**',async route=>{
   const request=route.request()
   const pathname=new URL(request.url()).pathname
-  if(request.method()!=='GET'||!['/api/v1/jobs','/api/v1/capabilities'].includes(pathname))return route.continue()
+  if(request.method()!=='GET')return route.continue()
+  const match=pathname.match(/^\/api\/v1\/jobs\/([^/]+)(\/artifacts\/enhanced\.wav)?$/)
+  if(match&&jobIds.has(match[1])&&match[2])return route.fulfill({contentType:'audio/wav',body:demoWav(),headers:{'Content-Disposition':'attachment; filename=enhanced.wav'}})
+  if(!['/api/v1/jobs','/api/v1/capabilities'].includes(pathname)&&!(match&&jobIds.has(match[1])))return route.continue()
   const response=await route.fetch()
   if(!response.ok())return route.fulfill({response})
   const payload=await response.json()
@@ -107,6 +111,14 @@ async function captureContext(browser,config,jobIds){
    payload.total=payload.items.length
    payload.offset=0
    payload.has_more=false
+  }else if(match&&payload.kind==='asr'&&payload.result){
+   // Mock inference intentionally bypasses enhancement. Illustrate its applied state
+   // with synthetic audio only; this is UI documentation, not inference evidence.
+   payload.result.audio_enhancement={...payload.result.audio_enhancement,
+    status:'applied',reason:'quiet_speech',playback_url:`/api/v1/jobs/${match[1]}/artifacts/enhanced.wav`,
+    waveform:payload.result.waveform,
+    speech_enhancement:{enabled:true,status:'applied',reason:'quiet_speech',strength:1},
+    background_denoise:{enabled:true,status:'bypassed',reason:'clean_audio',strength:.5}}
   }else{
    payload.events={...(payload.events||{}),sse:false}
   }
@@ -130,6 +142,48 @@ async function webpFromPng(browser,png,quality=.9){
  return Buffer.from(encoded,'base64')
 }
 
+async function captureReady(page){
+ await page.evaluate(()=>document.fonts.ready)
+ // A mounted waveform is not proof that its canvas has painted.
+ await page.waitForFunction(()=>[...document.querySelectorAll('canvas.waveform')].every(canvas=>{
+  if(!canvas.width||!canvas.height)return false
+  const pixels=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data
+  return pixels.some((value,index)=>index%4===3&&value>0)
+ }))
+ await page.evaluate(()=>new Promise(resolveFrame=>requestAnimationFrame(()=>requestAnimationFrame(resolveFrame))))
+}
+
+async function captureProcessingOptions(browser,config,jobIds){
+ for(const width of [1440,390]){
+  const context=await captureContext(browser,config,jobIds)
+  const page=await context.newPage()
+  const errors=[]
+  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
+  page.on('pageerror',error=>errors.push(error.message))
+  try{
+   await page.setViewportSize({width,height:950})
+   await page.goto(`${baseUrl}/#asr`,{waitUntil:'networkidle'})
+   if(width===390)await page.locator('.asr-settings-toggle').click()
+   const group=page.locator('.asr-processing-options')
+   await expect(group.getByRole('switch').first()).toBeChecked()
+   await expect(group.getByRole('switch').last()).toBeChecked()
+   const adjust=group.getByRole('button',{name:config.locale==='zh-CN'?'增强高级设置':'Advanced enhancement',exact:true})
+   await expect(adjust).toBeEnabled()
+   await adjust.click()
+   await expect(page.getByRole('dialog')).toBeVisible()
+   await page.getByRole('dialog').getByRole('button').last().click()
+   await expect(page.getByRole('dialog')).toHaveCount(0)
+   await page.evaluate(()=>document.activeElement?.blur())
+   await group.scrollIntoViewIfNeeded()
+   await captureReady(page)
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+   const png=await group.screenshot({type:'png'})
+   await writeFile(resolve(settingsOutputDir,config.directory,`processing-${width}.webp`),await webpFromPng(browser,png))
+   if(errors.length)throw new Error(`${config.locale} processing ${width} errors: ${errors.join(' | ')}`)
+  }finally{await context.close()}
+ }
+}
+
 async function capturePage(browser,context,config,hash,readySelector,name){
  const errors=[]
  const page=await context.newPage()
@@ -139,16 +193,21 @@ async function capturePage(browser,context,config,hash,readySelector,name){
  await page.getByRole('heading',{name:config.headings[hash],exact:true}).waitFor({state:'visible'})
  if(hash==='asr'||hash==='tts')await page.getByRole('tab',{name:config.resultsTab,exact:true}).click()
  await page.locator(readySelector).first().waitFor({state:'visible'})
- if(hash==='asr')await page.getByText(config.asrText,{exact:false}).first().waitFor({state:'visible'})
+ if(hash==='asr'){
+  await page.getByText(config.asrText,{exact:false}).first().waitFor({state:'visible'})
+  await expect(page.getByRole('link',{name:config.locale==='zh-CN'?'下载原音':'Download original',exact:true})).toBeVisible()
+  await expect(page.getByRole('link',{name:config.locale==='zh-CN'?'下载增强音':'Download enhanced audio',exact:true})).toBeVisible()
+ }
  const documentLocale=await page.locator('html').getAttribute('lang')
  if(documentLocale!==config.locale)throw new Error(`${hash} resolved ${documentLocale} instead of ${config.locale}`)
- await page.waitForTimeout(500)
+ await captureReady(page)
  await page.evaluate(()=>{
-  window.scrollTo({top:0,left:0,behavior:'auto'})
+  window.scrollTo({top:0,left:0,behavior:'instant'})
   document.documentElement.scrollLeft=0
   document.body.scrollLeft=0
-  document.querySelector('#main-content')?.scrollTo({top:0,left:0,behavior:'auto'})
+  document.querySelector('#main-content')?.scrollTo({top:0,left:0,behavior:'instant'})
  })
+ await captureReady(page)
  const png=await page.screenshot({type:'png',fullPage:false})
  const webp=await webpFromPng(browser,png)
  await writeFile(resolve(outputDir,config.directory,name),webp)
@@ -166,8 +225,9 @@ async function captureApiDocs(browser,context,config){
  await page.locator('.swagger-ui .info .title').waitFor({state:'visible'})
  await page.locator('.swagger-ui .opblock-tag').first().waitFor({state:'visible'})
  await page.getByText('快速开始 / Quick start',{exact:true}).waitFor({state:'visible'})
- await page.waitForTimeout(500)
- await page.evaluate(()=>window.scrollTo({top:0,left:0,behavior:'auto'}))
+ await captureReady(page)
+ await page.evaluate(()=>window.scrollTo({top:0,left:0,behavior:'instant'}))
+ await captureReady(page)
  const png=await page.screenshot({type:'png',fullPage:false})
  const webp=await webpFromPng(browser,png)
  await writeFile(resolve(outputDir,config.directory,'api-docs.webp'),webp)
@@ -177,6 +237,7 @@ async function captureApiDocs(browser,context,config){
 
 async function captureLocale(browser,config){
  await mkdir(resolve(outputDir,config.directory),{recursive:true})
+ await mkdir(resolve(settingsOutputDir,config.directory),{recursive:true})
  const jobIds=await seedDemoJobs(config)
  const context=await captureContext(browser,config,jobIds)
  try{
@@ -184,6 +245,7 @@ async function captureLocale(browser,config){
   await capturePage(browser,context,config,'tts','.audio-card','tts-workspace.webp')
   await capturePage(browser,context,config,'jobs','.jobs-table [role="rowheader"]','job-history.webp')
   await captureApiDocs(browser,context,config)
+  await captureProcessingOptions(browser,config,jobIds)
   return hero
  }finally{
   await context.close()

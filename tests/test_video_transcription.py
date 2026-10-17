@@ -340,7 +340,7 @@ def test_video_enhancement_historical_replay_and_invalid_mode(client, local, tmp
     request = job['request']
     request.pop('audio_enhancement')
     request['video_caller'].pop('audio_enhancement')
-    for field in ('speech_enhancement', 'background_denoise', 'enhancement_policy_version', 'denoise_backend'):
+    for field in ('speech_enhancement', 'background_denoise', 'enhancement_policy_version', 'denoise_backend', 'speech_enhancement_strength', 'background_denoise_strength'):
         request.pop(field, None)
         request['video_caller'].pop(field, None)
     with db.connect() as connection:
@@ -354,3 +354,22 @@ def test_video_enhancement_historical_replay_and_invalid_mode(client, local, tmp
     assert 'audio_enhancement' not in replay.json()['request']
     assert client.post('/api/v1/asr/video-jobs', json={**body, 'audio_enhancement': 'auto'}, headers=headers).status_code == 409
     assert client.post('/api/v1/asr/video-jobs', json={**body, 'audio_enhancement': 'invalid'}, headers=headers).status_code == 422
+
+
+def test_video_strength_snapshot_validation_and_replay(client, local, tmp_path):
+    item = upload(client, video_file(tmp_path / 'strength.mp4'))
+    body = {'upload_id': item['id'], 'compute_device': 'cpu', 'use_voiceprint_library': False,
+            'audio_enhancement': 'auto', 'speech_enhancement_strength': 1.5, 'background_denoise_strength': .75}
+    headers = {'Idempotency-Key': 'video-strength-001'}
+    for field, value in [('speech_enhancement_strength', -1), ('speech_enhancement_strength', 2.01),
+                         ('background_denoise_strength', 1.01), ('background_denoise_strength', -1)]:
+        assert client.post('/api/v1/asr/video-jobs', json={**body, field: value}, headers=headers).status_code == 422
+    response = client.post('/api/v1/asr/video-jobs', json=body, headers=headers)
+    assert response.status_code == 202, response.text
+    request = response.json()['request']
+    for saved in (request, request['video_caller']):
+        assert saved['enhancement_policy_version'] == 6
+        assert saved['speech_enhancement_strength'] == 1.5 and saved['background_denoise_strength'] == .75
+    replay_body = {k: v for k, v in body.items() if not k.endswith('_strength')}
+    assert client.post('/api/v1/asr/video-jobs', json=replay_body, headers=headers).status_code == 200
+    assert client.post('/api/v1/asr/video-jobs', json={**body, 'background_denoise_strength': 0}, headers=headers).status_code == 409

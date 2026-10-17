@@ -26,26 +26,86 @@ Video results use a compact seek bar with an optional waveform. Desktop frames s
 
 English: Desktop voiceprints use equal-width, independently scrolling people and sample panes. Group filtering and Manage groups appear above search and New person; group creation, rename and deletion live in the management menu. The list header shows the filtered count, and selected people reveal a bottom bar for moving, deleting and clearing selection. Narrow screens retain separate list/detail views with reachable actions. Sample controls adapt to the detail pane's width without remounting forms or players. This layout adds no stored settings and preserves existing navigation, draft and preference lifetimes.
 
-声纹库在当前分组内提供批量勾选，切换视图清空勾选；新增人员默认当前筛选分组；全部人员视图默认“未分组”，新建和编辑时均可选择归属。ASR 的“选择分组”默认全部（包含之后新增分组），手动选择只记住指定 ID。加载失败可重试，失效 ID 移除后提示，全部失效时阻止提交，不能扩大到全部。localStorage ASR 偏好 v4 兼容迁移 v3/v2/v1；恢复参数默认和资料库替换恢复全部分组。
+声纹库在当前分组内提供批量勾选，切换视图清空勾选；新增人员默认当前筛选分组；全部人员视图默认“未分组”，新建和编辑时均可选择归属。ASR 的“选择分组”默认全部（包含之后新增分组），手动选择只记住指定 ID。加载失败可重试，失效 ID 移除后提示，全部失效时阻止提交，不能扩大到全部。localStorage ASR 偏好 v7 兼容迁移旧版（含正式版 v0.1.33 的 v4）；恢复参数默认和资料库替换恢复全部分组。
 
 转写下载的“脱敏导出”默认开启，规则每行 `原词=替换词`，最多 100 对，错误提示行号。独立 localStorage `audio-intel:transcript-export:v1` 长期保存开关和编辑内容，包括尚未修正的输入；刷新、重开、退出登录、资料库替换均保留。关闭开关停止姓名/备注处理和关键词替换，规则保留；“恢复默认导出设置”开启并清空规则。正文只替换明确关键词，音频和画面保持原样。
 
-English: ASR v4 preferences migrate older settings and persist either all future groups or explicit IDs. Invalid choices never widen scope. Library replacement resets group selection to all. New people default to the filtered group, or Ungrouped in the all-people view; creation/editing can choose a group. Export v1 preferences independently persist toggle/editor contents across logout and replacement; reset enables redaction and clears rules. Disabling redaction disables every transformation without losing the rules. Loading/error/retry states remain explicit.
+English: ASR v7 preferences migrate older settings, including published v0.1.33 schema v4, and persist either all future groups or explicit IDs. Invalid choices never widen scope. Library replacement resets group selection to all. New people default to the filtered group, or Ungrouped in the all-people view; creation/editing can choose a group. Export v1 preferences independently persist toggle/editor contents across logout and replacement; reset enables redaction and clears rules. Disabling redaction disables every transformation without losing the rules. Loading/error/retry states remain explicit.
 
-## 人声增强与回放 / Speech enhancement and playback
+## 处理选项 / Processing options
 
-音频／视频设置默认勾选“人声增强”（`auto`），取消勾选为 `off`。偏好沿用 ASR v4
-localStorage 生命周期，不新增存储键或改变草稿清理规则。旧版未完成视频上传恢复原先
-的关闭设置。结果默认播放原音；实际增强的任务提供增强音回放和下载，切换保留播放
-位置及状态，波形随音轨更新，波形失败可重试。旁路／回退有实际状态说明，历史任务
-不补生成增强音。详见[人声增强指南](ASR_ENHANCEMENT.md)。
+音频／视频的“转写设置”展开后直接显示“处理选项”，无需再展开“高级设置”。
+“单任务加速”和“音频增强”上下排列，标题或说明均可点击切换，也支持键盘空格操作。
+单任务加速默认开启，根据设备能力加快处理；悬停或聚焦说明图标可查看完整说明。
+单条／文档合成共用相同的加速开关样式，计算方式和请求字段保持不变。
 
-Audio/video settings enable Speech enhancement (`auto`) by default; unchecking
-selects `off`. The existing ASR v4 localStorage lifetime and draft-clearing rules
-remain. Legacy paused video uploads resume with their original off setting.
-Results initially play original audio; applied jobs offer enhanced playback and
-download with position, play state and waveform following track changes. Waveform
-failures can be retried; bypass/fallback are shown and historical jobs are not backfilled.
+音频增强开启时显示已保存的人声增益和降噪力度；偏离服务端默认值时标记“自定义”，
+力度为零时显示“跳过”。点击“调整参数”进入增强高级设置，可分别调整或重置默认值。
+关闭后显示“使用原音”，参数入口禁用，之前的力度仍保留。增强组件的可用状态分别展示：
+例如降噪模型未就绪时，人声增益仍可用；未知状态不会显示为已就绪。
+旧服务缺少力度能力信息时仍可切换增强，但不展示力度摘要或参数入口。
+
+Audio/video transcription settings show Processing options without expanding Advanced settings.
+Acceleration and enhancement use stacked, keyboard-accessible switches; clicking either the title
+or description toggles its switch. Single-item and document TTS share the acceleration row.
+Enhancement shows saved speech/noise strengths, marks custom values, and displays Skip for zero.
+Adjust strengths opens the existing dialog with reset-to-server-default support. Disabling enhancement
+uses original audio and retains saved strengths. Component availability is reported separately;
+unknown capabilities are never presented as ready. Older servers without strength metadata keep
+the enhancement switch but hide strength summaries and the adjustment action.
+Preference versions, storage lifetime and submission contracts are unchanged; settings apply to new tasks.
+
+## 音频增强与回放 / Audio enhancement and playback
+
+音频／视频设置默认开启一个“音频增强”总开关（`auto`），统一控制背景降噪和人声增益，
+取消勾选为 `off`。ASR 偏好迁移到 `audio-intel:asr-preferences:v7` localStorage：
+正式版 v0.1.33 的 v4 总开关保留原值并补服务端默认力度；开发版 v5 两项任一开启
+则总开关开启，两项均关闭则保持关闭；v6 总开关保留原值并补默认力度。TTS 偏好仍为 v2。
+存储期限、退出登录后的保留行为和草稿清理规则不变。
+
+Audio/video forms expose one Audio enhancement switch, enabled by default
+(`auto`), for denoising and speech gain; unchecking selects `off`. ASR preferences
+migrate to `audio-intel:asr-preferences:v7` localStorage: published v0.1.33 schema v4
+keeps its combined value and acquires server-default strengths. Development v5 uses
+OR semantics for the independent controls; v6 keeps its master value and acquires defaults.
+TTS preferences remain v2.
+Storage lifetime, persistence across sign-out and draft-clearing rules are unchanged.
+
+暂停的视频上传继续使用其原参数，包含历史独立组合；旧上传缺少增强字段时按关闭处理。
+恢复时参数锁定，需显式清理上传后才能重新选择。结果默认播放原音；实际增强的任务提供
+增强音回放和下载，切换保留位置、播放状态并同步波形。波形失败可重试，增益和降噪分别
+报告实际状态；降噪未完成时仍可能提供增益后的音频，历史任务不补生成增强音。
+详见[音频增强指南](ASR_ENHANCEMENT.md#browser-control--网页总开关)。
+
+Paused video uploads keep their original parameters, including historical
+independent combinations; pre-enhancement uploads without the field remain off.
+Their settings stay locked until the upload is resumed or explicitly discarded.
+Results initially play original audio. Applied results offer enhanced playback and
+download, preserving position/play state and updating the waveform. Waveform
+failures can be retried. Per-operation results identify partial recovery; gain
+can succeed when denoising fails. Historical jobs are not backfilled.
+
+高级设置支持人声增益 0–200%（默认 100%）和 GTCRN 降噪混合 0–100%（默认 50%），
+实际默认值来自 capabilities。重置仅恢复两项力度；有效修改即时保存在 ASR v7 localStorage，
+v6 偏好保留总开关并补默认强度，存储期限不变。只影响新任务，暂停上传保持原参数。
+策略 6 保存力度并在逐项结果返回 `strength`；历史策略 ≤5 不改写、不升级，向旧幂等 key
+添加力度返回 409，需新 key。0 跳过对应项；总开关 off 仍关闭两项。
+
+Advanced settings expose independent gain/mix strengths and reset only those values.
+Capabilities define ranges/defaults. Valid changes persist immediately in ASR v7;
+v6 preferences keep the master value and acquire server defaults without changing lifetime.
+Policy 6 snapshots strengths; old requests and paused-upload snapshots retain their semantics.
+Adding strengths to a historical idempotency key conflicts (409). Higher values can affect
+naturalness or ASR accuracy; safety limits remain fixed and defaults preserve the waveform.
+
+原音／增强音控件将“试听”分段选择与“下载原音／下载增强音”分组，手机上两组分行。
+下载原音提供播放器中未增强的 WAV（视频任务同样下载音轨 WAV），不改变试听音轨或进度。
+没有增强音时仅提供原音下载；历史任务未保留原音 WAV 时显示不可用，不自动补生成。
+
+Original/enhanced track selection is grouped separately from the two downloads; mobile uses two rows.
+Original download serves the saved unenhanced playback WAV, including the audio track of video jobs,
+without changing listening state. Jobs without enhanced audio offer only original download;
+historical jobs without a saved original WAV show an unavailable explanation and are not backfilled.
 
 ## 阅读与人员导航 / Reading and person navigation
 

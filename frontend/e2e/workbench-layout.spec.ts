@@ -85,8 +85,11 @@ for(const viewport of [{width:1024,height:768},{width:1280,height:720},{width:13
   }
   await expect(page.getByRole('button',{name:'开始转写',exact:true})).toBeInViewport()
   if(viewport.width>=1280){
-   expect(await page.locator('.asr-settings-body').evaluate(e=>e.scrollHeight-e.clientHeight)).toBeLessThanOrEqual(1)
-   await expect(page.getByLabel('ASR 计算设备')).toBeInViewport()
+   // Stacked processing rows intentionally scroll inside the settings pane.
+   for(const control of await page.locator('.asr-settings-body select,.asr-settings-body [role=switch],.asr-settings-body .enhancement-settings-button').all()){
+    await control.scrollIntoViewIfNeeded();await expect(control).toBeInViewport()
+   }
+   await page.locator('.asr-settings-body').evaluate(e=>e.scrollTop=0)
   }
   await noOverflow(page,viewport.width)
   await page.screenshot({path:`/tmp/pc-layout-final-asr-${viewport.width}.png`})
@@ -101,15 +104,18 @@ for(const viewport of [{width:1024,height:768},{width:1280,height:720},{width:13
    await expect(page.locator('.tts-settings').getByText('No compatible NVIDIA GPU is available',{exact:true})).toHaveCount(1)
   }
   await expect(page.getByRole('button',{name:'生成语音',exact:true})).toBeInViewport()
-  if(viewport.width>=1280)expect(await page.locator('.tts-settings-body').evaluate(e=>e.scrollHeight-e.clientHeight)).toBeLessThanOrEqual(1)
+  await page.locator('#tts-acceleration').scrollIntoViewIfNeeded()
+  await expect(page.locator('#tts-acceleration')).toBeInViewport()
   await noOverflow(page,viewport.width)
   await page.screenshot({path:`/tmp/pc-layout-final-tts-${viewport.width}.png`})
   await page.locator('.language-switcher select:visible').first().selectOption('en-US')
   await expect(page.getByLabel('TTS model',{exact:true})).toBeVisible()
-  if(viewport.width>=1280)expect(await page.locator('.tts-settings-body').evaluate(e=>e.scrollHeight-e.clientHeight)).toBeLessThanOrEqual(1)
+  await page.locator('#tts-acceleration').scrollIntoViewIfNeeded()
+  await expect(page.locator('#tts-acceleration')).toBeInViewport()
   await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button').first().click()
   await expect(page.getByLabel('ASR model',{exact:true})).toBeVisible()
-  if(viewport.width>=1280)expect(await page.locator('.asr-settings-body').evaluate(e=>e.scrollHeight-e.clientHeight)).toBeLessThanOrEqual(1)
+  await page.getByRole('switch',{name:'Audio enhancement',exact:true}).scrollIntoViewIfNeeded()
+  await expect(page.getByRole('switch',{name:'Audio enhancement',exact:true})).toBeInViewport()
   await noOverflow(page,viewport.width)
   expect(errors).toEqual([])
  })

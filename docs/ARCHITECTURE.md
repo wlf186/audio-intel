@@ -56,14 +56,16 @@ audio input
 
 ### Speech enhancement
 
-Policy 5 exposes independent `speech_enhancement` and `background_denoise`
+The browser and recommended API use one `audio_enhancement=auto|off` control.
+Policy 6 retains compatible independent `speech_enhancement` and `background_denoise`
 booleans, both on by default. It executes denoising before continuous gain and
 recovers each operation independently. Gain-only skips model loading. Results
 record both outcomes; aggregate `applied` can include a `partial_fallback`.
-Submission snapshots include effective controls, policy and manifest-selected
-backend; ETA cohorts distinguish these combinations. Historical requests without
+Submission snapshots include effective controls, numeric strengths, policy and manifest-selected
+backend; policy-6 ETA cohorts distinguish strengths while historical cohorts retain their keys. Historical requests without
 these controls retain the legacy path and fingerprints. The original audio still
-supplies speaker clustering and voiceprints. There is no database migration.
+supplies speaker clustering and voiceprints. Browser preferences migrate to v7 with server-default strengths; v6 master values survive, and v5 migrates by combining either enabled control into `auto` while preserving both-off as
+`off`, storage lifetime and paused-upload snapshots. There is no database migration.
 
 The validated default remains GTCRN 50%. A pinned CPU FP32 UL-UNAS candidate
 has an independent optional manifest role and uses existing Torch/NumPy. Both
@@ -77,16 +79,23 @@ New audio, video and compatible transcription submissions default to
 `audio_enhancement=auto`; `off` preserves the former recognition input. The pinned
 GTCRN-DNS3 checkpoint runs in a separate CPU FP32 stage child within the existing
 ASR process tree, using bounded blocks and context. It uses the ASR environment,
-with no additional worker or package. Missing weights, invalid output and resource
-failures fall back to original audio and record the outcome.
+with no additional worker or package. Each operation reports its outcome:
+unavailable denoising does not block gain. Partial success produces an enhanced
+track with `applied` / `partial_fallback`; only no usable enhanced output falls
+back to original audio. Inspect both operation statuses.
 
-Automatic processing retains 50% original signal and smooths upward gain for quiet
+Default automatic processing retains 50% original signal and smooths upward gain for quiet
 speech. Clean, audible blocks bypass processing. The VAD union uses existing chunk
 rules; original audio supplies CAM++ and voiceprints. Sample count, video time
 origin and ASR model/precision are preserved. Clone-reference analysis and
 voiceprint imports are excluded.
 
-Processing policy 4 separates the existing 50% GTCRN mix from file-wide gain.
+Current policy 6 retains the continuous gain introduced by historical policy 4,
+separating GTCRN mix (default 0.5, configurable 0–1) from file-wide dB gain
+(default multiplier 1, configurable 0–2). Zero skips the operation; master off disables both.
+The gain multiplier precedes fixed peak/slope limits. Default signal output is unchanged.
+Historical policies ≤5 keep their snapshots; adding strengths to their idempotency keys
+conflicts. Per-operation results add optional strength; global summaries do not.
 Six-second centred speech RMS estimates, a soft activation knee and peak-safe
 forward/backward limits bound gain changes to 3 dB/s. Short gaps hold estimates;
 long gaps release gently to unity. Compact 20 ms statistics and tiled quantiles

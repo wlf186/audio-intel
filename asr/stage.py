@@ -329,7 +329,7 @@ def enhance(payload: dict[str, Any]) -> dict[str, Any]:
     from audio_intel.model_registry import asr_denoise_model, asr_enhancement_model
     from audio_intel.worker import JobCancelled
 
-    model = (asr_denoise_model(payload["denoise_backend"]) if payload.get("enhancement_policy_version") == 5
+    model = (asr_denoise_model(payload["denoise_backend"]) if payload.get("enhancement_policy_version") in {5, 6}
              and payload["background_denoise"] else asr_enhancement_model())
     def report(current: int, total: int) -> None:
         _progress(payload, "audio_enhancement", math.ceil(current / 16000), math.ceil(total / 16000),
@@ -341,11 +341,12 @@ def enhance(payload: dict[str, Any]) -> dict[str, Any]:
         def pause_progress(current: int, total: int) -> None:
             _progress(payload, "audio_enhancement_pauses", math.ceil(current / 16000), math.ceil(total / 16000),
                       stage_progress=current / max(total, 1), unit="media_second")
-        if payload.get("enhancement_policy_version") == 5:
+        if payload.get("enhancement_policy_version") in {5, 6}:
             return enhance_independent(Path(payload["input_path"]), Path(payload["enhanced_path"]),
                 payload["speech_regions"], report, vad_progress,
                 speech_enhancement=bool(payload["speech_enhancement"]),
-                background_denoise=bool(payload["background_denoise"]), backend=payload["denoise_backend"])
+                background_denoise=bool(payload["background_denoise"]), backend=payload["denoise_backend"],
+                **{key: payload[key] for key in ("speech_enhancement_strength", "background_denoise_strength") if key in payload})
         result = enhance_audio(Path(payload["input_path"]), Path(payload["enhanced_path"]),
                                payload["speech_regions"], report, vad_progress, pause_progress,
                                gain_policy="legacy" if os.getenv("AUDIO_INTEL_ASR_CONTINUOUS_GAIN", "1").strip().lower()
@@ -359,11 +360,16 @@ def enhance(payload: dict[str, Any]) -> dict[str, Any]:
                 else "resource_unavailable" if isinstance(exc, OSError) else "invalid_output" if isinstance(exc, ValueError)
                 else "inference_failed", "model": model["name"], "model_revision": model["revision"],
                 "compute_device": "cpu"}
-        if payload.get("enhancement_policy_version") == 5:
-            result.update(processing_version=5, **{key: {"enabled": payload[key],
+        if payload.get("enhancement_policy_version") in {5, 6}:
+            result.update(processing_version=payload["enhancement_policy_version"], **{key: {"enabled": payload[key],
                 "status": "fallback" if payload[key] else "off",
                 "reason": result["reason"] if payload[key] else "disabled"}
                 for key in ("speech_enhancement", "background_denoise")})
+            if payload["enhancement_policy_version"] == 6:
+                for key in ("speech_enhancement", "background_denoise"):
+                    result[key]["strength"] = payload[key + "_strength"]
+                    if payload[key] and payload[key + "_strength"] == 0:
+                        result[key].update(status="bypassed", reason="strength_zero")
             if not payload["background_denoise"]:
                 result.pop("model")
                 result.pop("model_revision")
