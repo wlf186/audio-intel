@@ -15,7 +15,7 @@ for(const width of [1440,1024,390])for(const locale of ['zh-CN','en-US']){
   const control=page.locator('#tts-acceleration')
   await expect(control).toBeChecked()
   await control.focus();await page.keyboard.press('Space');await expect(control).not.toBeChecked()
-  await page.getByRole('tab',{name:locale==='zh-CN'?'文档合成':'Document synthesis',exact:true}).click()
+  await page.getByRole('tab',{name:locale==='zh-CN'?'文档合成':'Document',exact:true}).click()
   await expect(control).not.toBeChecked()
   await page.locator('.setting-toggle-copy').click();await expect(control).toBeChecked()
   const help=page.locator('.setting-toggle-row .info-tooltip button')
