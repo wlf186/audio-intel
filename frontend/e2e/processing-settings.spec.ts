@@ -35,6 +35,7 @@ for(const width of [1440,1024,390])for(const locale of ['zh-CN','en-US']){
    return Math.min(b.bottom,clip.bottom)<=action.top||Math.max(b.top,clip.top)>=action.bottom
   })
   expect(layout).toBe(true)
+  await page.evaluate(()=>(document.activeElement as HTMLElement)?.blur())
   await page.screenshot({path:path.resolve(`../tmp/processing-settings/tts-switch-${width}-${locale}.png`),fullPage:true})
   expect(errors).toEqual([])
  })

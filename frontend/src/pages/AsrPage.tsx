@@ -125,7 +125,7 @@ type Props = {
   defaultComputeDevice: ComputeDevice
   maxSpeakers: number
   maxUploadBytes?: number
-  enhancementAvailable?: boolean
+  gainAvailable?: boolean
   denoiseAvailable?: boolean
   gainStrengthCapability?: AsrStrengthCapability
   noiseStrengthCapability?: AsrStrengthCapability
@@ -148,7 +148,7 @@ type Props = {
   onRevealHandled: (token: number) => void
 }
 
-export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, restoreState, restoreError, restoreSelected, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, enhancementAvailable, denoiseAvailable, gainStrengthCapability, noiseStrengthCapability, videoCapability, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, voiceprintGroups, voiceprintGroupsState, refreshVoiceprintGroups, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
+export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, restoreState, restoreError, restoreSelected, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, gainAvailable, denoiseAvailable, gainStrengthCapability, noiseStrengthCapability, videoCapability, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, voiceprintGroups, voiceprintGroupsState, refreshVoiceprintGroups, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const { t, i18n } = useTranslation()
   const [view, setView] = useState<'create'|'video'|'results'>(()=>readAsrSession().view)
   const [compact, setCompact] = useState(()=>matchMedia('(max-width: 1023px)').matches)
@@ -186,7 +186,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const [groupSelectionWarning,setGroupSelectionWarning]=useState(false)
   const strengthDefaults={speech:gainStrengthCapability?.default??1,noise:noiseStrengthCapability?.default??.5}
   const [enhancementSettingsOpen,setEnhancementSettingsOpen]=useState(false)
-  const enhancementAvailabilityNote=enhancementAvailable===true&&denoiseAvailable===true?'':t(`asr.enhancement.${enhancementAvailable===true&&denoiseAvailable===false?'denoiseOnlyUnavailable':enhancementAvailable===false&&denoiseAvailable===true?'gainOnlyUnavailable':enhancementAvailable===false&&denoiseAvailable===false?'bothUnavailable':'availabilityUnknown'}`)
+  const enhancementAvailabilityNote=gainAvailable===true&&denoiseAvailable===true?'':t(`asr.enhancement.${gainAvailable===true&&denoiseAvailable===false?'denoiseOnlyUnavailable':gainAvailable===false&&denoiseAvailable===true?'gainOnlyUnavailable':gainAvailable===false&&denoiseAvailable===false?'bothUnavailable':'availabilityUnknown'}`)
   const strengthLabel=(value:number)=>value===0?t('asr.enhancement.skip'):`${Math.round(value*100)}%`
   const [preferences, setPreferences] = useState<AsrPreferences>(() => loadAsrPreferences(maxSpeakers,defaultComputeDevice,strengthDefaults))
   useEffect(()=>{const reset=()=>setPreferences(current=>({...current,hotwordListIds:[]}));addEventListener('audio-intel:library-replaced',reset);return()=>removeEventListener('audio-intel:library-replaced',reset)},[])
@@ -673,12 +673,14 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           <h2>{t('asr.processingOptions')}</h2>
           <SettingToggleRow id="asr-acceleration" label={t('asr.acceleration')} description={t('asr.accelerationDescription')} checked={accelerateSingleTask} onChange={checked=>updatePreference('accelerateSingleTask',checked)} help={t('asr.accelerationHelp')}/>
           <SettingToggleRow id="asr-enhancement" label={t('asr.enhancement.label')} description={t('asr.enhancement.description')} checked={preferences.audioEnhancement==='auto'} onChange={checked=>updatePreference('audioEnhancement',checked?'auto':'off')} help={t('asr.enhancement.help')} helpLabel={t('asr.enhancement.helpLabel')}>
+            {preferences.audioEnhancement==='off'||(gainStrengthCapability&&noiseStrengthCapability)||enhancementAvailabilityNote?<>
             {preferences.audioEnhancement==='off'?<span>{t('asr.enhancement.originalAudio')}</span>:gainStrengthCapability&&noiseStrengthCapability?<>
               <span>{t('asr.enhancement.savedStrengths',{gain:strengthLabel(preferences.speechEnhancementStrength),noise:strengthLabel(preferences.backgroundDenoiseStrength)})}</span>
               {customEnhancementStrengths?<span className="setting-toggle-custom">{t('asr.enhancement.custom')}</span>:null}
             </>:null}
             {gainStrengthCapability&&noiseStrengthCapability?<button type="button" className="button enhancement-settings-button" aria-label={t('asr.enhancement.settings')} disabled={preferences.audioEnhancement==='off'} onClick={()=>setEnhancementSettingsOpen(true)}>{t('asr.enhancement.adjust')}</button>:null}
             {preferences.audioEnhancement==='off'?gainStrengthCapability&&noiseStrengthCapability?<p className="setting-toggle-note">{t('asr.enhancement.enableToAdjust')}</p>:null:enhancementAvailabilityNote?<p className="setting-toggle-note" role="note">{enhancementAvailabilityNote}</p>:null}
+            </>:null}
           </SettingToggleRow>
         </section>
         <div className={`asr-advanced${advancedOpen?' expanded':''}`}><button type="button" className="asr-advanced-toggle" aria-expanded={!compact||advancedOpen} aria-controls="asr-advanced-body" onClick={()=>setAdvancedOpen(value=>!value)}>{t('asr.workspace.advanced')} · {chosenModel.name} · {effectiveComputeDevice.toUpperCase()}</button><div className="asr-advanced-body" id="asr-advanced-body">

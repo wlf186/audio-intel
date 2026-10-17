@@ -400,6 +400,7 @@ for(const width of [1440,1024,390])for(const locale of ['zh-CN','en-US']){
   })
   expect(noOverlap).toBe(true)
   await group.scrollIntoViewIfNeeded()
+  await page.evaluate(()=>(document.activeElement as HTMLElement)?.blur())
   await page.screenshot({path:path.resolve(`../tmp/processing-settings/switches-${width}-${locale}.png`),fullPage:true})
   expect(errors).toEqual([])
  })
