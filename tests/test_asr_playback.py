@@ -191,3 +191,60 @@ def test_playback_rejects_symlink_escape(local, tmp_path):
         write_wave(tmp_path / 'playback.wav.partial')
         clean_partials(job['id'], local.jobs_dir)
         assert (tmp_path / 'playback.wav.partial').exists()
+
+
+@pytest.mark.parametrize('display_name,purpose', [
+    ('咖啡厅 会议.m4a', None), ('用户旅程版.mp4', 'video_transcription'), ('x' * 200 + '.wav', None),
+])
+def test_original_wav_download_filename_bytes_auth_and_ranges(local, display_name, purpose):
+    from urllib.parse import unquote
+    from audio_intel.utils import safe_filename
+
+    with TestClient(api.create_app()) as client:
+        job = db.create_job('asr', display_name, {'purpose': purpose} if purpose else {})
+        url = f"/api/v1/jobs/{job['id']}/playback"
+        download = url + '?download=true'
+        auth = {'Authorization': 'Bearer playback-test'}
+        assert client.get(download).status_code == 401
+        assert client.get(download, headers=auth).status_code == 409
+        output = local.jobs_dir / job['id'] / 'output/playback.wav'
+        expected = write_wave(output)
+        db.finish_job(job['id'], 'succeeded', result_json={'playback_url': url})
+        before = db.get_job(job['id'])
+        inline = client.get(url, headers=auth)
+        assert inline.status_code == 200 and 'content-disposition' not in inline.headers
+        response = client.get(download, headers=auth)
+        assert response.status_code == 200
+        assert response.content == inline.content == expected
+        assert response.headers['content-type'] == 'audio/wav'
+        disposition = unquote(response.headers['content-disposition'])
+        expected_name = safe_filename(Path(display_name).stem, 'audio')[:150] + '-original.wav'
+        assert disposition.startswith('attachment;') and expected_name in disposition
+        assert expected_name.endswith('-original.wav') and len(expected_name) <= 180
+        partial = client.get(download, headers={**auth, 'Range': 'bytes=0-43'})
+        assert partial.status_code == 206 and partial.content == expected[:44]
+        assert partial.headers['content-disposition'] == response.headers['content-disposition']
+        assert client.get(download, headers={**auth, 'Range': 'bytes=999999999-'}).status_code == 416
+        assert client.post('/api/v1/auth/session', headers=auth).status_code == 204
+        assert client.get(download).content == expected
+        assert client.delete('/api/v1/auth/session').status_code == 204
+        assert client.get(download).status_code == 401
+        assert db.get_job(job['id']) == before
+        assert list(output.parent.iterdir()) == [output]
+        output.unlink()
+        assert client.get(download, headers=auth).status_code == 404
+        assert not output.exists()
+        schema = client.get('/openapi.json').json()['paths']['/api/v1/jobs/{job_id}/playback']['get']
+        parameter = next(item for item in schema['parameters'] if item['name'] == 'download')
+        assert parameter['in'] == 'query' and parameter['schema']['default'] is False
+        assert 'Content-Disposition' in schema['responses']['200']['headers']
+
+
+def test_historical_missing_original_wav_download_is_not_regenerated(local):
+    with TestClient(api.create_app(), headers={'Authorization': 'Bearer playback-test'}) as client:
+        job = db.create_job('asr', 'historical.mp4', {'purpose': 'video_transcription'})
+        db.finish_job(job['id'], 'succeeded', result_json={'text': 'public fixture'})
+        before = db.get_job(job['id'])
+        assert client.get(f"/api/v1/jobs/{job['id']}/playback?download=true").status_code == 404
+        assert not (local.jobs_dir / job['id'] / 'output').exists()
+        assert db.get_job(job['id']) == before

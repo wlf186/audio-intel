@@ -1,3 +1,4 @@
+import {SettingToggleRow} from '../components/SettingToggleRow'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   CircleStop,
@@ -30,7 +31,6 @@ import type { DocumentCapability, DocumentSelection } from '../lib/types'
 import { JobMini } from '../components/JobMini'
 import { AudioTransport } from '../components/AudioTransport'
 import { ResourceStatePanel } from '../components/ResourceStatePanel'
-import { InfoTooltip } from '../components/InfoTooltip'
 import { WorkbenchDivider } from '../components/WorkbenchDivider'
 import { useMicrophoneRecorder } from '../hooks/useMicrophoneRecorder'
 import {
@@ -1204,22 +1204,7 @@ export function TtsPage({
             ) : null}
           </label>
           {draft.computeDevice === 'gpu' && effectiveTtsDevice === 'cpu' ? <small id="tts-device-warning" className="device-hint device-warning tts-device-warning">{computeUnavailableReason(ttsGpu,t,t('tts.gpuFallback'))}</small> : null}
-          <div className="acceleration-control">
-            <label>
-              <input
-                type="checkbox"
-                checked={draft.accelerateSingleTask}
-                onChange={(event) =>
-                  updatePreference('accelerateSingleTask', event.target.checked)
-                }
-              />
-              <span>{t('tts.acceleration')}</span>
-            </label>
-            <InfoTooltip
-              id="tts-acceleration-help"
-              text={t('tts.accelerationHelp')}
-            />
-          </div>
+          <SettingToggleRow id="tts-acceleration" label={t('tts.acceleration')} description={t('tts.accelerationDescription')} checked={draft.accelerateSingleTask} onChange={checked=>updatePreference('accelerateSingleTask',checked)} help={t('tts.accelerationHelp')}/>
           <details className="document-quality-help"><summary>{t('tts.quality.title')}</summary><p>{t('tts.modelHelp')}</p><p>{t('tts.languageHelp')}</p>{qualityNote}</details>
             </div>
           <div className="submission-actions">

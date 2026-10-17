@@ -34,18 +34,37 @@ Media PTS provides a shared audio/video origin; delayed audio is padded with sil
 
 Results support merge-next, split, boundary adjustment, replacement images and restoration of automatic sections. Revision checks prevent overwriting another client's edits; on conflict, close the editor and reload sections. Original detailed text and speaker snapshots remain accessible.
 
-## 人声增强 / Speech enhancement
+## 音频增强 / Audio enhancement
 
-视频任务在 `/api/v1/asr/video-jobs` JSON 中接受 `audio_enhancement=auto|off`，
+网页使用一个“音频增强”总开关。视频 API 推荐在 `/api/v1/asr/video-jobs` JSON 中使用
+`audio_enhancement=auto|off`，
 新任务默认 `auto`。上传与断点校验不处理媒体；增强在现有 ASR 任务的 CPU 子阶段运行，
 保留采样数、视频时间原点和说话人识别的原音输入。默认回放原音，实际增强后可切换或
 下载独立增强音。旧版上传恢复原设置，历史任务不补生成。详见[人声增强](ASR_ENHANCEMENT.md)。
 
-Video JSON accepts `audio_enhancement=auto|off`, defaulting to `auto`. Upload/resume
+The browser uses one Audio enhancement checkbox. Video JSON recommends
+`audio_enhancement=auto|off`, defaulting to `auto`. Independent booleans remain
+supported for compatibility and cannot be mixed with the combined control (422). Upload/resume
 verification does not process media. The existing ASR task enhances on CPU while
 preserving sample count, video time origin and original audio for diarization.
 Applied results offer an enhanced track; original playback remains the default.
-Legacy uploads retain their settings, and historical jobs are not backfilled.
+Paused uploads retain their saved settings, including independent combinations;
+pre-enhancement uploads stay off. Historical jobs are not backfilled. Denoising
+and gain report their outcomes separately; partial success can still provide an
+enhanced track. See the [enhancement contract](ASR_ENHANCEMENT.md).
+
+独立布尔参数继续兼容 API 调用，但不能与总开关混用（422）。暂停上传保留原参数，
+包括旧的独立组合；缺少增强字段的旧上传仍按关闭处理。降噪失败不阻断增益，是否生效
+以结果中两项的实际状态为准。
+
+原音／增强音控件将“试听”分段选择与“下载原音／下载增强音”分组，手机上两组分行。
+下载原音提供播放器中未增强的 WAV（视频任务同样下载音轨 WAV），不改变试听音轨或进度。
+没有增强音时仅提供原音下载；历史任务未保留原音 WAV 时显示不可用，不自动补生成。
+
+Original/enhanced track selection is grouped separately from the two downloads; mobile uses two rows.
+Original download serves the saved unenhanced playback WAV, including the audio track of video jobs,
+without changing listening state. Jobs without enhanced audio offer only original download;
+historical jobs without a saved original WAV show an unavailable explanation and are not backfilled.
 
 ## PDF 与磁盘 / PDF and disk use
 
@@ -135,3 +154,5 @@ English: Select voiceprint groups for audio/video; eligible people are fixed at 
 桌面保留 PDF 快捷按钮和“明细与字幕”菜单；窄屏使用“导出转写”弹窗统一选择 PDF/TXT/SRT/VTT/JSON、脱敏开关和替换规则。菜单支持点击外部或 Escape 关闭，不改变阅读滚动。规则错误即时显示；仅在脱敏开启时阻止下载，关闭开关可继续导出原文。声纹入库分两步，显示已选数量、固定操作区，回到上一步保留勾选。
 
 English: Each task/view retains its reading anchor and loaded count across navigation/reload, including segment filters. Edited sections restore a nearby ID/time anchor. Refresh keeps old content visible, disables editing and provides retry on failure. Current-tab sessionStorage clears on logout/auth invalidation. Time fields accept synchronized seconds and hh:mm:ss.sss, with ±0.1 and current-playback controls. Invalid ranges disable Save; server validation remains authoritative. Narrow screens consolidate transcript formats/redaction/rules into one export dialog. Desktop menus dismiss on outside click/Escape. Invalid rules block downloads only when redaction is enabled. Enrollment preselects clicked-paragraph sentences, retains selections between its two steps and keeps footer actions reachable.
+
+高级设置分别配置 `speech_enhancement_strength`（0–2，默认 1）与 `background_denoise_strength`（0–1，GTCRN 默认 0.5），视频提交 JSON 保存两项力度。Capabilities 公布实际范围／默认值；仅影响新提交任务，暂停上传保留原参数。Advanced strengths and reset share audio ASR preferences; paused uploads keep their saved snapshot.

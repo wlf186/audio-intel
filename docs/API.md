@@ -283,9 +283,19 @@ curl -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
 
 ASR source media is available at `GET /api/v1/jobs/{job_id}/source`, supports HTTP Range requests, and accepts `?download=true` to force a download.
 
-新完成的 ASR 任务在结果中提供 `playback_url`，指向 `GET /api/v1/jobs/{job_id}/playback`。它返回识别时保存的 16 kHz、单声道、PCM16 WAV，使片段、字词和波形跳转与识别时间轴一致，避免 VBR MP3 随机跳转偏差。该接口受 Bearer / 浏览器会话鉴权保护，支持 Range（`206` / `416`）；非 ASR 或尚未成功的任务返回 `409`，音频缺失返回 `404`。历史任务不补生成文件，缺少此字段时继续使用原音源。原文件下载和字幕时间戳保持不变。
+新完成的 ASR 任务在结果中提供 `playback_url`，指向 `GET /api/v1/jobs/{job_id}/playback`。它返回增强前保存的 16 kHz、单声道、PCM16 原音 WAV，使片段、字词和波形跳转与识别时间轴一致，避免 VBR MP3 随机跳转偏差。该接口受 Bearer / 浏览器会话鉴权保护，支持 Range（`206` / `416`）；非 ASR 或尚未成功的任务返回 `409`，音频缺失返回 `404`。历史任务不补生成文件，缺少此字段时继续使用原音源。原文件下载和字幕时间戳保持不变。
 
-New successful ASR results include `playback_url`, pointing to `GET /api/v1/jobs/{job_id}/playback`. This serves the saved 16 kHz mono PCM16 WAV on the recognition timeline, avoiding inaccurate VBR MP3 seeks for segments, words and waveforms. Bearer or browser-session authentication is required. Range requests support `206` / `416`; non-ASR or unsuccessful jobs return `409`, and missing audio returns `404`. Historical jobs are not backfilled and continue using their original source when this field is absent. Original downloads and transcript timestamps are unchanged.
+New successful ASR results include `playback_url`, pointing to `GET /api/v1/jobs/{job_id}/playback`. This serves the saved unenhanced 16 kHz mono PCM16 WAV on the recognition timeline, avoiding inaccurate VBR MP3 seeks for segments, words and waveforms. Bearer or browser-session authentication is required. Range requests support `206` / `416`; non-ASR or unsuccessful jobs return `409`, and missing audio returns `404`. Historical jobs are not backfilled and continue using their original source when this field is absent. Original downloads and transcript timestamps are unchanged.
+
+`GET /api/v1/jobs/{job_id}/playback?download=true` 下载与播放器“原音”一致的 WAV，音频和视频任务均适用。
+`download` 为可选 boolean，默认 `false`；`true` 返回 `Content-Disposition: attachment`，文件名为安全处理后的任务名（去扩展名）加 `-original.wav`。
+内容与普通回放逐字节相同，不重新处理或创建副本；鉴权、Range 及 `404/409/416` 语义保持一致。
+它与 `/source?download=true` 不同：后者提供上传的原始音频或视频文件。
+
+Optional query `download=true` serves the same unenhanced WAV as an attachment for audio and video jobs.
+The default is false. The filename uses the sanitized task stem plus `-original.wav`; long stems are truncated while preserving the WAV suffix.
+No audio is reprocessed, copied or backfilled. Authentication and Range/error behavior remain unchanged.
+`/source?download=true` continues to download the original upload, including the video container for video jobs.
 
 播放 WAV 随任务删除；每小时音频约增加 115 MB 存储。它不加入字幕导出文件列表，也不改变浏览器偏好或草稿的保存期限。
 
@@ -297,6 +307,9 @@ curl --fail-with-body \
   -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -H 'Range: bytes=0-43' \
   "$AUDIO_INTEL_URL/api/v1/jobs/$JOB_ID/playback" -o playback-header.bin
+# Download the complete unenhanced WAV.
+curl --fail-with-body -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  "$AUDIO_INTEL_URL/api/v1/jobs/$JOB_ID/playback?download=true" -o original.wav
 ```
 
 ## ASR speaker names and notes
@@ -642,20 +655,46 @@ print("Replacement backup:", receipt.get("backup_url"))
 `GET /api/v1/voiceprints/people` returns required `sort_initial` (A–Z or #) and full-pinyin/Latin ordered people; `/api/v1/tts/voices` uses the same ordering. The frontend passes that order through clone, document TTS, ASR rename/enrollment and video enrollment pickers. System hotword term order and historical speaker snapshots are unchanged.
 ## ASR speech enhancement / ASR 人声增强
 
+网页音频和视频表单使用一个“音频增强”总开关，提交 `audio_enhancement=auto|off`，
+统一开启／关闭背景降噪和人声增益；API 也推荐同一总开关，默认效果保持不变；开启后可通过高级参数分别配置力度并恢复默认值。独立参数继续兼容现有 API
+客户端及历史任务，网页不再分别提供两项开关。浏览器偏好迁移及暂停上传行为见
+[增强说明](ASR_ENHANCEMENT.md#browser-control--网页总开关)。
+
+The browser audio/video forms use one Audio enhancement checkbox. The API also
+recommends the combined control; submit
+`audio_enhancement=auto|off` to enable/disable both operations. Default processing is unchanged; optional numeric strengths configure each operation. Independent API fields and saved request/result contracts remain
+supported; paused uploads retain their original settings.
+
+三个入口新增可选 `speech_enhancement_strength`（有限浮点 0–2，默认 1，网页 0–200%）和
+`background_denoise_strength`（有限浮点 0–1，GTCRN 默认 0.5，网页 0–100%）。
+音频／OpenAI 兼容用 multipart，视频用 JSON；非法范围和非有限数返回 `422`。
+能力中两项的 `strength: {min,max,step,default,unit}` 是范围与默认值的权威来源；实验
+UL-UNAS 后端降噪默认 1。增益倍率作用于目标 dB 增益并受原安全限制，降噪值是自动选中
+片段的湿声比例，不保证消除全部背景音。调高可能影响自然度或识别率。
+
+Zero skips that operation (`bypassed / strength_zero`); denoising at zero loads no model.
+The master switch off still disables both. New policy-6 requests snapshot both values;
+per-operation results optionally include `strength`. Replay inherits omitted strengths;
+changed values return `409`. Historical policy ≤5 replay/retry retains its old semantics;
+supplying numeric strengths for a historical idempotency record returns `409` and requires a new key.
+The UI saves valid changes immediately under preference v7; resetting strengths leaves
+other settings intact. Only new submissions use changed values. Paused uploads retain snapshots.
+
 独立布尔参数 `speech_enhancement`（人声增强）与 `background_denoise`（背景降噪）
 适用于下面三个入口，新任务均默认 `true`。音频及兼容入口使用 multipart 的 `true/false`，
 视频入口使用 JSON boolean。双开先降噪再平稳增益；仅增益不加载降噪模型。
-旧 `audio_enhancement=auto|off` 是双开／双关别名，与任一新字段混用返回 `422`。
+总开关 `audio_enhancement=auto|off` 统一开启／关闭两项，与任一独立字段混用返回 `422`。
 省略参数重放时继承已保存设置，改变任一开关返回 `409`；历史请求不自动升级处理链。
 
 Independent booleans `speech_enhancement` and `background_denoise` default to true
 on all three endpoints. Both enabled means denoise then continuous gain; gain
-alone loads no denoiser. The legacy alias cannot be combined with new fields (422).
+alone loads no denoiser. The recommended combined control cannot be mixed with
+independent fields (422).
 Replay inherits saved settings; changes conflict (409). Historical requests retain
 their previous processing path.
 
 Capabilities add `asr.audio_enhancement.speech_enhancement` and
-`.background_denoise`, each with `supported/available/default`. Policy-5 detail/results
+`.background_denoise`, each with `supported/available/default/strength`. Policy-6 detail/results
 add the same two objects with `enabled/status/reason`; denoising also identifies
 the actual model/revision/mix. Failure is independent: `status=applied` with
 `reason=partial_fallback` can mean gain succeeded while denoising failed.
@@ -666,6 +705,11 @@ default; the stronger UL-UNAS candidate failed public CER validation. See the
 ```bash
 BASE_URL="${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}"
 API_KEY="${AUDIO_INTEL_API_KEY:?Set AUDIO_INTEL_API_KEY}"
+# Recommended: combined automatic denoising and speech gain.
+curl --fail-with-body -H "Authorization: Bearer $API_KEY" -H "Idempotency-Key: combined-audio-001" \
+  -F file=@meeting.wav -F audio_enhancement=auto \
+  -F speech_enhancement_strength=1.5 -F background_denoise_strength=0.75 "$BASE_URL/api/v1/asr/jobs"
+# Compatibility example: independent gain without denoising; do not mix fields.
 curl -H "Authorization: Bearer $API_KEY" -H "Idempotency-Key: independent-gain-001" \
   -F file=@meeting.wav -F speech_enhancement=true -F background_denoise=false \
   "$BASE_URL/api/v1/asr/jobs"
@@ -688,18 +732,22 @@ imports and clone-reference analysis are excluded.
 
 `GET /api/v1/capabilities` 的 `asr.audio_enhancement` 返回 `supported`、`available`、
 `default`、`modes`、固定模型及 revision、`compute_device=cpu` 和回放能力。
-`available=false` 时基础 ASR 仍可用，自动模式记录回退。非法模式返回 `422`。
+`available` 反映所选降噪模型是否就绪；两项独立能力分别反映增益和降噪可用性。
+`available=false` 不禁用基础 ASR 或独立增益。当前策略 6 分别尝试两项处理，降噪
+失败时增益仍可成功；总状态可能为 `applied`、原因为 `partial_fallback`。非法模式返回 `422`。
 
 Capabilities expose support, availability, default/modes, pinned model
-identity/revision, CPU execution and enhanced-playback support. An unavailable
-enhancer leaves base ASR usable with a recorded fallback. Invalid modes return `422`.
+identity/revision, CPU execution and enhanced-playback support. Top-level availability
+reflects the denoiser; per-operation capabilities report gain separately. Missing
+denoising weights leave base ASR and gain available. Policies 5 and 6 report independent
+outcomes; partial success is `applied` with `partial_fallback`. Invalid modes return `422`.
 
 | Result `status` | Meaning / 含义 |
 | --- | --- |
 | `off` | Saved request disables enhancement / 保存的请求关闭增强 |
 | `bypassed` | No processing needed; original used / 无需增强，使用原音 |
 | `applied` | Enhanced input for transcription/alignment / 转写及对齐使用增强音 |
-| `fallback` | Failure/unavailable model; reason recorded, original used / 增强失败或不可用，记录原因后使用原音 |
+| `fallback` | No usable enhanced output; reason recorded, original used / 未生成可用增强音，记录原因后使用原音 |
 
 详情及结果中的 `audio_enhancement` 可选；缺失的历史结果不表示增强成功。
 客户端应保留对未知 `reason` 的兼容。实际增强时返回 `playback_url` 与可选 `waveform`，
@@ -716,7 +764,8 @@ semantics remain, bypass retains no extra WAV, and global summaries/SSE omit det
 `gain_seconds`/`denoised_seconds` cover processing blocks, not exact voiced duration.
 `elapsed_seconds` measures enhancement, excluding subsequent VAD and other stages.
 
-处理策略 4 保留人声响度目标和 50% GTCRN 混合，使用 6 秒人声上下文与跨块连续增益，
+当前策略 6 保留策略 4 引入的人声响度目标、50% GTCRN 混合及连续增益；
+使用 6 秒人声上下文与跨块连续增益，
 最大变化每秒 3 dB，避免逐秒增益判断带动背景声起落。两次人声检测的并集仍用于 ASR 分段。
 新结果可包含下列可选字段，旧任务缺失时不表示已执行新策略：
 
@@ -727,14 +776,16 @@ semantics remain, bypass retains no extra WAV, and global summaries/SSE omit det
 | `max_pause_attenuation_db` | Maximum applied reduction, positive dB / 实际最大衰减量，正数 dB |
 | `pause_suppression_reason` | Applied/skipped reason; tolerate future values / 执行或跳过原因，客户端应兼容未知值 |
 
-Policy 4 preserves the loudness target, 50% GTCRN mixing, sample count and media
-clock. Six-second speech context and peak-safe continuous gain bounded to 3 dB/s
-replace per-second gain decisions. New policy-4 results report zero for both pause
+Current policy 6 retains policy 4's continuous gain, loudness target and
+50% GTCRN mix, preserving sample count and media clock. Six-second speech context and peak-safe continuous gain bounded to 3 dB/s
+replace per-second gain decisions. Policies 4 and 5 report zero for both pause
 attenuation fields and `disabled_for_naturalness`. Historical policy-2/3 diagnostics remain
 valid, including `applied`, `no_speech`, `no_noise`, `no_long_pauses`,
 `vad_unavailable`, and `bypassed`. A second-VAD failure retains base enhancement
 and original speech regions. `elapsed_seconds` includes signal processing and
-excludes VAD. The request still accepts only `auto|off`.
+excludes VAD. The combined field accepts only `auto|off`; compatible independent
+fields remain available. Enhancement progress in `media_second` accumulates work
+across passes and must not be read as recording duration; use `result.duration`.
 
 同一幂等键改变增强模式返回 `409`。重放旧请求时省略字段仍返回原任务，旧请求没有
 该字段按 `off` 解释；失败／取消重试保留保存的模式。历史请求、结果和媒体不自动改写。

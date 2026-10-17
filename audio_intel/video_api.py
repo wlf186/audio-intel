@@ -96,9 +96,11 @@ class VideoJobRequest(StrictModel):
     use_voiceprint_library: bool = True
     voiceprint_group_ids: list[str] | None = Field(None, description="所选声纹分组；省略全部，提交时固定人员范围 / Selected voiceprint groups; omission selects all, eligible people are snapshotted")
     accelerate_single_task: bool = True
-    audio_enhancement: Literal['auto', 'off'] | None = Field(None, description='旧组合别名；不能与独立开关混用 / Legacy combined alias; cannot mix with independent controls', json_schema_extra={'deprecated': True})
-    speech_enhancement: bool | None = Field(None, description='平稳提升轻声；默认开启 / Continuous quiet-speech gain; defaults to true', json_schema_extra={'default': True})
-    background_denoise: bool | None = Field(None, description='本地背景降噪；默认开启 / Local background denoising; defaults to true', json_schema_extra={'default': True})
+    audio_enhancement: Literal['auto', 'off'] | None = Field(None, description='推荐音频增强总开关：auto 自动降噪并提升轻声，off 关闭两项；不能与独立参数混用 / Recommended audio enhancement control: auto enables denoising and quiet-speech gain, off disables both; cannot mix with independent controls')
+    speech_enhancement: bool | None = Field(None, description='兼容独立增益参数；默认开启，不能与总开关混用 / Compatible independent gain control; defaults to true, cannot mix with the combined control', json_schema_extra={'default': True})
+    background_denoise: bool | None = Field(None, description='兼容独立降噪参数；默认开启，不能与总开关混用 / Compatible independent denoising control; defaults to true, cannot mix with the combined control', json_schema_extra={'default': True})
+    speech_enhancement_strength: float | None = Field(None, ge=0, le=2, allow_inf_nan=False, description="自动人声增益力度，默认 1；0 跳过 / Automatic gain strength, default 1; zero skips")
+    background_denoise_strength: float | None = Field(None, ge=0, le=1, allow_inf_nan=False, description="降噪混合比例，GTCRN 默认 0.5；0 跳过 / Denoising mix, GTCRN default 0.5; zero skips")
     video_roi: VideoRegion | None = None
 
 
@@ -298,7 +300,10 @@ def register(app: Any, api: Any) -> None:
             old = await run_in_threadpool(db.find_idempotent_job, 'submit_video', api.idempotency_key_hash(key))
             caller.pop('speech_enhancement', None)
             caller.pop('background_denoise', None)
-            caller.update(api.audio_enhancement_request(body.audio_enhancement, body.speech_enhancement, body.background_denoise, old))
+            caller.pop('speech_enhancement_strength', None)
+            caller.pop('background_denoise_strength', None)
+            caller.update(api.audio_enhancement_request(body.audio_enhancement, body.speech_enhancement, body.background_denoise, old,
+                speech_enhancement_strength=body.speech_enhancement_strength, background_denoise_strength=body.background_denoise_strength))
             if old and 'audio_enhancement' not in old['request'].get('video_caller', {}) and caller['audio_enhancement'] == 'off':
                 caller.pop('audio_enhancement')
             fingerprint = api.request_fingerprint(caller)

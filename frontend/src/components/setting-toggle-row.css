@@ -1,0 +1,20 @@
+.acceleration-control.setting-toggle-row{display:block;grid-column:1/-1;min-width:0;margin:0;padding:10px 12px;border:1px solid var(--line);background:#0b1213}
+.setting-toggle-main{display:grid;grid-template-columns:minmax(0,1fr) 44px 44px;gap:4px;align-items:center}
+.setting-toggle-row .setting-toggle-main .setting-toggle-copy{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:4px;min-width:0;min-height:44px;margin:0;cursor:pointer;line-height:1.5}
+.setting-toggle-title{font-size:13px;font-weight:600;color:var(--text)}
+.setting-toggle-description{font-size:12px;font-weight:400;color:var(--muted);overflow-wrap:anywhere}
+.setting-toggle-row .setting-toggle-main .info-tooltip>button{width:44px;min-width:44px;height:44px;min-height:44px;padding:0}
+.setting-toggle-row .setting-toggle-main .setting-toggle-hit{display:grid;place-items:center;position:relative;width:44px;height:44px;min-height:44px;margin:0;cursor:pointer}
+.setting-toggle-row .setting-toggle-hit input{position:absolute;inset:0;width:44px;height:44px;opacity:0;margin:0;cursor:pointer;z-index:1}
+.setting-toggle-track{width:36px;height:22px;border:1px solid #657370;border-radius:12px;background:#263230;position:relative;pointer-events:none}
+.setting-toggle-track:after{content:'';position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#c3ceca}
+.setting-toggle-hit input:checked+.setting-toggle-track{border-color:var(--cyan);background:var(--cyan)}
+.setting-toggle-hit input:checked+.setting-toggle-track:after{left:17px;background:#071012}
+.setting-toggle-hit input:focus-visible+.setting-toggle-track{outline:2px solid var(--yellow);outline-offset:4px}
+.setting-toggle-hit input:disabled{cursor:not-allowed}
+.setting-toggle-hit input:disabled+.setting-toggle-track{opacity:.4}
+.setting-toggle-row:has(input:disabled) .setting-toggle-copy{opacity:.6;cursor:not-allowed}
+.setting-toggle-detail{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);line-height:1.5}
+.setting-toggle-detail .enhancement-settings-button{min-height:44px;padding:6px 10px;margin-left:auto;font-size:12px;letter-spacing:0;white-space:normal;clip-path:none}
+.setting-toggle-detail .setting-toggle-custom{border:1px solid #326d70;padding:1px 5px;color:var(--cyan);font-size:11px;white-space:nowrap}
+.setting-toggle-note{flex-basis:100%;margin:0;overflow-wrap:anywhere}

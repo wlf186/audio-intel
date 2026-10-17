@@ -97,7 +97,7 @@ def test_independent_controls_submission_replay_and_backend_snapshot(local, monk
         assert first.status_code == 202
         saved = first.json()["request"]
         assert saved["speech_enhancement"] is gain and saved["background_denoise"] is noise
-        assert saved["enhancement_policy_version"] == 5 and saved["denoise_backend"] == "gtcrn"
+        assert saved["enhancement_policy_version"] == 6 and saved["denoise_backend"] == "gtcrn"
         monkeypatch.setenv("AUDIO_INTEL_ASR_DENOISE_BACKEND", "ulunas")
         replay = client.post("/api/v1/asr/jobs", files=files, headers=headers)
         assert replay.status_code == 200 and replay.json()["request"] == saved
@@ -646,3 +646,136 @@ def test_enhanced_playback_is_separate_authenticated_and_range_capable(local, mo
         assert client.get('/api/v1/jobs', headers=headers).json()['items'][0].get('result') is None
         assert client.post('/api/v1/auth/session', headers=headers).status_code == 204
         assert client.get(url, headers={'Range': 'bytes=0-43'}).status_code == 206
+
+
+def test_strength_snapshot_replay_historical_conflict_and_capabilities(local, monkeypatch):
+    monkeypatch.setenv('AUDIO_INTEL_ASR_DENOISE_BACKEND', 'gtcrn')
+    files = {'file': ('public.wav', b'RIFF-strength-controls', 'audio/wav')}
+    headers = {'Authorization': 'Bearer enhancement-test', 'Idempotency-Key': 'strength-snapshot-01'}
+    with TestClient(api.create_app()) as client:
+        cap = client.get('/api/v1/capabilities', headers=headers).json()['asr']['audio_enhancement']
+        assert cap['speech_enhancement']['strength'] == dict(min=0., max=2., step=.01, default=1., unit='gain_db_multiplier')
+        assert cap['background_denoise']['strength']['default'] == .5
+        first = client.post('/api/v1/asr/jobs', headers=headers, files=files,
+            data={'audio_enhancement': 'auto', 'speech_enhancement_strength': '1.5', 'background_denoise_strength': '.75'})
+        assert first.status_code == 202, first.text
+        saved = first.json()['request']
+        assert saved['enhancement_policy_version'] == 6
+        assert saved['speech_enhancement_strength'] == 1.5 and saved['background_denoise_strength'] == .75
+        monkeypatch.setenv('AUDIO_INTEL_ASR_DENOISE_BACKEND', 'ulunas')
+        replay = client.post('/api/v1/asr/jobs', headers=headers, files=files)
+        assert replay.status_code == 200 and replay.json()['request'] == saved
+        assert client.post('/api/v1/asr/jobs', headers=headers, files=files,
+                           data={'speech_enhancement_strength': '1'}).status_code == 409
+        historical = {k: v for k, v in saved.items() if not k.endswith('_strength')}
+        historical['enhancement_policy_version'] = 5
+        digest = hashlib.sha256(files['file'][1]).hexdigest()
+        key = 'strength-historical-01'
+        old, _ = db.create_job_idempotent('asr', 'public.wav', historical, 'b' * 32,
+            'submit_asr', api.idempotency_key_hash(key), api.request_fingerprint(historical, digest,
+                {'model', 'effective_context', 'hotword_lists', 'hotword_term_count', 'hotword_list_ids',
+                 'voiceprint_groups', 'voiceprint_person_ids', 'voiceprint_group_ids'}))
+        historical_headers = {**headers, 'Idempotency-Key': key}
+        before = db.get_job(old['id'])
+        response = client.post('/api/v1/asr/jobs', headers=historical_headers, files=files)
+        assert response.status_code == 200, response.text
+        assert db.get_job(old['id']) == before
+        assert client.post('/api/v1/asr/jobs', headers=historical_headers, files=files,
+            data={'background_denoise_strength': '.5'}).status_code == 409
+        off = client.post('/api/v1/asr/jobs', files=files, headers={**headers, 'Idempotency-Key': 'strength-off-001'},
+            data={'audio_enhancement': 'off', 'speech_enhancement_strength': '2', 'background_denoise_strength': '0'})
+        assert off.status_code == 202
+        assert off.json()['request']['speech_enhancement_strength'] == 2
+        assert off.json()['request']['speech_enhancement'] is False
+    current = request_controls(None, None, None)
+    assert current['background_denoise_strength'] == 1  # Experimental backend advertises its own default.
+    changed = {**current, 'speech_enhancement_strength': .25}
+    assert processing_key(current) != processing_key(changed)
+    assert processing_key(historical) == processing_key({**historical, 'speech_enhancement_strength': .25})
+
+
+@pytest.mark.parametrize('field,value', [('speech_enhancement_strength', '-.01'), ('speech_enhancement_strength', '2.01'),
+    ('background_denoise_strength', '1.01'), ('background_denoise_strength', '-1'),
+    ('speech_enhancement_strength', 'nan'), ('background_denoise_strength', 'inf'),
+    ('background_denoise_strength', '-inf'), ('speech_enhancement_strength', 'invalid')])
+def test_strength_bounds_native_and_openai(local, field, value):
+    with TestClient(api.create_app(), headers={'Authorization': 'Bearer enhancement-test', 'Idempotency-Key': 'strength-invalid-01'}) as client:
+        for endpoint in ('/api/v1/asr/jobs', '/v1/audio/transcriptions'):
+            response = client.post(endpoint, files={'file': ('public.wav', b'RIFF-public', 'audio/wav')}, data={field: value})
+            assert response.status_code == 422, response.text
+
+
+def test_openai_strength_snapshot(local, monkeypatch):
+    async def complete(job_id, **_):
+        db.finish_job(job_id, 'succeeded', result_json={'text': 'public fixture'})
+        return db.get_job(job_id)
+    monkeypatch.setattr(api, 'wait_for_job', complete)
+    with TestClient(api.create_app(), headers={'Authorization': 'Bearer enhancement-test'}) as client:
+        response = client.post('/v1/audio/transcriptions', files={'file': ('public.wav', b'RIFF-public', 'audio/wav')},
+            data={'speech_enhancement_strength': '0', 'background_denoise_strength': '1'})
+        assert response.status_code == 200
+        request = db.get_job(response.headers['X-Job-ID'])['request']
+        assert request['speech_enhancement_strength'] == 0 and request['background_denoise_strength'] == 1
+        assert request['enhancement_policy_version'] == 6
+
+
+@pytest.mark.parametrize('gain,noise', [(0., 0.), (0., .5), (1., 0.), (1., .5), (2., 1.)])
+def test_zero_strength_skips_operation_and_retains_signal_safety(local, tmp_path, monkeypatch, gain, noise):
+    source, target = tmp_path / 'source.wav', tmp_path / 'enhanced.wav'
+    samples = .02 * np.sin(np.arange(16000 * 7 + 113) * .1)
+    sf.write(source, samples, 16000, subtype='PCM_16')
+    calls = []
+    def load(backend):
+        calls.append(backend)
+        return lambda x: x * .4
+    monkeypatch.setattr(enhancement, 'load_background_denoiser', load)
+    result = enhancement.enhance_independent(source, target, [{'start': 0., 'end': 7.}], lambda *_: None,
+        lambda *_: None, speech_enhancement=True, background_denoise=True,
+        speech_enhancement_strength=gain, background_denoise_strength=noise, speech_detector=lambda *_: [])
+    assert bool(calls) is (noise > 0)
+    assert result['processing_version'] == 6
+    for name, strength in [('speech_enhancement', gain), ('background_denoise', noise)]:
+        assert result[name]['strength'] == strength
+        if strength == 0:
+            assert result[name]['status'] == 'bypassed' and result[name]['reason'] == 'strength_zero'
+    assert target.exists() is bool(gain or noise)
+    if target.exists():
+        data, rate = sf.read(target, dtype='float32')
+        assert rate == 16000 and len(data) == len(samples)
+        assert np.isfinite(data).all() and np.max(np.abs(data)) <= enhancement.CEILING + 1e-6
+    assert not list(tmp_path.glob('*.partial.wav')) and not list(tmp_path.glob('*.denoise.wav'))
+
+
+def test_default_strength_is_sample_exact_and_custom_gain_is_effective(local, tmp_path):
+    source = tmp_path / 'source.wav'
+    samples = .02 * np.sin(np.arange(16000 * 31 + 113) * .1)
+    samples[16000 * 30] = .94
+    sf.write(source, samples, 16000, subtype='PCM_16')
+    kwargs = dict(speech_enhancement=True, background_denoise=True, backend='gtcrn',
+                  denoiser=lambda x: x * .4, speech_detector=lambda *_: [])
+    def run(name, **strengths):
+        target = tmp_path / f'{name}.wav'
+        result = enhancement.enhance_independent(source, target, [{'start': 0., 'end': 31.}],
+            lambda *_: None, lambda *_: None, **kwargs, **strengths)
+        assert result['max_gain_db'] <= 24
+        data, _ = sf.read(target, dtype='float32')
+        assert len(data) == len(samples) and np.max(np.abs(data)) <= enhancement.CEILING + 1e-6
+        return target.read_bytes(), data
+    previous, _ = run('previous')
+    default, normal = run('default', speech_enhancement_strength=1., background_denoise_strength=.5)
+    assert previous == default
+    _, weak = run('weak', speech_enhancement_strength=.5, background_denoise_strength=.5)
+    _, strong = run('strong', speech_enhancement_strength=2., background_denoise_strength=.5)
+    region = slice(16000, 10 * 16000)
+    assert np.mean(weak[region]**2) < np.mean(normal[region]**2) < np.mean(strong[region]**2)
+
+
+@pytest.mark.parametrize('strength', [.25, 1., 2.])
+def test_custom_gain_retains_peak_cap_and_continuity(strength):
+    rms = np.r_[np.full(500, .02), np.full(500, .002), np.full(500, .04)]
+    peaks = rms * 2
+    peaks[730] = .88
+    gain = enhancement._continuous_gain_db(rms, peaks, np.ones(len(rms), dtype=bool), lambda *_: None, strength=strength)
+    assert 0 <= np.min(gain) <= np.max(gain) <= 24
+    assert np.max(np.abs(np.diff(gain))) <= .06 + 1e-9
+    assert np.all(peaks * 10 ** (gain / 20) <= enhancement.CEILING + 1e-9)

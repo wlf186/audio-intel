@@ -66,7 +66,6 @@ h1{text-shadow:none}
  .tts-workspace .tts-settings-body>.tabs{margin:0}
  .tts-workspace .tts-settings-body>.acceleration-control{margin:0;min-height:44px}
  .tts-workspace .tts-settings-body>.tts-device-warning{grid-column:auto;align-self:center;margin:0;font-size:12px;line-height:18px}
- .tts-workspace .tts-settings-body>.tts-device-warning+.acceleration-control{grid-column:auto}
  .tts-workspace .tts-settings .reference-asr-options{grid-template-columns:minmax(0,1fr) 120px}
 }
 

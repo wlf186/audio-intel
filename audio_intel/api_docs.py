@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 from .model_registry import asr_enhancement_model, asr_models, tts_models
+from .asr_enhancement import strength_capabilities
 
 
 API_DESCRIPTION = r"""
@@ -15,13 +16,21 @@ API_DESCRIPTION = r"""
 
 本页、`/openapi.json`、Swagger 代码/样式/图标、数据和模型推理均由本机提供；运行期间不访问 CDN、在线校验器或模型云服务。 / This page, its assets, data, and inference stay local at runtime.
 
-ASR 音频、视频及兼容转写支持 `audio_enhancement=auto|off`，新任务默认 `auto`。自动模式保守压制环境噪音并提升较小人声，保留全部交谈者；干净且音量充足的片段旁路。`GET /api/v1/capabilities` 的 `asr.audio_enhancement` 公布可用状态；任务详情的同名字段记录实际增强、旁路或回退。增强版为独立、受保护且支持 Range 的音频产物，原音保留。缺失增强模型时使用原音并记录原因；历史请求缺少该字段时按关闭解释，幂等重放和重试保留原语义。声纹导入与克隆参考分析不启用增强。
+推荐使用音频增强总开关 `audio_enhancement=auto|off`，网页音频／视频表单也使用同一总开关。`auto` 自动判断是否需要背景降噪和人声增益，`off` 关闭两项；新任务省略时默认开启。当前默认策略 6 保留已验证的 GTCRN 50% 混合和连续增益，默认处理强度不变；高级参数可独立调整并恢复默认值。全部处理在本地 CPU FP32 运行，保留全部交谈者，不向外部服务发送录音。
 
-推荐独立设置 `speech_enhancement=true|false`（人声增强）及 `background_denoise=true|false`（背景降噪），新任务两者默认开启。双开先降噪再平稳增益；仅增强不加载降噪模型，降噪失败仍可应用增益。旧 `audio_enhancement=auto|off` 为双开／双关别名，不能与新字段混用（422）。策略 5 在结果内分别返回 `speech_enhancement`、`background_denoise` 的 `enabled/status/reason`；部分失败时总状态可为 `applied`，原因 `partial_fallback`。历史请求沿用旧处理链，幂等重放和重试不自动升级。
+Use the recommended combined control `audio_enhancement=auto|off`, also used by the browser audio/video forms. `auto` enables automatic denoising and quiet-speech gain where needed; `off` disables both. Omission enables both for new jobs. Current policy 6 retains the validated GTCRN 50% mix and continuous gain; default strengths stay unchanged and advanced numeric fields can override them. Processing stays local on CPU FP32 and preserves all conversation speakers.
 
-Prefer independent booleans `speech_enhancement` and `background_denoise`, both defaulting to true. Denoise precedes continuous gain. Gain alone loads no denoiser and remains available when denoising fails. The legacy `audio_enhancement=auto|off` alias enables/disables both; mixing old and new inputs returns 422. Policy 5 records each operation's enabled/status/reason. An applied result with `partial_fallback` means one operation failed. Historical requests retain their previous processing path on replay/retry.
+高级参数 `speech_enhancement_strength` 为有限数 0–2（默认 1），`background_denoise_strength` 为有限数 0–1（GTCRN 默认 0.5）。三种 ASR 入口均支持；范围外或非有限数返回 422。每项能力的 `strength: {min,max,step,default,unit}` 公布实际默认值（实验 UL-UNAS 混合默认 1）。0 跳过该项并记录 `strength_zero`；降噪为 0 不加载模型。总开关关闭仍禁用两项。策略 6 保存强度并在逐项结果返回可选 `strength`。重放省略时继承，改变返回 409；历史策略 ≤5 不升级，向历史 key 添加强度返回 409，需用新 key。仅新任务受影响。增益仍受 +24 dB、3 dB/s、−1 dBFS 安全限制；更强可能影响自然度或识别率。网页偏好 v7 即时保存有效值，重置只影响两项力度。
 
-Audio, video and compatible ASR accept `audio_enhancement=auto|off`; new jobs default to `auto`. Automatic processing conservatively suppresses noise and lifts quiet speech while preserving all speakers. Clean, audible sections bypass processing. Read `asr.audio_enhancement` from capabilities; job detail/results record applied, bypassed or fallback status and enhanced playback. The original remains available. A missing enhancer falls back to original audio with a recorded reason. Historical requests without this field remain disabled on replay/retry. Voiceprint imports and clone-reference analysis are excluded.
+Advanced numeric controls use the same ranges/defaults across native audio, video and compatible transcription. Zero bypasses that operation; master off disables both. Policy 6 snapshots strengths; historical replay/retry remains unchanged and adding strengths to a historical key returns 409. Higher gain/mix may reduce naturalness or ASR accuracy. Default waveforms and automatic decisions remain unchanged.
+
+独立参数 `speech_enhancement=true|false`、`background_denoise=true|false` 继续兼容现有调用，省略时新任务两项均开启；不能与总开关混用（422）。降噪和增益分别恢复，降噪模型缺失不阻断增益。策略 5/6 结果分别记录两项的 `enabled/status/reason`；总状态 `applied` 配合 `partial_fallback` 表示仅部分处理成功，须查看各项状态。`asr.audio_enhancement.available` 反映所选降噪模型可用性；独立能力字段分别公布增益和降噪可用性，基础 ASR 不受缺少降噪模型影响。
+
+Independent `speech_enhancement` and `background_denoise` booleans remain supported for existing clients; new jobs default both to true. Mixing them with the combined control returns 422. Denoising and gain recover independently: a missing denoiser can still leave gain applied. Policy 5 records each operation's enabled/status/reason; aggregate `applied` with `partial_fallback` means only part of processing succeeded. Top-level enhancement availability reflects the selected denoiser; read each operation's capability separately. Missing denoising weights do not disable base ASR.
+
+仅实际增强的结果提供独立、受保护且支持 Range 的增强音，原音保留。`GET /api/v1/jobs/{job_id}/playback?download=true` 下载播放器中的未增强 WAV，音频和视频任务均适用；文件名为任务名加 `-original.wav`。`download` 默认 false，不重新处理或补生成历史音轨；缺失返回 404。原始上传文件仍由 `/source?download=true` 提供。网页将原音／增强音试听切换和两项下载分组。历史请求沿用保存的处理链；缺少增强字段按关闭解释，幂等重放与重试不自动升级。声纹导入和克隆参考分析不启用增强。
+
+Only applied results offer a separate authenticated Range-capable enhanced track; original audio remains available. `GET /api/v1/jobs/{job_id}/playback?download=true` downloads the saved unenhanced WAV for both audio and video jobs, named after the task with `-original.wav`. Download defaults to false and never reprocesses or backfills audio; missing WAV returns 404. `/source?download=true` still serves the uploaded file. The browser groups track selection separately from original/enhanced downloads. Historical requests retain their saved processing path, and a missing enhancement field means off. Replay and retry do not upgrade old requests. Voiceprint imports and clone-reference analysis are excluded.
 
 | 模式／状态 / Mode or status | 行为 / Behavior |
 | --- | --- |
@@ -29,16 +38,16 @@ Audio, video and compatible ASR accept `audio_enhancement=auto|off`; new jobs de
 | `off` | 按保存的请求关闭增强 / Disabled by the persisted request |
 | `bypassed` | 无需增强，继续使用原音 / Processing unnecessary; use original audio |
 | `applied` | 转写与对齐使用增强音，原音保留给说话人识别和回放 / Enhanced input for ASR/alignment; original retained for diarization/playback |
-| `fallback` | 模型缺失或增强失败，记录原因并使用原音 / Model unavailable or enhancement failed; record reason and use original audio |
+| `fallback` | 未生成可用增强音，记录原因并使用原音；部分成功为 applied / No usable enhanced audio; record reason and use original. Partial success is applied |
 
 增强始终在 CPU FP32 本地运行，与请求的 ASR CPU/GPU 设备独立。仅 `applied` 提供增强
 `playback_url`，使用普通鉴权产物接口并支持 Range；追加 `/waveform` 可读取波形。结果
 字段可选，旧任务缺失不表示增强成功。`gain_seconds`、`denoised_seconds` 是处理块覆盖
 秒数，`elapsed_seconds` 不含后续 VAD 和其他任务阶段。并非所有任务都有增强产物。
-处理策略 4 保留 GTCRN 混合与响度目标，使用 6 秒人声上下文和跨块连续增益，最大变化为
+当前策略 6 使用策略 4 引入的连续增益，保留 GTCRN 混合与响度目标，使用 6 秒人声上下文和跨块连续增益，最大变化为
 每秒 3 dB，避免逐秒增益切换带动背景声起伏。可选 `processing_version`、`pause_attenuated_seconds`、
 `max_pause_attenuation_db` 和 `pause_suppression_reason` 记录实际策略及衰减；
-策略 4 的间隙衰减量为零，原因为 `disabled_for_naturalness`；历史缺失不表示执行过间隙抑制。
+当前策略 6 与历史策略 4 的间隙衰减量为零，原因为 `disabled_for_naturalness`；历史缺失不表示执行过间隙抑制。
 `elapsed_seconds` 包含信号处理，不含 VAD。
 
 Enhancement always runs locally on CPU FP32 independently of the requested ASR
@@ -48,11 +57,11 @@ result field is optional for historical jobs. Block coverage seconds are not
 exact voiced duration, and enhancement time excludes subsequent VAD and other
 task stages. Model unavailability does not disable base ASR. Background speakers
 and severe reverberation may remain; a changed transcript is not an accuracy score.
-Processing policy 4 preserves GTCRN mixing and the loudness target, using six-second
+Current policy 6 uses the continuous gain introduced in policy 4, preserving GTCRN mixing and the loudness target with six-second
 speech context and continuous gain bounded to 3 dB/s across blocks. Optional `processing_version`,
 `pause_attenuated_seconds`, `max_pause_attenuation_db` and
 `pause_suppression_reason` describe actual processing; historical absence does not
-imply pause suppression. Policy 4 reports zero pause attenuation and
+imply pause suppression. Current policy 6 and historical policy 4 report zero pause attenuation and
 `disabled_for_naturalness`. Signal-processing time excludes VAD.
 
 
@@ -230,6 +239,8 @@ while :; do
 done
 [[ "$STATE" == succeeded ]] || { jq . "$TMP_DIR/job.json" >&2; exit 1; }
 curl --fail-with-body -sS "${AUTH[@]}" "$BASE_URL/api/v1/jobs/$JOB_ID/result" | jq .
+# Download the same unenhanced WAV used for original playback, without changing the job.
+curl --fail-with-body -sS "${AUTH[@]}" "$BASE_URL/api/v1/jobs/$JOB_ID/playback?download=true" -o original.wav
 ```
 </details>
 
@@ -1093,32 +1104,60 @@ RESULT_EXAMPLES["asr"]["value"]["playback_url"] = "/api/v1/jobs/asr_example/play
 
 for _status, _reason, _mode in (
     ("off", "disabled", "off"), ("bypassed", "clean", "auto"),
-    ("applied", "noise_and_gain", "auto"), ("fallback", "model_unavailable", "auto"),
+    ("applied", "noise_and_gain", "auto"), ("fallback", "resource_unavailable", "auto"),
 ):
-    _enhancement = {"mode": _mode, "status": _status, "reason": _reason}
+    _enhancement = {"mode": _mode, "status": _status, "reason": _reason, "processing_version": 6,
+                    "speech_enhancement": {"strength": 1.0, "enabled": _mode == "auto", "status": _status,
+                        "reason": "quiet_speech" if _status == "applied" else "audible_speech" if _status == "bypassed" else _reason},
+                    "background_denoise": {"strength": 0.5, "enabled": _mode == "auto", "status": _status,
+                        "reason": "noise" if _status == "applied" else _reason}}
     if _status in {"applied", "fallback"}:
         _definition = asr_enhancement_model()
         _enhancement.update(model=_definition["name"], model_revision=_definition["revision"], compute_device="cpu")
+        _enhancement["background_denoise"].update(model=_definition["name"], model_revision=_definition["revision"], wet_ratio=0.5)
     _result = deepcopy(RESULT_EXAMPLES["asr"]["value"])
     _result["audio_enhancement"] = _enhancement
     if _status == "applied":
         _enhancement.update(max_gain_db=12.0, denoised_seconds=3.2, gain_seconds=3.2,
                             wet_ratio=0.5, elapsed_seconds=0.2, input_samples=51200,
-                            processing_version=4, pause_attenuated_seconds=0.0,
+                            pause_attenuated_seconds=0.0,
                             max_pause_attenuation_db=0.0, pause_suppression_reason="disabled_for_naturalness",
                             playback_url="/api/v1/jobs/asr_example/artifacts/enhanced.wav",
                             waveform=[0.1, 0.4, 0.2])
+        _enhancement["speech_enhancement"]["max_gain_db"] = 12.0
         _result["artifacts"] = [{"name": "enhanced.wav", "path": "data/jobs/asr_example/output/enhanced.wav",
                                  "mime_type": "audio/wav", "size_bytes": 102444}]
     RESULT_EXAMPLES[f"asr_enhancement_{_status}"] = {
-        "summary": f"人声增强状态 / Speech enhancement: {_status}", "value": _result,
+        "summary": f"音频增强状态 / Audio enhancement: {_status}", "value": _result,
     }
 
+_zero = deepcopy(RESULT_EXAMPLES["asr"]["value"])
+_zero["audio_enhancement"] = {"mode": "auto", "status": "bypassed", "reason": "strength_zero",
+    "processing_version": 6, "compute_device": "cpu",
+    **{key: {"enabled": True, "strength": 0.0, "status": "bypassed", "reason": "strength_zero"}
+       for key in ("speech_enhancement", "background_denoise")}}
+RESULT_EXAMPLES["asr_enhancement_strength_zero"] = {
+    "summary": "力度为零，跳过两项 / Zero strengths bypass both operations", "value": _zero}
+
+_legacy = deepcopy(RESULT_EXAMPLES["asr_enhancement_applied"]["value"])
+_policy5 = deepcopy(RESULT_EXAMPLES["asr_enhancement_applied"]["value"])
+_policy5["audio_enhancement"]["processing_version"] = 5
+for _control in ("speech_enhancement", "background_denoise"):
+    _policy5["audio_enhancement"][_control].pop("strength")
+RESULT_EXAMPLES["asr_enhancement_policy5_legacy"] = {
+    "summary": "历史策略 5，固定默认强度 / Historical policy 5, fixed default strengths", "value": _policy5}
+_legacy["audio_enhancement"].update(processing_version=4)
+for _control in ("speech_enhancement", "background_denoise"):
+    _legacy["audio_enhancement"].pop(_control)
+RESULT_EXAMPLES["asr_enhancement_policy4_legacy"] = {
+    "summary": "历史策略 4，不代表新任务默认 / Historical policy 4, not the new-task default", "value": _legacy}
+
 _partial = deepcopy(RESULT_EXAMPLES["asr_enhancement_applied"]["value"])
-_partial["audio_enhancement"].update(processing_version=5, reason="partial_fallback",
+_partial["audio_enhancement"].update(processing_version=6, reason="partial_fallback",
     denoised_seconds=0.0,
-    speech_enhancement={"enabled": True, "status": "applied", "reason": "quiet_speech", "max_gain_db": 12.0},
-    background_denoise={"enabled": True, "status": "fallback", "reason": "model_unavailable"})
+    speech_enhancement={"strength": 1.0, "enabled": True, "status": "applied", "reason": "quiet_speech", "max_gain_db": 12.0},
+    background_denoise={**_partial["audio_enhancement"]["background_denoise"],
+                       "status": "fallback", "reason": "model_unavailable"})
 RESULT_EXAMPLES["asr_independent_partial"] = {
     "summary": "增益成功、降噪回退 / Gain applied, denoising unavailable", "value": _partial}
 
@@ -1242,9 +1281,9 @@ def _capabilities_example() -> dict[str, Any]:
                 "modes": ["auto", "off"], "model": enhancer["name"], "model_revision": enhancer["revision"],
                 "compute_device": "cpu", "preserves_all_speakers": True, "enhanced_playback": True,
                 "speech_enhancement": {"supported": True, "available": True, "default": True,
-                    "model": None, "model_revision": None},
+                    "model": None, "model_revision": None, "strength": strength_capabilities("gtcrn")["speech_enhancement"]},
                 "background_denoise": {"supported": True, "available": True, "default": True,
-                    "model": enhancer["name"], "model_revision": enhancer["revision"]}},
+                    "model": enhancer["name"], "model_revision": enhancer["revision"], "strength": strength_capabilities("gtcrn")["background_denoise"]}},
             "audio_formats": ["wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff"], "concise_pdf": True,
             "video": {"supported": True, "formats": ["mp4", "m4v", "mov", "mkv", "webm", "avi", "mpeg", "mpg", "ts"],
                       "max_upload_bytes": 26843545600, "chunk_bytes": 33554432, "upload_idle_seconds": 86400,
@@ -1329,6 +1368,14 @@ for _gain, _noise in ((False, False), (True, False), (False, True), (True, True)
         "value": {"upload_id": VIDEO_UPLOAD_EXAMPLE["id"], "compute_device": "cpu",
                   "speech_enhancement": _gain, "background_denoise": _noise},
     }
+for _path in ("/api/v1/asr/jobs", "/api/v1/asr/video-jobs", "/v1/audio/transcriptions"):
+    REQUEST_EXAMPLES[(_path, "post")]["enhancement_strengths"] = {
+        "summary": "自定义增强强度 / Custom enhancement strengths",
+        "value": {**({"upload_id": VIDEO_UPLOAD_EXAMPLE["id"]} if "video-jobs" in _path else {"file": "meeting.wav"}),
+                  "compute_device": "cpu", "audio_enhancement": "auto",
+                  "speech_enhancement_strength": 1.5, "background_denoise_strength": 0.75}}
+
+
 RESULT_EXAMPLES["asr_video"] = {"summary": "视频图文转写 / Illustrated video transcript", "value": {
     **RESULT_EXAMPLES["asr"]["value"], "video": {"contract_version": 1, "revision": 1, "duration": 3.2,
         "time_origin": 0.0, "roi": None, "detector": "ffmpeg_scdet_phash_stability",

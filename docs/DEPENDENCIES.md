@@ -21,14 +21,16 @@ ASR、TTS 和 aligner 各有 full 与 `-cpu` 两套哈希锁。full 使用固定
 
 ## 锁文件
 
-GTCRN-DNS3 由 manifest 固定上游 commit、checkpoint 和 SHA-256，使用现有
+GTCRN-DNS3 和实验性 UL-UNAS-DNS3 均由 manifest 固定上游 commit、checkpoint 和 SHA-256，使用现有
 ASR 环境的 Torch/NumPy 在 CPU FP32 运行，不增加依赖或环境。适配后的推理代码与
 MIT 许可随源码提供，权重只在 setup 下载；运行期要求 revision 标记和 checksum
 同时匹配。详见[人声增强](ASR_ENHANCEMENT.md)和[第三方声明](../THIRD_PARTY_NOTICES.md)。
 
-GTCRN-DNS3 uses existing ASR Torch/NumPy on CPU FP32, with no new package or
+GTCRN-DNS3 and experimental UL-UNAS-DNS3 use existing ASR Torch/NumPy on CPU FP32, with no new package or
 environment. The manifest pins its commit and checksum; MIT inference code ships
 in source, while weights download at setup and are verified for runtime readiness.
+UL-UNAS is included for administrator experiments and failed public CER validation;
+GTCRN 50% remains the default. Neither optional denoiser is required for base ASR readiness.
 
 根目录 `requirements-*.txt` 是人工维护的直接依赖；`requirements-lock/{linux,windows}/` 是 Python 3.12、x86_64 的完整哈希锁。安装器使用 `uv pip sync --require-hashes --strict`，并根据 `.runtime/deployment-profile` 为模型环境选择 CUDA 13.0 或官方 CPU Torch backend。
 

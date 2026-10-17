@@ -97,6 +97,27 @@ def test_readmes_keep_parallel_information_architecture() -> None:
     assert "README.md" in chinese
 
 
+def test_audio_enhancement_docs_match_controls_storage_and_model_notices() -> None:
+    english = (ROOT / "README.md").read_text(encoding="utf-8")
+    chinese = (ROOT / "README_CN.md").read_text(encoding="utf-8")
+    assert "One Audio enhancement switch" in english
+    assert "Separate switches default on" not in english
+    assert "一个“音频增强”总开关" in chinese
+    assert "两个开关默认开启" not in chinese
+
+    preferences = (ROOT / "frontend/src/lib/preferences.ts").read_text(encoding="utf-8")
+    key = re.search(r"export const asrPreferencesKey='([^']+)'", preferences).group(1)
+    workspace = (ROOT / "docs/WORKSPACES.md").read_text(encoding="utf-8")
+    assert key in workspace
+    assert "ASR v4 localStorage" not in workspace
+
+    notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    install = (ROOT / "docs/INSTALL.md").read_text(encoding="utf-8")
+    assert "asr/licenses/UL-UNAS-MIT.txt" in notices
+    assert "UL-UNAS-DNS3" in notices and "UL-UNAS-DNS3" in install
+    assert "experimental" in install and "GTCRN" in install
+
+
 def test_public_brand_notice_preserves_license_and_identity_boundaries() -> None:
     english = (ROOT / "README.md").read_text(encoding="utf-8")
     chinese = (ROOT / "README_CN.md").read_text(encoding="utf-8")

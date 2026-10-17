@@ -554,6 +554,8 @@ def test_speech_enhancement_openapi_contract_and_examples(tmp_path, monkeypatch)
     monkeypatch.setattr(db_module, "settings", local)
     schema = api_module.create_app().openapi()
     schemas = schema["components"]["schemas"]
+    assert "Use the recommended combined control" in schema["info"]["description"]
+    assert "Prefer independent booleans" not in schema["info"]["description"]
     for path in ("/api/v1/asr/jobs", "/api/v1/asr/video-jobs", "/v1/audio/transcriptions"):
         operation = schema["paths"][path]["post"]
         media_type = "application/json" if "video-jobs" in path else "multipart/form-data"
@@ -561,7 +563,13 @@ def test_speech_enhancement_openapi_contract_and_examples(tmp_path, monkeypatch)
         contract = schemas[body["schema"]["$ref"].rsplit("/", 1)[-1]]
         field = contract["properties"]["audio_enhancement"]
         assert "audio_enhancement" not in contract.get("required", [])
-        assert field["deprecated"] is True
+        assert not field.get("deprecated", False)
+        assert "Recommended audio enhancement control" in field["description"]
+        for name, maximum in (("speech_enhancement_strength", 2), ("background_denoise_strength", 1)):
+            numeric = contract["properties"][name]
+            assert name not in contract.get("required", [])
+            number = next(part for part in numeric.get("anyOf", [numeric]) if part.get("type") == "number")
+            assert number["minimum"] == 0 and number["maximum"] == maximum
         for control in ("speech_enhancement", "background_denoise"):
             assert contract["properties"][control]["default"] is True
             assert control not in contract.get("required", [])
@@ -591,8 +599,11 @@ def test_speech_enhancement_openapi_contract_and_examples(tmp_path, monkeypatch)
         assert JobResultResponse.model_validate(value).model_dump(exclude_unset=True) == value
         enhancement = value["audio_enhancement"]
         assert enhancement["status"] == status
+        assert enhancement["processing_version"] == 6
+        for control in ("speech_enhancement", "background_denoise"):
+            assert enhancement[control]["enabled"] is (status != "off")
+            assert enhancement[control]["status"] == status
         if status == "applied":
-            assert enhancement["processing_version"] == 4
             assert enhancement["pause_attenuated_seconds"] == 0
             assert enhancement["max_pause_attenuation_db"] == 0
             assert enhancement["pause_suppression_reason"] == "disabled_for_naturalness"
@@ -601,10 +612,19 @@ def test_speech_enhancement_openapi_contract_and_examples(tmp_path, monkeypatch)
             assert any(artifact["name"] == "enhanced.wav" for artifact in value["artifacts"])
         else:
             assert "playback_url" not in enhancement
-    historical = dict(RESULT_EXAMPLES["asr_enhancement_applied"]["value"])
+    historical = dict(RESULT_EXAMPLES["asr_enhancement_policy4_legacy"]["value"])
+    assert historical["audio_enhancement"]["processing_version"] == 4
+    assert "speech_enhancement" not in historical["audio_enhancement"]
+    assert "background_denoise" not in historical["audio_enhancement"]
+    assert JobResultResponse.model_validate(historical).model_dump(exclude_unset=True) == historical
     partial = RESULT_EXAMPLES["asr_independent_partial"]["value"]
     assert JobResultResponse.model_validate(partial).model_dump(exclude_unset=True) == partial
-    assert partial["audio_enhancement"]["processing_version"] == 5
+    assert partial["audio_enhancement"]["processing_version"] == 6
+    assert partial["audio_enhancement"]["status"] == "applied"
+    assert partial["audio_enhancement"]["reason"] == "partial_fallback"
+    assert partial["audio_enhancement"]["speech_enhancement"]["status"] == "applied"
+    assert partial["audio_enhancement"]["background_denoise"]["status"] == "fallback"
+    assert partial["audio_enhancement"]["denoised_seconds"] == 0
     historical["audio_enhancement"] = {**historical["audio_enhancement"],
         "processing_version": 2, "pause_attenuated_seconds": .4,
         "max_pause_attenuation_db": 6., "pause_suppression_reason": "applied"}

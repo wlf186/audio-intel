@@ -122,7 +122,7 @@ test('ASR group preferences migrate, persist, retry and never expand a stale sel
  await page.getByRole('button',{name:'选择分组',exact:true}).click()
  await expect(dialog.getByRole('checkbox',{name:'工作组',exact:false})).toBeChecked()
  await expect(dialog.getByRole('checkbox',{name:'影视组',exact:false})).toBeChecked()
- const preferences=await page.evaluate(()=>JSON.parse(localStorage.getItem('audio-intel:asr-preferences:v5')!));expect(preferences.language).toBe('English');expect(preferences.voiceprintGroupIds).toEqual(['group_work','group_film'])
+ const preferences=await page.evaluate(()=>JSON.parse(localStorage.getItem('audio-intel:asr-preferences:v7')!));expect(preferences.language).toBe('English');expect(preferences.voiceprintGroupIds).toEqual(['group_work','group_film'])
  state.groups=state.groups.filter(g=>g.id!=='group_work')
  await page.reload();await page.getByRole('button',{name:'选择分组',exact:true}).click()
  await expect(dialog.getByRole('status')).toContainText('已移除不存在的分组')

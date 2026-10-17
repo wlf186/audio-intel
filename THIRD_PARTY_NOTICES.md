@@ -11,6 +11,7 @@ Original code and documentation in this repository are licensed under Apache-2.0
 | Qwen3-TTS 12Hz 1.7B Base / CustomVoice / VoiceDesign | <https://huggingface.co/collections/Qwen/qwen3-tts> | Apache-2.0 |
 | FSMN-VAD | <https://modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch> | Apache-2.0 model card |
 | GTCRN inference code / GTCRN-DNS3 checkpoint | [Xiaobin-Rong/gtcrn, pinned source](https://github.com/Xiaobin-Rong/gtcrn/tree/502ebfab64da7c4a9af78dcb9c6ceef1ebb01c73) | MIT; [included license](asr/licenses/GTCRN-MIT.txt), copyright 2024 Rong Xiaobin |
+| UL-UNAS inference code / UL-UNAS-DNS3 checkpoint (experimental) | [Xiaobin-Rong/ul-unas, pinned source](https://github.com/Xiaobin-Rong/ul-unas/tree/00f7c700da43d38347f30a6ccebd86fcbc798e07) | MIT; [included license](asr/licenses/UL-UNAS-MIT.txt), copyright 2026 Xiaobin Rong |
 | CAM++ | <https://www.modelscope.cn/models/iic/speech_campplus_sv_zh-cn_16k-common> | Apache-2.0 model card |
 | FunASR toolkit | <https://github.com/modelscope/FunASR> | MIT; model weights have separate terms |
 | ModelScope SDK | <https://github.com/modelscope/modelscope> | Apache-2.0 |
@@ -36,6 +37,14 @@ and omits upstream benchmark code, introducing no Python dependency. The DNS3
 checkpoint is downloaded separately and is not redistributed in this repository;
 `audio_intel/model_manifest.json` pins its revision and SHA-256. See the
 [speech enhancement guide](docs/ASR_ENHANCEMENT.md).
+
+`asr/ulunas.py` contains adapted UL-UNAS inference code at the pinned commit in
+the table. Its MIT license and copyright notice are retained in
+`asr/licenses/UL-UNAS-MIT.txt`. The adaptation uses native Torch reshapes and an
+input-length-preserving ISTFT, without adding Python dependencies. The DNS3
+checkpoint downloads separately under the manifest's revision and checksum and
+is not redistributed in Git. This backend remains experimental after public CER
+validation failed; the validated GTCRN mix remains the default.
 
 The project currently publishes source-only releases. It does not publish container images, prebuilt Python runtimes, model bundles, or compiled frontend distributions. Dependency lock files describe what the setup process resolves; they are not a statement that every locked package is redistributed by the project.
 

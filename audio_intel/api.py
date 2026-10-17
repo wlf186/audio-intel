@@ -31,7 +31,7 @@ from . import __version__, reference_ranges
 from .document_api import capabilities as document_capabilities
 from .video_api import capabilities as video_capabilities
 from .config import settings
-from .asr_enhancement import capabilities as enhancement_capabilities, request_mode, request_controls
+from .asr_enhancement import capabilities as enhancement_capabilities, request_mode, request_controls, StrengthConflict
 from .asr_speakers import merge_speakers, persist_speaker_result, speaker_identity, speaker_update_lock
 from .deployment import deployment_metadata
 from .gpu import COMPUTE_DEVICES, cached_gpu_snapshot, gpu_snapshot
@@ -426,9 +426,11 @@ def validate_audio_enhancement(value: str | None, existing: dict[str, Any] | Non
 
 
 def audio_enhancement_request(value: str | None, speech: bool | None, noise: bool | None,
-                              existing: dict[str, Any] | None = None) -> dict[str, Any]:
+                              existing: dict[str, Any] | None = None, **strengths: float | None) -> dict[str, Any]:
     try:
-        return request_controls(value, speech, noise, existing)
+        return request_controls(value, speech, noise, existing, **strengths)
+    except StrengthConflict as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(422, detail=str(exc)) from exc
 
@@ -1486,9 +1488,11 @@ def create_app() -> FastAPI:
         compute_device: str = Form(default_device, description="cpu 或 gpu；省略时使用部署默认值且无静默回退 / cpu or gpu; omission uses the deployment default and there is no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         use_voiceprint_library: bool = Form(True, description="用声纹库匹配并命名说话人 / Match and label speakers from the voiceprint library"),
         voiceprint_group_ids: str | None = Form(None, description="JSON 分组 ID 数组；省略使用全部，提交时固定人员范围 / JSON group ID array; omission selects all, eligible people are fixed at submission"),
-        audio_enhancement: str | None = Form(None, description="旧组合别名 auto 双开、off 双关；不能与新开关混用 / Legacy alias: auto enables both, off disables both; cannot mix with independent controls", json_schema_extra={"enum": ["auto", "off"], "deprecated": True}),
-        speech_enhancement: bool | None = Form(None, description="平稳提升轻声；新任务默认开启 / Lift quiet speech continuously; defaults to true", json_schema_extra={"default": True}),
-        background_denoise: bool | None = Form(None, description="本地背景降噪；新任务默认开启 / Local background denoising; defaults to true", json_schema_extra={"default": True}),
+        audio_enhancement: str | None = Form(None, description="推荐音频增强总开关：auto 自动降噪并提升轻声，off 关闭两项；不能与独立参数混用 / Recommended audio enhancement control: auto enables denoising and quiet-speech gain, off disables both; cannot mix with independent controls", json_schema_extra={"enum": ["auto", "off"]}),
+        speech_enhancement: bool | None = Form(None, description="兼容独立增益参数；默认开启，不能与总开关混用 / Compatible independent gain control; defaults to true, cannot mix with the combined control", json_schema_extra={"default": True}),
+        background_denoise: bool | None = Form(None, description="兼容独立降噪参数；默认开启，不能与总开关混用 / Compatible independent denoising control; defaults to true, cannot mix with the combined control", json_schema_extra={"default": True}),
+        speech_enhancement_strength: float | None = Form(None, ge=0, le=2, allow_inf_nan=False, description="自动人声增益力度，0–2；默认 1，0 跳过 / Automatic gain strength, 0–2; default 1, zero skips gain"),
+        background_denoise_strength: float | None = Form(None, ge=0, le=1, allow_inf_nan=False, description="降噪混合比例，0–1；GTCRN 默认 0.5，0 跳过 / Denoising mix, 0–1; GTCRN default 0.5, zero skips denoising"),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="启用质量中性的单任务自动批处理 / Enable quality-neutral single-job auto-batching"),
         idempotency_key: str = Header(..., alias="Idempotency-Key", description=IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
@@ -1505,7 +1509,8 @@ def create_app() -> FastAPI:
         hotword_data = await run_in_threadpool(
             hotword_request_data, context, hotword_list_ids, existing,
         )
-        enhancement_request = audio_enhancement_request(audio_enhancement, speech_enhancement, background_denoise, existing)
+        enhancement_request = audio_enhancement_request(audio_enhancement, speech_enhancement, background_denoise, existing,
+            speech_enhancement_strength=speech_enhancement_strength, background_denoise_strength=background_denoise_strength)
         voiceprint_data = await run_in_threadpool(voiceprint_scope_data, voiceprint_group_ids, use_voiceprint_library and diarize, existing)
         job_id = uuid.uuid4().hex
         original_name = safe_filename(file.filename or "audio.bin")
@@ -2647,12 +2652,12 @@ def create_app() -> FastAPI:
         "/api/v1/jobs/{job_id}/playback", response_class=FileResponse, tags=[JOB_TAG],
         summary="播放与转写时间轴一致的音频 / Play audio on the ASR timeline",
         description=bilingual(
-            "仅成功的新 ASR 任务可用，返回识别时保存的 16 kHz 单声道 PCM16 WAV。支持 Range；历史任务不补生成，缺失时返回 404。原文件仍由 source 接口提供。",
-            "Successful new ASR jobs only. Returns the saved 16 kHz mono PCM16 WAV used for recognition. Supports Range. Historical jobs are not backfilled; missing audio returns 404. The source endpoint continues to serve the original upload.",
+            "仅成功的 ASR 任务可用，返回增强前保存的 16 kHz 单声道 PCM16 原音 WAV。支持 Range；download=true 以任务名加 -original.wav 作为附件下载，不重新处理音频。历史任务不补生成，缺失时返回 404。原始上传文件仍由 source 接口提供。",
+            "Successful ASR jobs only. Returns the saved unenhanced 16 kHz mono PCM16 WAV. Supports Range; download=true serves an attachment named after the task with -original.wav, without reprocessing audio. Historical jobs are not backfilled; missing audio returns 404. The source endpoint continues to serve the original upload.",
         ),
         operation_id="getJobPlayback",
         responses={
-            200: {"description": "完整 WAV / Full WAV", "content": {"audio/wav": {"schema": BINARY_SCHEMA}}, "headers": {"Accept-Ranges": {"schema": {"type": "string", "example": "bytes"}}}},
+            200: {"description": "完整 WAV / Full WAV", "content": {"audio/wav": {"schema": BINARY_SCHEMA}}, "headers": {"Accept-Ranges": {"schema": {"type": "string", "example": "bytes"}}, "Content-Disposition": {"description": "download=true 时为附件 / Attachment when download=true", "schema": {"type": "string"}}}},
             206: {"description": "部分 WAV / Partial WAV", "content": {"audio/wav": {"schema": BINARY_SCHEMA}}, "headers": {"Content-Range": {"schema": {"type": "string", "example": "bytes 0-43/96044"}}}},
             416: {**problem_response("Range 超出文件范围 / Requested range is not satisfiable", 416), "headers": {"Content-Range": {"schema": {"type": "string", "example": "bytes */96044"}}}},
             **AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE,
@@ -2660,6 +2665,7 @@ def create_app() -> FastAPI:
     )
     def job_playback(
         job_id: str,
+        download: bool = Query(False, description="下载未增强的原音 WAV，与播放器原音一致 / Download the unenhanced WAV matching original playback"),
         range_header: str | None = Header(None, alias="Range", description="可选单段字节范围 / Optional single byte range"),
         _: None = Depends(require_api_key),
     ) -> FileResponse:
@@ -2671,7 +2677,8 @@ def create_app() -> FastAPI:
         path = (output / "playback.wav").resolve()
         if not (job.get("result") or {}).get("playback_url") or path.parent != output or not path.is_file():
             raise HTTPException(status_code=404, detail="Playback audio is unavailable")
-        return FileResponse(path, media_type="audio/wav")
+        filename = f"{safe_filename(Path(str(job['display_name'])).stem, 'audio')[:150]}-original.wav" if download else None
+        return FileResponse(path, media_type="audio/wav", filename=filename)
 
     @app.get(
         "/api/v1/jobs/{job_id}/artifacts/{name}", response_class=FileResponse,
@@ -3059,9 +3066,11 @@ def add_openai_routes(app: FastAPI) -> None:
         compute_device: str = Form(default_device, description="cpu 或 gpu；省略时使用部署默认值且无静默回退 / cpu or gpu; omission uses the deployment default and there is no silent fallback", json_schema_extra={"enum": ["cpu", "gpu"]}),
         use_voiceprint_library: bool = Form(True, description="匹配声纹库 / Match voiceprint library"),
         voiceprint_group_ids: str | None = Form(None, description="JSON 分组 ID 数组；省略使用全部，提交时固定人员范围 / JSON group ID array; omission selects all, eligible people are fixed at submission"),
-        audio_enhancement: str | None = Form(None, description="旧组合别名 auto 双开、off 双关；不能与新开关混用 / Legacy alias: auto enables both, off disables both; cannot mix with independent controls", json_schema_extra={"enum": ["auto", "off"], "deprecated": True}),
-        speech_enhancement: bool | None = Form(None, description="平稳提升轻声；新任务默认开启 / Lift quiet speech continuously; defaults to true", json_schema_extra={"default": True}),
-        background_denoise: bool | None = Form(None, description="本地背景降噪；新任务默认开启 / Local background denoising; defaults to true", json_schema_extra={"default": True}),
+        audio_enhancement: str | None = Form(None, description="推荐音频增强总开关：auto 自动降噪并提升轻声，off 关闭两项；不能与独立参数混用 / Recommended audio enhancement control: auto enables denoising and quiet-speech gain, off disables both; cannot mix with independent controls", json_schema_extra={"enum": ["auto", "off"]}),
+        speech_enhancement: bool | None = Form(None, description="兼容独立增益参数；默认开启，不能与总开关混用 / Compatible independent gain control; defaults to true, cannot mix with the combined control", json_schema_extra={"default": True}),
+        background_denoise: bool | None = Form(None, description="兼容独立降噪参数；默认开启，不能与总开关混用 / Compatible independent denoising control; defaults to true, cannot mix with the combined control", json_schema_extra={"default": True}),
+        speech_enhancement_strength: float | None = Form(None, ge=0, le=2, allow_inf_nan=False, description="自动人声增益力度，0–2；默认 1，0 跳过 / Automatic gain strength, 0–2; default 1, zero skips gain"),
+        background_denoise_strength: float | None = Form(None, ge=0, le=1, allow_inf_nan=False, description="降噪混合比例，0–1；GTCRN 默认 0.5，0 跳过 / Denoising mix, 0–1; GTCRN default 0.5, zero skips denoising"),
         accelerate_single_task: bool = Form(SINGLE_TASK_ACCELERATION_DEFAULT, description="单任务自动批处理 / Single-job auto-batching"),
         idempotency_key: str | None = Header(None, alias="Idempotency-Key", description=OPTIONAL_IDEMPOTENCY_KEY_DESCRIPTION, json_schema_extra=IDEMPOTENCY_KEY_SCHEMA),
         _: None = Depends(require_api_key),
@@ -3083,7 +3092,8 @@ def add_openai_routes(app: FastAPI) -> None:
         hotword_data = await run_in_threadpool(
             hotword_request_data, prompt, hotword_list_ids, existing,
         )
-        enhancement_request = audio_enhancement_request(audio_enhancement, speech_enhancement, background_denoise, existing)
+        enhancement_request = audio_enhancement_request(audio_enhancement, speech_enhancement, background_denoise, existing,
+            speech_enhancement_strength=speech_enhancement_strength, background_denoise_strength=background_denoise_strength)
         voiceprint_data = await run_in_threadpool(voiceprint_scope_data, voiceprint_group_ids, use_voiceprint_library and diarize, existing)
         try:
             speakers = None if speaker_count == "auto" else int(speaker_count)
