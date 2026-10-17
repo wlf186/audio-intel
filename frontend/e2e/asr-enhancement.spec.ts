@@ -28,7 +28,11 @@ async function audioDownloadServer(){
   response.end(data.subarray(start,end+1))
  })
  await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)})
- return {origin:`http://127.0.0.1:${(server.address() as AddressInfo).port}`,close:()=>new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()))}
+ return {origin:`http://127.0.0.1:${(server.address() as AddressInfo).port}`,close:()=>new Promise<void>((resolve,reject)=>{
+  server.close(error=>error?reject(error):resolve())
+  // Browsers may retain active media/preconnect sockets until their context closes.
+  server.closeAllConnections()
+ })}
 }
 
 async function fixture(page:Page,withPeaks=true,partial=false,strengths=false,tracks:{original?:boolean;status?:'off'|'bypassed'|'fallback';origin?:string}={}){
@@ -346,7 +350,7 @@ for(const width of [1440,390])test(`original and enhanced WAV downloads preserve
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  await page.screenshot({path:path.resolve(`../tmp/original-audio-download/controls-${width}-en.png`)})
  expect(errors).toEqual([])
- }finally{await server.close()}
+ }finally{await test.step('Close synthetic media connections',()=>server.close())}
 })
 
 for(const status of ['off','bypassed','fallback'] as const)test(`original WAV remains downloadable with enhancement ${status}`,async({page})=>{
