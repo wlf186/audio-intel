@@ -113,7 +113,7 @@ export function VideoTimeline({jobId,duration,currentTime,enhanced,available,sce
  function chooseScene(scene:VideoScene,node:HTMLElement){showPreview(scene,node);selectScene(scene)}
  function zoom(factor:number){const next=clamp(span*factor,Math.min(10,duration),duration);const center=currentTime>=start&&currentTime<=end?currentTime:start+span/2;setRange({start:clamp(center-next/2,0,duration-next),span:next})}
  function seekPointer(event:PointerEvent<HTMLCanvasElement>,commit=false){const rect=event.currentTarget.getBoundingClientRect();const seconds=start+clamp((event.clientX-rect.left)/rect.width,0,1)*span;setFollow(true);onSeek(seconds);if(commit)onSeekCommit(seconds)}
- const scrollWidth=Math.min(1_000_000,Math.max(width,duration/span*width))
+ const scrollWidth=Math.min(1_000_000,Math.max(width,span>0?duration/span*width:width))
  useLayoutEffect(()=>{
   const node=scroller.current
   if(!node)return
@@ -134,7 +134,7 @@ export function VideoTimeline({jobId,duration,currentTime,enhanced,available,sce
  // Dense full views retain every scene marker, while only loading images with usable width.
  let nextTile=0
  const tiles=visibleScenes.filter(scene=>{const left=(Math.max(start,scene.start)-start)/span*width;if(left<nextTile)return false;nextTile=left+64;return true})
- const playhead=currentTime>=start&&currentTime<=end?100*(currentTime-start)/span:undefined
+ const playhead=span>0&&currentTime>=start&&currentTime<=end?100*(currentTime-start)/span:undefined
  return <section className="video-timeline" aria-label={t('timeline.label')}>
   <div className="timeline-toolbar"><span>{formatTime(start,false)}–{formatTime(end,false)}</span><InfoTooltip id={`timeline-help-${jobId}`} label={t('timeline.helpLabel')} text={t('timeline.help')}/><select className={`timeline-scene-picker${visibleScenes.length>width/44?' dense':''}`} aria-label={t('timeline.chooseScene')} value="" onChange={event=>{const scene=scenes.data?.scenes.find(scene=>scene.id===event.target.value);if(scene)selectScene(scene)}}><option value="">{t('timeline.chooseScene')}</option>{scenes.data?.scenes.map((scene,index)=><option key={scene.id} value={scene.id}>{t('video.scene',{number:index+1})} · {formatTime(scene.start,false)}–{formatTime(scene.end,false)}</option>)}</select><div role="group" aria-label={t('timeline.zoom')}><button type="button" className="icon-button" aria-label={t('timeline.zoomOut')} disabled={span>=duration} onClick={()=>zoom(2)}><Minus size={16}/></button><button type="button" className="icon-button" aria-label={t('timeline.zoomIn')} disabled={span<=Math.min(10,duration)} onClick={()=>zoom(.5)}><Plus size={16}/></button><button type="button" className="icon-button" aria-label={t('timeline.fit')} onClick={()=>{setRange({start:0,span:duration});setFollow(true)}}><Maximize size={16}/></button><button className="icon-button" type="button" aria-label={t('timeline.follow')} title={t('timeline.followHelp')} disabled={playhead!==undefined} onClick={()=>{setFollow(true);setRange({start:clamp(currentTime-span*.2,0,duration-span),span})}}><LocateFixed size={16}/></button></div></div>
   <div className="timeline-tracks" ref={track}>

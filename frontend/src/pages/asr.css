@@ -303,10 +303,11 @@
  .asr-audio-downloads.has-enhanced>.audio-download-menu{display:block}
 }
 @media(min-width:1024px) and (min-height:601px){
- .asr-workspace.workbench.view-results{grid-template-columns:max-content minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);column-gap:24px}
- .view-results .asr-heading{grid-column:1;grid-row:1;align-self:center}
- .view-results .asr-tabs{grid-column:2;grid-row:1}
- .asr-workspace.view-results .asr-results{grid-column:1/-1;grid-row:2;overflow:hidden}
+ .asr-workspace.workbench.hud-page{grid-template-columns:max-content minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);column-gap:24px}
+ .asr-workspace .asr-heading{grid-column:1;grid-row:1;align-self:center}
+ .asr-workspace .asr-tabs{grid-column:2;grid-row:1}
+ .asr-workspace .asr-create,.asr-workspace .asr-results{grid-column:1/-1;grid-row:2}
+ .asr-workspace.view-results .asr-results{overflow:hidden}
  .asr-workspace.view-results .video-result{height:100%;min-height:0;overflow:hidden;scrollbar-gutter:stable}
  .asr-workspace.view-results .video-result .video-transcript,.asr-workspace.view-results .video-result .segments{flex:1;min-height:0;max-height:none;overflow:auto;scrollbar-gutter:stable}
  .asr-workspace.view-results .video-result .result-head{padding:4px 12px;min-height:52px}
@@ -340,3 +341,11 @@
 /* Reserve highlight space so the active item never changes line wrapping. */
 .video-section{border-left:2px solid transparent;padding-left:8px}
 .video-paragraph{padding-left:8px}
+
+.asr-enhancement-row .enhancement-partial .button{color:#ffbd69;border-color:#ffbd6980}
+@media(min-width:1024px) and (max-height:600px){
+ .asr-workspace.workbench.hud-page{height:auto;min-height:100%;grid-template-rows:auto auto auto}
+ .asr-workspace.view-results .asr-results{overflow:visible;align-items:start}
+ .asr-workspace.view-results .video-result{height:auto;min-height:0;overflow:visible}
+ .asr-workspace.view-results .video-result .video-transcript,.asr-workspace.view-results .video-result .segments{min-height:180px;max-height:60dvh}
+}

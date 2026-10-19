@@ -18,7 +18,7 @@ The Library uses a single page heading and Voiceprints/Hotwords tabs. Desktop pe
 
 视频转写结果默认显示共用时间刻度的画面缩略图和波形。“画面目录”定位对应时间段的开头；点击波形按准确时间定位，拖动在松开后同步滚动、高亮正文。放大后用横向滚动条或触控板浏览，手机可横向拖动缩略图区；浏览不改变播放时间，“定位播放点”恢复跟随。主动定位逐句明细会清除搜索／说话人筛选，模式切换仍保留各自阅读位置和原有存储期限。PC 截图与文字并排，点击正文截图可放大；阅读模式与编辑或搜索／筛选共用工具栏。增强状态收在下载旁，点击查看设置强度及实际处理详情；较窄卡片使用“下载音频”菜单。音频结果仍默认展示波形。详见[音视频指南](VIDEO_TRANSCRIPTION.md)。
 
-Video results use a compact seek bar with an optional waveform. Desktop frames sit beside their matching text and open an enlarged view when clicked. Reading mode and scene editing share a toolbar. Audio results retain their default waveform. See the [audio/video guide](VIDEO_TRANSCRIPTION.md).
+Video results always show representative thumbnails above the waveform. The scene directory seeks to an interval start; waveform clicks seek to the exact time and reveal/highlight the matching reader content, with drag gestures revealing on release. Horizontal scrollbars, trackpads and touch drags over thumbnails browse the zoomed timeline without seeking; Locate playhead restores following. Explicit navigation clears detailed-reader search/speaker filters, while view changes retain independent bookmarks and existing storage lifetimes. Desktop frames sit beside text and open an enlarged view when clicked. Reading mode shares a toolbar with editing or search/filter controls. Processing status opens its details beside audio downloads; narrow cards group both tracks into an audio-download menu. Audio results retain their default waveform. See the [audio/video guide](VIDEO_TRANSCRIPTION.md).
 
 ## 分组与导出习惯 / Group and export preferences
 

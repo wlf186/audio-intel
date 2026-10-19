@@ -278,7 +278,11 @@ for(const locale of ['zh-CN','en-US'])test(`compact library and video reading in
  await expect.poll(()=>page.locator('.result-panel audio').evaluate((e:HTMLAudioElement)=>e.readyState)).toBeGreaterThanOrEqual(1)
  await expect(page.locator('.media-loading')).toHaveCount(0)
  const reader=page.locator('.video-transcript')
- expect((await reader.boundingBox())!.height).toBeGreaterThanOrEqual(280)
+ // Measure the actual visible reading space, not the former overflowing 280px minimum.
+ await expect(page.locator('.timeline-waveform')).toHaveAttribute('data-window-end','60')
+ const readingBox=(await reader.boundingBox())!
+ expect(readingBox.height).toBeGreaterThanOrEqual(180)
+ expect(readingBox.y+readingBox.height).toBeLessThanOrEqual(720)
  await expect(page.locator('.video-paragraph p').first()).toBeInViewport()
  await expect(page.locator('.video-timeline')).toBeVisible()
  await page.locator('.video-frame').first().click()
