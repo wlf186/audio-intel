@@ -100,6 +100,8 @@ def test_window_peaks_tracks_validation_auth_and_schema(local):
     schema = client.get('/openapi.json').json()
     assert schema['components']['schemas']['JobWaveformResponse']['properties']['waveform']['maxItems'] == 2048
     assert schema['components']['schemas']['ArtifactWaveformResponse']['properties']['waveform']['maxItems'] == 240
+    for path, method in [('/api/v1/jobs/storage', 'post'), ('/api/v1/jobs/{job_id}/waveform', 'get')]:
+        assert 'Retry-After' in schema['paths'][path][method]['responses']['429']['headers']
     (output/'enhanced.wav').unlink()
     assert client.get(url+'?track=enhanced').status_code == 404
     client.headers.clear()

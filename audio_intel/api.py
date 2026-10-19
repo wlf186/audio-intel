@@ -2467,7 +2467,7 @@ def create_app() -> FastAPI:
         "/api/v1/jobs/storage", response_model=JobStorageResponse, tags=[JOB_TAG],
         summary="查询任务文件占用 / Measure job file storage",
         description=bilingual("最多100个ID，逐项返回状态；只统计任务专属 jobs/id 和 tmp/id，不跟随链接。活动任务缓存5秒，终态30秒，refresh可刷新；不读取任务结果。", "Up to 100 IDs with per-item states. Counts only owned jobs/id and tmp/id without following links. Active TTL 5s, terminal TTL 30s; refresh bypasses cache. Does not read job results."),
-        operation_id="getJobsStorage", responses={**AUTH_RESPONSES, **VALIDATION_RESPONSE, 429: problem_response("统计繁忙，请稍后重试 / Storage measurement busy; retry", 429)},
+        operation_id="getJobsStorage", responses={**AUTH_RESPONSES, **VALIDATION_RESPONSE, 429: {**problem_response("统计繁忙，请稍后重试 / Storage measurement busy; retry", 429), "headers": {"Retry-After": {"schema": {"type": "integer", "example": 2}}}}},
     )
     def jobs_storage(payload: JobStorageRequest, response: Response, _: None = Depends(require_api_key)) -> dict:
         from .job_storage import retrieve, StorageBusy
@@ -2698,7 +2698,7 @@ def create_app() -> FastAPI:
         "/api/v1/jobs/{job_id}/waveform", response_model=JobWaveformResponse, tags=[JOB_TAG],
         summary="读取时间窗口波形 / Get timeline window waveform",
         description=bilingual("仅已保存的原音或增强音WAV，不生成缺失音频。窗口以秒表示，最多2048点；内存缓存，与产物波形共享计算限额，读取时阻止删除。旧产物接口仍最多240点。", "Saved original/enhanced WAV only; missing audio is never generated. Window in seconds, at most 2048 peaks. Memory cache, shared artifact calculation budget and deletion protection. The artifact endpoint remains limited to 240 peaks."),
-        operation_id="getJobWaveform", responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE, 429: problem_response("波形计算繁忙 / Waveform calculation busy", 429)},
+        operation_id="getJobWaveform", responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE, 429: {**problem_response("波形计算繁忙 / Waveform calculation busy", 429), "headers": {"Retry-After": {"schema": {"type": "integer", "example": 2}}}}},
     )
     def job_waveform(
         job_id: str, response: Response,
