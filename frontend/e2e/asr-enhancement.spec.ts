@@ -363,6 +363,7 @@ for(const status of ['off','bypassed','fallback'] as const)test(`original WAV re
  await expect(page.getByRole('link',{name:'下载原音',exact:true})).toBeVisible()
  await expect(page.getByRole('link',{name:'下载增强音',exact:true})).toHaveCount(0)
  await expect(page.getByRole('group',{name:'试听音轨',exact:true})).toHaveCount(0)
+ if(status==='fallback')await expect(page.locator('.enhancement-summary')).toContainText('增强未能应用')
  expect(errors).toEqual([])
 })
 

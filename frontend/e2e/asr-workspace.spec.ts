@@ -22,6 +22,7 @@ async function fixture(page:Page){
   if(path.endsWith('/artifacts/transcript.txt'))return route.fulfill({contentType:'text/plain',body:'转写内容'})
   const job=state.jobs.find(j=>path===`/api/v1/jobs/${j.id}`)
   if(job){state.detailReads.push(job.id);return state.failDetail?route.fulfill({status:503,json:{detail:'详情暂不可用'}}):route.fulfill({json:job})}
+  if(path==='/api/v1/jobs/storage')return route.fulfill({json:{items:route.request().postDataJSON().job_ids.map((id:string)=>({id,status:'not_found',bytes:null,basis:null,checked_at:new Date().toISOString()}))}})
   if(route.request().method()!=='GET')throw new Error(`Unexpected mutation: ${path}`)
   return route.continue()
  })

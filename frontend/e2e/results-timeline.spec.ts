@@ -142,3 +142,26 @@ test('scene edits refresh the shared timeline and reader revision @timing',async
  expect(reads).toBe(2)
  expect(errors).toEqual([])
 })
+
+test('failed scene refresh retains the reader and retries without stale editing @timing',async({page})=>{
+ const {state,errors}=await uxFixture(page)
+ let reads=0
+ await page.route('**/api/v1/jobs/ux-video/video-scenes',route=>{
+  if(route.request().method()==='PATCH'){state.job.result!.video!.revision++;return route.fulfill({json:state.job.result})}
+  reads++
+  return reads===2?route.fulfill({status:503,json:{detail:'Scenes temporarily unavailable'}}):route.fulfill({json:{revision:state.job.result!.video!.revision,scenes:state.job.result!.video!.scenes}})
+ })
+ await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+ await expect(page.locator('.video-section')).toHaveCount(20)
+ await page.getByRole('button',{name:'编辑分段',exact:true}).click()
+ await page.getByRole('button',{name:'更换截图',exact:true}).first().click()
+ await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click()
+ await expect(page.locator('.video-transcript [role=alert]')).toContainText('Scenes temporarily unavailable')
+ await expect(page.locator('.video-section')).toHaveCount(20)
+ await expect(page.getByRole('button',{name:'更换截图',exact:true}).first()).toBeDisabled()
+ await page.locator('.video-transcript [role=alert]').getByRole('button').click()
+ await expect(page.locator('.video-transcript [role=alert]')).toHaveCount(0)
+ await expect(page.getByRole('button',{name:'更换截图',exact:true}).first()).toBeEnabled()
+ expect(reads).toBe(3)
+ expect(errors).toEqual([])
+})

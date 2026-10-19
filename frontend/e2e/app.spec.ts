@@ -1344,7 +1344,7 @@ test('task duration, single/multi/select-all and partial batch deletion are inte
  await expect(page.getByText('当前批次 41/90 codec 帧（总量估算）')).toBeVisible()
  const failedRow=page.locator('.table-row').filter({hasText:'失败合成'})
  await expect(failedRow.getByText('显存或内存不足')).toBeVisible()
- await expect(failedRow.getByRole('cell')).toHaveCount(7)
+ await expect(failedRow.getByRole('cell')).toHaveCount(8)
  await expect(failedRow.getByRole('rowheader')).toHaveCount(1)
  const failureButton=page.getByRole('button',{name:'查看失败详情 失败合成'})
  await failureButton.click()

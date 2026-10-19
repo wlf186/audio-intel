@@ -57,9 +57,10 @@ export function VideoTimeline({jobId,duration,currentTime,enhanced,available,sce
   const ctx=node.getContext('2d');if(!ctx)return
   ctx.scale(ratio,ratio);ctx.clearRect(0,0,rect.width,rect.height)
   if(!data)return
-  const step=rect.width/data.waveform.length
-  data.waveform.forEach((value,index)=>{const h=Math.max(1,value*rect.height*.85);ctx.fillStyle='#00aab2';ctx.fillRect(index*step,(rect.height-h)/2,Math.max(1,step*.65),h)})
- },[data,width])
+  const offset=(data.start-start)/span*rect.width
+  const step=(data.end-data.start)/span*rect.width/data.waveform.length
+  data.waveform.forEach((value,index)=>{const h=Math.max(1,value*rect.height*.85);ctx.fillStyle='#00aab2';ctx.fillRect(offset+index*step,(rect.height-h)/2,Math.max(1,step*.65),h)})
+ },[data,width,start,span])
  useEffect(()=>{if(!preview)return;const escape=(event:KeyboardEvent)=>{if(event.key==='Escape')setPreview(undefined)};window.addEventListener('keydown',escape);const dismiss=()=>setPreview(undefined);window.addEventListener('scroll',dismiss,true);return()=>{window.removeEventListener('keydown',escape);window.removeEventListener('scroll',dismiss,true)}},[preview])
  function showPreview(scene:VideoScene,node:HTMLElement){const rect=node.getBoundingClientRect(),below=rect.top<220;setPreviewError(false);setPreview({scene,left:clamp(rect.left+rect.width/2,Math.min(152,innerWidth/2),Math.max(innerWidth/2,innerWidth-152)),top:below?rect.bottom+6:rect.top-6,below})}
  function sceneAt(time:number){return scenes.data?.scenes.find(scene=>time>=scene.start&&time<scene.end)||scenes.data?.scenes.at(-1)}
