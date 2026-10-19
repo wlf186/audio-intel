@@ -82,7 +82,7 @@ response.raise_for_status()
 Path("transcript.json").write_bytes(response.content)
 ```
 
-中文：界面全部转写下载默认脱敏。替换编辑器按行 `原词=替换词`，按第一个等号拆分，忽略空行、允许空替换词；错误显示行号。独立 localStorage `audio-intel:transcript-export:v1` 保存开关和原始编辑内容，刷新、重开、退出登录及资料库替换后保留；清空替换规则保留脱敏开关，只清空规则，可撤销（保留完整原始输入，包括错误内容）；下一次编辑、页面卸载或刷新后撤销失效。ASR 分组偏好使用 v4，兼容迁移旧版本。
+中文：界面全部转写下载默认脱敏。替换编辑器按行 `原词=替换词`，按第一个等号拆分，忽略空行、允许空替换词；错误显示行号。独立 localStorage `audio-intel:transcript-export:v1` 保存开关和原始编辑内容，刷新、重开、退出登录及资料库替换后保留；清空替换规则保留脱敏开关，只清空规则，可撤销（保留完整原始输入，包括错误内容）；下一次编辑、页面卸载或刷新后撤销失效。ASR 偏好使用 v7，兼容迁移旧版本（包括 v0.1.33 的 v4）。
 
 ## Native asynchronous lifecycle
 
