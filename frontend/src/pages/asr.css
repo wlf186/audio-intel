@@ -249,7 +249,8 @@
 .timeline-scene{background:transparent}
 .timeline-pan label>span{white-space:nowrap}
 .enhancement-summary{padding:0 12px;margin-top:0;margin-bottom:2px}
-@media(min-width:1024px){.asr-workspace .video-result{height:auto;min-height:100%}.asr-workspace .asr-results{overflow:auto}.asr-workspace .video-result .video-transcript{flex:1;min-height:280px;max-height:70dvh}}
+/* Loading must not toggle scrollbar width and invalidate the waveform again. */
+@media(min-width:1024px){.asr-workspace .video-result{height:auto;min-height:100%;scrollbar-gutter:stable}.asr-workspace .asr-results{overflow:auto}.asr-workspace .video-result .video-transcript{flex:1;min-height:280px;max-height:70dvh}}
 .video-result .asr-enhancement-row{padding:6px 12px;margin:0;gap:8px 12px;align-items:center}
 .video-result .asr-enhancement-row .player-row{padding:0;min-height:44px;gap:6px;flex-wrap:nowrap;border:0}
 .video-result .asr-enhancement-row .player-row>span:last-child,.video-result .asr-enhancement-row .player-row .grow{display:none}
