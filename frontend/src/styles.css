@@ -492,4 +492,4 @@ select:focus{border-color:var(--cyan)}
 .job-storage{font-size:11px;overflow-wrap:anywhere;color:var(--muted)}
 @media(min-width:1201px){.jobs-page .table-head,.jobs-page .table-row{grid-template-columns:30px minmax(170px,1.6fr) 55px 88px 146px 82px minmax(110px,1fr) 88px 122px}}
 @media(min-width:1024px) and (max-width:1200px){.jobs-page .table-head,.jobs-page .table-row{grid-template-columns:28px minmax(140px,1.4fr) 48px 78px 124px 75px minmax(90px,1fr) 70px 100px;gap:6px}}
-@media(max-width:1023px){.job-storage{display:none}.storage-mobile{display:inline}.job-storage-toolbar{align-items:flex-start}.selection-bar>span{min-width:0;overflow-wrap:anywhere}}
+@media(max-width:1023px){.job-storage,.job-storage-heading{display:none}.storage-mobile{display:inline}.job-storage-toolbar{align-items:flex-start}.selection-bar>span{min-width:0;overflow-wrap:anywhere}}

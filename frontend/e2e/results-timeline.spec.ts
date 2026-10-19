@@ -71,15 +71,18 @@ test('2000 scene overview only loads visible thumbnails and shares one scenes re
  expect(errors).toEqual([])
 })
 
-test('storage loading, real zero, unknown subtotal and clear retry',async({page,responseGate})=>{
+for(const width of [1440,1000,390])test(`storage loading, real zero, unknown subtotal and clear retry at ${width}px`,async({page,responseGate})=>{
+ await page.setViewportSize({width,height:1000})
  const {state,errors}=await uxFixture(page)
  const base=state.job
  await page.route(url=>url.pathname==='/api/v1/jobs',route=>route.fulfill({json:{items:[base,{...base,id:'zero',display_name:'Zero task'},{...base,id:'unknown',display_name:'Unknown task'}],count:3,total:3,limit:25,offset:0,has_more:false}}))
  const gate=responseGate();let calls=0
  await page.route('**/api/v1/jobs/storage',async route=>{calls++;if(calls===1)await gate.hold();return route.fulfill({json:{items:[{id:base.id,status:'ready',bytes:1048576,checked_at:'2026-10-19T00:00:00Z',basis:'logical'},{id:'zero',status:'ready',bytes:0,checked_at:'2026-10-19T00:00:00Z',basis:'logical'},{id:'unknown',status:calls===1?'error':'ready',bytes:calls===1?null:2097152,checked_at:'2026-10-19T00:00:00Z',basis:'logical'}]}})})
  await page.goto('/#jobs');await gate.arrived
+ await expect(page.getByRole('columnheader')).toHaveCount(width===1440?9:width===1000?8:0)
  await expect(page.locator('.job-storage').first()).toContainText('统计中')
- await page.getByRole('checkbox',{name:'全选当前页可操作任务',exact:true}).check()
+ if(width===390){for(const checkbox of await page.locator('.table-row input[type=checkbox]').all())await checkbox.check()}
+ else await page.getByRole('checkbox',{name:'全选当前页可操作任务',exact:true}).check()
  await expect(page.locator('.selection-bar')).toContainText('占用待确认')
  gate.release()
  await expect(page.locator('.job-storage').nth(1)).toContainText('0 B')
@@ -91,6 +94,7 @@ test('storage loading, real zero, unknown subtotal and clear retry',async({page,
  await page.getByRole('button',{name:'刷新占用',exact:true}).click()
  await expect(page.locator('.selection-bar')).toContainText('3.0 MB')
  await expect(page.locator('.selection-bar')).not.toContainText('未知')
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  expect(errors).toEqual([])
 })
 
