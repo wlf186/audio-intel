@@ -116,7 +116,7 @@ for(const width of [1440,390]){
   await expect.poll(()=>player.evaluate((e:HTMLAudioElement)=>e.paused)).toBe(false)
   await expect.poll(()=>player.evaluate((e:HTMLAudioElement)=>e.currentTime)).toBeGreaterThanOrEqual(2)
   await player.evaluate((e:HTMLAudioElement)=>e.pause())
-  for(const control of await group.locator('button,a').all()){
+  for(const control of await group.locator('button:visible,a:visible').all()){
    const box=await control.boundingBox();expect(box!.height).toBeGreaterThanOrEqual(44);expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(width)
   }
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
@@ -204,7 +204,7 @@ test('partial processing shows each outcome while retaining enhanced playback',a
  const {errors}=await fixture(page,true,true)
  await showAsrResults(page)
  await expect(page.locator('.enhancement-summary')).toContainText('增强部分未应用')
- await page.getByRole('button',{name:'处理详情',exact:true}).click()
+ await page.locator('.enhancement-summary button').click()
  await expect(page.locator('.enhancement-details-panel')).toContainText('人声增强')
  await expect(page.locator('.enhancement-details-panel')).toContainText('未完成，已回退')
  await page.keyboard.press('Escape')
@@ -294,8 +294,8 @@ test('older capabilities omit advanced settings and numeric submissions',async({
 test('policy 6 results show used strengths and explicit zero bypass',async({page})=>{
  const {errors}=await fixture(page,true,false,true)
  await showAsrResults(page)
- await expect(page.locator('.enhancement-summary')).toContainText('人声 150% · 降噪 0%')
- await page.getByRole('button',{name:'处理详情',exact:true}).click()
+ await page.locator('.enhancement-summary button').click()
+ await expect(page.locator('.enhancement-details-panel')).toContainText('人声 150% · 降噪 0%')
  await expect(page.locator('.enhancement-details-panel')).toContainText('强度为 0，已跳过')
  expect(errors).toEqual([])
 })
@@ -317,7 +317,8 @@ for(const width of [1440,390])test(`original and enhanced WAV downloads preserve
  await expect.poll(()=>player.evaluate((e:HTMLAudioElement)=>e.readyState)).toBeGreaterThanOrEqual(1)
  await player.evaluate((e:HTMLAudioElement)=>{e.pause();e.currentTime=1})
  const originalEvent=page.waitForEvent('download')
- await downloads.getByRole('link',{name:'下载原音',exact:true}).click()
+ if(await downloads.getByRole('button',{name:'下载音频',exact:true}).isVisible())await downloads.getByRole('button',{name:'下载音频',exact:true}).click()
+ await page.getByRole('link',{name:'下载原音',exact:true}).click()
  const original=await originalEvent
  expect(original.suggestedFilename()).toBe('公开增强测试-original.wav')
  expect(await original.failure()).toBeNull()
@@ -328,7 +329,8 @@ for(const width of [1440,390])test(`original and enhanced WAV downloads preserve
  expect(await player.evaluate((e:HTMLAudioElement)=>e.paused)).toBe(true)
  await page.getByRole('button',{name:'播放',exact:true}).click()
  const enhancedEvent=page.waitForEvent('download')
- await downloads.getByRole('link',{name:'下载增强音',exact:true}).click()
+ if(await downloads.getByRole('button',{name:'下载音频',exact:true}).isVisible())await downloads.getByRole('button',{name:'下载音频',exact:true}).click()
+ await page.getByRole('link',{name:'下载增强音',exact:true}).click()
  const enhanced=await enhancedEvent
  expect(enhanced.suggestedFilename()).toBe('enhanced.wav')
  expect(await enhanced.failure()).toBeNull()
@@ -343,13 +345,14 @@ for(const width of [1440,390])test(`original and enhanced WAV downloads preserve
  await tracks.getByRole('button',{name:'原音',exact:true}).focus()
  await page.keyboard.press('Enter')
  await expect(tracks.getByRole('button',{name:'原音',exact:true})).toHaveAttribute('aria-pressed','true')
- for(const control of await group.locator('button,a').all()){
+ for(const control of await group.locator('button:visible,a:visible').all()){
   const box=await control.boundingBox();expect(box!.height).toBeGreaterThanOrEqual(44);expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(width)
  }
  if(width===390){const listenBox=await tracks.boundingBox();const downloadBox=await downloads.boundingBox();expect(downloadBox!.y).toBeGreaterThan(listenBox!.y+listenBox!.height)}
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  await page.screenshot({path:path.resolve(`../tmp/original-audio-download/controls-${width}-zh.png`)})
  await page.locator('.language-switcher select:visible').first().selectOption('en-US')
+ if(await page.locator('.audio-download-menu button').isVisible())await page.locator('.audio-download-menu button').click()
  await expect(page.getByRole('link',{name:'Download original',exact:true})).toBeVisible()
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  await page.screenshot({path:path.resolve(`../tmp/original-audio-download/controls-${width}-en.png`)})

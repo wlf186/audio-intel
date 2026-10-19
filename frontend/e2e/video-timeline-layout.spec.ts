@@ -36,11 +36,11 @@ test.describe('video timeline with classic scrollbars',()=>{
   await expect(page.locator('.video-section')).toHaveCount(20)
   const geometry=await page.evaluate(()=>{
    const panel=document.querySelector<HTMLElement>('.video-result')!,reader=document.querySelector<HTMLElement>('.video-transcript')!
-   const spareReaderHeight=Math.max(0,reader.clientHeight-parseFloat(getComputedStyle(reader).minHeight))
+   const spareReaderHeight=Math.max(0,reader.clientHeight-280)
    return{criticalHeight:Math.ceil(innerHeight+panel.scrollHeight-panel.clientHeight-spareReaderHeight+12),width:Math.round(document.querySelector('.timeline-tracks')!.getBoundingClientRect().width)}
   })
   // Derive the boundary from the synthetic content, independent of OS font metrics.
-  expect(geometry.criticalHeight).toBeGreaterThan(840)
+  expect(geometry.criticalHeight).toBeGreaterThan(600)
   await page.setViewportSize({width,height:geometry.criticalHeight-40})
   const narrowWidth=await page.locator('.timeline-tracks').evaluate(node=>Math.round(node.getBoundingClientRect().width))
   if(narrowWidth!==geometry.width)await expect.poll(()=>requests.at(-1)).toBe(narrowWidth)

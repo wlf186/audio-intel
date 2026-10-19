@@ -159,8 +159,18 @@ English: Each task/view retains its reading anchor and loaded count across navig
 
 ## 视频结果时间轴 / Video result timeline
 
-视频结果默认常显波形，上方为已有场景代表截图，共用同一时间刻度；波形是播放定位控件，不另设播放进度滑块。初始显示全片，可×2／÷2缩放、平移窗口（最小10秒，短视频以全长为限）、显示全片及回到播放位置。手动平移暂时关闭跟随播放；“浏览时间范围”只移动可见窗口，不改变播放位置。截图区间按实际起止时间成比例排列，密集场景可通过场景菜单和缩放定位。仅加载可见且有展示空间的缩略图，避免长视频一次请求全部图片。
+视频结果默认常显波形，上方为对应画面段的代表截图，共用同一时间刻度。“画面目录”列出全部画面段，与正文的“画面 1、画面 2…”对应。每个画面段是一段时间，代表截图取自该段中的某一时刻；预览分别标注“对应时段”和“截图时刻”。全片视图会省略放不下的缩略图，放大后显示更多，目录始终保留全部画面。
 
-悬停或键盘聚焦缩略图显示放大预览、场景范围和截图时刻，Escape／离开关闭；移动端可点击预览并跳转。点击场景定位到 `scene.start`，保留暂停／播放状态，并在当前图文阅读或逐句明细模式中显示对应内容；代表帧的 `frame_time` 可能位于场景末尾，不用作跳转时间。编辑场景后，阅读区与时间轴共用同一份修订结果并同时更新。
+初始显示全片，可×2／÷2缩放（最小10秒，短视频以全长为限）。放大后通过横向滚动条、触控板横滑或聚焦滚动区域后的方向键浏览；手机可横向拖动缩略图区。横向浏览只改变可视窗口，不改变播放位置，并暂停自动跟随。播放点移出窗口时，“定位播放点”按钮可将窗口移回并恢复跟随；选择画面或操作波形也恢复跟随。正常纵向滚动不被时间轴拦截。
 
-English: The always-visible waveform seeks playback; representative scene thumbnails share its time scale. Zoom/pan controls browse the window separately from seeking. Manual pan pauses auto-follow; Return to playhead restores it. Hover/focus previews reuse existing images, never decode additional video frames. Scene selection seeks the scene start, preserves playback state and reveals the relevant reading content. Both views use one revision-aware scenes resource. Peaks are requested for the visible saved audio window; playhead ticks do not refetch. No historical media rewrite or transcription/enhancement pipeline change is required.
+悬停或键盘聚焦缩略图显示预览，Escape／离开关闭。选择画面定位到 `scene.start`；代表截图的 `frame_time` 可能位于该段末尾，不用作跳转时间。点击波形保留准确点击时间，并同步定位、高亮图文阅读或逐句明细中的对应内容；拖动波形在松开时定位正文，键盘操作同样支持。静音间隔定位后续最近语句，片尾定位最后一句，播放时间保持所选值。所有定位保留播放／暂停状态；正常播放只更新高亮，不持续滚动正文。
+
+主动从画面目录、缩略图或波形定位逐句明细时，会清除搜索和说话人筛选，以显示目标语句；切换阅读模式仍恢复各自的位置。浏览器存储期限不变。编辑画面段后，阅读区与时间轴共用修订结果并同时更新。
+
+结果页的增强状态位于音频下载旁，点击简短状态按钮查看设置强度、逐项处理状态和原因；设置强度不代表每一项一定已执行。较窄的结果卡片将原音／增强音下载收进“下载音频”菜单。桌面标题与页签、阅读模式与当前模式工具分别共用一行，正文独立滚动；手机和极矮窗口允许页面纵向滚动。时间轴横向滚动条占位固定，放大不会再挤出一整行平移控件。
+
+English: The scene directory lists every interval and matches the numbered illustrated sections. Thumbnails are representative frames; previews distinguish the interval from the frame capture time. Zoom in to see more thumbnails. After zooming, browse with the native horizontal scrollbar, a horizontal trackpad gesture, focused scrollbar keyboard navigation, or a touch drag over thumbnails. Browsing does not seek and pauses following. Locate playhead restores following without changing playback time; explicit waveform/scene navigation also resumes following. Vertical scrolling remains available.
+
+Scene selection seeks to the interval start. Waveform clicks seek to the exact chosen time and reveal/highlight the illustrated paragraph or detailed sentence; dragging reveals the reader on release, and keyboard navigation does the same. Gaps reveal the next sentence and the endpoint reveals the final sentence without changing the selected time. Playback state is preserved. Playback ticks highlight without repeatedly scrolling the reader. Explicit navigation clears detailed-reader search/speaker filters; switching views still restores their independent bookmarks and storage lifetime is unchanged.
+
+Audio processing is a compact status button beside downloads; its popover shows configured strengths, actual statuses and reasons. Narrow result cards combine both audio downloads into one menu. Desktop controls leave the remaining height for the reader; mobile/very short windows allow page scrolling. Waveform requests remain limited to the visible saved audio window. No historical media rewrite, API or inference-pipeline change is required.

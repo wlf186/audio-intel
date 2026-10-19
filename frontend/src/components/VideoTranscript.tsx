@@ -7,6 +7,7 @@ import {formatTime,HttpError,request} from '../lib/api'
 import type {Job,JobResult,VideoScene} from '../lib/types'
 import {Modal} from './Modal'
 import {readReaderBookmark} from '../lib/workspaceSession'
+import {readingIndex,revealReadingNode} from '../lib/readerNavigation'
 import {useReaderBookmark} from '../hooks/useReaderBookmark'
 
 type Action='merge_next'|'split'|'boundary'|'frame'|'restore'
@@ -17,10 +18,11 @@ function Frame({jobId,scene}:{jobId:string;scene:VideoScene}){
  const label=t('video.frameAt',{time:formatTime(scene.frame_time,false)})
  return error?<p role="alert">{t('video.frameFailed')} <button className="button" onClick={()=>{setError(false);setRetry(value=>value+1)}}>{t('common.actions.reload')}</button></p>:<><button type="button" className="video-frame" aria-label={t('workspaceSplit.enlargeFrame')} title={t('workspaceSplit.enlargeFrame')} onClick={()=>setExpanded(true)}><img loading="lazy" src={url} alt={label} onError={()=>setError(true)}/></button>{expanded?<Modal title={label} closeLabel={t('common.actions.close')} className="video-frame-modal" onClose={()=>setExpanded(false)}><img src={url} alt={label} onError={()=>{setExpanded(false);setError(true)}}/></Modal>:null}</>
 }
-export function VideoTranscript({job,toolbar,editing,onEditingChange,onUpdated,onSeek,onRename,onEnroll,resource,reveal,currentTime=0}:{job:Job;resource:VideoScenesResource;reveal?:{sceneId:string;token:number};toolbar?:HTMLElement|null;editing:boolean;onEditingChange:(value:boolean)=>void;onUpdated:(id:string,result:JobResult)=>void;onSeek:(time:number)=>void;onRename:(id:string)=>void;onEnroll:(id:string,segmentIds:number[])=>void;currentTime?:number}){
+export function VideoTranscript({job,toolbar,editing,onEditingChange,onUpdated,onSeek,onRename,onEnroll,resource,reveal,currentTime=0}:{job:Job;resource:VideoScenesResource;reveal?:{sceneId?:string;time:number;token:number};toolbar?:HTMLElement|null;editing:boolean;onEditingChange:(value:boolean)=>void;onUpdated:(id:string,result:JobResult)=>void;onSeek:(time:number)=>void;onRename:(id:string)=>void;onEnroll:(id:string,segmentIds:number[])=>void;currentTime?:number}){
  const {t}=useTranslation()
  const {data,error,loading:refreshing,reload}=resource
  const [visible,setVisible]=useState(()=>readReaderBookmark(`${job.id}:video`)?.visibleCount||20)
+ const revealedToken=useRef<number|undefined>(undefined)
  const scrollRoot=useRef<HTMLDivElement>(null)
  const sentinel=useRef<HTMLDivElement>(null)
  const [dialog,setDialog]=useState<{action:Action;scene?:VideoScene;upper?:number;revision:number}>()
@@ -37,12 +39,17 @@ export function VideoTranscript({job,toolbar,editing,onEditingChange,onUpdated,o
  const {prepareRefresh}=useReaderBookmark(`${job.id}:video`,scrollRoot,{active:true,ready:Boolean(data)&&!refreshing,visibleCount:visible})
  useEffect(()=>{if(refreshing)prepareRefresh()},[refreshing,prepareRefresh])
  useEffect(()=>{
-  if(!reveal||!data||refreshing)return
-  const index=data.scenes.findIndex(scene=>scene.id===reveal.sceneId)
+  if(!reveal||!data||refreshing||revealedToken.current===reveal.token)return
+  const index=reveal.sceneId?data.scenes.findIndex(scene=>scene.id===reveal.sceneId):readingIndex(data.scenes,reveal.time)
   if(index<0)return
   if(index>=visible){setVisible(index+1);return}
-  const node=[...scrollRoot.current?.querySelectorAll<HTMLElement>('[data-reader-id]')||[]].find(node=>node.dataset.readerId===reveal.sceneId)
-  node?.scrollIntoView({block:'start',behavior:'instant'})
+  const node=[...scrollRoot.current?.querySelectorAll<HTMLElement>('[data-reader-id]')||[]].find(node=>node.dataset.readerId===data.scenes[index].id)
+  if(node&&scrollRoot.current){
+    revealedToken.current=reveal.token
+    const paragraphs=data.scenes[index].paragraphs||[]
+    const paragraph=node.querySelectorAll<HTMLElement>('.video-paragraph')[readingIndex(paragraphs,reveal.time)]
+    revealReadingNode(scrollRoot.current,paragraph||node)
+  }
  },[reveal,data,refreshing,visible])
  useEffect(()=>{setDialog(undefined);setSaving(false);return()=>saveController.current?.abort()},[job.id])
  useEffect(()=>{
@@ -63,14 +70,16 @@ export function VideoTranscript({job,toolbar,editing,onEditingChange,onUpdated,o
   setSaving(true);setSaveError('')
   try{const result=await request<JobResult>(`/api/v1/jobs/${job.id}/video-scenes`,{method:'PATCH',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:dialog.revision,action:dialog.action,scene_id:dialog.scene?.id,time:['split','boundary','frame'].includes(dialog.action)?moment:undefined})});if(!controller.signal.aborted){onUpdated(job.id,result);setDialog(undefined)}}catch(cause){if(!controller.signal.aborted){if(cause instanceof HttpError&&cause.status===409)setConflict(true);else setSaveError((cause as Error).message)}}finally{if(!controller.signal.aborted)setSaving(false)}
  }
+ const activeScene=data?.scenes[readingIndex(data.scenes,currentTime)]
+ const activeParagraph=activeScene?.paragraphs?.[readingIndex(activeScene.paragraphs,currentTime)]
  const tools=<div className="video-reading-tools"><button className="button" onClick={()=>onEditingChange(!editing)} aria-pressed={editing}>{t(editing?'video.finishEditing':'video.editSections')}</button>{editing?<button className="button" disabled={!data||refreshing||Boolean(error)} onClick={()=>open('restore')}>{t('video.actions.restore')}</button>:null}</div>
  return <>{toolbar?createPortal(tools,toolbar):tools}<div className="video-transcript" ref={scrollRoot} aria-busy={refreshing}>
   {error?<p className="error" role="alert">{error} <button className="button" onClick={()=>reload()}>{t('common.actions.reload')}</button></p>:refreshing?<p className="reader-refresh-status" role="status">{t('video.loading')}</p>:null}
   {data?<>
-   {data.scenes.slice(0,visible).map((scene,index)=><section className="video-section" key={scene.id} data-reader-id={scene.id} data-reader-time={scene.start}>
+   {data.scenes.slice(0,visible).map((scene,index)=><section className={`video-section${activeScene?.id===scene.id?' navigation-active':''}`} key={scene.id} data-reader-id={scene.id} data-reader-time={scene.start}>
     <header><h3>{t('video.scene',{number:index+1})}</h3><button className="video-scene-time" onClick={()=>onSeek(scene.start)}>{formatTime(scene.start,false)} – {formatTime(scene.end,false)}</button>{editing?<div className="video-scene-actions"><button className="button" disabled={refreshing||Boolean(error)} onClick={()=>open('frame',scene,index)}>{t('video.actions.frame')}</button>{index+1<data.scenes.length?<button className="button" disabled={refreshing||Boolean(error)} onClick={()=>{open('boundary',scene,index);setMoment(scene.end)}}>{t('video.actions.boundary')}</button>:null}</div>:null}</header>
     <div className="video-scene-content"><Frame jobId={job.id} scene={scene}/><div className="video-scene-text">
-    {scene.paragraphs?.length?scene.paragraphs.map((paragraph,i)=><div className="video-paragraph" key={i}><div><button className="video-speaker" onClick={()=>onRename(paragraph.speaker)}>{paragraph.speaker_label}</button><button className="video-paragraph-time" onClick={()=>onSeek(paragraph.start)}>{formatTime(paragraph.start,false)} – {formatTime(paragraph.end,false)}</button><button className="icon-button video-enroll" title={t('asr.results.addToVoiceprints')} aria-label={t('asr.results.addToVoiceprints')} onClick={()=>onEnroll(paragraph.speaker,paragraph.segment_ids)}><Fingerprint size={17}/></button></div><p>{paragraph.text}</p></div>):<p className="video-silent">{t('video.noSpeech')}</p>}
+    {scene.paragraphs?.length?scene.paragraphs.map((paragraph,i)=><div className={`video-paragraph${paragraph===activeParagraph?' navigation-active':''}`} key={i}><div><button className="video-speaker" onClick={()=>onRename(paragraph.speaker)}>{paragraph.speaker_label}</button><button className="video-paragraph-time" onClick={()=>onSeek(paragraph.start)}>{formatTime(paragraph.start,false)} – {formatTime(paragraph.end,false)}</button><button className="icon-button video-enroll" title={t('asr.results.addToVoiceprints')} aria-label={t('asr.results.addToVoiceprints')} onClick={()=>onEnroll(paragraph.speaker,paragraph.segment_ids)}><Fingerprint size={17}/></button></div><p>{paragraph.text}</p></div>):<p className="video-silent">{t('video.noSpeech')}</p>}
     </div></div>
     {editing?<div className="video-scene-actions"><button className="button" disabled={refreshing||Boolean(error)} onClick={()=>open('split',scene,index)}>{t('video.actions.split')}</button>{index+1<data.scenes.length?<button className="button" disabled={refreshing||Boolean(error)} onClick={()=>open('merge_next',scene,index)}>{t('video.actions.merge_next')}</button>:null}</div>:null}
    </section>)}

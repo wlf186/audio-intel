@@ -16,7 +16,7 @@ ASR and TTS ratios are stored independently in this site's `audio-intel:workbenc
 
 The Library uses a single page heading and Voiceprints/Hotwords tabs. Desktop people and sample panes scroll within the available height; alphabet navigation scrolls the people list without changing the selected person. See the [library guide](LIBRARY.md) for transfer and ordering rules.
 
-视频转写结果默认显示共用时间刻度的场景缩略图和波形，点击或拖动波形定位；可缩放、平移及回到播放位置。PC 截图与对应文字并排，点击截图可放大；“图文阅读／逐句明细”和分段编辑操作共用阅读工具栏。音频结果仍默认展示波形。详见[音视频指南](VIDEO_TRANSCRIPTION.md)。
+视频转写结果默认显示共用时间刻度的画面缩略图和波形。“画面目录”定位对应时间段的开头；点击波形按准确时间定位，拖动在松开后同步滚动、高亮正文。放大后用横向滚动条或触控板浏览，手机可横向拖动缩略图区；浏览不改变播放时间，“定位播放点”恢复跟随。主动定位逐句明细会清除搜索／说话人筛选，模式切换仍保留各自阅读位置和原有存储期限。PC 截图与文字并排，点击正文截图可放大；阅读模式与编辑或搜索／筛选共用工具栏。增强状态收在下载旁，点击查看设置强度及实际处理详情；较窄卡片使用“下载音频”菜单。音频结果仍默认展示波形。详见[音视频指南](VIDEO_TRANSCRIPTION.md)。
 
 Video results use a compact seek bar with an optional waveform. Desktop frames sit beside their matching text and open an enlarged view when clicked. Reading mode and scene editing share a toolbar. Audio results retain their default waveform. See the [audio/video guide](VIDEO_TRANSCRIPTION.md).
 
