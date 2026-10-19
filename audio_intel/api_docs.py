@@ -1006,6 +1006,9 @@ DATETIME_FIELDS = {
 }
 
 REQUEST_EXAMPLES: dict[tuple[str, str], dict[str, dict[str, Any]]] = {
+    ("/api/v1/jobs/storage", "post"): {
+        "selected_jobs": {"summary": "测量任务文件 / Measure owned job files", "value": {"job_ids": ["asr_example"], "refresh": False}},
+    },
     ("/api/v1/jobs/{job_id}/speakers/{speaker_id}", "patch"): {
         "name_and_note": {"summary": "更新姓名与备注，合并相同人员 / Update name and note, merging matching identities", "value": {"name": "张三", "note": "研发一部"}},
         "preserve_note": {"summary": "只修改姓名，保留备注 / Rename while preserving the note", "value": {"name": "李四"}},

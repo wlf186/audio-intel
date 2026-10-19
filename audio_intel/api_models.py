@@ -1011,3 +1011,29 @@ class ArtifactWaveformResponse(PublicModel):
     artifact_name: str = Field(description="音频产物名称 / Audio artifact name")
     duration: float = Field(gt=0, description="波形对应的音频时长（秒） / Waveform audio duration in seconds")
     waveform: list[Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]] = Field(min_length=1, max_length=240, description="按时间均匀分布的峰值，范围 0–1 / Uniformly timed peak amplitudes in [0, 1]")
+
+
+class JobStorageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    job_ids: list[Annotated[str, Field(min_length=1, max_length=128)]] = Field(min_length=1, max_length=100, description="最多100个任务ID / At most 100 job IDs")
+    refresh: bool = Field(False, description="绕过短期缓存 / Bypass the short-lived cache")
+
+
+class JobStorageItem(PublicModel):
+    id: str
+    status: Literal["ready", "error", "not_found"]
+    bytes: int | None = Field(ge=0, description="任务文件占用；未知为null / Owned file bytes; null when unknown")
+    checked_at: str = Field(description="测量时间 / Measurement timestamp")
+    basis: Literal["allocated", "logical"] | None = Field(description="分配空间；无块统计的平台使用逻辑字节 / Allocated space, or logical bytes where block accounting is unavailable")
+
+
+class JobStorageResponse(PublicModel):
+    items: list[JobStorageItem]
+
+
+class JobWaveformResponse(PublicModel):
+    track: Literal["original", "enhanced"]
+    duration: float = Field(gt=0, description="完整音轨秒数 / Full track duration in seconds")
+    start: float = Field(ge=0, description="实际窗口起点 / Actual window start")
+    end: float = Field(gt=0, description="实际窗口终点 / Actual window end")
+    waveform: list[Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]] = Field(min_length=1, max_length=2048, description="窗口内均匀时间峰值 / Uniformly timed peaks within the window")

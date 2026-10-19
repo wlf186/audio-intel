@@ -154,7 +154,11 @@ def retrieve(path: Path, *, cache_directory: Path | None = None) -> dict[str, An
     existing = cached(path, cache_directory)
     if existing is not None:
         return existing
-    key = str(path)
+    return run_limited(str(path), lambda: prepare(path, cache_directory=cache_directory) if cache_directory is not None else prepare(path))
+
+
+def run_limited(key: str, calculate):
+    """Share two calculation slots and coalesce identical pending reads."""
     with _lock:
         future = _pending.get(key)
         owner = future is None
@@ -166,7 +170,7 @@ def retrieve(path: Path, *, cache_directory: Path | None = None) -> dict[str, An
     if not owner:
         return future.result()
     try:
-        result = prepare(path, cache_directory=cache_directory) if cache_directory is not None else prepare(path)
+        result = calculate()
         future.set_result(result)
         return result
     except Exception as exc:

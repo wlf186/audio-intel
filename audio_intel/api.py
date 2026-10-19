@@ -17,7 +17,7 @@ import uuid
 from contextlib import ExitStack, contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Literal
 from urllib.parse import urlsplit
 
 from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Security, UploadFile
@@ -106,7 +106,7 @@ from .api_docs import (
     enrich_openapi_schema,
 )
 from .api_models import (
-    ArtifactWaveformResponse,
+    ArtifactWaveformResponse, JobStorageRequest, JobStorageResponse, JobWaveformResponse,
     AdmissionProblemDetail, AuthSessionResponse, BatchDeleteResponse, CapabilitiesResponse,
     EventJobResponse, EventSnapshot, EventUpdate,
     HealthResponse, JobListResponse, JobResponse, JobResultResponse, OpenAIModelList, QueueResponse,
@@ -2463,6 +2463,20 @@ def create_app() -> FastAPI:
             "limit": limit, "offset": offset, "has_more": offset + len(items) < total,
         }
 
+    @app.post(
+        "/api/v1/jobs/storage", response_model=JobStorageResponse, tags=[JOB_TAG],
+        summary="查询任务文件占用 / Measure job file storage",
+        description=bilingual("最多100个ID，逐项返回状态；只统计任务专属 jobs/id 和 tmp/id，不跟随链接。活动任务缓存5秒，终态30秒，refresh可刷新；不读取任务结果。", "Up to 100 IDs with per-item states. Counts only owned jobs/id and tmp/id without following links. Active TTL 5s, terminal TTL 30s; refresh bypasses cache. Does not read job results."),
+        operation_id="getJobsStorage", responses={**AUTH_RESPONSES, **VALIDATION_RESPONSE, 429: problem_response("统计繁忙，请稍后重试 / Storage measurement busy; retry", 429)},
+    )
+    def jobs_storage(payload: JobStorageRequest, response: Response, _: None = Depends(require_api_key)) -> dict:
+        from .job_storage import retrieve, StorageBusy
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            return retrieve(list(dict.fromkeys(payload.job_ids)), settings.jobs_dir, settings.temp_dir, refresh=payload.refresh)
+        except StorageBusy:
+            raise HTTPException(429, "Storage measurement busy", headers={"Retry-After": "2"}) from None
+
     @app.get(
         "/api/v1/jobs/{job_id}", response_model=JobResponse, response_model_exclude_unset=True,
         tags=[JOB_TAG], summary="查询任务状态与进度 / Get job status and progress",
@@ -2679,6 +2693,48 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Playback audio is unavailable")
         filename = f"{safe_filename(Path(str(job['display_name'])).stem, 'audio')[:150]}-original.wav" if download else None
         return FileResponse(path, media_type="audio/wav", filename=filename)
+
+    @app.get(
+        "/api/v1/jobs/{job_id}/waveform", response_model=JobWaveformResponse, tags=[JOB_TAG],
+        summary="读取时间窗口波形 / Get timeline window waveform",
+        description=bilingual("仅已保存的原音或增强音WAV，不生成缺失音频。窗口以秒表示，最多2048点；内存缓存，与产物波形共享计算限额，读取时阻止删除。旧产物接口仍最多240点。", "Saved original/enhanced WAV only; missing audio is never generated. Window in seconds, at most 2048 peaks. Memory cache, shared artifact calculation budget and deletion protection. The artifact endpoint remains limited to 240 peaks."),
+        operation_id="getJobWaveform", responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE, 429: problem_response("波形计算繁忙 / Waveform calculation busy", 429)},
+    )
+    def job_waveform(
+        job_id: str, response: Response,
+        track: Literal["original", "enhanced"] = Query("original", description="音轨 / Audio track"),
+        start: float = Query(0, ge=0, allow_inf_nan=False, description="窗口起点秒数 / Start seconds"),
+        end: float | None = Query(None, gt=0, allow_inf_nan=False, description="窗口终点秒数，默认末尾 / End seconds, defaults to track end"),
+        points: int = Query(1024, ge=1, le=2048, description="最多峰值数量 / Maximum peak count"),
+        _: None = Depends(require_api_key),
+    ) -> dict:
+        from .document_download import reader_lease
+        from .waveforms import WaveformBusy
+        from .waveform_ranges import retrieve
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            with reader_lease(job_id):
+                job = job_or_404(job_id)
+                if job["kind"] != "asr" or job["state"] != "succeeded":
+                    raise HTTPException(409, "Only successful ASR jobs have timeline audio")
+                result = job.get("result") or {}
+                root = settings.jobs_dir.resolve() / job_id / "output"
+                path = root / "playback.wav"
+                declared = result.get("playback_url")
+                if track == "enhanced":
+                    declared = (result.get("audio_enhancement") or {}).get("playback_url")
+                    item = next((item for item in result.get("artifacts", []) if declared and declared.split('?')[0].endswith('/artifacts/' + item.get('name', ''))), None)
+                    path = Path(item["path"]) if item else root / "missing"
+                if not declared or path.resolve().parent != root or not path.is_file() or path.suffix.lower() != '.wav':
+                    raise HTTPException(404, "Saved waveform audio unavailable")
+                try:
+                    return retrieve(path.resolve(), track, start, end, points)
+                except WaveformBusy:
+                    raise HTTPException(429, "Waveform calculation busy", headers={"Retry-After": "2"}) from None
+                except (ValueError, OSError):
+                    raise HTTPException(422, "Invalid waveform window or saved WAV") from None
+        except FileNotFoundError:
+            raise HTTPException(404, "Saved waveform audio unavailable") from None
 
     @app.get(
         "/api/v1/jobs/{job_id}/artifacts/{name}", response_class=FileResponse,
