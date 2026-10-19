@@ -16,7 +16,7 @@ ASR and TTS ratios are stored independently in this site's `audio-intel:workbenc
 
 The Library uses a single page heading and Voiceprints/Hotwords tabs. Desktop people and sample panes scroll within the available height; alphabet navigation scrolls the people list without changing the selected person. See the [library guide](LIBRARY.md) for transfer and ordering rules.
 
-视频转写结果默认使用紧凑播放进度条，波形可按需展开。PC 截图与对应文字并排，点击截图可放大；“图文阅读／逐句明细”和分段编辑操作共用阅读工具栏。音频结果仍默认展示波形。详见[音视频指南](VIDEO_TRANSCRIPTION.md)。
+视频转写结果默认显示共用时间刻度的场景缩略图和波形，点击或拖动波形定位；可缩放、平移及回到播放位置。PC 截图与对应文字并排，点击截图可放大；“图文阅读／逐句明细”和分段编辑操作共用阅读工具栏。音频结果仍默认展示波形。详见[音视频指南](VIDEO_TRANSCRIPTION.md)。
 
 Video results use a compact seek bar with an optional waveform. Desktop frames sit beside their matching text and open an enlarged view when clicked. Reading mode and scene editing share a toolbar. Audio results retain their default waveform. See the [audio/video guide](VIDEO_TRANSCRIPTION.md).
 
@@ -28,7 +28,7 @@ English: Desktop voiceprints use equal-width, independently scrolling people and
 
 声纹库在当前分组内提供批量勾选，切换视图清空勾选；新增人员默认当前筛选分组；全部人员视图默认“未分组”，新建和编辑时均可选择归属。ASR 的“选择分组”默认全部（包含之后新增分组），手动选择只记住指定 ID。加载失败可重试，失效 ID 移除后提示，全部失效时阻止提交，不能扩大到全部。localStorage ASR 偏好 v7 兼容迁移旧版（含正式版 v0.1.33 的 v4）；恢复参数默认和资料库替换恢复全部分组。
 
-转写下载的“脱敏导出”默认开启，规则每行 `原词=替换词`，最多 100 对，错误提示行号。独立 localStorage `audio-intel:transcript-export:v1` 长期保存开关和编辑内容，包括尚未修正的输入；刷新、重开、退出登录、资料库替换均保留。关闭开关停止姓名/备注处理和关键词替换，规则保留；“恢复默认导出设置”开启并清空规则。正文只替换明确关键词，音频和画面保持原样。
+转写下载的“脱敏导出”默认开启，规则每行 `原词=替换词`，最多 100 对，错误提示行号。独立 localStorage `audio-intel:transcript-export:v1` 长期保存开关和编辑内容，包括尚未修正的输入；刷新、重开、退出登录、资料库替换均保留。关闭开关停止姓名/备注处理和关键词替换，规则保留；“清空替换规则”仅清空规则、保留脱敏开关，可撤销至清空前的原始输入；继续编辑、离开页面或刷新后撤销失效。正文只替换明确关键词，音频和画面保持原样。
 
 English: ASR v7 preferences migrate older settings, including published v0.1.33 schema v4, and persist either all future groups or explicit IDs. Invalid choices never widen scope. Library replacement resets group selection to all. New people default to the filtered group, or Ungrouped in the all-people view; creation/editing can choose a group. Export v1 preferences independently persist toggle/editor contents across logout and replacement; reset enables redaction and clears rules. Disabling redaction disables every transformation without losing the rules. Loading/error/retry states remain explicit.
 
@@ -116,3 +116,9 @@ historical jobs without a saved original WAV show an unavailable explanation and
 这些导航记录保存到当前页签的 `sessionStorage`：刷新与切页保留，关闭页签、退出登录或鉴权失效清除。资料库替换只清除人员导航；导出设置、ASR 参数和桌面比例仍沿用各自长期 `localStorage` 周期。浏览器禁用存储时，当前页面仍可使用导航。
 
 English: Narrow screens use a separate person detail route, with Back/browser history restoring group, search and both list/index scroll positions. Desktop retains two panes. Existing samples appear first; Add sample expands upload/recording. Returning to the list retains an unsubmitted in-memory draft; changing people/groups or leaving the library asks before discarding it. Refresh does not restore file bytes. Readers save an anchor and loaded count per job/view, plus segment filters; refreshing sections keeps the old content visible until current data is ready. Deleted jobs remove bookmarks. Navigation uses current-tab sessionStorage across reload/navigation, cleared on tab closure, logout or authentication invalidation. Library replacement clears person navigation only. Existing localStorage export, parameter and layout preferences retain their independent lifetimes.
+
+结果页的增强状态与本次保存的力度合并为紧凑摘要，“处理详情”展开人声与降噪各自状态；部分回退始终在摘要提示。历史任务未记录的力度不补默认值。
+
+任务记录显示每项任务文件占用，勾选与删除确认显示已知项合计及未知项数量；零字节、统计中与统计失败分开显示，可手动刷新。统计任务专属输入、输出、临时文件，排除共享资料库、模型和数据库；活动任务数据最多缓存5秒，终态30秒。删除后的实际释放可能因数据库压缩、正在写入文件而不同。窄屏在任务名称下显示占用。
+
+English: Enhancement status and saved strengths occupy one compact summary; details show each operation, with partial fallback always visible. History shows per-task owned disk usage and a selection subtotal with unknown counts. Loading/errors never imply zero. Refresh remeasures owned inputs/outputs/temp files, excluding shared libraries/models/database; actual reclaimed space may differ. Clear replacement rules preserves redaction and offers transient exact-text undo; preference storage lifetime is unchanged.

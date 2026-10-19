@@ -1,3 +1,4 @@
+import {mockTimelineWaveform} from './timeline-fixture'
 import {capabilitiesFor,expect,test,type Page} from './fixtures'
 
 async function fixture(page:Page,locale='zh-CN'){
@@ -12,6 +13,7 @@ async function fixture(page:Page,locale='zh-CN'){
  const {request:_,result:__,...summary}=job
  await page.route(url=>url.pathname==='/api/v1/jobs',route=>{state.listReads++;return route.fulfill({json:{items:[summary,{...summary,id:'other-job',display_name:'Other video'}],total:2,count:2,has_more:false}})})
  await page.route(/\/api\/v1\/jobs\/(enrollment-video|other-job)$/,route=>route.fulfill({json:{...job,id:new URL(route.request().url()).pathname.split('/').pop()}}))
+ await mockTimelineWaveform(page,'enrollment-video',120)
  await page.route('**/video-scenes',route=>{state.sceneReads++;return route.fulfill({json:{revision:1,scenes}})})
  await page.route('**/video-frames/*',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="white"/></svg>'}))
  const wav=Buffer.alloc(44+16000*120*2);wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(wav.length-44,40)

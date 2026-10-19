@@ -132,3 +132,61 @@ def test_window_reader_blocks_deletion_and_shares_busy_budget(local, monkeypatch
     assert response.status_code == 429 and response.headers['Retry-After'] == '2'
     with deletion_guard(job['id']):
         assert client.get(url).status_code == 404
+
+
+def test_storage_ttl_active_and_terminal_and_deleted_cache(local, monkeypatch):
+    config, client = local
+    job = db.create_job('asr', 'empty', {})
+    clock = [100.]
+    monkeypatch.setattr(job_storage.time, 'monotonic', lambda: clock[0])
+    calls = []
+    monkeypatch.setattr(job_storage, 'measure', lambda _: (calls.append(1) or 0, 'logical'))
+    def read():
+        return client.post('/api/v1/jobs/storage', json={'job_ids': [job['id']]}).json()['items'][0]
+    assert read()['bytes'] == 0
+    clock[0] += 4
+    assert read()['bytes'] == 0 and len(calls) == 1
+    clock[0] += 2
+    read(); assert len(calls) == 2
+    db.finish_job(job['id'], 'cancelled')
+    read(); assert len(calls) == 3
+    clock[0] += 29
+    read(); assert len(calls) == 3
+    clock[0] += 2
+    read(); assert len(calls) == 4
+    assert client.delete(f'/api/v1/jobs/{job["id"]}?purge=true').status_code == 204
+    assert read()['status'] == 'not_found'
+
+
+@pytest.mark.skipif(__import__('os').name != 'nt', reason='Native Windows junction behavior')
+def test_storage_skips_windows_junction(tmp_path):
+    import subprocess
+    root = tmp_path/'owned'; root.mkdir()
+    outside = tmp_path/'shared'; outside.mkdir()
+    (outside/'large').write_bytes(b'x'*100000)
+    baseline = job_storage.measure([root])[0]
+    link = root/'junction'
+    result = subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(outside)], capture_output=True)
+    assert result.returncode == 0, result.stderr.decode(errors='replace')
+    try:
+        assert job_storage.measure([root])[0] < baseline + 100000
+    finally:
+        link.rmdir()
+
+
+def test_window_decode_memory_is_bounded_and_invalid_file_is_422(local):
+    import tracemalloc
+    _, client = local
+    job, output = audio_job(local)
+    path = output/'playback.wav'
+    with sf.SoundFile(path, 'w', samplerate=16000, channels=1, subtype='PCM_16') as stream:
+        for _ in range(600):
+            stream.write(np.full(16000, .25, dtype='float32'))
+    tracemalloc.start()
+    value = waveform_ranges.retrieve(path, 'original', 590, 600, 2048)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert value['duration'] == 600 and value['start'] == 590
+    assert value['waveform'] == [.25]*2048 and peak < 4*1024*1024
+    path.write_bytes(b'broken wav')
+    assert client.get(f'/api/v1/jobs/{job["id"]}/waveform').status_code == 422

@@ -156,3 +156,11 @@ English: Select voiceprint groups for audio/video; eligible people are fixed at 
 English: Each task/view retains its reading anchor and loaded count across navigation/reload, including segment filters. Edited sections restore a nearby ID/time anchor. Refresh keeps old content visible, disables editing and provides retry on failure. Current-tab sessionStorage clears on logout/auth invalidation. Time fields accept synchronized seconds and hh:mm:ss.sss, with ±0.1 and current-playback controls. Invalid ranges disable Save; server validation remains authoritative. Narrow screens consolidate transcript formats/redaction/rules into one export dialog. Desktop menus dismiss on outside click/Escape. Invalid rules block downloads only when redaction is enabled. Enrollment preselects clicked-paragraph sentences, retains selections between its two steps and keeps footer actions reachable.
 
 高级设置分别配置 `speech_enhancement_strength`（0–2，默认 1）与 `background_denoise_strength`（0–1，GTCRN 默认 0.5），视频提交 JSON 保存两项力度。Capabilities 公布实际范围／默认值；仅影响新提交任务，暂停上传保留原参数。Advanced strengths and reset share audio ASR preferences; paused uploads keep their saved snapshot.
+
+## 视频结果时间轴 / Video result timeline
+
+视频结果默认常显波形，上方为已有场景代表截图，共用同一时间刻度；波形是播放定位控件，不另设播放进度滑块。初始显示全片，可×2／÷2缩放、平移窗口（最小10秒，短视频以全长为限）、显示全片及回到播放位置。手动平移暂时关闭跟随播放；“浏览时间范围”只移动可见窗口，不改变播放位置。截图区间按实际起止时间成比例排列，密集场景可通过场景菜单和缩放定位。仅加载可见且有展示空间的缩略图，避免长视频一次请求全部图片。
+
+悬停或键盘聚焦缩略图显示放大预览、场景范围和截图时刻，Escape／离开关闭；移动端可点击预览并跳转。点击场景定位到 `scene.start`，保留暂停／播放状态，并在当前图文阅读或逐句明细模式中显示对应内容；代表帧的 `frame_time` 可能位于场景末尾，不用作跳转时间。编辑场景后，阅读区与时间轴共用同一份修订结果并同时更新。
+
+English: The always-visible waveform seeks playback; representative scene thumbnails share its time scale. Zoom/pan controls browse the window separately from seeking. Manual pan pauses auto-follow; Return to playhead restores it. Hover/focus previews reuse existing images, never decode additional video frames. Scene selection seeks the scene start, preserves playback state and reveals the relevant reading content. Both views use one revision-aware scenes resource. Peaks are requested for the visible saved audio window; playhead ticks do not refetch. No historical media rewrite or transcription/enhancement pipeline change is required.

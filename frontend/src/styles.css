@@ -485,3 +485,11 @@ select:focus{border-color:var(--cyan)}
 @media(max-width:520px){.people-panel{max-height:none}.group-edit-actions .icon-button{min-width:44px;min-height:44px}.transcript-export-actions{flex-wrap:wrap}.asr-voiceprint-toggle .voiceprint-scope-button{min-height:44px}.person-select-row{grid-template-columns:44px minmax(0,1fr)}}
 
 .voiceprint-group-controls>label{margin:0}.voiceprint-group-controls,.voiceprint-batch-controls{flex-shrink:0}.voiceprint-batch-controls>.batch-select-all{display:flex;margin:0;font-size:12px}.voiceprint-batch-controls>span{align-self:center;font-size:12px}.asr-voiceprint-toggle .voiceprint-scope-button{width:44px;min-width:44px;padding:0;display:grid;place-items:center;flex-shrink:0}
+
+.job-storage-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:10px 0;color:var(--muted);font-size:12px}
+.job-storage-toolbar .button{flex-shrink:0;min-height:44px}
+.storage-mobile{display:none}
+.job-storage{font-size:11px;overflow-wrap:anywhere;color:var(--muted)}
+@media(min-width:1201px){.jobs-page .table-head,.jobs-page .table-row{grid-template-columns:30px minmax(170px,1.6fr) 55px 88px 146px 82px minmax(110px,1fr) 88px 122px}}
+@media(min-width:1024px) and (max-width:1200px){.jobs-page .table-head,.jobs-page .table-row{grid-template-columns:28px minmax(140px,1.4fr) 48px 78px 124px 75px minmax(90px,1fr) 70px 100px;gap:6px}}
+@media(max-width:1023px){.job-storage{display:none}.storage-mobile{display:inline}.job-storage-toolbar{align-items:flex-start}.selection-bar>span{min-width:0;overflow-wrap:anywhere}}

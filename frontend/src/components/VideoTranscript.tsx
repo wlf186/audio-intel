@@ -2,6 +2,7 @@ import {useEffect,useRef,useState} from 'react'
 import {createPortal} from 'react-dom'
 import {Fingerprint} from 'lucide-react'
 import {useTranslation} from 'react-i18next'
+import type {VideoScenesResource} from '../hooks/useVideoScenes'
 import {formatTime,HttpError,request} from '../lib/api'
 import type {Job,JobResult,VideoScene} from '../lib/types'
 import {Modal} from './Modal'
@@ -16,13 +17,10 @@ function Frame({jobId,scene}:{jobId:string;scene:VideoScene}){
  const label=t('video.frameAt',{time:formatTime(scene.frame_time,false)})
  return error?<p role="alert">{t('video.frameFailed')} <button className="button" onClick={()=>{setError(false);setRetry(value=>value+1)}}>{t('common.actions.reload')}</button></p>:<><button type="button" className="video-frame" aria-label={t('workspaceSplit.enlargeFrame')} title={t('workspaceSplit.enlargeFrame')} onClick={()=>setExpanded(true)}><img loading="lazy" src={url} alt={label} onError={()=>setError(true)}/></button>{expanded?<Modal title={label} closeLabel={t('common.actions.close')} className="video-frame-modal" onClose={()=>setExpanded(false)}><img src={url} alt={label} onError={()=>{setExpanded(false);setError(true)}}/></Modal>:null}</>
 }
-export function VideoTranscript({job,toolbar,editing,onEditingChange,onUpdated,onSeek,onRename,onEnroll,currentTime=0}:{job:Job;toolbar?:HTMLElement|null;editing:boolean;onEditingChange:(value:boolean)=>void;onUpdated:(id:string,result:JobResult)=>void;onSeek:(time:number)=>void;onRename:(id:string)=>void;onEnroll:(id:string,segmentIds:number[])=>void;currentTime?:number}){
+export function VideoTranscript({job,toolbar,editing,onEditingChange,onUpdated,onSeek,onRename,onEnroll,resource,reveal,currentTime=0}:{job:Job;resource:VideoScenesResource;reveal?:{sceneId:string;token:number};toolbar?:HTMLElement|null;editing:boolean;onEditingChange:(value:boolean)=>void;onUpdated:(id:string,result:JobResult)=>void;onSeek:(time:number)=>void;onRename:(id:string)=>void;onEnroll:(id:string,segmentIds:number[])=>void;currentTime?:number}){
  const {t}=useTranslation()
- const [data,setData]=useState<{revision:number;scenes:VideoScene[]}>()
- const [error,setError]=useState('')
- const [reload,setReload]=useState(0)
+ const {data,error,loading:refreshing,reload}=resource
  const [visible,setVisible]=useState(()=>readReaderBookmark(`${job.id}:video`)?.visibleCount||20)
- const [refreshing,setRefreshing]=useState(true)
  const scrollRoot=useRef<HTMLDivElement>(null)
  const sentinel=useRef<HTMLDivElement>(null)
  const [dialog,setDialog]=useState<{action:Action;scene?:VideoScene;upper?:number;revision:number}>()
@@ -37,11 +35,15 @@ export function VideoTranscript({job,toolbar,editing,onEditingChange,onUpdated,o
  const [saving,setSaving]=useState(false)
  const [saveError,setSaveError]=useState('')
  const {prepareRefresh}=useReaderBookmark(`${job.id}:video`,scrollRoot,{active:true,ready:Boolean(data)&&!refreshing,visibleCount:visible})
+ useEffect(()=>{if(refreshing)prepareRefresh()},[refreshing,prepareRefresh])
  useEffect(()=>{
-  const controller=new AbortController();prepareRefresh();setRefreshing(true);setError('')
-  void request<{revision:number;scenes:VideoScene[]}>(`/api/v1/jobs/${job.id}/video-scenes`,{signal:controller.signal}).then(value=>{if(!controller.signal.aborted){setData(value);setRefreshing(false)}},cause=>{if(!controller.signal.aborted){setError(cause.message);setRefreshing(false)}})
-  return()=>controller.abort()
- },[job.id,job.result,reload,prepareRefresh])
+  if(!reveal||!data||refreshing)return
+  const index=data.scenes.findIndex(scene=>scene.id===reveal.sceneId)
+  if(index<0)return
+  if(index>=visible){setVisible(index+1);return}
+  const node=[...scrollRoot.current?.querySelectorAll<HTMLElement>('[data-reader-id]')||[]].find(node=>node.dataset.readerId===reveal.sceneId)
+  node?.scrollIntoView({block:'start',behavior:'instant'})
+ },[reveal,data,refreshing,visible])
  useEffect(()=>{setDialog(undefined);setSaving(false);return()=>saveController.current?.abort()},[job.id])
  useEffect(()=>{
   const root=scrollRoot.current,target=sentinel.current
@@ -63,7 +65,7 @@ export function VideoTranscript({job,toolbar,editing,onEditingChange,onUpdated,o
  }
  const tools=<div className="video-reading-tools"><button className="button" onClick={()=>onEditingChange(!editing)} aria-pressed={editing}>{t(editing?'video.finishEditing':'video.editSections')}</button>{editing?<button className="button" disabled={!data||refreshing||Boolean(error)} onClick={()=>open('restore')}>{t('video.actions.restore')}</button>:null}</div>
  return <>{toolbar?createPortal(tools,toolbar):tools}<div className="video-transcript" ref={scrollRoot} aria-busy={refreshing}>
-  {error?<p className="error" role="alert">{error} <button className="button" onClick={()=>setReload(value=>value+1)}>{t('common.actions.reload')}</button></p>:refreshing?<p className="reader-refresh-status" role="status">{t('video.loading')}</p>:null}
+  {error?<p className="error" role="alert">{error} <button className="button" onClick={()=>reload()}>{t('common.actions.reload')}</button></p>:refreshing?<p className="reader-refresh-status" role="status">{t('video.loading')}</p>:null}
   {data?<>
    {data.scenes.slice(0,visible).map((scene,index)=><section className="video-section" key={scene.id} data-reader-id={scene.id} data-reader-time={scene.start}>
     <header><h3>{t('video.scene',{number:index+1})}</h3><button className="video-scene-time" onClick={()=>onSeek(scene.start)}>{formatTime(scene.start,false)} – {formatTime(scene.end,false)}</button>{editing?<div className="video-scene-actions"><button className="button" disabled={refreshing||Boolean(error)} onClick={()=>open('frame',scene,index)}>{t('video.actions.frame')}</button>{index+1<data.scenes.length?<button className="button" disabled={refreshing||Boolean(error)} onClick={()=>{open('boundary',scene,index);setMoment(scene.end)}}>{t('video.actions.boundary')}</button>:null}</div>:null}</header>
@@ -77,7 +79,7 @@ export function VideoTranscript({job,toolbar,editing,onEditingChange,onUpdated,o
   {dialog?<Modal title={t(`video.actions.${dialog.action}`)} closeLabel={t('common.actions.close')} onClose={()=>{if(!saving)setDialog(undefined)}}>
    <p>{t(`video.editHelp.${dialog.action}`)}</p>
    {timed?<><p className="time-range-help">{t('workspaceUx.timeRange',{start:formatTime(dialog.scene?.start||0),end:formatTime(dialog.upper||0),left:t(dialog.action==='frame'?'workspaceUx.inclusive':'workspaceUx.exclusive')})}</p><div className="two-cols"><label>{t('video.timeSeconds')}<input type="number" min={dialog.scene?.start||0} max={dialog.upper} step="0.1" value={momentInput} aria-invalid={!validTime} onChange={event=>{setMomentInput(event.target.value);if(event.target.value.trim()&&Number.isFinite(Number(event.target.value)))setClockInput(formatTime(Number(event.target.value)))}}/></label><label>{t('workspaceUx.timeClock')}<input value={clockInput} placeholder="00:00:00.000" aria-invalid={!validTime} onChange={event=>{const raw=event.target.value;setClockInput(raw);const match=/^(\d+):([0-5]\d):([0-5]\d(?:\.\d{1,3})?)$/.exec(raw);setMomentInput(match?String(Number(match[1])*3600+Number(match[2])*60+Number(match[3])):'')}}/></label></div>{!validTime?<p className="error" role="alert">{t('workspaceUx.invalidTime')}</p>:null}<div className="time-edit-actions"><button className="button" disabled={!Number.isFinite(moment)||!momentInput.trim()} onClick={()=>setMoment(Math.round((moment-.1)*10)/10)}>−0.1 {t('workspaceUx.seconds')}</button><button className="button" disabled={!Number.isFinite(moment)||!momentInput.trim()} onClick={()=>setMoment(Math.round((moment+.1)*10)/10)}>+0.1 {t('workspaceUx.seconds')}</button><button className="button" onClick={()=>setMoment(currentTime)}>{t('workspaceUx.currentTime')}</button><button className="button" disabled={!validTime} onClick={()=>{setPreview(moment);setPreviewError(false)}}>{t('video.previewFrame')}</button></div>{preview!==undefined?(previewError?<p className="error" role="alert">{t('video.frameFailed')}</p>:<img className="video-edit-preview" src={`/api/v1/jobs/${job.id}/video-preview?time=${preview}`} alt={t('video.frameAt',{time:formatTime(preview,false)})} onError={()=>setPreviewError(true)}/>):null}</>:null}
-   {stale?<p className="error" role="alert">{t('video.editConflict')} <button className="button" onClick={()=>{setDialog(undefined);setConflict(false);setReload(value=>value+1)}}>{t('video.discardEditReload')}</button></p>:saveError?<p className="error" role="alert">{saveError}</p>:null}
+   {stale?<p className="error" role="alert">{t('video.editConflict')} <button className="button" onClick={()=>{setDialog(undefined);setConflict(false);reload()}}>{t('video.discardEditReload')}</button></p>:saveError?<p className="error" role="alert">{saveError}</p>:null}
    <div className="modal-actions"><button className="button" disabled={saving} onClick={()=>setDialog(undefined)}>{t('common.actions.cancel')}</button><button className="primary" disabled={saving||!data||refreshing||Boolean(error)||stale||!validTime} onClick={()=>void save()}>{saving?t('common.states.processing'):t('common.actions.save')}</button></div>
   </Modal>:null}
  </div></>

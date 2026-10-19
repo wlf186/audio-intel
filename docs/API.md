@@ -82,7 +82,7 @@ response.raise_for_status()
 Path("transcript.json").write_bytes(response.content)
 ```
 
-中文：界面全部转写下载默认脱敏。替换编辑器按行 `原词=替换词`，按第一个等号拆分，忽略空行、允许空替换词；错误显示行号。独立 localStorage `audio-intel:transcript-export:v1` 保存开关和原始编辑内容，刷新、重开、退出登录及资料库替换后保留；恢复默认导出设置开启脱敏并清空规则。ASR 分组偏好使用 v4，兼容迁移旧版本。
+中文：界面全部转写下载默认脱敏。替换编辑器按行 `原词=替换词`，按第一个等号拆分，忽略空行、允许空替换词；错误显示行号。独立 localStorage `audio-intel:transcript-export:v1` 保存开关和原始编辑内容，刷新、重开、退出登录及资料库替换后保留；清空替换规则保留脱敏开关，只清空规则，可撤销（保留完整原始输入，包括错误内容）；下一次编辑、页面卸载或刷新后撤销失效。ASR 分组偏好使用 v4，兼容迁移旧版本。
 
 ## Native asynchronous lifecycle
 
@@ -816,3 +816,22 @@ jq -n --arg upload_id "$VIDEO_UPLOAD_ID" \
 See the [processing and validation contract](ASR_ENHANCEMENT.md). Background
 speakers and severe reverberation can remain; text agreement, listening level and
 non-speech energy changes do not establish accuracy without a trusted transcript.
+
+## Task storage and timeline waveforms / 任务占用与时间轴波形
+
+`POST /api/v1/jobs/storage` accepts `{ "job_ids": ["job-id"], "refresh": false }` (1–100 IDs, duplicates coalesced, no submission/idempotency semantics). Authentication is required. Returns `{ "items": [{ "id": "job-id", "status": "ready", "bytes": 1048576, "checked_at": "2026-10-19T00:00:00Z", "basis": "allocated" }] }`. Each item is `ready`, `error`, or `not_found`; unknown bytes/basis are null, never fabricated zero. Measures only `data/jobs/<id>` and `tmp/<id>` with no symlink/junction traversal. `basis=allocated` uses filesystem blocks; `logical` is the fallback on platforms without block accounting. It excludes shared voiceprints, documents, models and the database. Active cache TTL is 5 seconds, terminal TTL 30 seconds, with up to two scans; `refresh=true` bypasses cache. Busy returns 429 and `Retry-After: 2`. Measurements are estimates and can differ from deletion's reclaimed bytes. Global job summaries and SSE remain unchanged and do not include storage or read results.
+
+中文：任务占用是按需批量查询的只读元数据；逐项状态、空值与真实零值必须区分。客户端仅查询当前页，勾选按已知项汇总，部分未知时明确提示；刷新可绕过短期缓存。统计不改写历史任务。
+
+`GET /api/v1/jobs/{job_id}/waveform?track=original&start=0&end=60&points=1024` reads saved timeline WAV only. `track` is `original` (default) or `enhanced`; start defaults to 0, end to track end, points is 1–2048 (default 1024). Returns `{ "track": "original", "duration": 120, "start": 0, "end": 60, "waveform": [0.2, 0.4] }`, with actual sample-aligned window boundaries and uniformly spaced peaks in [0,1]. The frontend uses returned window coordinates. End clips to duration; empty/reversed/nonfinite windows return 422. Requires authentication and a successful ASR job (otherwise 409); undeclared/missing WAV returns 404, never reprocesses media or falls back to source. Uses bounded-memory WAV seeking, a bounded in-memory cache and the existing two-calculation budget (429 + `Retry-After: 2`). Deletion while a reader is active returns 409. Existing artifact waveform responses remain capped at 240 points.
+
+中文：视频时间轴从此接口按可见窗口读取原音／增强音，播放时间更新不重复请求；该接口不解析原视频、不生成缺失文件、不持久化新波形缓存。
+
+Executable client / 可执行客户端：
+
+```bash
+.runtime/api/bin/python scripts/job_metadata.py storage JOB_ID
+.runtime/api/bin/python scripts/job_metadata.py waveform JOB_ID --track enhanced --start 30 --end 60 --points 1024
+```
+
+Set `AUDIO_INTEL_BASE_URL` and optional `AUDIO_INTEL_API_KEY` in the client shell. Windows uses `.runtime\api\Scripts\python.exe`.

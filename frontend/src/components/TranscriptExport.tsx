@@ -2,7 +2,7 @@ import {useEffect,useRef,useState} from 'react'
 import {Download,Settings2} from 'lucide-react'
 import {useTranslation} from 'react-i18next'
 import {HttpError,requestResponse} from '../lib/api'
-import {loadTranscriptExportPreferences,saveTranscriptExportPreferences,parseTranscriptRules,defaultTranscriptExportPreferences,type TranscriptExportPreferences} from '../lib/transcriptExportPreferences'
+import {loadTranscriptExportPreferences,saveTranscriptExportPreferences,parseTranscriptRules,type TranscriptExportPreferences} from '../lib/transcriptExportPreferences'
 import type {Job} from '../lib/types'
 import {Modal} from './Modal'
 import {ActionPopover} from './ActionPopover'
@@ -20,6 +20,7 @@ export function TranscriptExport({job}:{job:Job}){
  const {t}=useTranslation()
  const [preferences,setPreferences]=useState(loadTranscriptExportPreferences)
  const updatePreferences=(next:TranscriptExportPreferences)=>{setPreferences(next);saveTranscriptExportPreferences(next);setError('')}
+ const [undoRules,setUndoRules]=useState<string>()
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
  const [remaining,setRemaining]=useState(0)
@@ -60,7 +61,7 @@ export function TranscriptExport({job}:{job:Job}){
   }finally{if(!active.signal.aborted){controller.current=undefined;setBusy(false)}}
  }
  const redaction=<label className="redaction-toggle"><input type="checkbox" checked={preferences.redact} onChange={event=>updatePreferences({...preferences,redact:event.target.checked})}/>{t('transcriptExport.redact')}</label>
- const editor=<div className="transcript-rule-editor"><p>{t('transcriptExport.help')}</p><label>{t('transcriptExport.rulesLabel')}<textarea aria-label={t('transcriptExport.rulesLabel')} aria-invalid={Boolean(ruleError)} aria-describedby={ruleError?'transcript-rule-error':undefined} rows={5} value={preferences.rules} spellCheck={false} placeholder={t('transcriptExport.example')} onChange={event=>updatePreferences({...preferences,rules:event.target.value})}/></label>{ruleError?<p id="transcript-rule-error" className="error" role="alert">{ruleError}</p>:null}<button className="button" disabled={busy} onClick={()=>updatePreferences({...defaultTranscriptExportPreferences})}>{t('transcriptExport.reset')}</button></div>
+ const editor=<div className="transcript-rule-editor"><p>{t('transcriptExport.help')}</p><label>{t('transcriptExport.rulesLabel')}<textarea aria-label={t('transcriptExport.rulesLabel')} aria-invalid={Boolean(ruleError)} aria-describedby={ruleError?'transcript-rule-error':undefined} rows={5} value={preferences.rules} spellCheck={false} placeholder={t('transcriptExport.example')} onChange={event=>{setUndoRules(undefined);updatePreferences({...preferences,rules:event.target.value})}}/></label>{ruleError?<p id="transcript-rule-error" className="error" role="alert">{ruleError}</p>:null}<div className="rule-clear-actions"><button className="button" disabled={busy||!preferences.rules} onClick={()=>{setUndoRules(preferences.rules);updatePreferences({...preferences,rules:''})}}>{t('transcriptExport.clearRules')}</button>{undoRules!==undefined?<span role="status">{t('transcriptExport.cleared')} <button className="button" disabled={busy} onClick={()=>{updatePreferences({...preferences,rules:undoRules});setUndoRules(undefined)}}>{t('transcriptExport.undo')}</button></span>:null}</div></div>
  const label=busy?t('video.pdfPreparing'):remaining?t('video.pdfRetryIn',{seconds:remaining}):t(format==='pdf'?'video.pdf':'common.actions.download')
  return <div className="transcript-export">
   {compact?<button className="primary export-mobile-trigger" onClick={()=>setOpen(true)}><Download size={16}/>{t('transcriptExport.open')}</button>:<>

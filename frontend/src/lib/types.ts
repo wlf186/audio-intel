@@ -64,3 +64,7 @@ export type DocumentResult={contract_version:1;title:string;sections:Array<{id:s
 
 export type DocumentJobSection=DocumentSection&{job_id:string;position:number;start_offset:number;end_offset:number;state:'pending'|'generating'|'complete';retries:number;artifact:Artifact|null;updated_at:string}
 export type DocumentSectionPage={items:DocumentJobSection[];total:number;offset:number;limit:number}
+
+export type JobStorageItem={id:string;status:'ready'|'error'|'not_found';bytes:number|null;checked_at:string;basis:'allocated'|'logical'|null}
+export type JobWaveform={track:'original'|'enhanced';duration:number;start:number;end:number;waveform:number[]}
+export type VideoScenes={revision:number;scenes:VideoScene[]}

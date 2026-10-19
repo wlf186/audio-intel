@@ -39,6 +39,8 @@
 
 Separate audio/video creation tabs share the ASR queue. Audio keeps its 4 GiB limit; video supports resumable uploads up to 25 GiB, editable presentation images with matching discussion, and illustrated PDF. Audio adds concise PDF while retaining detailed exports. See the [video transcription guide](docs/VIDEO_TRANSCRIPTION.md).
 
+Video results include a zoomable scene-and-waveform timeline. Task history shows per-job file usage and selected totals; enhancement details stay in a compact summary.
+
 Voiceprint libraries support groups, scoped ASR recognition and batch move/delete. Transcript downloads support default-on name/note redaction and up to 100 keyword replacements, with persistent browser preferences. ZIP v2 includes groups and imports remain compatible with v1. Upgrade backups cover only necessary data and must be removed after complete acceptance; see [the upgrade guide](docs/UPGRADE.md).
 
 ## Interface preview

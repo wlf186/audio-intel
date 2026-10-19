@@ -1,3 +1,4 @@
+import {mockTimelineWaveform} from './timeline-fixture'
 import {openTranscriptExport} from './ux-helpers'
 import {capabilitiesFor,expect,test,type Page} from './fixtures'
 import {createHash} from 'node:crypto'
@@ -23,6 +24,7 @@ async function fixture(page:Page,locale='zh-CN'){
  await page.route('**/api/v1/capabilities',async route=>{const body=await capabilitiesFor(page);body.events={...body.events,sse:true};await route.fulfill({json:body})})
  await page.route(url=>url.pathname==='/api/v1/jobs',route=>route.fulfill({json:{items:[summary,{...summary,id:'other-video',display_name:'Other fixture.mp4'}],count:2,total:2,limit:100,offset:0,has_more:false}}))
  await page.route(/\/api\/v1\/jobs\/(recovery-video|other-video)$/,route=>route.fulfill({json:{...summary,id:new URL(route.request().url()).pathname.split('/').pop(),request:{compute_device:'cpu',language:'Chinese'},result:result()}}))
+ await mockTimelineWaveform(page,'recovery-video',20)
  await page.route('**/video-scenes',async route=>{
   if(route.request().method()==='PATCH'){
    state.patches.push(route.request().postDataJSON())

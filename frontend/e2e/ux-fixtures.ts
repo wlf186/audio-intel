@@ -1,3 +1,4 @@
+import {mockTimelineWaveform} from './timeline-fixture'
 import {capabilitiesFor,type Page} from './fixtures'
 import type {Job,VideoScene,VoiceprintPerson,VoiceprintGroup} from '../src/lib/types'
 
@@ -39,8 +40,13 @@ export async function uxFixture(page:Page){
   return route.fulfill({json:{revision:job.result!.video!.revision,scenes}})
  })
  await page.route('**/api/v1/jobs/ux-video/video-frames/*',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#edf2f3"/><text x="40" y="80" fill="#293641" font-size="28">Workspace review</text></svg>'}))
+ await mockTimelineWaveform(page,'ux-video',120)
  const audio=wave()
- await page.route('**/api/v1/jobs/ux-video/playback',route=>route.fulfill({contentType:'audio/wav',body:audio}))
+ await page.route('**/api/v1/jobs/ux-video/playback',route=>{
+  const range=route.request().headers()['range']?.match(/bytes=(\d+)-(\d*)/)
+  const start=range?Number(range[1]):0,end=range?.[2]?Math.min(Number(range[2]),audio.length-1):audio.length-1
+  return route.fulfill({status:range?206:200,contentType:'audio/wav',headers:{'Accept-Ranges':'bytes',...(range?{'Content-Range':`bytes ${start}-${end}/${audio.length}`}:{})},body:audio.subarray(start,end+1)})
+ })
  await page.route('**/api/v1/jobs/ux-video/transcript-export',route=>{state.exports.push(route.request().postDataJSON());return route.fulfill({contentType:'application/pdf',headers:{'Content-Disposition':'attachment; filename="transcript.pdf"'},body:'%PDF-fixture'})})
  return{state,errors}
 }

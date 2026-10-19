@@ -2731,7 +2731,7 @@ def create_app() -> FastAPI:
                     return retrieve(path.resolve(), track, start, end, points)
                 except WaveformBusy:
                     raise HTTPException(429, "Waveform calculation busy", headers={"Retry-After": "2"}) from None
-                except (ValueError, OSError):
+                except (ValueError, OSError, RuntimeError):
                     raise HTTPException(422, "Invalid waveform window or saved WAV") from None
         except FileNotFoundError:
             raise HTTPException(404, "Saved waveform audio unavailable") from None
