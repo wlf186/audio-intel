@@ -22,6 +22,8 @@ def main() -> None:
     parser.add_argument('--state', type=Path, default=Path('tmp/video-upload-client.json'))
     parser.add_argument('--device', choices=('cpu', 'gpu'))
     parser.add_argument('--language', default='Auto')
+    parser.add_argument('--scene-min-change-percent', type=float, help='Minimum changed picture area, 0.5–50 percent')
+    parser.add_argument('--scene-min-stable-seconds', type=float, help='Minimum new-picture duration, 0.5–5 seconds')
     parser.add_argument('--pdf', type=Path, help='Wait for completion and download the concise PDF')
     parser.add_argument('--voiceprint-group', action='append', help='Eligible voiceprint group ID; repeat to select several, omit for all')
     parser.add_argument('--no-redact', action='store_true', help='Export original names, notes and text')
@@ -55,6 +57,11 @@ def submit(args: argparse.Namespace) -> None:
     else:
         state = {'file': identity, 'create_key': uuid.uuid4().hex, 'job_key': uuid.uuid4().hex,
                  'parameters': {'language': args.language, 'compute_device': args.device, **({'voiceprint_group_ids': args.voiceprint_group} if getattr(args, 'voiceprint_group', None) else {})}}
+        controls = {key: getattr(args, argument) for key, argument in (
+            ('min_change_percent', 'scene_min_change_percent'), ('min_stable_seconds', 'scene_min_stable_seconds'))
+            if getattr(args, argument, None) is not None}
+        if controls:
+            state['parameters']['video_scene_detection'] = controls
 
     def save() -> None:
         args.state.parent.mkdir(parents=True, exist_ok=True)

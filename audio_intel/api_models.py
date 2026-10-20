@@ -5,6 +5,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .video_detection import SceneDetectionCapability, SceneDetectionSettings
+
 
 class PublicModel(BaseModel):
     """Public wire models keep forward-compatible fields without hiding existing data."""
@@ -242,6 +244,7 @@ class VideoCapability(PublicModel):
     upload_lifetime_seconds: int
     max_scenes: int
     scene_editing: bool
+    scene_detection: SceneDetectionCapability | None = None
 
 
 class AsrStrengthCapability(PublicModel):
@@ -664,6 +667,8 @@ class VideoAnalysisResponse(PublicModel):
     detector: str
     scenes: list[VideoSceneResponse]
     original_scenes: list[VideoSceneResponse]
+    automatic_scenes: list[VideoSceneResponse] | None = Field(None, description='最近一次应用的自动分段 / Most recently applied automatic sections')
+    scene_detection: SceneDetectionSettings | None = Field(None, description='当前自动检测参数；历史缺失表示未记录 / Applied detection settings; absent in legacy results')
 
 
 class JobResultResponse(PublicModel):

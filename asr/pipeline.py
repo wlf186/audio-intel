@@ -855,7 +855,8 @@ def process_job(context: JobContext) -> dict[str, Any]:
     if request.get("purpose") == "video_transcription":
         from audio_intel.video_frames import decode as decode_video
         normalized = context.work_dir / "normalized.wav"
-        audio, rate, video_result = decode_video(source, normalized, context.work_dir / "frames", request.get("video_roi"), context)
+        audio, rate, video_result = decode_video(source, normalized, context.work_dir / "frames", request.get("video_roi"), context,
+            request.get("video_scene_detection") if request.get("video_detector") == "presentation-v2" else None)
     else:
         audio, rate = _mock_audio(source, normalized) if settings.mock_mode else decode_audio(source, normalized)
     duration = len(audio) / rate
@@ -1122,6 +1123,9 @@ def process_job(context: JobContext) -> dict[str, Any]:
         shutil.move(str(normalized), str(context.output_dir / "playback.wav"))
         shutil.rmtree(context.output_dir / "frames", ignore_errors=True)
         shutil.move(str(context.work_dir / "frames"), str(context.output_dir / "frames"))
+        if (context.work_dir / "scene-features").exists():
+            shutil.rmtree(context.output_dir / "scene-features", ignore_errors=True)
+            shutil.move(str(context.work_dir / "scene-features"), str(context.output_dir / "scene-features"))
         result["playback_url"] = f"/api/v1/jobs/{context.job_id}/playback"
     else:
         result["playback_url"] = save_playback_audio(context.job_id, normalized)

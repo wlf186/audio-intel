@@ -475,3 +475,9 @@ corepack pnpm@10.15.1 --dir frontend typecheck
 ### 开发版：结果摘要、任务占用与视频时间轴
 
 从 v0.1.34 更新：数据迁移无；SQLite schema v14、历史请求／结果和媒体均不改写，无额外升级备份要求。新增只读任务占用和窗口波形接口，原任务列表／SSE及产物波形契约保持兼容。需重建前端并重启原有API与工作进程，再按本文完成部署验收。导出偏好的存储键与周期不变；清空规则保留脱敏开关，撤销仅在当前页面下一次编辑之前有效。
+
+## 画面检测 v2 / Picture detection v2
+
+本次无数据库结构迁移，不批量改写历史结果或媒体，无需额外升级备份。新视频使用 presentation-v2；旧任务重试沿用 v1，用户可在结果页显式预览并应用 v2。最近一次自动分段和实际参数是新增可选结果字段，首次自动快照保留。任务目录新增可重建特征缓存；旧任务按需生成，不在启动时扫描全部视频。浏览器新增独立的画面检测 localStorage 偏好，成功应用后保存，退出登录仍保留；弹窗草稿不持久化。更新后按本页维护流程重新构建前端并刷新 API、supervisor 和 executor。
+
+No schema migration, automatic historical rewrite or extra upgrade backup is required. New videos use presentation-v2; legacy retries retain v1, with explicit result-side preview/apply available. Applied settings/latest automatic sections are optional result additions and the initial snapshot remains intact. Rebuildable feature caches are created per job on demand, not by scanning all videos at startup. A separate browser localStorage preference persists successful choices across sign-out; dialog drafts are not persisted. Rebuild the frontend and refresh API, supervisors and executors using the maintenance procedure above.

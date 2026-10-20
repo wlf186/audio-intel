@@ -495,9 +495,14 @@ The stream immediately emits `event: job`, continues on changes, and closes at a
 
 Audio defaults to 4 GiB; the video API defaults to 25 GiB. Capabilities publish formats, chunk size and limits. Create a resumable upload, append exact-size checksummed chunks, then submit the complete upload to the shared ASR queue. GET the upload to verify persisted hashes before resuming. Unfinished uploads expire after 24 idle hours or 7 days total; DELETE immediately discards them. Submitted uploads follow task deletion.
 
-`GET /api/v1/jobs/{job_id}/video-scenes` 返回画面与合并发言；PATCH 同路径携带 revision，支持 merge_next / split / boundary / frame / restore；冲突后重新读取。`GET /api/v1/jobs/{job_id}/transcript.pdf` 对已完成音频返回简洁 PDF，对视频返回图文 PDF；同说话人连续发言合并时间与原文，保留口头语。原始逐句结果不丢弃。已有音频 JSON/TXT/SRT/VTT 保持可用。PDF 与截图预览均无需云服务。
+`GET /api/v1/jobs/{job_id}/video-scenes` 返回画面与合并发言；PATCH 同路径携带 revision，支持 merge_next / split / boundary / frame / restore / apply_detection；冲突后重新读取。`GET /api/v1/jobs/{job_id}/transcript.pdf` 对已完成音频返回简洁 PDF，对视频返回图文 PDF；同说话人连续发言合并时间与原文，保留口头语。原始逐句结果不丢弃。已有音频 JSON/TXT/SRT/VTT 保持可用。PDF 与截图预览均无需云服务。
 
-GET video-scenes for images/paragraphs; PATCH with revision for edits, reloading on conflicts. Concise PDF preserves words and combines adjacent same-speaker speech and time ranges; video adds representative images. Detailed audio formats remain available. PDF generation is bounded and memory-cached; previews do not write files. Busy operations return 429. Images are heuristic presentation representatives, not codec I-frames; brief or complex slide changes may require manual correction.
+GET video-scenes for images/paragraphs; PATCH with revision for edits, reloading on conflicts. Concise PDF preserves words and combines adjacent same-speaker speech and time ranges; video adds representative images. Detailed audio formats remain available. PDF generation is bounded and memory-cached; timestamp image previews do not write files. Picture-detection previews retain temporary images until expiry. Busy operations return 429. Images are heuristic presentation representatives, not codec I-frames; brief or complex slide changes may require manual correction.
+
+画面检测参数来自 `asr.video.scene_detection`：最小变化比例默认 3%（0.5–50%），最短保持时间默认 1 秒（0.5–5 秒）。视频提交可传 `video_scene_detection`。结果页使用 POST `/api/v1/jobs/{job_id}/video-scene-previews`（Idempotency-Key，revision、settings）创建 CPU 预览；GET 同路径加 preview_id 轮询进度，DELETE 取消。ready 后 PATCH video-scenes，传 action=apply_detection、preview_id、revision 应用。首次 202、同 key 重放 200、冲突 409、繁忙 429、过期 410；最多一个计算、八份预览，30 分钟或重启后失效。最近自动分段保存在 automatic_scenes，首次 original_scenes 保留。只重算画面，不重新运行 ASR。
+
+Picture detection settings come from `asr.video.scene_detection`: changed area defaults to 3% (0.5–50), new-picture duration to 1 second (0.5–5). Video submissions accept `video_scene_detection`. POST `/api/v1/jobs/{job_id}/video-scene-previews` with Idempotency-Key, revision and settings; GET with preview_id polls and DELETE cancels. Apply a ready preview by PATCHing video-scenes with action=apply_detection, preview_id and revision. First acceptance 202, replay 200, conflict 409, busy 429, expiry 410. One active calculation, eight previews, 30-minute lifetime, invalidated on restart. Latest automatic sections are automatic_scenes; original_scenes retains the initial snapshot. ASR is not rerun.
+
 
 ## 声纹人员与样本名称 / Voiceprint identities and sample names
 
@@ -1232,6 +1237,7 @@ def _device_examples(minimum_memory_mib: int) -> list[dict[str, Any]]:
 
 
 def _capabilities_example() -> dict[str, Any]:
+    from .video_detection import capability as scene_detection_capability
     asr_entries = []
     for model in asr_models():
         asr_entries.append({
@@ -1290,7 +1296,7 @@ def _capabilities_example() -> dict[str, Any]:
             "audio_formats": ["wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff"], "concise_pdf": True,
             "video": {"supported": True, "formats": ["mp4", "m4v", "mov", "mkv", "webm", "avi", "mpeg", "mpg", "ts"],
                       "max_upload_bytes": 26843545600, "chunk_bytes": 33554432, "upload_idle_seconds": 86400,
-                      "upload_lifetime_seconds": 604800, "max_scenes": 2000, "scene_editing": True},
+                      "upload_lifetime_seconds": 604800, "max_scenes": 2000, "scene_editing": True, "scene_detection": scene_detection_capability()},
             "model": default_asr["name"], "default_model": default_asr["id"], "models": asr_entries,
             "diarization": "CAM++ single-active-speaker", "speaker_count": {"min": 1, "max": 15, "default": "auto"},
             "voiceprint_library": True, "languages": ["Auto", "Chinese", "English"], "default_language": "Auto",
@@ -1344,6 +1350,10 @@ VIDEO_SCENES_EXAMPLE = {"revision": 1, "scenes": [{**VIDEO_SCENE_EXAMPLE, "parag
      "text": "欢迎使用本地转写。", "segment_ids": [0]},
 ]}]}
 REQUEST_EXAMPLES.update({
+    ("/api/v1/jobs/{job_id}/video-scene-previews", "post"): {
+        "default": {"summary": "预览新的画面分段 / Preview new picture sections",
+                    "value": {"revision": 1, "settings": {"min_change_percent": 3, "min_stable_seconds": 1}}},
+    },
     ("/api/v1/voiceprints/people/{person_id}/samples/from-asr", "post"): {
         "video_sentences": {"summary": "视频原始语句入库 / Import original video sentences",
                             "value": {"job_id": "video_example", "segment_ids": [0, 2]}},
@@ -1360,6 +1370,10 @@ REQUEST_EXAMPLES.update({
                               ("boundary", "调整结束时间 / Move boundary"), ("frame", "更换截图 / Replace frame"), ("restore", "恢复自动分段 / Restore automatic sections")]
     },
 })
+REQUEST_EXAMPLES[("/api/v1/jobs/{job_id}/video-scenes", "patch")]["apply_detection"] = {
+    "summary": "应用 ready 状态的预览 / Apply a ready preview",
+    "value": {"revision": 1, "action": "apply_detection", "preview_id": "0123456789abcdef0123456789abcdef"},
+}
 REQUEST_EXAMPLES[("/api/v1/asr/video-jobs", "post")]["enhancement_off"] = {
     "summary": "关闭视频人声增强 / Disable video speech enhancement",
     "value": {**REQUEST_EXAMPLES[("/api/v1/asr/video-jobs", "post")]["lecture"]["value"],

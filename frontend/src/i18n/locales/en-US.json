@@ -156,7 +156,7 @@
       "merge_next": "Merge with next"
     },
     "editHelp": {
-      "restore": "Restore the original sections and images, replacing your scene edits. Speaker names are kept.",
+      "restore": "Restore the most recently applied automatic sections, discarding subsequent section and image edits.",
       "frame": "Choose a clearer, complete image within this section.",
       "boundary": "Adjust the boundary between this section and the next. Speech will be reassigned.",
       "split": "Choose a split time. The new section uses the image at that time.",
@@ -683,5 +683,33 @@
     "playbackPosition": "Playback position (seconds)",
     "waveform": "Waveform",
     "enlargeFrame": "Enlarge screenshot"
+  },
+  "sceneDetection": {
+    "title": "Picture detection",
+    "intro": "Adjust the rules, preview, then apply. Only pictures are analyzed; audio is not transcribed again.",
+    "legacy": "This task used legacy detection without recorded controls. These settings apply to the new preview.",
+    "min_change_percent": "Minimum picture change (%)",
+    "min_stable_seconds": "Minimum new-picture duration (seconds)",
+    "min_change_percentHelp": "Lower values detect more changes. Subtitles and pointer changes below this area are ignored.",
+    "min_stable_secondsHelp": "Longer durations ignore brief appearances. Pictures are sampled about every 0.5 seconds.",
+    "reset": "Restore defaults",
+    "preview": "Preview detection",
+    "cancel": "Cancel detection",
+    "apply": "Apply preview",
+    "applying": "Applying…",
+    "memory": "Successfully applied settings are remembered for later videos submitted in this browser. Reset changes only the pending settings.",
+    "conflict": "Sections changed elsewhere. Close and reopen picture detection.",
+    "changed": "Settings changed. Generate a new preview before applying.",
+    "failed": "Picture detection failed. The original result is unchanged; retry the preview.",
+    "count": "Current: {{before}} sections → Preview: {{after}}",
+    "current": "Current sections",
+    "candidate": "Preview sections",
+    "replaceEdits": "Replace my current section and image edits, keeping the transcript.",
+    "phases": {
+      "preparing": "Preparing detection…",
+      "scanning": "First-time preparation: scanning the original video…",
+      "detecting": "Calculating sections from cached features…",
+      "images": "Preparing preview images…"
+    }
   }
 }

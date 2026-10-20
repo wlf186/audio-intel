@@ -22,9 +22,9 @@ Unfinished uploads expire after **24 idle hours** or **7 days from creation**, a
 
 ## 画面与讨论 / Images and discussion
 
-面向 PPT 讲解、屏幕录制。使用 PyAV 内置的 FFmpeg `scdet`，按约 0.5 秒抽样，在内存中比较感知哈希、文字边缘保留率和稳定性；同一页逐步显示内容尽量合并，保留最后的稳定完整画面。非相邻的重复页面保留各自时间范围。默认最多 2,000 段，超过时明确失败并提示拆分源文件。这里的「关键帧」指内容代表画面，不是视频编码的 I 帧。
+面向 PPT 讲解、屏幕录制。新任务使用 presentation-v2，按约 0.5 秒抽样，结合变化面积、候选持续时间与内容边缘保留率判断切换；同一页逐步显示内容尽量合并，保留稳定完整画面。旧任务重试继续使用基于 FFmpeg `scdet` 的 v1。非相邻的重复页面保留各自时间范围。默认最多 2,000 段，超过时明确失败并提示拆分源文件。这里的「关键帧」指内容代表画面，不是视频编码的 I 帧。
 
-Designed for slides and screen recordings. PyAV's FFmpeg `scdet` is complemented by in-memory perceptual hashes, edge retention and stability checks sampled about every 0.5 seconds. Incremental slide builds are merged where possible, retaining the last stable frame. Nonadjacent repeated pages retain separate time ranges. More than 2,000 sections fails explicitly with a request to split the source. These are content representatives, not codec I-frames.
+Designed for slides and screen recordings. New tasks use presentation-v2: samples about every 0.5 seconds combine changed area, candidate duration and content retention. Incremental builds are merged where possible, retaining a stable complete frame. Legacy retries retain FFmpeg scdet-based v1. Nonadjacent repeated pages retain separate time ranges. More than 2,000 sections fails explicitly with a request to split the source. These are content representatives, not codec I-frames.
 
 视频时刻依据媒体 PTS，与音轨共用起点；音轨延迟以静音补齐，不按帧序号推算时间。跨页发言有完整可靠的逐词对齐时按词分配，否则整句归属时间重叠最多的一页，保持原文、不丢句。画面分析是启发式算法，不做 OCR 或语义理解；短于抽样/稳定窗口的页面、相似模板、复杂动画、镜头移动可能需要修正。带讲者小窗时可先框选 PPT 区域。
 
@@ -72,11 +72,11 @@ historical jobs without a saved original WAV show an unavailable explanation and
 
 Audio offers a primary concise PDF action and a secondary details/subtitles menu. Adjacent speech with the same speaker ID merges with its combined time range; words and disfluencies are preserved. Equal names with different IDs do not merge. Video offers illustrated concise PDF, with images followed by their discussion. A bundled Chinese font keeps PDF rendering offline.
 
-上传直接顺序追加到一份文件，校验并 fsync 后才确认偏移；不创建分片文件再拼接、不预分配 25 GiB，不在重试时重写已确认数据。提交时同盘重命名。画面分析只保存最终代表 JPEG，不保存抽样帧序列。原音复用一份归一化 WAV；实际应用人声增强时另存一份增强 WAV，约每小时 115 MB，旁路时不增加；临时目录和数据目录在同一文件系统时完成阶段直接移动，否则跨盘移动需一次复制。失败/取消后的工作目录由现有 worker 清理。PDF 按需在内存生成，单渲染并发、64 MiB LRU 缓存（5 分钟）；单份 PDF 输入上限为 400 万文本字符、128 MiB JPEG，超过返回 413 并提示拆分。预览最多两个解码器且不写磁盘。修改截图后清理不再被当前/原始分段引用的图片，删除任务清理其输入与结果。
+上传直接顺序追加到一份文件，校验并 fsync 后才确认偏移；不创建分片文件再拼接、不预分配 25 GiB，不在重试时重写已确认数据。提交时同盘重命名。画面分析保存最终代表 JPEG；v2 另保存有上限、可重建的低分辨率压缩特征缓存，不保存高分辨率抽样序列。原音复用一份归一化 WAV；实际应用人声增强时另存一份增强 WAV，约每小时 115 MB，旁路时不增加；临时目录和数据目录在同一文件系统时完成阶段直接移动，否则跨盘移动需一次复制。失败/取消后的工作目录由现有 worker 清理。PDF 按需在内存生成，单渲染并发、64 MiB LRU 缓存（5 分钟）；单份 PDF 输入上限为 400 万文本字符、128 MiB JPEG，超过返回 413 并提示拆分。预览最多两个解码器且不写磁盘。修改截图后清理不再被当前/原始分段引用的图片，删除任务清理其输入与结果。
 
-Uploads append to one file and are acknowledged only after checksum verification and fsync: no chunk concatenation, full-size preallocation or acknowledged-byte rewrite. Submission renames on the same filesystem. Only final JPEG representatives are written; sampled frames stay in memory. One normalized WAV preserves original playback; applied enhancement retains a separate WAV (about 115 MB/hour), while bypass adds no file. Keep temporary and data directories on the same filesystem for rename-only completion; crossing filesystems requires one copy. Existing worker cleanup removes failed/cancelled working directories. PDFs render on demand in memory, with one renderer and a 64 MiB, five-minute LRU. PDF inputs are limited to 4 million text characters and 128 MiB of JPEGs; larger exports return 413 with a split-source hint. At most two preview decoders run, without writing images. Unreferenced edited images are removed, and task deletion removes owned inputs/results.
+Uploads append to one file and are acknowledged only after checksum verification and fsync: no chunk concatenation, full-size preallocation or acknowledged-byte rewrite. Submission renames on the same filesystem. Final JPEG representatives are saved; v2 also saves bounded, rebuildable compressed low-resolution features, not a full-resolution sampled-frame sequence. One normalized WAV preserves original playback; applied enhancement retains a separate WAV (about 115 MB/hour), while bypass adds no file. Keep temporary and data directories on the same filesystem for rename-only completion; crossing filesystems requires one copy. Existing worker cleanup removes failed/cancelled working directories. PDFs render on demand in memory, with one renderer and a 64 MiB, five-minute LRU. PDF inputs are limited to 4 million text characters and 128 MiB of JPEGs; larger exports return 413 with a split-source hint. At most two preview decoders run, without writing images. Unreferenced edited images are removed, and task deletion removes owned inputs/results.
 
-算法选择参考：[FFmpeg scdet](https://ffmpeg.org/ffmpeg-filters.html#scdet)、[PySceneDetect 检测器](https://www.scenedetect.com/docs/api/detectors.html)。后者提供内容/自适应切镜，但不直接判断 PPT 的同页动画，因此本实现复用现有 FFmpeg，加上面向幻灯片的比较，避免增加 OpenCV/模型运行时。
+算法选择参考：[FFmpeg scdet](https://ffmpeg.org/ffmpeg-filters.html#scdet)、[PySceneDetect 检测器](https://www.scenedetect.com/docs/api/detectors.html)。后者提供内容/自适应切镜，但不直接判断 PPT 的同页动画，因此 v1 复用 FFmpeg 并加入幻灯片比较，v2 使用统一的面积／持续时间门槛；均不增加 OpenCV 或模型运行时。
 
 ## 客户端示例 / Client example
 
@@ -174,3 +174,28 @@ English: The scene directory lists every interval and matches the numbered illus
 Scene selection seeks to the interval start. Waveform clicks seek to the exact chosen time and reveal/highlight the illustrated paragraph or detailed sentence; dragging reveals the reader on release, and keyboard navigation does the same. Gaps reveal the next sentence and the endpoint reveals the final sentence without changing the selected time. Playback state is preserved. Playback ticks highlight without repeatedly scrolling the reader. Explicit navigation clears detailed-reader search/speaker filters; switching views still restores their independent bookmarks and storage lifetime is unchanged.
 
 Audio processing is a compact status button beside downloads; its popover shows configured strengths, actual statuses and reasons. Narrow result cards combine both audio downloads into one menu. Desktop controls leave the remaining height for the reader; mobile/very short windows allow page scrolling. Waveform requests remain limited to the visible saved audio window. No historical media rewrite, API or inference-pipeline change is required.
+
+## 结果页画面检测 / Picture detection in results
+
+在「任务与结果 → 图文阅读 → 画面检测」设置两项参数：**最小画面变化比例**默认 3%（0.5–50%），**新画面最短保持时间**默认 1 秒（0.5–5 秒）。比例越低越敏感，时间越长越容易忽略闪过的画面；具体范围与默认值以 capabilities 为准。presentation-v2 按约 0.5 秒抽样，相对当前页基准比较显著颜色变化面积，候选画面持续满足条件后才确认切换。小面积字幕、鼠标变化不绕过阈值；同页增量显示尽量合并。它仍是局部视觉启发式，不进行 OCR 或语义理解。
+
+Open **Tasks & results → Illustrated reading → Picture detection**. Minimum picture change defaults to **3%** (0.5–50%); minimum new-picture duration defaults to **1 second** (0.5–5 seconds). Lower area thresholds detect more changes; longer durations ignore brief appearances. Capabilities owns the limits/defaults. The presentation-v2 detector samples about every 0.5 seconds, compares significant color changes against the current page, and confirms a consistent candidate only after the requested duration. Small subtitles/pointer changes cannot bypass these gates. Incremental builds are merged where possible; this remains a visual heuristic without OCR or semantic understanding.
+
+先点击「预览检测」，查看当前／候选画面数量、时间和缩略图，再点击「应用预览」。预览不改变结果，也不重跑音频转写；存在人工分段或截图修改时须勾选替换确认。其他客户端修改分段后必须重新预览。应用保留原转写文字、说话人和时间戳，更新画面及讨论归属。「恢复自动分段」恢复最近一次成功应用的自动分段；首次自动分段快照仍保留。旧结果不自动重算，旧任务重试沿用原算法。
+
+Preview the count, times and images before applying. Preview leaves the result unchanged and does not rerun ASR. Replacing manual sections or images requires explicit confirmation. Concurrent edits require a new preview. Apply preserves transcript text, speaker identities and timestamps while updating picture boundaries and discussion grouping. Restore automatic sections restores the most recently applied detection; the first automatic snapshot remains available. Legacy results are not recomputed automatically and retries retain their original detector.
+
+应用成功后，浏览器在独立的 `audio-intel:video-scene-detection:v1` localStorage 中保存这两项参数，刷新、关闭浏览器或退出登录后保留，用于该浏览器后续提交的视频；其他浏览器使用各自偏好。已有任务优先显示自己的实际设置。「恢复默认值」只重置待预览参数，重新预览并应用后才更新任务和偏好。未应用草稿关闭弹窗即丢弃。新建页不增加控件，暂停上传继续使用上传开始时保存的参数。
+
+After successful apply, the two settings are saved in the browser's independent `audio-intel:video-scene-detection:v1` localStorage, surviving reload, browser close and sign-out, and used for subsequent videos submitted from that browser. Existing tasks display their own applied settings. Restore defaults changes only the pending controls; preview and apply to update the task and preference. Closing the dialog discards unapplied drafts. Creation forms add no controls; resumed uploads retain their original submission snapshot.
+
+首次分析顺带生成分块压缩的本地特征缓存，旧任务首次预览时补建。缓存位于任务目录，计入任务空间占用，删除任务时一起清理；每任务最多 512 MiB，超限或缓存失败可重新扫描，不影响转写成功。预览在独立 CPU 进程运行，全局最多一个，最多保留八份已完成预览；30 分钟或服务重启后失效。取消等待进程退出。全部图片、缓存和计算都留在本地。
+
+Initial analysis builds a chunk-compressed local feature cache; legacy tasks build it on first preview. Job-owned caches count toward storage and are deleted with the job. The 512 MiB per-job budget is optional: cache failure/exhaustion falls back to scanning without failing transcription. A separate CPU process handles previews, with one active computation and at most eight completed previews. Previews expire after 30 minutes or a service restart; cancellation waits for process exit. Pictures, caches and computation remain local.
+
+```bash
+# Replace the example ID with a completed local video job; omit --apply to inspect only.
+AUDIO_INTEL_BASE_URL=http://127.0.0.1:20810 \
+  .runtime/api/bin/python scripts/preview_video_scenes.py 0123456789abcdef0123456789abcdef \
+  --min-change-percent 3 --min-stable-seconds 1
+```

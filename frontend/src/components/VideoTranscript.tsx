@@ -6,6 +6,8 @@ import type {VideoScenesResource} from '../hooks/useVideoScenes'
 import {formatTime,HttpError,request} from '../lib/api'
 import type {Job,JobResult,VideoScene} from '../lib/types'
 import {Modal} from './Modal'
+import {SceneDetection} from './SceneDetection'
+import type {SceneDetectionCapability} from '../lib/sceneDetection'
 import {readReaderBookmark} from '../lib/workspaceSession'
 import {readingIndex,revealReadingNode} from '../lib/readerNavigation'
 import {useReaderBookmark} from '../hooks/useReaderBookmark'
@@ -18,9 +20,10 @@ function Frame({jobId,scene}:{jobId:string;scene:VideoScene}){
  const label=t('video.frameAt',{time:formatTime(scene.frame_time,false)})
  return error?<p role="alert">{t('video.frameFailed')} <button className="button" onClick={()=>{setError(false);setRetry(value=>value+1)}}>{t('common.actions.reload')}</button></p>:<><button type="button" className="video-frame" aria-label={t('workspaceSplit.enlargeFrame')} title={t('workspaceSplit.enlargeFrame')} onClick={()=>setExpanded(true)}><img loading="lazy" src={url} alt={label} onError={()=>setError(true)}/></button>{expanded?<Modal title={label} closeLabel={t('common.actions.close')} className="video-frame-modal" onClose={()=>setExpanded(false)}><img src={url} alt={label} onError={()=>{setExpanded(false);setError(true)}}/></Modal>:null}</>
 }
-export function VideoTranscript({job,toolbar,editing,onEditingChange,onUpdated,onSeek,onRename,onEnroll,resource,reveal,currentTime=0}:{job:Job;resource:VideoScenesResource;reveal?:{sceneId?:string;time:number;token:number};toolbar?:HTMLElement|null;editing:boolean;onEditingChange:(value:boolean)=>void;onUpdated:(id:string,result:JobResult)=>void;onSeek:(time:number)=>void;onRename:(id:string)=>void;onEnroll:(id:string,segmentIds:number[])=>void;currentTime?:number}){
+export function VideoTranscript({job,toolbar,editing,onEditingChange,onUpdated,onSeek,onRename,onEnroll,resource,reveal,currentTime=0,detectionCapability}:{job:Job;resource:VideoScenesResource;reveal?:{sceneId?:string;time:number;token:number};toolbar?:HTMLElement|null;editing:boolean;onEditingChange:(value:boolean)=>void;onUpdated:(id:string,result:JobResult)=>void;onSeek:(time:number)=>void;onRename:(id:string)=>void;onEnroll:(id:string,segmentIds:number[])=>void;currentTime?:number;detectionCapability?:SceneDetectionCapability}){
  const {t}=useTranslation()
  const {data,error,loading:refreshing,reload}=resource
+ const [detectionOpen,setDetectionOpen]=useState(false)
  const [visible,setVisible]=useState(()=>readReaderBookmark(`${job.id}:video`)?.visibleCount||20)
  const revealedToken=useRef<number|undefined>(undefined)
  const scrollRoot=useRef<HTMLDivElement>(null)
@@ -72,8 +75,8 @@ export function VideoTranscript({job,toolbar,editing,onEditingChange,onUpdated,o
  }
  const activeScene=data?.scenes[readingIndex(data.scenes,currentTime)]
  const activeParagraph=activeScene?.paragraphs?.[readingIndex(activeScene.paragraphs,currentTime)]
- const tools=<div className="video-reading-tools"><button className="button" onClick={()=>onEditingChange(!editing)} aria-pressed={editing}>{t(editing?'video.finishEditing':'video.editSections')}</button>{editing?<button className="button" disabled={!data||refreshing||Boolean(error)} onClick={()=>open('restore')}>{t('video.actions.restore')}</button>:null}</div>
- return <>{toolbar?createPortal(tools,toolbar):tools}<div className="video-transcript" ref={scrollRoot} aria-busy={refreshing}>
+ const tools=<div className="video-reading-tools">{detectionCapability?.preview?<button className="button" disabled={!data||refreshing||Boolean(error)} onClick={()=>setDetectionOpen(true)}>{t('sceneDetection.title')}</button>:null}<button className="button" onClick={()=>onEditingChange(!editing)} aria-pressed={editing}>{t(editing?'video.finishEditing':'video.editSections')}</button>{editing?<button className="button" disabled={!data||refreshing||Boolean(error)} onClick={()=>open('restore')}>{t('video.actions.restore')}</button>:null}</div>
+ return <>{detectionOpen&&detectionCapability&&job.result?<SceneDetection jobId={job.id} result={job.result} capability={detectionCapability} onClose={()=>setDetectionOpen(false)} onUpdated={onUpdated}/>:null}{toolbar?createPortal(tools,toolbar):tools}<div className="video-transcript" ref={scrollRoot} aria-busy={refreshing}>
   {error?<p className="error" role="alert">{error} <button className="button" onClick={()=>reload()}>{t('common.actions.reload')}</button></p>:refreshing?<p className="reader-refresh-status" role="status">{t('video.loading')}</p>:null}
   {data?<>
    {data.scenes.slice(0,visible).map((scene,index)=><section className={`video-section${activeScene?.id===scene.id?' navigation-active':''}`} key={scene.id} data-reader-id={scene.id} data-reader-time={scene.start}>

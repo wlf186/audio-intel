@@ -154,10 +154,17 @@ def probe(source: Path) -> dict[str, Any]:
         return {'width': stream.width, 'height': stream.height, 'duration': (container.duration or 0) / av.time_base}
 
 
-def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | None, context: Any) -> tuple[Any, int, dict]:
+def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | None, context: Any,
+           detection_settings: dict | None = None) -> tuple[Any, int, dict]:
     import soundfile as sf
 
     detector = PresentationDetector(frame_directory)
+    writer = None
+    if detection_settings is not None:
+        from .video_detection import Detector, FeatureWriter, thumbnail
+        detector = Detector(detection_settings)
+        from .config import settings
+        writer = FeatureWriter(frame_directory.parent / 'scene-features', source, roi, settings.min_free_disk_bytes)
     samples: list[np.ndarray] = []
     sample_count = 0
     last_sample = -1.0
@@ -192,7 +199,12 @@ def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | No
                     timestamp = max(0.0, float(frame.time or 0) - origin)
                     video_end = max(video_end, timestamp + float(frame.duration or 0) * float(frame.time_base))
                     if timestamp - last_sample >= .49:
-                        detector.feed(crop_picture(frame, roi), timestamp)
+                        if writer is not None:
+                            rgb = thumbnail(frame, roi)
+                            detector.feed(rgb, timestamp)
+                            writer.add(rgb, timestamp)
+                        else:
+                            detector.feed(crop_picture(frame, roi), timestamp)
                         last_sample = timestamp
                     if time.monotonic() - last_progress >= 2:
                         context.progress(.04 + .05 * min(1, timestamp / max(duration, timestamp, 1)), 'video_analysis',
@@ -200,7 +212,7 @@ def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | No
                         last_progress = time.monotonic()
         for converted in resampler.resample(None):
             add_audio(converted)
-    if not samples or detector.picture is None:
+    if not samples or (detector.anchor is None if writer is not None else detector.picture is None):
         raise ValueError('Video has no decodable audio or picture')
     end = max(video_end, sample_count / 16000)
     padding = round(end * 16000) - sample_count
@@ -214,6 +226,14 @@ def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | No
     normalized.parent.mkdir(parents=True, exist_ok=True)
     sf.write(normalized, values, 16000, format='WAV', subtype='PCM_16')
     detector.flush(end)
+    if writer is not None:
+        from .video_detection import VERSION, materialize
+        writer.finish(end, origin)
+        materialize(source, detector.scenes, frame_directory, roi, origin, lambda *args: None)
+        return values, 16000, {'contract_version': 1, 'revision': 1, 'duration': end, 'time_origin': origin,
+                              'roi': roi, 'detector': VERSION, 'scene_detection': detection_settings,
+                              'scenes': detector.scenes, 'automatic_scenes': [dict(s) for s in detector.scenes],
+                              'original_scenes': [dict(s) for s in detector.scenes]}
     return values, 16000, {'contract_version': 1, 'revision': 1, 'duration': end, 'time_origin': origin,
                           'roi': roi, 'detector': 'presentation-v1', 'scenes': detector.scenes,
                           'original_scenes': [dict(scene) for scene in detector.scenes]}

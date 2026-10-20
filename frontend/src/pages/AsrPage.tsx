@@ -1,3 +1,4 @@
+import {loadDetection} from '../lib/sceneDetection'
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {createPortal} from 'react-dom'
 import {ActionPopover} from '../components/ActionPopover'
@@ -472,7 +473,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       const strengthParams=gainStrengthCapability&&noiseStrengthCapability?{speech_enhancement_strength:preferences.speechEnhancementStrength,background_denoise_strength:preferences.backgroundDenoiseStrength}:{}
       for(const [name,value] of Object.entries(strengthParams))data.set(name,String(value))
       if (selectedHotwordIds.size) data.set('hotword_list_ids', [...selectedHotwordIds].join(','))
-      const job = isVideoTab?await submitVideo(file,{model,language,speaker_count:speakers==='auto'?null:Number(speakers),diarize:true,align,use_voiceprint_library:useVoiceprints,...(manualGroups?{voiceprint_group_ids:preferences.voiceprintGroupIds}:{}),compute_device:effectiveComputeDevice,accelerate_single_task:accelerateSingleTask,audio_enhancement:preferences.audioEnhancement,...strengthParams,hotword_list_ids:[...selectedHotwordIds],video_roi:videoRoi||null},{signal:controller.signal,onProgress:setUploadProgress}):await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
+      const job = isVideoTab?await submitVideo(file,{model,language,speaker_count:speakers==='auto'?null:Number(speakers),diarize:true,align,use_voiceprint_library:useVoiceprints,...(manualGroups?{voiceprint_group_ids:preferences.voiceprintGroupIds}:{}),compute_device:effectiveComputeDevice,accelerate_single_task:accelerateSingleTask,audio_enhancement:preferences.audioEnhancement,...strengthParams,hotword_list_ids:[...selectedHotwordIds],video_roi:videoRoi||null,...(videoCapability?.scene_detection?{video_scene_detection:loadDetection(videoCapability.scene_detection)}:{})},{signal:controller.signal,onProgress:setUploadProgress}):await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
       onJobSubmitted(job)
       setLastSubmitted(job)
       onSelect(job)
@@ -927,7 +928,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               </p>
             ) : null}
             {result.video?<div className="video-view-tabs" role="group" aria-label={t('video.readingMode')}><button aria-pressed={videoReading} onClick={()=>{checkpointWorkspace();setSceneReveal(undefined);setSegmentReveal(undefined);setVideoReading(true)}}>{t('video.reading')}</button><button aria-pressed={!videoReading} onClick={()=>{checkpointWorkspace();setSceneReveal(undefined);setSegmentReveal(undefined);setVideoReading(false)}}>{t('video.details')}</button><div className="video-toolbar" ref={setVideoToolbar}/></div>:null}
-            {result.video&&videoReading?<VideoTranscript key={selected.id} job={selected} resource={videoScenes} reveal={sceneReveal} currentTime={currentTime} toolbar={videoToolbar} editing={videoEditing} onEditingChange={setVideoEditing} onUpdated={onJobResultUpdated} onSeek={seconds=>{stopAt.current=undefined;seekWord(seconds)}} onEnroll={(speakerId,segmentIds)=>{audio.current?.pause();setVideoEnrollment({jobId:selected.id,speakerId,segmentIds})}} onRename={id=>{const segment=result.segments?.find(item=>item.speaker===id);if(segment)openRename(segment)}}/>:<>
+            {result.video&&videoReading?<VideoTranscript detectionCapability={videoCapability?.scene_detection} key={selected.id} job={selected} resource={videoScenes} reveal={sceneReveal} currentTime={currentTime} toolbar={videoToolbar} editing={videoEditing} onEditingChange={setVideoEditing} onUpdated={(id,next)=>{onJobResultUpdated(id,next);setSceneReveal({time:currentTime,token:++navigationSequence.current})}} onSeek={seconds=>{stopAt.current=undefined;seekWord(seconds)}} onEnroll={(speakerId,segmentIds)=>{audio.current?.pause();setVideoEnrollment({jobId:selected.id,speakerId,segmentIds})}} onRename={id=>{const segment=result.segments?.find(item=>item.speaker===id);if(segment)openRename(segment)}}/>:<>
             {result.video&&videoToolbar?createPortal(segmentTools,videoToolbar):segmentTools}
             {selectedSegments.size ? (
               <div className="segment-selection" aria-label={t('asr.results.selectionActions')}>

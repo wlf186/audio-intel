@@ -292,3 +292,13 @@ Temporary upgrade backups have a recorded purpose and exact path. Scope follows 
 Job-owned storage uses an authenticated batch POST separate from summary queries and SSE. It selects only ID/state/update metadata, never `result_json`, scans owned job/temp paths without following symlinks or Windows reparse points, and reports per-item unknown states separately from real zero. A bounded 512-entry cache retains active measurements for 5 seconds and terminal measurements for 30 seconds; at most two scans run concurrently. Shared libraries, models and SQLite are excluded, so deletion's reclaimed space is a separate measurement.
 
 Video navigation uses one revision-aware scenes resource for both the illustrated reader and the timeline. Existing representative frames form a proportional scene track, with visible tiles loaded lazily and a keyboard-accessible scene selector for dense timelines. The waveform is the seek control; zoom/pan browse the time window, with debounced reads and stale-response cancellation. Playback ticks only update the playhead. The window waveform endpoint seeks saved mono PCM16 WAV in bounded blocks, caches up to 128 windows in memory, and shares the existing two-calculation budget and purge reader leases. It does not create sidecars or backfill media; the older artifact endpoint remains capped at 240 peaks. Enhancement summaries use persisted outcomes/strengths and keep fallback visible without changing processing.
+
+### Result-side picture detection / 结果页画面检测
+
+Video presentation-v2 separates low-resolution feature sampling, temporal candidate confirmation and representative JPEG generation. Chunked XOR/ZIP feature caches are versioned and bound to source size/mtime, ROI and sampling shape. They are job-owned optional state (512 MiB budget), streamed in bounded chunks and rebuilt on mismatch/corruption. Initial ASR/video decoding preserves the existing audio path; legacy retry uses presentation-v1.
+
+视频 v2 将特征抽样、候选持续时间判断和正式截图分离；分块差分压缩缓存绑定源文件、ROI 和特征版本，按块读取，失配或损坏时重建。缓存可选且计入任务空间，旧任务重试保留 v1，音轨解码路径不变。
+
+API-managed disposable previews use one bounded CPU subprocess, immutable progress snapshots and complete process-tree cleanup. Preview receipts/images are temporary and expire on restart; successful feature caches survive. Reader leases protect active source/cache access from deletion. Applying a ready preview uses the existing speaker/result lock plus revision and updated_at checks, installs images before committing the new video section metadata, and preserves transcript and first-section snapshots. The ASR/TTS queues, job summary/SSE contract and SQLite schema are unchanged.
+
+预览由 API 管理独立 CPU 子进程，使用不可变进度文件和完整进程树回收；重启丢弃未应用预览、保留完整缓存。读取租约阻止处理中删除任务；应用使用结果锁及修订检查，先准备图片再提交分段元数据。队列、任务摘要/SSE 和数据库结构保持兼容。

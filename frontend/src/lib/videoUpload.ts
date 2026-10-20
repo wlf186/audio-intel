@@ -4,7 +4,7 @@ import i18n from '../i18n'
 
 export const videoResumeKey='audio-intel:video-upload:v1'
 export type VideoRegion={x:number;y:number;width:number;height:number}
-export type VideoCapability={supported:boolean;formats:string[];max_upload_bytes:number;chunk_bytes:number;upload_idle_seconds:number;upload_lifetime_seconds:number;max_scenes:number;scene_editing:boolean}
+export type VideoCapability={supported:boolean;formats:string[];max_upload_bytes:number;chunk_bytes:number;upload_idle_seconds:number;upload_lifetime_seconds:number;max_scenes:number;scene_editing:boolean;scene_detection?:import('./sceneDetection').SceneDetectionCapability}
 type Upload={id:string;name:string;size_bytes:number;offset:number;expires_at:number;chunk_bytes:number;job_id:string|null;chunks:Array<{offset:number;size_bytes:number;sha256:string}>}
 type Resume={id?:string;name:string;size:number;createKey:string;jobKey:string;params:Record<string,unknown>}
 export function loadVideoResume():Resume|undefined{

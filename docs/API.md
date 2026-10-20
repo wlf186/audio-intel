@@ -835,3 +835,25 @@ Executable client / 可执行客户端：
 ```
 
 Set `AUDIO_INTEL_BASE_URL` and optional `AUDIO_INTEL_API_KEY` in the client shell. Windows uses `.runtime\api\Scripts\python.exe`.
+
+### 视频画面检测预览 / Video picture detection previews
+
+`asr.video.scene_detection` in capabilities provides the detector version and min/max/step/default for `min_change_percent` (default 3, range 0.5–50) and `min_stable_seconds` (default 1, range 0.5–5). `POST /api/v1/asr/video-jobs` accepts optional `video_scene_detection` with these fields. Omission uses server defaults; new requests snapshot presentation-v2 and effective settings. Historical retry/idempotent replay preserves its original request. Browser result-page preferences are supplied explicitly on later submissions; paused uploads keep their saved parameters.
+
+capabilities 提供画面检测版本、范围及默认值；视频提交可传 `video_scene_detection` 两项参数，省略时使用服务端推荐值。新任务保存版本与有效参数；历史重试及幂等重放保持原请求。浏览器从结果页记住参数并在后续提交时显式传入，暂停上传不改参数。
+
+| Method / 方法 | Path / 路径 | Contract / 契约 |
+| --- | --- | --- |
+| POST | `/api/v1/jobs/{job_id}/video-scene-previews` | Required `Idempotency-Key`; JSON `revision`, `settings`. First 202, same-request replay 200, conflict 409, busy/disk limit 429 with Retry-After. / 创建预览，不改原结果。 |
+| GET | `/api/v1/jobs/{job_id}/video-scene-previews/{preview_id}` | State, settings and measured phase progress; ready includes candidate scenes and protected preview URLs. / 查询真实进度与候选画面。 |
+| GET | `/api/v1/jobs/{job_id}/video-scene-previews/{preview_id}/frames/{name}` | Generated preview JPEG only. / 仅该预览生成的图片。 |
+| DELETE | `/api/v1/jobs/{job_id}/video-scene-previews/{preview_id}` | Wait for child exit, discard preview, 204. / 等待进程退出后清理。 |
+| PATCH | `/api/v1/jobs/{job_id}/video-scenes` | `action=apply_detection`, `revision`, `preview_id`; apply a ready preview, 200 with updated result, stale revision 409. / 显式应用。 |
+
+Preview settings example: `{"revision":1,"settings":{"min_change_percent":3,"min_stable_seconds":1}}`. States are running, ready, failed, cancelled, applying and applied. Progress phases are scanning, detecting and images; they describe video seconds or prepared image counts, not ASR progress. One active preview; at most eight retained; expiry after 30 minutes or restart returns 410. Idempotency receipts share the preview lifetime. Poll manually after network errors; recreate an expired preview. No inference queue entry is created. All routes require normal session/Bearer authentication and same-origin write protections.
+
+示例请求如上。进度按扫描／缓存计算的媒体秒数、截图数量报告，不伪造 ASR 进度。最多一个活动预览、八份保留预览；30 分钟或重启后返回 410，幂等记录同寿命。网络错误可重查，过期重新预览，不创建 ASR 队列任务。所有接口继续受鉴权及同源写保护。
+
+Result `video.scene_detection` records applied parameters; `video.automatic_scenes` records the latest applied automatic sections. `scenes` remains the editable current set and `original_scenes` retains the initial snapshot. `restore` restores `automatic_scenes`, falling back to the initial snapshot for legacy results. Missing legacy parameters do not imply the new defaults were used. Applying preserves the original ASR segments, words and speaker data. Preview generation never changes the job result. CLI examples: `scripts/preview_video_scenes.py JOB_ID` previews; explicit `--apply` saves. `scripts/submit_video.py` also accepts `--scene-min-change-percent` and `--scene-min-stable-seconds`.
+
+结果新增实际参数和最近一次自动分段；首次快照保留。恢复操作优先使用最近一次自动分段，旧结果沿用首次快照。历史缺失参数不表示使用过新默认值。应用不改原始转写文字、词与说话人；预览不改任务结果。CLI 默认只预览，显式 `--apply` 才更新。

@@ -24,6 +24,7 @@ from .api_models import JobResponse, JobResultResponse, VideoSceneResponse
 from .asr_speakers import speaker_update_lock
 from .document_download import reader_lease
 from .transcript import scene_transcripts
+from .video_detection import SceneDetectionSettings
 
 
 class StrictModel(BaseModel):
@@ -102,6 +103,7 @@ class VideoJobRequest(StrictModel):
     speech_enhancement_strength: float | None = Field(None, ge=0, le=2, allow_inf_nan=False, description="自动人声增益力度，默认 1；0 跳过 / Automatic gain strength, default 1; zero skips")
     background_denoise_strength: float | None = Field(None, ge=0, le=1, allow_inf_nan=False, description="降噪混合比例，GTCRN 默认 0.5；0 跳过 / Denoising mix, GTCRN default 0.5; zero skips")
     video_roi: VideoRegion | None = None
+    video_scene_detection: SceneDetectionSettings | None = Field(None, description='画面检测参数；省略使用推荐值 / Picture detection settings; omission uses recommended defaults')
 
 
 from .transcript_export import TranscriptExportRequest
@@ -109,23 +111,35 @@ from .transcript_export import TranscriptExportRequest
 
 class SceneEdit(StrictModel):
     revision: int = Field(ge=1, description='开始编辑时读取的修订号；不能用后台新修订替换 / Revision read when editing began; never substitute a newer background revision')
-    action: Literal['merge_next', 'split', 'boundary', 'frame', 'restore']
+    action: Literal['merge_next', 'split', 'boundary', 'frame', 'restore', 'apply_detection']
+    preview_id: str | None = Field(None, pattern=r'^[a-f0-9]{32}$')
     scene_id: str | None = None
     time: float | None = Field(None, ge=0, description='视频起点后的秒数；拆分/边界严格位于区间内，截图允许左端点 / Seconds from video origin; split/boundary are strictly inside the interval, frame may use its left endpoint')
 
 
+    @model_validator(mode='after')
+    def detection_preview(self):
+        if self.action == 'apply_detection' and not self.preview_id:
+            raise ValueError('apply_detection requires preview_id')
+        return self
+
+
 def capabilities(config: Any) -> dict[str, Any]:
+    from .video_detection import capability
     return {'audio_formats': store.AUDIO_FORMATS, 'concise_pdf': True,
             'video': {'supported': True, 'formats': store.VIDEO_FORMATS,
                       'max_upload_bytes': config.max_video_upload_bytes,
                       'chunk_bytes': config.video_upload_chunk_bytes,
                       'upload_idle_seconds': config.video_upload_idle_seconds,
                       'upload_lifetime_seconds': config.video_upload_lifetime_seconds,
-                      'max_scenes': 2000, 'scene_editing': True}}
+                      'max_scenes': 2000, 'scene_editing': True, 'scene_detection': capability()}}
 
 
 def register(app: Any, api: Any) -> None:
     config = api.settings
+    from .video_previews import PreviewManager, register_previews
+    previews = PreviewManager(config)
+    register_previews(app, api, previews)
     auth = Depends(api.require_api_key)
     locks: dict[str, tuple[asyncio.Lock, int]] = {}
     preview_slots = threading.BoundedSemaphore(2)
@@ -186,9 +200,11 @@ def register(app: Any, api: Any) -> None:
     async def lifespan(application: Any):
         async with prior(application):
             task = asyncio.create_task(cleanup())
+            await previews.start()
             try:
                 yield
             finally:
+                await previews.close()
                 task.cancel()
                 try:
                     await task
@@ -292,6 +308,8 @@ def register(app: Any, api: Any) -> None:
         api.ensure_service('asr')
         key = api.validate_idempotency_key(idempotency_key)
         caller = body.model_dump(mode='json')
+        if body.video_scene_detection is None:
+            caller.pop('video_scene_detection', None)
         if body.voiceprint_group_ids is None:
             caller.pop('voiceprint_group_ids', None)
         else:
@@ -331,6 +349,8 @@ def register(app: Any, api: Any) -> None:
                 raise api.admission_problem(decision, 'asr')
             try:
                 payload = {**caller, **hotwords, **scope, 'video_caller': caller, 'purpose': 'video_transcription',
+                           'video_scene_detection': (body.video_scene_detection or SceneDetectionSettings()).model_dump(),
+                           'video_detector': 'presentation-v2',
                            'model': selected['public_id'], 'language': language, 'compute_device': device,
                            'compute_device_name': device_name, 'export_formats': []}
                 job, replayed = await run_in_threadpool(store.complete, config, row, payload, api.idempotency_key_hash(key), fingerprint)
@@ -440,9 +460,11 @@ def register(app: Any, api: Any) -> None:
             return Response(buffer.getvalue(), media_type='image/jpeg', headers={'Cache-Control': 'no-store'})
 
     @app.patch('/api/v1/jobs/{job_id}/video-scenes', tags=tags, response_model=JobResultResponse, responses=errors,
-               description='携带 revision 修订号进行合并、拆分、边界/截图调整或恢复。冲突返回 409，请重新读取。\n\n**English:** Submit revision with merge_next, split, boundary, frame or restore. Stale revision returns 409; reload before retrying.',
+               description='携带 revision 修订号进行合并、拆分、边界/截图调整、恢复或应用检测预览。冲突返回 409，请重新读取。\n\n**English:** Submit revision with merge_next, split, boundary, frame, restore or apply_detection (with preview_id). Stale revision returns 409; reload before retrying.',
               summary='修正视频分段 / Edit presentation sections')
     def edit(job_id: str, body: SceneEdit, _: None = auth) -> dict:
+        if body.action == 'apply_detection':
+            return previews.apply(job_id, body.preview_id, body.revision)
         from .video_frames import picture_at, save_picture
         with picture_slot(), speaker_update_lock(job_id), task_reader(job_id):
             job = completed(job_id, True)
@@ -455,7 +477,7 @@ def register(app: Any, api: Any) -> None:
             if body.action != 'restore' and index < 0:
                 raise HTTPException(404, 'Scene not found')
             if body.action == 'restore':
-                video['scenes'] = copy.deepcopy(video['original_scenes'])
+                video['scenes'] = copy.deepcopy(video.get('automatic_scenes') or video['original_scenes'])
                 values = video['scenes']
             elif body.action == 'merge_next':
                 if index + 1 >= len(values):
@@ -502,7 +524,7 @@ def register(app: Any, api: Any) -> None:
                     if path.name not in before:
                         path.unlink(missing_ok=True)
                 raise
-            retained = {s['image'] for s in values + video['original_scenes']}
+            retained = {s['image'] for s in values + video['original_scenes'] + (video.get('automatic_scenes') or [])}
             for path in folder.glob('*.jpg'):
                 if path.name not in retained:
                     path.unlink(missing_ok=True)

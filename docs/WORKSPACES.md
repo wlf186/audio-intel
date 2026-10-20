@@ -122,3 +122,7 @@ English: Narrow screens use a separate person detail route, with Back/browser hi
 任务记录显示每项任务文件占用，勾选与删除确认显示已知项合计及未知项数量；零字节、统计中与统计失败分开显示，可手动刷新。统计任务专属输入、输出、临时文件，排除共享资料库、模型和数据库；活动任务数据最多缓存5秒，终态30秒。删除后的实际释放可能因数据库压缩、正在写入文件而不同。窄屏在任务名称下显示占用。
 
 English: Enhancement status and saved strengths occupy one compact summary; details show each operation, with partial fallback always visible. History shows per-task owned disk usage and a selection subtotal with unknown counts. Loading/errors never imply zero. Refresh remeasures owned inputs/outputs/temp files, excluding shared libraries/models/database; actual reclaimed space may differ. Clear replacement rules preserves redaction and offers transient exact-text undo; preference storage lifetime is unchanged.
+
+视频结果的「画面检测」弹窗支持变化比例与保持时间，先预览、再应用，详见[视频转写](VIDEO_TRANSCRIPTION.md#结果页画面检测--picture-detection-in-results)。成功应用后记住本浏览器后续视频参数，当前任务仍保留自己的设置；默认值重置只修改待预览值。弹窗关闭丢弃草稿，不占用主阅读区高度。
+
+The video result's Picture detection dialog previews area/duration controls before applying. Applied settings are remembered for future videos in this browser; each existing task keeps its own settings. Reset affects pending controls only. Closing discards the draft and the dialog adds no height to the reading area. See [video transcription](VIDEO_TRANSCRIPTION.md#结果页画面检测--picture-detection-in-results).
