@@ -252,10 +252,14 @@ class PreviewManager:
                 pass  # Best-effort progress must never fail decoding.
 
     async def discard(self, job_id: str, identifier: str):
-        item = self.get(job_id, identifier)
-        if item['state'] == 'applying':
-            raise HTTPException(409, 'Preview is being applied')
-        task = self.tasks.get(identifier)
+        with self.lock:
+            item = self.get(job_id, identifier)
+            if item['state'] == 'applying':
+                raise HTTPException(409, 'Preview is being applied')
+            # Prevent an apply thread from acquiring a ready preview while its
+            # files are being discarded (including while cancellation awaits).
+            item['state'] = 'cancelled'
+            task = self.tasks.get(identifier)
         if task:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
@@ -265,8 +269,8 @@ class PreviewManager:
             self.items.pop(identifier, None)
 
     def apply(self, job_id: str, identifier: str | None, revision: int) -> dict:
-        item = self.get(job_id, identifier or '')
         with self.lock:
+            item = self.get(job_id, identifier or '')
             if item['state'] != 'ready':
                 raise HTTPException(409, 'Preview is not ready')
             item['state'] = 'applying'
