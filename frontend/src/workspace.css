@@ -338,9 +338,10 @@ h1{text-shadow:none}
 @media(max-width:600px){
  .page-pad{padding:16px 14px}
  .workspace-tabs{gap:0}
- .workspace-tabs button{flex:1;padding:10px 6px;font-size:13px;min-width:0}
+ .workspace-tabs button{flex:1;padding:6px;font-size:13px;line-height:20px;min-width:0;white-space:normal;overflow-wrap:anywhere}
  .library-navigation{padding:16px 14px 12px;gap:8px}
- .library-navigation .library-tabs{flex:1 1 190px}
+ .library-navigation .library-tabs{flex:1 1 max-content;min-width:max-content}
+ .library-navigation .library-tools{margin-left:auto}
  .library-content .page-pad{padding:0 14px 20px}
  .jobs-navigation{gap:10px}
  .jobs-navigation .filter{width:100%;display:flex;flex-wrap:wrap}

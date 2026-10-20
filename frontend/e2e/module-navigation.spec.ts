@@ -26,7 +26,14 @@ for(const [width,height] of [[1280,720],[1440,800],[1470,830],[1280,560],[390,84
    await expect(tabs.getByRole('tab').last()).toHaveAttribute('aria-selected','true')
    await page.keyboard.press('Home');await expect(first).toHaveAttribute('aria-selected','true')
    expect(Math.abs((await tabs.boundingBox())!.y-before.y)).toBeLessThanOrEqual(1)
-   for(const control of await tabs.getByRole('tab').all())expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+   for(const control of await tabs.getByRole('tab').all()){
+    expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    expect(await control.evaluate(node=>{
+     const box=node.getBoundingClientRect(),text=document.createRange()
+     text.selectNodeContents(node)
+     return [...text.getClientRects()].every(rect=>rect.left>=box.left+3&&rect.right<=box.right-3&&rect.top>=box.top&&rect.bottom<=box.bottom)
+    })).toBe(true)
+   }
   }
   if(index===2){
    await main.getByRole('button',{name:zh?'资料库工具':'Library tools',exact:true}).click()

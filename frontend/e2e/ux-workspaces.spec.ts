@@ -15,7 +15,7 @@ for(const width of [1440,390]){
   const exportButton=page.getByRole('button',{name:'导出简洁 PDF',exact:true})
   await expect(exportButton).toBeDisabled();expect(state.exports).toHaveLength(0)
   await editor.fill('产品=项目');await expect(exportButton).toBeEnabled()
-  if(width===1440){await page.keyboard.press('Escape');await expect(editor).toBeHidden();await page.getByRole('button',{name:'关键词替换',exact:true}).click();await page.locator('h1').click();await expect(editor).toBeHidden()}
+  if(width===1440){await page.keyboard.press('Escape');await expect(editor).toBeHidden();await page.getByRole('button',{name:'关键词替换',exact:true}).click();await page.getByRole('tab',{name:'任务与结果',exact:true}).click();await expect(editor).toBeHidden()}
   await assertReachable(page,width)
   await page.screenshot({path:info.outputPath('export.png')})
   expect(errors).toEqual([])
