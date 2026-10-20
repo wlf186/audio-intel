@@ -656,8 +656,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
             </div>)
   return (
     <div className={`workbench hud-page asr-workspace${view==='results'?' view-results':''}`}>
-      <header className="asr-heading"><h1>{t('asr.title')}</h1></header>
-      <div className="asr-tabs" role="tablist" aria-label={t('asr.title')} onKeyDown={event=>{
+      <div className="asr-tabs workspace-tabs" role="tablist" aria-label={t('asr.title')} onKeyDown={event=>{
         if(busy)return
         const tabs=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role=tab]'))
         const index=tabs.indexOf(document.activeElement as HTMLButtonElement)

@@ -628,8 +628,7 @@ export function TtsPage({
   return (
     <div className="tts-grid hud-page tts-workspace">
       <section className="tts-editor" data-module="TTS_CONSOLE / SYN_02">
-        <div className="section-title"><h1 tabIndex={-1}>{t('tts.title')}</h1></div>
-        <div className="tts-workspace-tabs" role="tablist" aria-label={t('tts.workspace.label')} onKeyDown={handleTabKeys}>
+        <div className="tts-workspace-tabs workspace-tabs" role="tablist" aria-label={t('tts.workspace.label')} onKeyDown={handleTabKeys}>
           {(['text', ...(documentCapability?.supported ? ['document' as const] : []), 'results'] as WorkspaceView[]).map(view=><button
             key={view} id={`tts-workspace-${view}`} type="button" role="tab"
             aria-selected={workspaceView===view} aria-controls={view==='results'?'tts-result-content':'tts-mode-content'}

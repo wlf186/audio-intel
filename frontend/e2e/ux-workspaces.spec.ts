@@ -158,5 +158,5 @@ test('browser back waits for draft confirmation and cancellation restores the UR
  await page.goBack();await expect(page).toHaveURL(/#library\/voiceprints$/)
  await page.goBack();const dialog=page.getByRole('dialog');await expect(dialog).toBeVisible();await expect(page).toHaveURL(/#library\/voiceprints$/)
  await dialog.locator('.modal-actions').getByRole('button',{name:'取消',exact:true}).click();await expect(dialog).toHaveCount(0);await expect(page).toHaveURL(/#library\/voiceprints$/)
- await page.goBack();await expect(dialog).toBeVisible();await dialog.getByRole('button',{name:'放弃并继续',exact:true}).click();await expect(page).toHaveURL(/#asr$/);await expect(page.getByRole('heading',{name:'音视频转写',exact:true})).toBeVisible();expect(errors).toEqual([])
+ await page.goBack();await expect(dialog).toBeVisible();await dialog.getByRole('button',{name:'放弃并继续',exact:true}).click();await expect(page).toHaveURL(/#asr$/);await expect(page.getByRole('main',{name:'转写工作台',exact:true})).toBeVisible();expect(errors).toEqual([])
 })

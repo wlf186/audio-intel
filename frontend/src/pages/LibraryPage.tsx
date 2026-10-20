@@ -118,13 +118,15 @@ export function LibraryPage({tab,onTabChange,maxUploadBytes,onImported,children}
  const phase=!item||['queued','validating','failed','expired'].includes(item.state)?1:item.state==='ready'?2:3
  const removedSummary=preview?t('workspaceUx.replaceCounts',{groups:preview.removed.groups??t('workspaceUx.notProvided'),people:preview.removed.people,samples:preview.removed.samples,lists:preview.removed.hotword_lists}):''
  return <div className="library-page hud-page">
-  <div className="page-heading library-heading"><div><h1 tabIndex={-1}>{t('library.title')}</h1><p>{t('library.subtitle')}</p></div><div className="library-tools"><ActionPopover label={t('workspaceUx.libraryTools')} className="library-tool-menu" closeOnAction><button className="button" onClick={()=>download('/api/v1/library/export')}><Download size={17}/>{t('library.export')}</button><button className="button" onClick={()=>setOpen(true)}><Upload size={17}/>{t('library.import')}</button></ActionPopover></div></div>
+  <div className="library-navigation workspace-toolbar">
+  <div className="library-tabs workspace-tabs" role="tablist" aria-label={t('library.sections')} onKeyDown={handleTabKeys}>
+   {(['voiceprints','hotwords'] as const).map(value=><button id={`library-tab-${value}`} key={value} role="tab" aria-selected={tab===value} aria-controls="library-panel" tabIndex={tab===value?0:-1} onClick={()=>onTabChange(value)}>{t(value==='voiceprints'?'voiceprints.title':'hotwords.title')}</button>)}
+  </div>
+   <div className="library-tools"><ActionPopover label={t('workspaceUx.libraryTools')} className="library-tool-menu" closeOnAction><p>{t('library.subtitle')}</p><button className="button" onClick={()=>download('/api/v1/library/export')}><Download size={17}/>{t('library.export')}</button><button className="button" onClick={()=>setOpen(true)}><Upload size={17}/>{t('library.import')}</button></ActionPopover></div>
+  </div>
   {error&&!open?<p className="error library-message" role="alert">{error}</p>:null}
   {notice&&!open?<p className="notice library-message" role="status">{notice}</p>:null}
   {active&&!open?<button className="button library-message" onClick={()=>setOpen(true)}>{t(`library.states.${item.state as 'queued'|'validating'|'applying'}`)}</button>:null}
-  <div className="library-tabs" role="tablist" aria-label={t('library.sections')} onKeyDown={handleTabKeys}>
-   {(['voiceprints','hotwords'] as const).map(value=><button id={`library-tab-${value}`} key={value} role="tab" aria-selected={tab===value} aria-controls="library-panel" tabIndex={tab===value?0:-1} onClick={()=>onTabChange(value)}>{t(value==='voiceprints'?'voiceprints.title':'hotwords.title')}</button>)}
-  </div>
   <div className="library-content" id="library-panel" role="tabpanel" aria-labelledby={`library-tab-${tab}`}>{children}</div>
   {open?<Modal className="library-import-modal" title={t('library.importTitle')} closeLabel={t('common.actions.close')} onClose={()=>{if(!busy)setOpen(false)}}>
    <ol className="import-stepper" aria-label={t('workspaceUx.importSteps')}>{([1,2,3] as const).map(step=><li key={step} aria-current={phase===step?'step':undefined}><b>{step}</b>{t(`workspaceUx.importStep${step}`)}</li>)}</ol>

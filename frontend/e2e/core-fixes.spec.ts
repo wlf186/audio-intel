@@ -97,7 +97,7 @@ test('pending voiceprint polling stops after session expiry and resumes after lo
   return route.fulfill({json:{items:[{id:'person',name:'测试声纹',sample_count:1,include_in_hotword_library:false,created_at:now,updated_at:now,samples:[{id:'sample',person_id:'person',state,language:'Chinese',transcript:'测试',words:[],tts_eligible:state==='ready',embedding_status:'ready',created_at:now,updated_at:now}]}]}})
  })
  await page.goto('/#tts')
- await expect(page.getByRole('heading',{name:'语音合成',exact:true})).toBeVisible()
+ await expect(page.getByRole('main',{name:'语音合成',exact:true})).toBeVisible()
  await expect.poll(()=>calls).toBe(1)
  await page.clock.fastForward(2100)
  await expect(page.getByRole('heading',{name:'访问验证'})).toBeVisible()

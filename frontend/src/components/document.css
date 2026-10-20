@@ -142,9 +142,7 @@
 .modal-card:has(.document-text-preview)>.modal-close,.modal-card:has(.document-library)>.modal-close{width:44px;height:44px;min-height:44px;padding:10px;display:grid;place-items:center}
 
 /* One shell for text, documents and task results; navigation never moves between panels. */
-.tts-workspace .tts-editor{display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:16px;padding:24px;min-width:0}
-.tts-workspace .section-title{display:block;margin:0}
-.tts-workspace .section-title h1{margin:0}
+.tts-workspace .tts-editor{display:grid;grid-template-rows:auto minmax(0,1fr);gap:16px;padding:24px;min-width:0}
 .tts-workspace-tabs{display:flex;gap:8px;min-width:0;border-bottom:1px solid var(--line)}
 .tts-workspace-tabs button{transition:none;min-height:44px;padding:10px 16px;border:0;border-bottom:3px solid transparent;background:transparent;color:var(--muted);font:inherit;white-space:nowrap}
 .tts-workspace-tabs button[aria-selected=true]{color:var(--yellow);border-bottom-color:var(--yellow)}

@@ -7,5 +7,13 @@ export async function mockTimelineWaveform(page:Page,jobId:string,duration:numbe
 }
 
 export async function scrollTimelineTo(page:Page,start:number,duration=120,span=60){
- await page.locator('.timeline-scroll-viewport').evaluate((node,{start,duration,span})=>{node.scrollLeft=start/(duration-span)*(node.scrollWidth-node.clientWidth)},{start,duration,span})
+ const bar=page.getByRole('scrollbar')
+ await bar.scrollIntoViewIfNeeded()
+ if(start<=0){await bar.press('Home');return}
+ if(start>=duration-span){await bar.press('End');return}
+ const rail=(await bar.boundingBox())!,thumb=(await page.locator('.timeline-scrollbar-thumb').boundingBox())!
+ const target=rail.x+start/(duration-span)*(rail.width-thumb.width)+thumb.width/2
+ const y=rail.y+rail.height/2
+ await page.mouse.move(thumb.x+thumb.width/2,y);await page.mouse.down()
+ await page.mouse.move(target,y,{steps:4});await page.mouse.up()
 }

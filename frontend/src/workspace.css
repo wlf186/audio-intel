@@ -27,7 +27,7 @@ h1{text-shadow:none}
 
 @media(min-width:1024px){
  .asr-workspace.workbench,.tts-workspace,.tts-workspace .tts-editor{height:100%;min-height:0}
- .asr-workspace.workbench{grid-template-rows:auto auto minmax(0,1fr)}
+ .asr-workspace.workbench{grid-template-rows:auto minmax(0,1fr)}
  .asr-workspace.view-results .result-panel{min-height:0}
  .asr-workspace .asr-create{min-height:0}
  .asr-settings:not(.expanded) .asr-settings-body{display:grid}
@@ -71,9 +71,9 @@ h1{text-shadow:none}
 
 }
 
-/* Library tabs are the section titles; only the parent owns a page heading. */
-.library-heading{padding:16px 24px 12px;border:0;flex-shrink:0}
-.library-heading p{font-size:12px}
+/* Library panes scroll independently below their section navigation. */
+
+
 .library-tabs{margin-bottom:12px;border-bottom:1px solid var(--line)}
 .library-tabs button{border:0;border-bottom:2px solid transparent;background:transparent}
 .library-tabs button[aria-selected=true]{background:transparent;border-bottom-color:var(--yellow)}
@@ -139,7 +139,7 @@ h1{text-shadow:none}
 @media(max-width:600px){
  .page-pad{padding:18px 14px}
  .page-heading h1{font-size:24px}
- .library-heading{padding:16px 14px 10px}
+
  .library-content .page-pad{padding:0 14px 16px}
  .library-content .people-panel{max-height:none;padding:10px}
  .library-content .people-index{height:280px;min-height:220px}
@@ -193,7 +193,7 @@ h1{text-shadow:none}
 .app-shell>header .logout{width:44px;min-width:44px;min-height:44px}
 .video-speaker{min-width:44px;min-height:44px}
 .asr-workspace .player-row>.waveform-toggle{min-width:44px}
-.library-heading{justify-content:space-between}
+
 .library-tool-menu-panel{display:grid;gap:10px}
 .library-content .people-alphabet{display:flex;flex-direction:column;width:45px;align-content:initial}
 .library-content .people-alphabet button{width:44px;min-height:44px;font-size:12px;line-height:1.4}
@@ -301,7 +301,7 @@ h1{text-shadow:none}
  .library-content .samples-panel{height:100%;overflow:auto;border:1px solid var(--line);padding-bottom:20px}
  .person-list-open .samples-panel,.person-detail-open .people-panel{display:none}
  .mobile-person-back{display:flex;min-height:44px;margin-bottom:12px}
- .library-heading p{display:none}
+
  .library-tools{width:auto}
  .library-tools button{flex:none;min-height:44px}
  .library-content .voiceprint-page>.notice,.library-content .voiceprint-page>.error{flex-shrink:0}
@@ -309,12 +309,40 @@ h1{text-shadow:none}
 }
 @media(max-width:600px){
  .library-page{height:calc(100dvh - 126px);min-height:400px}
- .library-heading{padding:12px 14px;gap:8px;flex-wrap:nowrap}
- .library-heading h1{font-size:24px;margin:0}
+
+
  .library-tabs{margin-bottom:10px}
  .group-edit-actions .button,.group-edit-actions .icon-button{min-height:44px}
  .library-import-modal,.video-enrollment{width:calc(100vw - 24px)}
  .video-enrollment>.modal-actions{display:flex;flex-wrap:wrap;gap:8px}
  .video-enrollment>.modal-actions>span{flex:1 1 140px}
  .video-enrollment>.modal-actions>.primary{flex:1 1 140px;min-height:44px}
+}
+
+/* The global navigation names modules; content starts with tabs or useful controls. */
+.page-pad{padding:20px}
+.workspace-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;flex-shrink:0}
+.workspace-tabs{display:flex;gap:8px;min-width:0;margin:0;border-bottom:1px solid var(--line)}
+.workspace-tabs button{min-height:44px;padding:10px 16px;border:0;border-bottom:3px solid transparent;background:transparent;color:var(--muted);font:inherit;white-space:nowrap;cursor:pointer;transition:none}
+.workspace-tabs button[aria-selected=true]{color:var(--yellow);border-bottom-color:var(--yellow);background:transparent}
+.workspace-tabs button:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+.library-navigation{padding:20px 20px 12px;flex-wrap:wrap}
+.library-navigation .library-tabs{flex:1}
+.library-navigation .library-tools{width:auto}
+.library-navigation .library-tools button{min-height:44px}
+.library-tool-menu-panel>p{font-size:12px;line-height:1.5;color:var(--muted);margin:0 0 8px}
+.library-content .page-pad{padding:0 20px 20px}
+.jobs-navigation{flex-wrap:wrap;margin-bottom:16px}
+.jobs-summary{color:var(--muted);font-size:13px;margin:0}
+.jobs-navigation .filter{margin:0;max-width:100%}
+@media(max-width:600px){
+ .page-pad{padding:16px 14px}
+ .workspace-tabs{gap:0}
+ .workspace-tabs button{flex:1;padding:10px 6px;font-size:13px;min-width:0}
+ .library-navigation{padding:16px 14px 12px;gap:8px}
+ .library-navigation .library-tabs{flex:1 1 190px}
+ .library-content .page-pad{padding:0 14px 20px}
+ .jobs-navigation{gap:10px}
+ .jobs-navigation .filter{width:100%;display:flex;flex-wrap:wrap}
+ .jobs-navigation .filter button{flex:1;padding:0 10px}
 }

@@ -161,15 +161,15 @@ English: Each task/view retains its reading anchor and loaded count across navig
 
 视频结果默认常显波形，上方为对应画面段的代表截图，共用同一时间刻度。“画面目录”列出全部画面段，与正文的“画面 1、画面 2…”对应。每个画面段是一段时间，代表截图取自该段中的某一时刻；预览分别标注“对应时段”和“截图时刻”。全片视图会省略放不下的缩略图，放大后显示更多，目录始终保留全部画面。
 
-初始显示全片，可×2／÷2缩放（最小10秒，短视频以全长为限）。放大后通过横向滚动条、触控板横滑或聚焦滚动区域后的方向键浏览；手机可横向拖动缩略图区。横向浏览只改变可视窗口，不改变播放位置，并暂停自动跟随。播放点移出窗口时，“定位播放点”按钮可将窗口移回并恢复跟随；选择画面或操作波形也恢复跟随。正常纵向滚动不被时间轴拦截。
+初始显示全片，可×2／÷2缩放（最小10秒，短视频以全长为限）。横向滚动条由页面绘制并始终可见，不随系统滚动条设置自动隐藏；滑块长度表示当前可见范围，全片视图时满宽且不可拖动。放大后可拖动滑块、点击轨道或使用触控板横滑浏览；手机也可横向拖动滑块或缩略图区。聚焦滚动条后，方向键移动可见范围的 10%，PageUp／PageDown 或点击空白轨道移动 90%，Home／End 到两端。横向浏览只改变可视窗口，不改变播放位置，并暂停自动跟随。播放点移出窗口时，“定位播放点”按钮可将窗口移回并恢复跟随；选择画面或操作波形也恢复跟随。正常纵向滚动不被时间轴拦截。
 
 悬停或键盘聚焦缩略图显示预览，Escape／离开关闭。选择画面定位到 `scene.start`；代表截图的 `frame_time` 可能位于该段末尾，不用作跳转时间。点击波形保留准确点击时间，并同步定位、高亮图文阅读或逐句明细中的对应内容；拖动波形在松开时定位正文，键盘操作同样支持。静音间隔定位后续最近语句，片尾定位最后一句，播放时间保持所选值。所有定位保留播放／暂停状态；正常播放只更新高亮，不持续滚动正文。
 
 主动从画面目录、缩略图或波形定位逐句明细时，会清除搜索和说话人筛选，以显示目标语句；切换阅读模式仍恢复各自的位置。浏览器存储期限不变。编辑画面段后，阅读区与时间轴共用修订结果并同时更新。
 
-结果页的增强状态位于音频下载旁，点击简短状态按钮查看设置强度、逐项处理状态和原因；设置强度不代表每一项一定已执行。较窄的结果卡片将原音／增强音下载收进“下载音频”菜单。桌面标题与页签、阅读模式与当前模式工具分别共用一行，正文独立滚动；手机和极矮窗口允许页面纵向滚动。时间轴横向滚动条占位固定，放大不会再挤出一整行平移控件。
+结果页的增强状态位于音频下载旁，点击简短状态按钮查看设置强度、逐项处理状态和原因；设置强度不代表每一项一定已执行。较窄的结果卡片将原音／增强音下载收进“下载音频”菜单。内容区直接展示子页签，阅读模式与当前模式工具共用一行，正文独立滚动；手机和极矮窗口允许页面纵向滚动。时间轴横向滚动条占位固定，放大不会再挤出一整行平移控件。
 
-English: The scene directory lists every interval and matches the numbered illustrated sections. Thumbnails are representative frames; previews distinguish the interval from the frame capture time. Zoom in to see more thumbnails. After zooming, browse with the native horizontal scrollbar, a horizontal trackpad gesture, focused scrollbar keyboard navigation, or a touch drag over thumbnails. Browsing does not seek and pauses following. Locate playhead restores following without changing playback time; explicit waveform/scene navigation also resumes following. Vertical scrolling remains available.
+English: The scene directory lists every interval and matches the numbered illustrated sections. Thumbnails are representative frames; previews distinguish the interval from the frame capture time. Zoom in to see more thumbnails. After zooming, browse with the persistent page-rendered scrollbar, a horizontal trackpad gesture, or a touch drag over the bar or thumbnails. The bar remains visible regardless of OS auto-hide preferences; its length represents the visible range and it is disabled in full view. Focused arrow keys move 10% of the visible range; PageUp/PageDown and empty-track clicks move 90%; Home/End go to the boundaries. Browsing does not seek and pauses following. Locate playhead restores following without changing playback time; explicit waveform/scene navigation also resumes following. Vertical scrolling remains available.
 
 Scene selection seeks to the interval start. Waveform clicks seek to the exact chosen time and reveal/highlight the illustrated paragraph or detailed sentence; dragging reveals the reader on release, and keyboard navigation does the same. Gaps reveal the next sentence and the endpoint reveals the final sentence without changing the selected time. Playback state is preserved. Playback ticks highlight without repeatedly scrolling the reader. Explicit navigation clears detailed-reader search/speaker filters; switching views still restores their independent bookmarks and storage lifetime is unchanged.
 

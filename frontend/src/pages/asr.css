@@ -1,6 +1,5 @@
-.asr-workspace.workbench{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr);gap:12px;padding:20px;min-width:0;align-content:start}
+.asr-workspace.workbench{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:12px;padding:20px;min-width:0;align-content:start}
 .asr-workspace [hidden]{display:none!important}
-.asr-heading h1{margin:0;font-size:25px;color:var(--yellow)}
 .asr-tabs{display:flex;border-bottom:1px solid var(--line);gap:8px}
 .asr-tabs button{border:0;border-bottom:3px solid transparent;background:transparent;color:var(--muted);padding:10px 16px;min-height:44px;font:inherit;transition:none}
 .asr-tabs button[aria-selected=true]{color:var(--yellow);border-bottom-color:var(--yellow)}
@@ -56,7 +55,7 @@
 .asr-task-status{padding:16px}
 @media(min-width:1200px){.asr-results{overflow:hidden}}
 @media(max-width:1199px){
- .asr-workspace.workbench{height:auto;min-height:100%;grid-template-rows:auto auto auto}
+ .asr-workspace.workbench{height:auto;min-height:100%;grid-template-rows:auto auto}
  .asr-workspace .asr-create{grid-template-columns:minmax(0,1fr)}
  .asr-settings:not(.expanded) .asr-settings-body{display:none}
  .asr-settings-body{overflow:visible}
@@ -283,11 +282,14 @@
 .asr-audio-downloads>.audio-download-menu{display:none}
 .audio-download-menu-panel{display:grid;gap:8px;width:220px}
 .audio-download-menu-panel .button{min-height:44px}
-.timeline-scroll-viewport{overflow-x:scroll;overflow-y:hidden;min-width:0;scrollbar-width:thin;overscroll-behavior-x:contain}
-.timeline-scroll-viewport::-webkit-scrollbar{height:12px}
-.timeline-scroll-content{position:relative}
-.timeline-scroll-viewport{height:14px}
-.timeline-scroll-viewport:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+.timeline-scrollbar{position:relative;min-width:0;height:16px;flex-shrink:0;cursor:pointer;touch-action:none;user-select:none}
+.timeline-scrollbar-track{position:absolute;inset:3px 0;background:var(--panel-2);border:1px solid var(--line);border-radius:5px}
+.timeline-scrollbar-thumb{position:absolute;left:0;top:3px;height:10px;background:var(--muted);border:1px solid var(--text);border-radius:5px;pointer-events:none}
+.timeline-scrollbar:hover .timeline-scrollbar-thumb,.timeline-scrollbar:focus-visible .timeline-scrollbar-thumb{background:var(--cyan)}
+.timeline-scrollbar[aria-disabled=true]{cursor:default}
+.timeline-scrollbar[aria-disabled=true] .timeline-scrollbar-thumb{background:var(--line);border-color:var(--muted)}
+.timeline-scrollbar:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+@media(max-width:600px),(pointer:coarse){.timeline-scrollbar{height:44px}.timeline-scrollbar-track{top:17px;bottom:17px}.timeline-scrollbar-thumb{top:17px}}
 .timeline-scenes{touch-action:pan-y}
 .timeline-toolbar>.info-tooltip{flex-basis:auto;flex-shrink:0}
 .timeline-toolbar .timeline-scene-picker{width:150px;max-width:150px}
@@ -303,9 +305,8 @@
  .asr-audio-downloads.has-enhanced>.audio-download-menu{display:block}
 }
 @media(min-width:1024px) and (min-height:601px){
- .asr-workspace.workbench.hud-page{grid-template-columns:max-content minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);column-gap:24px}
- .asr-workspace .asr-heading{grid-column:1;grid-row:1;align-self:center}
- .asr-workspace .asr-tabs{grid-column:2;grid-row:1}
+ .asr-workspace.workbench.hud-page{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+ .asr-workspace .asr-tabs{grid-column:1;grid-row:1}
  .asr-workspace .asr-create,.asr-workspace .asr-results{grid-column:1/-1;grid-row:2}
  .asr-workspace.view-results .asr-results{overflow:hidden}
  .asr-workspace.view-results .video-result{height:100%;min-height:0;overflow:hidden;scrollbar-gutter:stable}
@@ -344,7 +345,7 @@
 
 .asr-enhancement-row .enhancement-partial .button{color:#ffbd69;border-color:#ffbd6980}
 @media(min-width:1024px) and (max-height:600px){
- .asr-workspace.workbench.hud-page{height:auto;min-height:100%;grid-template-rows:auto auto auto}
+ .asr-workspace.workbench.hud-page{height:auto;min-height:100%;grid-template-rows:auto auto}
  .asr-workspace.view-results .asr-results{overflow:visible;align-items:start}
  .asr-workspace.view-results .video-result{height:auto;min-height:0;overflow:visible}
  .asr-workspace.view-results .video-result .video-transcript,.asr-workspace.view-results .video-result .segments{min-height:180px;max-height:60dvh}

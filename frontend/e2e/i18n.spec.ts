@@ -59,7 +59,7 @@ test('detects, switches, and persists the interface language without reloading p
 
  await page.goto('/#tts')
  await expect(page.locator('html')).toHaveAttribute('lang','en-US')
- await expect(page.getByRole('heading',{name:'Speech synthesis'})).toBeVisible()
+ await expect(page.getByRole('main',{name:'Speech synthesis',exact:true})).toBeVisible()
  const fullLabels=['Transcription','Speech synthesis','Library','Task history','System status']
  const mediumLabels=['Transcribe','Synthesize','Library','Tasks','System']
  await expectNavigationLayout(page,1920,fullLabels,'full')
@@ -87,16 +87,16 @@ test('detects, switches, and persists the interface language without reloading p
  const requestCount=protectedRequests.length
  await desktopSelect.selectOption('zh-CN')
  await expect(page.locator('html')).toHaveAttribute('lang','zh-CN')
- await expect(page.getByRole('heading',{name:'语音合成'})).toBeVisible()
+ await expect(page.getByRole('main',{name:'语音合成',exact:true})).toBeVisible()
  await expect(editor).toHaveValue('Keep this draft while switching languages')
  // Observe the settled language switch for unintended protected-resource refetches.
  await page.waitForTimeout(300)
  expect(protectedRequests).toHaveLength(requestCount)
  await page.reload()
  await expect(page.locator('html')).toHaveAttribute('lang','zh-CN')
- await expect(page.getByRole('heading',{name:'语音合成'})).toBeVisible()
+ await expect(page.getByRole('main',{name:'语音合成',exact:true})).toBeVisible()
  await page.getByRole('combobox',{name:'界面语言'}).selectOption('en-US')
- await expect(page.getByRole('heading',{name:'Speech synthesis'})).toBeVisible()
+ await expect(page.getByRole('main',{name:'Speech synthesis',exact:true})).toBeVisible()
  await page.setViewportSize({width:390,height:844})
  await expectNavigationLayout(page,390,['ASR','TTS','Library','Tasks','System'],'short',true)
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)

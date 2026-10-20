@@ -1,5 +1,5 @@
 {
-  "timeline": {"label": "视频时间轴", "scenes": "画面缩略图", "zoom": "时间轴缩放", "zoomIn": "放大时间轴", "zoomOut": "缩小时间轴", "fit": "显示全片", "follow": "定位播放点", "panLeft": "向前移动窗口", "panRight": "向后移动窗口", "window": "横向浏览时间轴", "waveFailed": "波形读取失败", "scenesFailed": "场景读取失败", "chooseScene": "画面目录", "followHelp": "移回当前播放点并恢复跟随，不改变播放时间。", "helpLabel": "时间轴使用说明", "help": "画面目录列出全部画面段；每段用一张代表截图展示，点击从该段开头定位。全片视图可能省略部分缩略图，放大可显示更多。放大后可横向滚动或使用触控板浏览，不改变播放位置。点击波形可同步定位正文。", "sceneRange": "对应时段", "frameTime": "截图时刻"},
+  "timeline": {"fullWindow":"已显示完整时间轴，放大后可横向浏览。","visibleWindow":"可见范围 {{start}}–{{end}}","scrollHelp":"拖动长条滑块或点击轨道浏览，不改变播放位置。","label": "视频时间轴", "scenes": "画面缩略图", "zoom": "时间轴缩放", "zoomIn": "放大时间轴", "zoomOut": "缩小时间轴", "fit": "显示全片", "follow": "定位播放点", "panLeft": "向前移动窗口", "panRight": "向后移动窗口", "window": "横向浏览时间轴", "waveFailed": "波形读取失败", "scenesFailed": "场景读取失败", "chooseScene": "画面目录", "followHelp": "移回当前播放点并恢复跟随，不改变播放时间。", "helpLabel": "时间轴使用说明", "help": "画面目录列出全部画面段；每段用一张代表截图展示，点击从该段开头定位。全片视图可能省略部分缩略图，放大可显示更多。放大后可横向滚动或使用触控板浏览，不改变播放位置。点击波形可同步定位正文。", "sceneRange": "对应时段", "frameTime": "截图时刻"},
   "workspaceUx": {
     "finishAction": "请等待当前操作完成后再离开。",
     "searchPeople": "搜索姓名或备注",

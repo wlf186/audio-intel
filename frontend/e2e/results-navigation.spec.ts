@@ -69,7 +69,7 @@ test('waveform commits reveal lazy readers, clear detail filters and preserve pa
  expect(errors).toEqual([])
 })
 
-test('horizontal wheel and native scrollbar browse without seeking; locate restores following',async({page})=>{
+test('horizontal wheel and persistent scrollbar browse without seeking; locate restores following',async({page})=>{
  const {errors}=await uxFixture(page)
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  const waveform=page.locator('.timeline-waveform')
