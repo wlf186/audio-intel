@@ -23,7 +23,7 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US'])test(`pictur
   if(route.request().method()==='PATCH'){
    expect(route.request().postDataJSON().action).toBe('apply_detection')
    applies++
-   Object.assign(state.job.result!.video!,{scenes:proposed,automatic_scenes:proposed,scene_detection:controls,revision:2})
+   Object.assign(state.job.result!.video!,{scenes:proposed,automatic_scenes:proposed,scene_detection:controls,revision:2,applied_preview_id:'preview'})
    return route.fulfill({json:state.job.result})
   }
   return route.fulfill({json:{revision:state.job.result!.video!.revision,scenes:state.job.result!.video!.scenes}})
