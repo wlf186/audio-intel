@@ -179,6 +179,8 @@ For code or test defects, reproduce the failure where practical, correct the cau
 
 ### Transcription CI lessons
 
+The [2026-10-21 Linux dependency audit](https://github.com/wlf186/audio-intel/actions/runs/39528793586) at `f6ed65e13eb012c6caf11f3d4806adddf7c3a9b0` passed backend tests but rejected the existing Vite dependency under [GHSA-587h-7wmj-h5pm](https://github.com/advisories/GHSA-587h-7wmj-h5pm). Pin Vite to the patched 7.3.7 release and regenerate the frontend lock; retain the high-severity audit gate and rerun the production build and browser checks. No inference dependencies change.
+
 | Failure and evidence | Diagnosis and regression |
 | --- | --- |
 | [Linux original/enhanced download cleanup timeout](https://github.com/wlf186/audio-intel/actions/runs/39005964233) at `f0516df52cbfc21d9d5added74247c25de5d40c6` | Desktop/390 px traces completed the UI and byte assertions in about four seconds, then timed out in fixture teardown. Chromium retained media/preconnect sockets, so `server.close()` waited indefinitely. A deterministic retained-TCP-socket experiment reproduced the wait. Call `server.closeAllConnections()` after registering the close callback, and label cleanup as a test step. Both cases passed five local repetitions; [Linux](https://github.com/wlf186/audio-intel/actions/runs/39006688504) and [Windows](https://github.com/wlf186/audio-intel/actions/runs/39006688443) full suites passed at corrective SHA `cd3766b2da092150be8d57482cf8c19888074543`. Preserve listening-state, download-byte, console/overflow assertions and the original deadlines. |

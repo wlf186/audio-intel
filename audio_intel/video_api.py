@@ -468,7 +468,7 @@ def register(app: Any, api: Any) -> None:
             return Response(buffer.getvalue(), media_type='image/jpeg', headers={'Cache-Control': 'no-store'})
 
     @app.patch('/api/v1/jobs/{job_id}/video-scenes', tags=tags, response_model=JobResultResponse, responses=errors,
-               description='携带 revision 修订号进行合并、拆分、边界/截图调整、恢复、应用检测预览或设置导出隐藏画面。冲突返回 409，请重新读取。\n\n**English:** Submit revision with merge_next, split, boundary, frame, restore apply_detection (with preview_id) or set_export_visibility (with export_hidden_scene_ids). Stale revision returns 409; reload before retrying.',
+               description='携带 revision 修订号进行合并、拆分、边界/截图调整、恢复、应用检测预览或设置导出隐藏画面。冲突返回 409，请重新读取。\n\n**English:** Submit revision with merge_next, split, boundary, frame, restore, apply_detection (with preview_id) or set_export_visibility (with export_hidden_scene_ids). Stale revision returns 409; reload before retrying.',
               summary='修正视频分段 / Edit presentation sections')
     def edit(job_id: str, body: SceneEdit, _: None = auth) -> dict:
         if body.action == 'apply_detection':
