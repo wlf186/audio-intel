@@ -1,4 +1,4 @@
-import {openTranscriptExport} from './ux-helpers'
+import {downloadConcise,openTranscriptExport} from './ux-helpers'
 import {capabilitiesFor,expect,test,type Page} from './fixtures'
 import type {VoiceprintGroup,VoiceprintPerson} from '../src/lib/types'
 
@@ -143,7 +143,7 @@ for(const width of [1440,390])test(`redaction export preference, validation and 
  const editor=page.getByLabel('替换规则（每行 原词=替换词）',{exact:true})
  const openRules=async()=>{if(width===1440)await panel.getByRole('button',{name:'关键词替换',exact:true}).click()}
  await openRules();await editor.fill('广东移动=gy\ncontact=reach')
- let downloading=page.waitForEvent('download');await page.getByRole('button',{name:'导出简洁 PDF',exact:true}).click();await downloading
+ let downloading=page.waitForEvent('download');await downloadConcise(page);await downloading
  expect(state.exports.at(-1)).toEqual({format:'pdf',redact:true,replacements:[{source:'广东移动',target:'gy'},{source:'contact',target:'reach'}]})
  await panel.getByRole('checkbox',{name:'脱敏导出',exact:true}).uncheck()
  if(width===1440)await openRules()
@@ -157,7 +157,7 @@ for(const width of [1440,390])test(`redaction export preference, validation and 
  await openRules();await expect(editor).toHaveValue('bad syntax')
  await panel.getByRole('checkbox',{name:'脱敏导出',exact:true}).check()
  if(width===390)await page.locator('.transcript-export-modal select').selectOption('pdf')
- await expect(page.getByRole('button',{name:'导出简洁 PDF',exact:true})).toBeDisabled()
+ await expect(page.locator(width===390?'.transcript-export-modal .modal-actions .primary':'.transcript-concise>button')).toBeDisabled()
  if(width===1440)await openRules()
  await expect(page.getByRole('alert')).toContainText('第 1 行')
  expect(state.exports).toHaveLength(2)

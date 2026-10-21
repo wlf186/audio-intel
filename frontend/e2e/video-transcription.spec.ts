@@ -1,4 +1,4 @@
-import {openTranscriptExport,closeTranscriptExport} from './ux-helpers'
+import {downloadConcise,openTranscriptExport,closeTranscriptExport} from './ux-helpers'
 import {capabilitiesFor,expect,test} from './fixtures'
 import path from 'node:path'
 import {execFileSync} from 'node:child_process'
@@ -71,7 +71,7 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  expect(Buffer.concat(originalChunks)).toEqual(await originalResponse.body())
 
  await openTranscriptExport(page)
- if(width===390){await expect(page.locator('.transcript-export-modal select option')).toHaveCount(5);await closeTranscriptExport(page)}
+ if(width===390){await expect(page.locator('.transcript-export-modal select option')).toHaveCount(6);await closeTranscriptExport(page)}
  else{await page.getByRole('button',{name:'明细与字幕',exact:true}).click();await expect(page.locator('.transcript-export-details-panel button')).toHaveCount(4);await page.keyboard.press('Escape')}
  await expect(page.getByRole('button',{name:'编辑分段',exact:true})).toHaveCount(0)
  await page.getByRole('button',{name:'画面检测',exact:true}).click()
@@ -85,10 +85,15 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  await page.keyboard.press('Escape')
  await openTranscriptExport(page)
  const downloadPromise=page.waitForEvent('download')
- await page.getByRole('button',{name:'导出简洁 PDF',exact:true}).click()
+ await downloadConcise(page)
  const download=await downloadPromise
  expect(await download.failure()).toBeNull()
  expect(download.suggestedFilename()).toMatch(/\.pdf$/)
+ const wordPromise=page.waitForEvent('download')
+ await downloadConcise(page,'docx')
+ const word=await wordPromise
+ expect(await word.failure()).toBeNull()
+ expect(word.suggestedFilename()).toMatch(/\.docx$/)
  await closeTranscriptExport(page)
  await page.getByRole('button',{name:'逐句明细',exact:true}).click()
  await expect(page.locator('.segments article').first()).toBeVisible()

@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .asr_speakers import speaker_identity, speaker_label
 from .utils import timecode
 
-MIME_TYPES = {"pdf": "application/pdf", "json": "application/json", "txt": "text/plain", "srt": "application/x-subrip", "vtt": "text/vtt"}
+MIME_TYPES = {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "pdf": "application/pdf", "json": "application/json", "txt": "text/plain", "srt": "application/x-subrip", "vtt": "text/vtt"}
 
 
 class Replacement(BaseModel):
@@ -33,7 +33,7 @@ class Replacement(BaseModel):
 
 class TranscriptExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    format: Literal["pdf", "json", "txt", "srt", "vtt"] = "pdf"
+    format: Literal["pdf", "docx", "json", "txt", "srt", "vtt"] = "pdf"
     redact: bool = Field(True, description="缩写姓名、遮盖备注并替换正文 / Abbreviate names, mask notes and replace transcript keywords")
     replacements: list[Replacement] = Field(default_factory=list, max_length=100)
 

@@ -324,7 +324,7 @@ class AsrCapability(PublicModel):
     speaker_count: SpeakerCountCapability
     voiceprint_library: bool
     voiceprint_group_selection: bool = True
-    transcript_export: dict[str, Any] = Field(default_factory=lambda: {"formats": ["pdf", "json", "txt", "srt", "vtt"], "redact_default": True, "max_replacements": 100})
+    transcript_export: dict[str, Any] = Field(default_factory=lambda: {"formats": ["pdf", "docx", "json", "txt", "srt", "vtt"], "redact_default": True, "max_replacements": 100})
     languages: list[str]
     default_language: str
     timestamp_precisions: list[str]

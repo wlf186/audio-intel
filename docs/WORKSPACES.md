@@ -130,3 +130,7 @@ The video result's Picture detection dialog previews area/duration controls befo
 画面检测弹窗打开即显示当前画面；滚动自动加载，底部操作始终可达。导出隐藏标记随任务保存在服务端，不使用浏览器存储；应用变化后的检测参数时重置。检测参数的浏览器默认值生命周期保持不变。
 
 English: Picture detection immediately shows current pictures, loads more on scroll, and keeps footer actions reachable. Export visibility is server-owned task metadata, not browser storage, and resets when changed detection settings are applied. Browser detection-default preferences retain their existing lifetime.
+
+音视频任务的桌面“简洁导出”菜单提供 PDF（固定排版）和 Word（DOCX，可编辑），明细与字幕入口保留。手机在原导出弹窗选择 DOCX，默认 PDF；不新增格式偏好存储。
+
+English: The desktop Concise export menu offers PDF (fixed layout) and Word (DOCX, editable), alongside the existing details/subtitles menu. Mobile uses the existing format selector, defaulting to PDF, without new format-preference storage.

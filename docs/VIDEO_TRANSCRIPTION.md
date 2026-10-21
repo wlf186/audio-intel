@@ -68,9 +68,9 @@ historical jobs without a saved original WAV show an unavailable explanation and
 
 ## PDF 与磁盘 / PDF and disk use
 
-音频提供主操作「导出简洁 PDF」，次级「明细与字幕」保留 JSON、TXT、SRT、VTT。简洁 PDF 将相同 speaker ID 的相邻发言合并为一段，保留第一句开始与最后一句结束时间，不删改口头语、不做总结；同名但不同 ID 的说话人不会误合并。视频也支持 JSON、TXT、SRT、VTT，并提供图文简洁 PDF，按画面分段，画面下展示相应讨论。PDF 内嵌本地简体中文字体，无云服务或系统字体依赖。
+音视频提供主操作「简洁导出」，可选择 PDF 或 Word（DOCX），次级「明细与字幕」保留 JSON、TXT、SRT、VTT。简洁 PDF 将相同 speaker ID 的相邻发言合并为一段，保留第一句开始与最后一句结束时间，不删改口头语、不做总结；同名但不同 ID 的说话人不会误合并。视频也支持 JSON、TXT、SRT、VTT，并提供图文简洁 PDF，按画面分段，画面下展示相应讨论。PDF 内嵌本地简体中文字体，无云服务或系统字体依赖。
 
-Audio offers a primary concise PDF action and a secondary details/subtitles menu. Adjacent speech with the same speaker ID merges with its combined time range; words and disfluencies are preserved. Equal names with different IDs do not merge. Video offers illustrated concise PDF, with images followed by their discussion. A bundled Chinese font keeps PDF rendering offline.
+Audio and video offer a concise export menu with PDF and editable Word (DOCX) and a secondary details/subtitles menu. Adjacent speech with the same speaker ID merges with its combined time range; words and disfluencies are preserved. Equal names with different IDs do not merge. Video offers illustrated concise PDF, with images followed by their discussion. A bundled Chinese font keeps PDF rendering offline.
 
 上传直接顺序追加到一份文件，校验并 fsync 后才确认偏移；不创建分片文件再拼接、不预分配 25 GiB，不在重试时重写已确认数据。提交时同盘重命名。画面分析保存最终代表 JPEG；v2 另保存有上限、可重建的低分辨率压缩特征缓存，不保存高分辨率抽样序列。原音复用一份归一化 WAV；实际应用人声增强时另存一份增强 WAV，约每小时 115 MB，旁路时不增加；临时目录和数据目录在同一文件系统时完成阶段直接移动，否则跨盘移动需一次复制。失败/取消后的工作目录由现有 worker 清理。PDF 按需在内存生成，单渲染并发、64 MiB LRU 缓存（5 分钟）；单份 PDF 输入上限为 400 万文本字符、128 MiB JPEG，超过返回 413 并提示拆分。预览最多两个解码器且不写磁盘。修改截图后清理不再被当前/原始分段引用的图片，删除任务清理其输入与结果。
 
@@ -139,7 +139,7 @@ English: In **Illustrated reading**, choose **Add to voiceprint library** beside
 
 ## 分组与脱敏导出 / Groups and redacted export
 
-音视频任务均可选择多个声纹分组，默认全部，提交时固定人员 ID。PDF、JSON、TXT、SRT、VTT 下载默认脱敏，可关闭；只处理下载副本，原始结果、音频和截图不改写。关键词每行 `原词=替换词`，最多 100 对，浏览器长期记忆开关和规则。具体算法、边界和接口见 [API 指南](API.md#on-demand-redacted-transcript-export--按需脱敏导出)。
+音视频任务均可选择多个声纹分组，默认全部，提交时固定人员 ID。PDF、DOCX、JSON、TXT、SRT、VTT 下载默认脱敏，可关闭；只处理下载副本，原始结果、音频和截图不改写。关键词每行 `原词=替换词`，最多 100 对，浏览器长期记忆开关和规则。具体算法、边界和接口见 [API 指南](API.md#on-demand-redacted-transcript-export--按需脱敏导出)。
 
 CLI 的 `--voiceprint-group ID` 可重复选择分组，省略使用全部；`--pdf` 默认脱敏，`--no-redact` 导出原文，`--replacements rules.json` 接收 UTF-8 `{source,target}` 数组。中断后沿用原续传记录和已接受任务，不重新计算任务范围；导出选项在下载时应用。
 
@@ -210,3 +210,11 @@ AUDIO_INTEL_BASE_URL=http://127.0.0.1:20810 \
 候选检测预览须先应用，再设置隐藏。修改任一检测参数并成功应用会清除旧标记；单纯修改输入、恢复默认输入、预览或取消均不清除。同参数重新应用仅保留时间范围、代表帧时间和图片均一致的标记。保存隐藏设置会使尚未应用的预览失效；参数保留，可重新预览。
 
 English: Picture detection immediately shows current pictures and export-hidden badges. It loads 12 pictures per batch automatically near the bottom. Select individual or loaded pictures, then Hide in exports, Restore in exports or Restore all. Changes are saved with the task across browsers. Failed saves retain selection; revision conflicts require closing and reopening. PDF uses a Picture hidden placeholder while retaining section numbers, times and text; JSON includes markers and text formats remain complete. Reading, timeline and source media are unchanged. Picture hiding is independent of text redaction. Candidate previews must be applied before setting visibility. Applying changed detection parameters clears old markers; editing inputs, resetting inputs, previewing or cancelling does not. Unchanged parameters preserve markers only for identical time ranges, frame times and images. Saving visibility invalidates pending previews without clearing their input settings.
+
+### 可编辑 Word 导出 / Editable Word export
+
+简洁导出菜单的 Word（DOCX）使用与 PDF 相同的段落、时间范围和画面分组，文字可编辑。手机在现有导出弹窗选择 DOCX，默认仍为 PDF，不新增格式偏好存储。隐藏画面显示“画面已隐藏 / Picture hidden”，包内不嵌入被隐藏的原图，讨论文字保留；关闭文字脱敏也不会取消隐藏。历史已完成任务无需重新转写。
+
+DOCX 完全本地生成，复用已安装的 python-docx 1.2.0，无新增依赖或数据库迁移。中文使用文档字体样式而非嵌入字体，Word/WPS 的字体替代和分页可能不同于 PDF。
+
+English: Choose Word (DOCX) in Concise export, or in the mobile format selector (PDF remains the default). Editable documents preserve the same paragraphs, times and picture grouping as PDF. Hidden pictures use placeholders without embedding their original bytes; text remains, independently of text redaction. Existing completed jobs work without retranscription. Generation is offline using the already pinned python-docx library, with no new dependencies, migration or browser-storage policy. Fonts are not embedded, so Word/WPS pagination may differ from PDF.

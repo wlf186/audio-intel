@@ -12,7 +12,7 @@ for(const width of [1440,390]){
   if(width===1440)await page.getByRole('button',{name:'关键词替换',exact:true}).click()
   const editor=page.getByLabel('替换规则（每行 原词=替换词）',{exact:true})
   await editor.fill('bad syntax');await expect(editor).toHaveAttribute('aria-invalid','true')
-  const exportButton=page.getByRole('button',{name:'导出简洁 PDF',exact:true})
+  const exportButton=page.locator(width===390?'.transcript-export-modal .modal-actions .primary':'.transcript-concise>button')
   await expect(exportButton).toBeDisabled();expect(state.exports).toHaveLength(0)
   await editor.fill('产品=项目');await expect(exportButton).toBeEnabled()
   if(width===1440){await page.keyboard.press('Escape');await expect(editor).toBeHidden();await page.getByRole('button',{name:'关键词替换',exact:true}).click();await page.getByRole('tab',{name:'任务与结果',exact:true}).click();await expect(editor).toBeHidden()}

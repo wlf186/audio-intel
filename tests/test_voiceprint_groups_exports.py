@@ -10,6 +10,7 @@ import wave
 import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
+from docx import Document
 
 from audio_intel import api, db, library_store, voiceprint_groups as groups
 from audio_intel.config import settings
@@ -178,11 +179,16 @@ def test_all_download_formats_default_on_auth_and_original_unchanged(local):
     db.update_job(job["id"], state="succeeded", result_json=result)
     with TestClient(api.create_app()) as client:
         url = f"/api/v1/jobs/{job['id']}/transcript-export"
-        for format in ("json", "txt", "srt", "vtt", "pdf"):
+        for format in ("json", "txt", "srt", "vtt", "pdf", "docx"):
             response = client.post(url, json={"format": format, "replacements": [{"source": "广东移动", "target": "gy"}]})
             assert response.status_code == 200, response.text
             assert "transcript." in response.headers["content-disposition"]
             text = "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(response.content)).pages) if format == "pdf" else response.text
+            if format == 'docx':
+                document = Document(io.BytesIO(response.content))
+                text = '\n'.join(p.text for p in document.paragraphs)
+                assert document.core_properties.title == 'Transcript'
+                assert document.core_properties.author == ''
             assert "VC-1" in text and "gy" in text
             assert "Vince Carter" not in text and "01234567" not in text
         assert "Vince Carter" in client.post(url, json={"format": "json", "redact": False}).text
@@ -227,4 +233,4 @@ def test_group_and_export_authentication_and_strict_openapi(local, monkeypatch):
     assert definitions["Replacement"]["additionalProperties"] is False
     assert "group_id" in definitions["VoiceprintPersonResponse"]["required"]
     responses = schema["paths"]["/api/v1/jobs/{job_id}/transcript-export"]["post"]["responses"]
-    assert set(responses["200"]["content"]) == {"application/pdf", "application/json", "text/plain", "application/x-subrip", "text/vtt"}
+    assert set(responses["200"]["content"]) == {"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/pdf", "application/json", "text/plain", "application/x-subrip", "text/vtt"}

@@ -880,3 +880,25 @@ response = requests.patch(f"{base_url}/api/v1/jobs/{job_id}/video-scenes", heade
           "export_hidden_scene_ids": [video["scenes"][0]["id"]]})
 response.raise_for_status()
 ```
+
+### DOCX 简洁导出 / Concise DOCX export
+
+`POST /api/v1/jobs/{job_id}/transcript-export` 的 `format` 新增 `docx`，默认仍为 `pdf`。能力接口的 `asr.transcript_export.formats` 声明支持格式；旧 PDF GET/HEAD 地址保持不变，不新增 DOCX GET 路由。音频合并相邻同说话人发言，视频按画面组织图文，使用已有脱敏、关键词替换与导出隐藏设置。隐藏图片不嵌入 DOCX，文字完整保留。仅支持已完成 ASR 任务。
+
+响应 MIME 为 `application/vnd.openxmlformats-officedocument.wordprocessingml.document`，带 `Content-Length`、UTF-8 `Content-Disposition` 与 `Cache-Control: no-store`。认证和同源写入规则与其他 POST 导出一致。生成器独立限制为一次并发，5 分钟内存缓存，总缓存不超过 64 MiB；正文上限 4,000,000 字符，引用的可见图片总量上限 128 MiB。超限 413，繁忙 429 并附 `Retry-After: 2`。缓存随结果、导出设置和任务更新时间变化，无持久导出文件。
+
+```python
+import os
+from pathlib import Path
+import requests
+
+base = os.environ["AUDIO_INTEL_BASE_URL"].rstrip("/")
+job_id = os.environ["AUDIO_INTEL_JOB_ID"]
+headers = {"Authorization": f"Bearer {os.environ['AUDIO_INTEL_API_KEY']}"} if os.environ.get("AUDIO_INTEL_API_KEY") else {}
+response = requests.post(f"{base}/api/v1/jobs/{job_id}/transcript-export",
+    headers=headers, json={"format": "docx", "redact": True, "replacements": []}, timeout=120)
+response.raise_for_status()
+Path("transcript.docx").write_bytes(response.content)
+```
+
+English: The existing POST export accepts `format="docx"`; PDF remains the default. Capabilities advertise DOCX. The binary Word response uses its standard MIME type and UTF-8 filename. Audio paragraphs and illustrated video sections follow PDF semantics, including redaction and replacement rules. Export-hidden images are omitted from the package and replaced with placeholders without losing text, even when `redact=false`. Authentication and same-origin checks remain unchanged. An independent single renderer uses a five-minute, 64 MiB bounded memory cache; limits are 4,000,000 text characters and 128 MiB visible-image bytes. Oversize requests return 413, busy requests 429 with Retry-After 2. No new dependency, persistent artifact or database migration is required.

@@ -135,6 +135,7 @@ class SceneEdit(StrictModel):
 def capabilities(config: Any) -> dict[str, Any]:
     from .video_detection import capability
     return {'audio_formats': store.AUDIO_FORMATS, 'concise_pdf': True,
+            'transcript_export': {'formats': ['pdf', 'docx', 'json', 'txt', 'srt', 'vtt'], 'redact_default': True, 'max_replacements': 100},
             'video': {'supported': True, 'formats': store.VIDEO_FORMATS,
                       'max_upload_bytes': config.max_video_upload_bytes,
                       'chunk_bytes': config.video_upload_chunk_bytes,
@@ -405,9 +406,9 @@ def register(app: Any, api: Any) -> None:
 
     @app.post('/api/v1/jobs/{job_id}/transcript-export', tags=tags, response_class=Response,
               operation_id='exportTranscript', summary='按需脱敏导出转写 / Export a transcript with optional redaction',
-              description='默认缩写姓名、遮盖备注；最多 100 对字面关键词替换（每项最多 8000 字）。关闭 redact 停止文字脱敏；任务中的导出隐藏画面标记仍生效，PDF 显示占位框。只处理导出副本；原音视频和图片文件保持原样。\n\n**English:** Names are abbreviated and notes masked by default. Up to 100 literal replacements, 8000 characters per value. Disabling redact disables text transformations; saved export-hidden pictures still use PDF placeholders. Original media remains unchanged.',
+              description='默认缩写姓名、遮盖备注；最多 100 对字面关键词替换（每项最多 8000 字）。关闭 redact 停止文字脱敏；任务中的导出隐藏画面标记仍生效，PDF/DOCX 显示占位框。只处理导出副本；原音视频和图片文件保持原样。\n\n**English:** Names are abbreviated and notes masked by default. Up to 100 literal replacements, 8000 characters per value. Disabling redact disables text transformations; saved export-hidden pictures still use PDF/DOCX placeholders. Original media remains unchanged.',
               responses={**errors, **api.NOT_FOUND_RESPONSE, **api.VALIDATION_RESPONSE,
-                         200: {'description': '所选格式的下载 / Download in the selected format', 'content': {mime: {'schema': api.BINARY_SCHEMA} for mime in ('application/pdf', 'application/json', 'text/plain', 'application/x-subrip', 'text/vtt')}}})
+                         200: {'description': '所选格式的下载 / Download in the selected format', 'content': {mime: {'schema': api.BINARY_SCHEMA} for mime in ('application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/json', 'text/plain', 'application/x-subrip', 'text/vtt')}}})
     def transcript_export(job_id: str, body: TranscriptExportRequest, _: None = auth) -> Response:
         from .transcript_export import export_result, format_transcript, MIME_TYPES
         from .transcript_pdf import download
@@ -416,9 +417,14 @@ def register(app: Any, api: Any) -> None:
                 job = completed(job_id)
                 result = export_result(job['result'], body)
                 title = 'Transcript' if body.redact else job['display_name']
-                if body.format == 'pdf':
+                if body.format in ('pdf', 'docx'):
                     variant = hashlib.sha256(json.dumps([job['updated_at'], body.model_dump()], sort_keys=True).encode()).hexdigest()
-                    payload = download(title, result, config.jobs_dir / job_id / 'output', cache_variant=variant)
+                    if body.format == 'docx':
+                        from .transcript_docx import download as download_docx
+                        renderer = download_docx
+                    else:
+                        renderer = download
+                    payload = renderer(title, result, config.jobs_dir / job_id / 'output', cache_variant=variant)
                 else:
                     content = format_transcript(result, body.format)
                     if len(content) > 4_000_000:

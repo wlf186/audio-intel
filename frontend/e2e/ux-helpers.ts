@@ -3,7 +3,7 @@ import {expect,type Page} from './fixtures'
 export async function openTranscriptExport(page:Page){
  await expect(page.locator('.transcript-export')).toBeVisible()
  const trigger=page.locator('.export-mobile-trigger')
- if(await trigger.isVisible())await trigger.click()
+ if(await trigger.isVisible()&&!await page.locator('.transcript-export-modal').isVisible())await trigger.click()
 }
 export async function closeTranscriptExport(page:Page){
  const dialog=page.locator('.transcript-export-modal')
@@ -36,4 +36,16 @@ export async function assertReachable(page:Page,width:number){
   return false
  }).map(element=>element.getAttribute('aria-label')||element.textContent?.trim()))
  expect(clipped).toEqual([])
+}
+
+export async function downloadConcise(page:Page,format:'pdf'|'docx'='pdf'){
+ await openTranscriptExport(page)
+ const modal=page.locator('.transcript-export-modal')
+ if(await modal.isVisible()){
+  await modal.locator('select').selectOption(format)
+  await modal.locator('.modal-actions .primary').click()
+ }else{
+  await page.locator('.transcript-concise>button').click()
+  await page.locator(`.transcript-concise-panel button[data-format="${format}"]`).click()
+ }
 }

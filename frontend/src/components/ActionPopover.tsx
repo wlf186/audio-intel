@@ -1,7 +1,7 @@
 import {useEffect,useId,useLayoutEffect,useRef,useState,type ReactNode} from 'react'
 import {createPortal} from 'react-dom'
 
-export function ActionPopover({label,children,className='',disabled=false,icon,closeOnAction=false}:{label:string;children:ReactNode;className?:string;disabled?:boolean;icon?:ReactNode;closeOnAction?:boolean}){
+export function ActionPopover({label,children,className='',disabled=false,icon,closeOnAction=false,primary=false}:{label:string;children:ReactNode;className?:string;disabled?:boolean;icon?:ReactNode;closeOnAction?:boolean;primary?:boolean}){
  const [open,setOpen]=useState(false)
  const [position,setPosition]=useState({left:8,top:8,maxHeight:400})
  const trigger=useRef<HTMLButtonElement>(null)
@@ -31,5 +31,5 @@ export function ActionPopover({label,children,className='',disabled=false,icon,c
   document.addEventListener('pointerdown',outside);document.addEventListener('focusin',outside);document.addEventListener('keydown',keyboard)
   return()=>{document.removeEventListener('pointerdown',outside);document.removeEventListener('focusin',outside);document.removeEventListener('keydown',keyboard)}
  },[open])
- return <div className={`action-popover ${className}`}><button type="button" ref={trigger} className="button" aria-label={label} aria-expanded={open} aria-controls={open?id:undefined} onClick={()=>setOpen(value=>!value)} disabled={disabled}>{icon}{label}</button>{open?createPortal(<div ref={panel} id={id} role="dialog" aria-label={label} className={`action-popover-panel ${className}-panel`} style={{left:position.left,top:position.top,maxHeight:position.maxHeight}} onClick={event=>{if(closeOnAction&&(event.target as Element).closest('button,a[download]'))close(true)}}>{children}</div>,document.body):null}</div>
+ return <div className={`action-popover ${className}`}><button type="button" ref={trigger} className={primary?'primary':'button'} aria-label={label} aria-expanded={open} aria-controls={open?id:undefined} onClick={()=>setOpen(value=>!value)} disabled={disabled}>{icon}{label}</button>{open?createPortal(<div ref={panel} id={id} role="dialog" aria-label={label} className={`action-popover-panel ${className}-panel`} style={{left:position.left,top:position.top,maxHeight:position.maxHeight}} onClick={event=>{if(closeOnAction&&(event.target as Element).closest('button,a[download]'))close(true)}}>{children}</div>,document.body):null}</div>
 }

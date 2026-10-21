@@ -136,6 +136,7 @@ type Props = {
   denoiseAvailable?: boolean
   gainStrengthCapability?: AsrStrengthCapability
   noiseStrengthCapability?: AsrStrengthCapability
+  transcriptExportFormats?: import('../lib/types').TranscriptExportFormat[]
   videoCapability?: VideoCapability
   audioFormats?: string[]
   asrLanguages?: string[]
@@ -155,7 +156,7 @@ type Props = {
   onRevealHandled: (token: number) => void
 }
 
-export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, restoreState, restoreError, restoreSelected, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, gainAvailable, denoiseAvailable, gainStrengthCapability, noiseStrengthCapability, videoCapability, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, voiceprintGroups, voiceprintGroupsState, refreshVoiceprintGroups, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
+export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, restoreState, restoreError, restoreSelected, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, gainAvailable, denoiseAvailable, gainStrengthCapability, noiseStrengthCapability, videoCapability, transcriptExportFormats, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, voiceprintGroups, voiceprintGroupsState, refreshVoiceprintGroups, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const { t, i18n } = useTranslation()
   const [view, setView] = useState<'create'|'video'|'results'>(()=>readAsrSession().view)
   const [compact, setCompact] = useState(()=>matchMedia('(max-width: 1023px)').matches)
@@ -830,7 +831,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               <span>
                 {String(result.model_name || selected.request.model || 'Qwen3-ASR')} · {formatTime(duration)} · {(result.compute_device || selected.request.compute_device || 'gpu').toString().toUpperCase()} {result.precision || ''}
               </span></div>
-              <TranscriptExport key={selected.id} job={selected}/>
+              <TranscriptExport key={selected.id} job={selected} formats={transcriptExportFormats}/>
             </div>
             <audio
               ref={audio}

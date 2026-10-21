@@ -79,7 +79,7 @@ Service entrypoints automatically load the project-root `.env`, with exported en
 
 Audio and compatible submissions accept `voiceprint_group_ids` as JSON-array form text; video takes a JSON array. Omission selects all. Eligible person IDs are fixed on first acceptance; replay and retry preserve the scope. Group moves do not rewrite historical results. Library ZIP v2 includes membership and continues to accept v1 imports.
 
-`POST /api/v1/jobs/{job_id}/transcript-export` 支持 PDF/JSON/TXT/SRT/VTT，默认 `redact=true`，姓名缩写、备注遮盖居中一半；最多 100 对 `{source,target}` 字面关键词替换，每项最多 8000 字，区分大小写、最长优先、不连锁。关闭开关停止全部处理，任务原数据、音频和画面保持原样。
+`POST /api/v1/jobs/{job_id}/transcript-export` 支持 PDF/DOCX/JSON/TXT/SRT/VTT，默认 `redact=true`，姓名缩写、备注遮盖居中一半；最多 100 对 `{source,target}` 字面关键词替换，每项最多 8000 字，区分大小写、最长优先、不连锁。关闭开关仅停止文字处理，PDF/DOCX 仍遵循画面隐藏设置；任务原数据、音频和画面保持原样。
 
 Redacted downloads abbreviate names, mask notes, replace configured transcript keywords and remove auxiliary original identity snapshots from JSON. Turning redact off returns original content. PDF cache and resource limits remain bounded; binary downloads use normal authentication and Retry-After recovery. Legacy artifact/PDF GET routes retain raw compatibility. Only export copies change.
 
@@ -495,7 +495,7 @@ The stream immediately emits `event: job`, continues on changes, and closes at a
 
 Audio defaults to 4 GiB; the video API defaults to 25 GiB. Capabilities publish formats, chunk size and limits. Create a resumable upload, append exact-size checksummed chunks, then submit the complete upload to the shared ASR queue. GET the upload to verify persisted hashes before resuming. Unfinished uploads expire after 24 idle hours or 7 days total; DELETE immediately discards them. Submitted uploads follow task deletion.
 
-`GET /api/v1/jobs/{job_id}/video-scenes` 返回画面与合并发言；PATCH 同路径携带 revision，支持 merge_next / split / boundary / frame / restore / apply_detection / set_export_visibility；冲突后重新读取。`GET /api/v1/jobs/{job_id}/transcript.pdf` 对已完成音频返回简洁 PDF，对视频返回图文 PDF；同说话人连续发言合并时间与原文，保留口头语。原始逐句结果不丢弃。已有音频 JSON/TXT/SRT/VTT 保持可用。PDF 与截图预览均无需云服务。
+`GET /api/v1/jobs/{job_id}/video-scenes` 返回画面与合并发言；PATCH 同路径携带 revision，支持 merge_next / split / boundary / frame / restore / apply_detection / set_export_visibility；冲突后重新读取。`GET /api/v1/jobs/{job_id}/transcript.pdf` 对已完成音频返回简洁 PDF，对视频返回图文 PDF；同说话人连续发言合并时间与原文，保留口头语。原始逐句结果不丢弃。已有音频 JSON/TXT/SRT/VTT 保持可用。POST `/api/v1/jobs/{job_id}/transcript-export` 还支持 `format="docx"`，生成可编辑图文，沿用脱敏与画面隐藏规则。PDF、DOCX 与截图预览均无需云服务。
 
 GET video-scenes for images/paragraphs; PATCH with revision for edits, reloading on conflicts. Concise PDF preserves words and combines adjacent same-speaker speech and time ranges; video adds representative images. Detailed audio formats remain available. PDF generation is bounded and memory-cached; timestamp image previews do not write files. Picture-detection previews retain temporary images until expiry. Busy operations return 429. Images are heuristic presentation representatives, not codec I-frames; brief or complex slide changes may require manual correction.
 
@@ -1294,6 +1294,7 @@ def _capabilities_example() -> dict[str, Any]:
                 "background_denoise": {"supported": True, "available": True, "default": True,
                     "model": enhancer["name"], "model_revision": enhancer["revision"], "strength": strength_capabilities("gtcrn")["background_denoise"]}},
             "audio_formats": ["wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff"], "concise_pdf": True,
+            "transcript_export": {"formats": ["pdf", "docx", "json", "txt", "srt", "vtt"], "redact_default": True, "max_replacements": 100},
             "video": {"supported": True, "formats": ["mp4", "m4v", "mov", "mkv", "webm", "avi", "mpeg", "mpg", "ts"],
                       "max_upload_bytes": 26843545600, "chunk_bytes": 33554432, "upload_idle_seconds": 86400,
                       "upload_lifetime_seconds": 604800, "max_scenes": 2000, "scene_editing": True, "scene_detection": scene_detection_capability()},
@@ -1350,6 +1351,10 @@ VIDEO_SCENES_EXAMPLE = {"revision": 1, "scenes": [{**VIDEO_SCENE_EXAMPLE, "parag
      "text": "欢迎使用本地转写。", "segment_ids": [0]},
 ]}]}
 REQUEST_EXAMPLES.update({
+    ("/api/v1/jobs/{job_id}/transcript-export", "post"): {
+        "concise_pdf": {"summary": "简洁 PDF / Concise PDF", "value": {"format": "pdf", "redact": True}},
+        "editable_docx": {"summary": "可编辑 Word / Editable Word", "value": {"format": "docx", "redact": True, "replacements": []}},
+    },
     ("/api/v1/jobs/{job_id}/video-scene-previews", "post"): {
         "default": {"summary": "预览新的画面分段 / Preview new picture sections",
                     "value": {"revision": 1, "settings": {"min_change_percent": 3, "min_stable_seconds": 1}}},

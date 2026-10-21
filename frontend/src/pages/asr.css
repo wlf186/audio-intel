@@ -385,3 +385,7 @@
 @media(max-width:600px){.scene-detection-footer .scene-detection-actions{gap:6px}.scene-detection-footer .button,.scene-detection-footer .primary{flex:1 1 85px;font-size:12px;padding:8px}.scene-detection-footer small{font-size:11px}.scene-detection-body{padding-right:4px}}
 
 .video-section header .scene-hidden-badge{display:inline-block;margin:0;font-size:12px}
+
+.transcript-concise-panel{display:grid;gap:8px;min-width:190px}
+.transcript-concise-panel .button{justify-content:flex-start;min-height:44px}
+.transcript-concise-panel small{display:block;color:var(--muted);font-size:11px}

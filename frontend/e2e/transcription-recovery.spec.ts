@@ -1,5 +1,5 @@
 import {mockTimelineWaveform} from './timeline-fixture'
-import {openTranscriptExport} from './ux-helpers'
+import {downloadConcise,openTranscriptExport} from './ux-helpers'
 import {capabilitiesFor,expect,test,type Page} from './fixtures'
 import {createHash} from 'node:crypto'
 
@@ -122,15 +122,15 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
   })
   await f.open()
   await openTranscriptExport(page)
-  const exportButton=page.locator(width===390?'.transcript-export-modal .modal-actions .primary':'.transcript-export-actions>.primary')
-  await exportButton.click();await expect(exportButton).toBeDisabled();await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'繁忙':'busy');await expect(exportButton).toBeEnabled()
-  status=413;await exportButton.click();await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'上限':'limit')
-  status=0;await exportButton.click();await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'中断':'interrupted')
-  status=200;const downloading=page.waitForEvent('download');await exportButton.click();const download=await downloading;expect(download.suggestedFilename()).toBe('讲座.pdf');expect(await download.failure()).toBeNull()
+  const exportButton=page.locator(width===390?'.transcript-export-modal .modal-actions .primary':'.transcript-concise>button')
+  await downloadConcise(page);await expect(exportButton).toBeDisabled();await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'繁忙':'busy');await expect(exportButton).toBeEnabled()
+  status=413;await downloadConcise(page);await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'上限':'limit')
+  status=0;await downloadConcise(page);await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'中断':'interrupted')
+  status=200;const downloading=page.waitForEvent('download');await downloadConcise(page);const download=await downloading;expect(download.suggestedFilename()).toBe('讲座.pdf');expect(await download.failure()).toBeNull()
   expect(methods).toEqual(['POST','POST','POST','POST'])
   await expect(page.locator('.transcript-export [role=alert]')).toHaveCount(0)
   await page.screenshot({path:testInfo.outputPath('export.png'),fullPage:true})
-  status=401;await exportButton.click();await expect(page.getByRole('heading',{name:zh?'访问验证':'Access verification',exact:true})).toBeVisible()
+  status=401;await downloadConcise(page);await expect(page.getByRole('heading',{name:zh?'访问验证':'Access verification',exact:true})).toBeVisible()
   expect(errors).toEqual([])
  })
 }
@@ -140,7 +140,7 @@ test('switching tasks aborts a pending PDF without downloading stale content',as
  page.on('download',()=>downloads++)
  await page.route('**/transcript-export',async route=>{await held;await route.fulfill({contentType:'application/pdf',body:'%PDF-old'}).catch(()=>undefined)})
  await f.open();const requested=page.waitForRequest('**/transcript-export')
- await page.locator('.transcript-export button.primary').click();const request=await requested
+ await downloadConcise(page);const request=await requested
  const failed=page.waitForEvent('requestfailed',{predicate:failed=>failed===request})
  await page.getByRole('button',{name:/Other fixture.mp4/}).click()
  await expect(page.locator('.transcript-export button.primary')).toBeEnabled();release();await failed

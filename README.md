@@ -37,7 +37,7 @@
 > [!IMPORTANT]
 > This is an independent, unofficial open-source project maintained on a non-commercial basis. It has not been authorized, sponsored, approved, or endorsed by CD PROJEKT RED, R. Talsorian Games, or any related rights holder. See the [brand and project status notice](BRAND_NOTICE.md).
 
-Separate audio/video creation tabs share the ASR queue. Audio keeps its 4 GiB limit; video supports resumable uploads up to 25 GiB, editable presentation images with matching discussion, and illustrated PDF. Audio adds concise PDF while retaining detailed exports. See the [video transcription guide](docs/VIDEO_TRANSCRIPTION.md).
+Separate audio/video creation tabs share the ASR queue. Audio keeps its 4 GiB limit; video supports resumable uploads up to 25 GiB, editable presentation images with matching discussion, and illustrated PDF/Word (DOCX). Audio offers concise PDF/Word while retaining detailed exports. See the [video transcription guide](docs/VIDEO_TRANSCRIPTION.md).
 
 Video results include a zoomable scene-and-waveform timeline. Task history shows per-job file usage and selected totals; enhancement details stay in a compact summary.
 
@@ -65,7 +65,7 @@ Transcription results support entering speaker names and optional notes manually
 
 | Area | Capabilities |
 | --- | --- |
-| **Local speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, concise PDF, and detailed JSON/SRT/VTT/TXT export |
+| **Local speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, concise PDF/Word (DOCX), and detailed JSON/SRT/VTT/TXT export |
 | **Speaker intelligence** | Voiceprints distinguish namesakes by notes and support named, renameable samples; custom and voiceprint-derived hotword lists improve domain vocabulary while completed tasks retain immutable snapshots |
 | **Local voice studio** | Qwen3-TTS 0.6B/1.7B, preset voices, one-off or library-based voice cloning with optional 3–30 second library reference ranges, 1.7B VoiceDesign, and WAV/FLAC/MP3 output |
 | **Document synthesis** | EPUB, TXT, Markdown, text PDF, DOCX, XLSX and PPTX; structural/length previews, reusable imports with bulk removal, checkpoint recovery, and album-tagged ZIP / complete MP3 downloads |
