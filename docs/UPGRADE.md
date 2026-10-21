@@ -107,11 +107,11 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
-## 稳定截图修复 / Stable picture confirmation
+## v0.1.37 稳定截图修复 / Stable picture confirmation
 
-本次无数据库结构迁移或历史媒体批量改写，无需额外升级备份。新视频使用 presentation-v3、视频结果契约 2，客户端需支持成对为空的 image/frame_time 和为空的预览 preview_url。旧结果保持原样，v1/v2 重试保留原算法；历史任务通过“预览检测 → 应用预览”显式启用修复。无达标截图的分段显示“无稳定画面”，文字与时间范围保留；PDF/DOCX 同样使用占位。保持时间输入支持 0.1 秒步进，范围和浏览器偏好键、寿命不变，既有特征缓存继续复用。
+从 v0.1.36 升级：**数据迁移：无**，无历史媒体批量改写，无需额外升级备份；更早版本须覆盖中间版本的迁移要求。新视频使用 presentation-v3、视频结果契约 2，客户端需支持成对为空的 image/frame_time 和为空的预览 preview_url。旧结果保持原样，v1/v2 重试保留原算法；历史任务通过“预览检测 → 应用预览”显式启用修复。无达标截图的分段显示“无稳定画面”，文字与时间范围保留；PDF/DOCX 同样使用占位。保持时间输入支持 0.1 秒步进，范围和浏览器偏好键、寿命不变，既有特征缓存继续复用。
 
-English: No database or historical-file migration and no extra upgrade backup. New videos use presentation-v3 and video contract 2, including paired nullable image/frame_time and nullable preview_url. Clients must handle no-picture sections. Historical results and v1/v2 retry semantics remain intact; explicit preview and apply enables the fix. PDF/DOCX retain text with placeholders. Duration input supports 0.1-second steps within the existing range; browser preference keys/lifetimes and raw feature-cache identity are unchanged. Follow the maintenance procedure: stop the recorded idle service, rebuild the frontend, and restore and verify the API, supervisors and executors.
+English: From v0.1.36, no database or historical-file migration and no extra upgrade backup is required; earlier upgrades must cover intervening migration requirements. New videos use presentation-v3 and video contract 2, including paired nullable image/frame_time and nullable preview_url. Clients must handle no-picture sections. Historical results and v1/v2 retry semantics remain intact; explicit preview and apply enables the fix. PDF/DOCX retain text with placeholders. Duration input supports 0.1-second steps within the existing range; browser preference keys/lifetimes and raw feature-cache identity are unchanged. Dependencies and models are unchanged. Follow the maintenance procedure: stop the recorded idle service, rebuild the frontend, and restore and verify the API, supervisors and executors. Refresh browser pages after upgrading.
 
 ## v0.1.36 转写任务切换修复
 
