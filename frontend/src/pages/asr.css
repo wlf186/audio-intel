@@ -383,3 +383,5 @@
 .scene-hidden-badge{display:block;color:var(--orange);margin-top:4px;font-weight:600}
 .scene-detection-sentinel{min-height:44px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px}
 @media(max-width:600px){.scene-detection-footer .scene-detection-actions{gap:6px}.scene-detection-footer .button,.scene-detection-footer .primary{flex:1 1 85px;font-size:12px;padding:8px}.scene-detection-footer small{font-size:11px}.scene-detection-body{padding-right:4px}}
+
+.video-section header .scene-hidden-badge{display:inline-block;margin:0;font-size:12px}
