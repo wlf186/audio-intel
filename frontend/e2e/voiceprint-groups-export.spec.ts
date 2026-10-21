@@ -141,7 +141,7 @@ for(const width of [1440,390])test(`redaction export preference, validation and 
  await openTranscriptExport(page)
  await expect(panel.getByRole('checkbox',{name:'脱敏导出',exact:true})).toBeChecked()
  const editor=page.getByLabel('替换规则（每行 原词=替换词）',{exact:true})
- const openRules=async()=>{if(width===1440)await panel.getByRole('button',{name:'关键词替换',exact:true}).click();await expect(panel.locator('.transcript-rule-editor')).toContainText('导出隐藏画面的设置仍生效')}
+ const openRules=async()=>{if(width===1440)await panel.getByRole('button',{name:'关键词替换',exact:true}).click();await expect(page.locator('.transcript-rule-editor')).toContainText('导出隐藏画面的设置仍生效')}
  await openRules();await editor.fill('广东移动=gy\ncontact=reach')
  let downloading=page.waitForEvent('download');await downloadConcise(page);await downloading
  expect(state.exports.at(-1)).toEqual({format:'pdf',redact:true,replacements:[{source:'广东移动',target:'gy'},{source:'contact',target:'reach'}]})

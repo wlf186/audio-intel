@@ -100,6 +100,15 @@ Gradio 6.17.3 要求 `pillow<13`，当前三个模型环境保留 Pillow 12.3.0�
 | [CVE-2026-112899](https://github.com/python-pillow/Pillow/security/advisories/GHSA-vx6w-vv9f-6gvg) | EPS/Ghostscript scaled rendering |
 | [CVE-2026-112403](https://github.com/python-pillow/Pillow/security/advisories/GHSA-8g5g-8vmr-9782) | Pillow JPEG decoding |
 
-ASR/aligner 仅向 Qwen 传音频数组，TTS 使用文本与本地音频；服务不启动 Gradio。`audio_intel/video_frames.py` 与 `video_detection.py` 通过 PyAV/NumPy 获取已解码像素，仅做变换与 JPEG 编码，不调用 Pillow 图片解码或上述操作。读取导出图片的 API 环境已升级。`test_video_frames_do_not_decode_images_with_pillow` 回归检查该边界。
+ASR/aligner 仅向 Qwen 提供本地音频路径或数组，TTS 使用文本与本地音频；服务不启动 Gradio。`audio_intel/video_frames.py` 与 `video_detection.py` 通过 PyAV/NumPy 获取已解码像素，仅做变换与 JPEG 编码，不调用 Pillow 图片解码或上述操作。读取导出图片的 API 环境已升级。`test_video_frames_do_not_decode_images_with_pillow` 回归检查该边界。
 
 The exceptions apply only to model runtimes constrained by Gradio, whose service paths consume audio or decoded pixel arrays. Pillow file decoding, PDF append, TIFF encoding, GIF seeking, morphology and EPS rendering are not used there. API image readers use the patched version. These are bounded non-reachability assessments, not fixes to Pillow 12.3.0; new advisories still fail audits, and new image inputs or Gradio serving invalidate this assessment.
+
+
+同轮完整模型锁审计还发现旧间接依赖公告：hydra-core 升至 1.3.7、urllib3 至 2.8.0、Werkzeug 至 3.1.9。Qwen 精确固定的 Accelerate/Transformers 暂保留，以下新增例外仅限固定 manifest、本地离线推理：
+
+- [PYSEC-2026-3804 / GHSA-4j2p-28q2-5m79](https://github.com/advisories/GHSA-4j2p-28q2-5m79)：Accelerate 恶意 checkpoint 索引路径；服务不接收用户 checkpoint 或 shard 索引。
+- [PYSEC-2026-4174 / GHSA-x9r9-c232-4q39](https://github.com/advisories/GHSA-x9r9-c232-4q39)：远程 `custom_generate` 文件缓存；服务不接受或调用远程 custom_generate，强制离线加载本地模型。
+- [PYSEC-2026-3929 / GHSA-xrqw-3rrv-vx5w](https://github.com/advisories/GHSA-xrqw-3rrv-vx5w)：恶意 chat_template 在 tokenizer/processor `save_pretrained()` 时写出目录；服务不导出 tokenizer/processor，也不接受用户模型配置。
+
+Full model-lock audits additionally update hydra-core to 1.3.7, urllib3 to 2.8.0 and Werkzeug to 3.1.9. The three exact exceptions above cover attacker-supplied checkpoint indexes, remote custom generation and tokenizer/processor saving. None is exposed by the manifest-only offline service. They are not package fixes; reassess on Qwen releases or changes to model provenance/loading/export, and retain failure for undeclared advisories.

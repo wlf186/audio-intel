@@ -81,7 +81,7 @@ Audio and compatible submissions accept `voiceprint_group_ids` as JSON-array for
 
 `POST /api/v1/jobs/{job_id}/transcript-export` 支持 PDF/DOCX/JSON/TXT/SRT/VTT，默认 `redact=true`，姓名缩写、备注遮盖居中一半；最多 100 对 `{source,target}` 字面关键词替换，每项最多 8000 字，区分大小写、最长优先、不连锁。关闭开关仅停止文字处理，PDF/DOCX 仍遵循画面隐藏设置；任务原数据、音频和画面保持原样。
 
-Redacted downloads abbreviate names, mask notes, replace configured transcript keywords and remove auxiliary original identity snapshots from JSON. Turning redact off returns original content. PDF cache and resource limits remain bounded; binary downloads use normal authentication and Retry-After recovery. Legacy artifact/PDF GET routes retain raw compatibility. Only export copies change.
+Redacted downloads abbreviate names, mask notes, replace configured transcript keywords and remove auxiliary original identity snapshots from JSON. Turning redact off preserves original text; PDF/DOCX still honor export-hidden pictures with placeholders and retained text. PDF/DOCX caches and resource limits remain bounded; binary downloads use normal authentication and Retry-After recovery. Legacy artifact routes remain available; PDF GET retains original text and honors picture visibility. Only export copies change.
 
 ```bash
 BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
