@@ -24,6 +24,7 @@ from .api_models import JobResponse, JobResultResponse, VideoSceneResponse
 from .asr_speakers import speaker_update_lock
 from .document_download import reader_lease
 from .transcript import scene_transcripts
+from .transcript_filename import transcript_filename
 from .video_detection import SceneDetectionSettings
 
 
@@ -381,15 +382,15 @@ def register(app: Any, api: Any) -> None:
 
     pdf_headers = {
         'Content-Type': {'schema': {'type': 'string', 'const': 'application/pdf'}},
-        'Content-Length': {'description': 'PDF 字节数 / PDF bytes', 'schema': {'type': 'integer'}},
-        'Content-Disposition': {'description': 'UTF-8 下载文件名 / UTF-8 download filename', 'schema': {'type': 'string'}},
+        'Content-Length': {'description': '文件字节数 / File bytes', 'schema': {'type': 'integer'}},
+        'Content-Disposition': {'description': '任务名主体加导出扩展名的 UTF-8 附件名 / UTF-8 attachment name: task basename plus export extension', 'schema': {'type': 'string'}},
     }
     @app.head('/api/v1/jobs/{job_id}/transcript.pdf', tags=tags, response_class=Response,
               responses={**errors, 200: {'description': '导出响应头，无响应体 / Export headers, no body', 'headers': pdf_headers}},
               summary='准备简洁 PDF / Prepare concise PDF',
-              description='准备同一缓存导出并返回下载头，无响应体。\n\n**English:** Prepare the same cached export and return download headers without a body.')
+              description='准备同一缓存导出并返回下载头，无响应体；附件按任务名主体加 .pdf 命名。\n\n**English:** Prepare the same cached export and return download headers without a body; name the attachment after the task basename plus .pdf.')
     @app.get('/api/v1/jobs/{job_id}/transcript.pdf', tags=tags, response_class=Response, responses={**errors, 200: {'headers': pdf_headers, 'content': {'application/pdf': {'schema': {'type': 'string', 'format': 'binary'}}}}},
-             description='合并连续同说话人发言及时间范围，保留原文；视频按画面组织图文。仅已完成 ASR，内存缓存，繁忙时 429。\n\n**English:** Merge adjacent speech from the same speaker and its time range, preserving words. Videos include images and matching discussion. Completed ASR only; memory cached, 429 when busy.',
+             description='合并连续同说话人发言及时间范围，保留原文；视频按画面组织图文。附件按任务名主体加 .pdf 命名。仅已完成 ASR，内存缓存，繁忙时 429。\n\n**English:** Merge adjacent speech from the same speaker and its time range, preserving words. Videos include images and matching discussion. Attachment names use the task basename plus .pdf. Completed ASR only; memory cached, 429 when busy.',
               summary='下载简洁转写 PDF / Download concise transcript PDF')
     def pdf(job_id: str, request: Request, _: None = auth) -> Response:
         from .transcript_pdf import download
@@ -401,14 +402,14 @@ def register(app: Any, api: Any) -> None:
             raise HTTPException(413, str(exc)) from exc
         except (BlockingIOError, RuntimeError) as exc:
             raise HTTPException(429, str(exc), headers={'Retry-After': '2'}) from exc
-        filename = quote(Path(job['display_name']).stem + '-transcript.pdf')
+        filename = quote(transcript_filename(job['display_name'], job_id, 'pdf'), safe='')
         return Response(payload if request.method != 'HEAD' else None, media_type='application/pdf', headers={'Content-Length': str(len(payload)), 'Content-Disposition': f"attachment; filename*=UTF-8''{filename}", 'Cache-Control': 'no-store'})
 
     @app.post('/api/v1/jobs/{job_id}/transcript-export', tags=tags, response_class=Response,
               operation_id='exportTranscript', summary='按需脱敏导出转写 / Export a transcript with optional redaction',
-              description='默认缩写姓名、遮盖备注；最多 100 对字面关键词替换（每项最多 8000 字）。关闭 redact 停止文字脱敏；任务中的导出隐藏画面标记仍生效，PDF/DOCX 显示占位框。只处理导出副本；原音视频和图片文件保持原样。\n\n**English:** Names are abbreviated and notes masked by default. Up to 100 literal replacements, 8000 characters per value. Disabling redact disables text transformations; saved export-hidden pictures still use PDF/DOCX placeholders. Original media remains unchanged.',
+              description='默认缩写姓名、遮盖备注；最多 100 对字面关键词替换（每项最多 8000 字）。关闭 redact 停止文字脱敏；任务中的导出隐藏画面标记仍生效，PDF/DOCX 显示占位框。附件始终使用任务名主体加导出扩展名，脱敏不隐藏文件名中的任务名称。只处理导出副本；原音视频和图片文件保持原样。\n\n**English:** Names are abbreviated and notes masked by default. Up to 100 literal replacements, 8000 characters per value. Disabling redact disables text transformations; saved export-hidden pictures still use PDF/DOCX placeholders. Attachments always use the task basename plus export extension; redaction does not hide the task name in the filename. Original media remains unchanged.',
               responses={**errors, **api.NOT_FOUND_RESPONSE, **api.VALIDATION_RESPONSE,
-                         200: {'description': '所选格式的下载 / Download in the selected format', 'content': {mime: {'schema': api.BINARY_SCHEMA} for mime in ('application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/json', 'text/plain', 'application/x-subrip', 'text/vtt')}}})
+                         200: {'description': '所选格式的下载 / Download in the selected format', 'headers': {'Content-Disposition': pdf_headers['Content-Disposition'], 'Content-Length': pdf_headers['Content-Length']}, 'content': {mime: {'schema': api.BINARY_SCHEMA} for mime in ('application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/json', 'text/plain', 'application/x-subrip', 'text/vtt')}}})
     def transcript_export(job_id: str, body: TranscriptExportRequest, _: None = auth) -> Response:
         from .transcript_export import export_result, format_transcript, MIME_TYPES
         from .transcript_pdf import download
@@ -434,8 +435,7 @@ def register(app: Any, api: Any) -> None:
             raise HTTPException(413, str(exc)) from exc
         except (BlockingIOError, RuntimeError) as exc:
             raise HTTPException(429, str(exc), headers={'Retry-After': '2'}) from exc
-        stem = 'transcript' if body.redact else Path(job['display_name']).stem + '-transcript'
-        filename = quote(stem + '.' + body.format)
+        filename = quote(transcript_filename(job['display_name'], job_id, body.format), safe='')
         return Response(payload, media_type=MIME_TYPES[body.format], headers={'Content-Length': str(len(payload)), 'Content-Disposition': f"attachment; filename*=UTF-8''{filename}", 'Cache-Control': 'no-store'})
 
     @app.get('/api/v1/jobs/{job_id}/video-scenes', tags=tags, response_model=VideoScenesResponse, responses=errors,

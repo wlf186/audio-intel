@@ -81,7 +81,11 @@ Audio and compatible submissions accept `voiceprint_group_ids` as JSON-array for
 
 `POST /api/v1/jobs/{job_id}/transcript-export` 支持 PDF/DOCX/JSON/TXT/SRT/VTT，默认 `redact=true`，姓名缩写、备注遮盖居中一半；最多 100 对 `{source,target}` 字面关键词替换，每项最多 8000 字，区分大小写、最长优先、不连锁。关闭开关仅停止文字处理，PDF/DOCX 仍遵循画面隐藏设置；任务原数据、音频和画面保持原样。
 
+所有转写下载的附件名使用任务名主体加导出扩展名，例如 `Recording_10.m4a` → `Recording_10.pdf`，脱敏开关不隐藏文件名中的任务名称。旧 PDF GET/HEAD 和 ASR transcript.json/txt/srt/vtt 产物下载同样适用，URL 与磁盘产物名不变。浏览器遵循响应头；客户端显式指定输出路径时仍使用该路径。
+
 Redacted downloads abbreviate names, mask notes, replace configured transcript keywords and remove auxiliary original identity snapshots from JSON. Turning redact off preserves original text; PDF/DOCX still honor export-hidden pictures with placeholders and retained text. PDF/DOCX caches and resource limits remain bounded; binary downloads use normal authentication and Retry-After recovery. Legacy artifact routes remain available; PDF GET retains original text and honors picture visibility. Only export copies change.
+
+All transcript attachments use the task basename plus export extension, such as `Recording_10.m4a` → `Recording_10.pdf`, regardless of redaction. Legacy PDF GET/HEAD and ASR transcript.json/txt/srt/vtt downloads use the same naming; URLs and saved artifacts remain unchanged. Browsers follow Content-Disposition; explicit client output paths still take precedence.
 
 ```bash
 BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
@@ -89,7 +93,7 @@ JOB_ID=${JOB_ID:?export the completed ASR job ID first}
 curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"format":"pdf","redact":true,"replacements":[{"source":"广东移动","target":"gy"}]}' \
-  "$BASE_URL/api/v1/jobs/$JOB_ID/transcript-export" -o transcript.pdf
+  "$BASE_URL/api/v1/jobs/$JOB_ID/transcript-export" -o Recording_10.pdf
 ```
 
 <details>

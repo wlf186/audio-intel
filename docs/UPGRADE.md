@@ -107,6 +107,14 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## 开发版：转写下载命名与声纹分组 / Development: transcript names and voiceprint groups
+
+从 v0.1.37 更新：数据迁移无，无需额外升级备份；没有历史文件批量改写。转写 PDF/DOCX/JSON/TXT/SRT/VTT 下载统一使用任务名主体加导出扩展名，脱敏不再隐藏附件文件名中的任务名称，正文和文档内部元数据的脱敏规则不变。旧下载 URL、磁盘产物名与历史结果保持不变。
+
+从音频或视频结果添加声纹样本时，新建人员可选择已有分组，默认“未分组”。该选择只保存在当前弹窗内，重新打开重置，不新增浏览器存储。识别范围区分“全部分组（包含以后新增）”与“指定分组”；指定模式的三态“全选当前分组”只选择当前列表。切换模式清空指定选择，关闭弹窗和刷新保留已保存的模式及选择。沿用 ASR v7 存储键、保存时机与退出登录后的保留寿命；既有指定范围不会因新增分组自动扩大，提交后的人员快照不变。
+
+English: Updating from v0.1.37 needs no migration, historical-file rewrite or extra upgrade backup. Transcript downloads use the task basename plus export extension even with redaction enabled; content and internal document redaction remain unchanged. Legacy URLs and saved artifacts remain compatible. Audio/video enrollment can assign a new person to an existing group, defaulting to Ungrouped; this modal draft resets on reopening and is not persisted. Recognition scope separates all groups, including future groups, from specific groups. Specific selection has a tri-state select-all for the current list only. Switching modes clears specific choices; closing/reloading retains saved settings. ASR v7 storage keys, save timing and sign-out retention remain unchanged, as do submitted person snapshots. Rebuild the frontend and restore/verify all recorded service processes following the maintenance procedure above.
+
 ## v0.1.37 稳定截图修复 / Stable picture confirmation
 
 从 v0.1.36 升级：**数据迁移：无**，无历史媒体批量改写，无需额外升级备份；更早版本须覆盖中间版本的迁移要求。新视频使用 presentation-v3、视频结果契约 2，客户端需支持成对为空的 image/frame_time 和为空的预览 preview_url。旧结果保持原样，v1/v2 重试保留原算法；历史任务通过“预览检测 → 应用预览”显式启用修复。无达标截图的分段显示“无稳定画面”，文字与时间范围保留；PDF/DOCX 同样使用占位。保持时间输入支持 0.1 秒步进，范围和浏览器偏好键、寿命不变，既有特征缓存继续复用。

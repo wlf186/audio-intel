@@ -63,6 +63,12 @@
     "scopeTitle": "Voiceprint recognition groups",
     "scopeHelp": "Eligible people are fixed at submission. Later moves or additions do not change submitted jobs.",
     "allGroups": "All groups (including future groups)",
+    "scopeMode": "Voiceprint recognition scope",
+    "specifiedGroups": "Specific groups",
+    "selectAllGroups": "Select all current groups",
+    "allGroupsHelp": "New jobs use all groups, including groups added later.",
+    "specifiedGroupsHelp": "Use only checked groups. Selecting all current groups does not include future groups. Switching modes clears the specific selection.",
+    "unavailable": "This group is unavailable. Select another group.",
     "chooseAtLeastOne": "Select at least one voiceprint group",
     "staleSelection": "Unavailable groups were removed. Review your selection."
   },

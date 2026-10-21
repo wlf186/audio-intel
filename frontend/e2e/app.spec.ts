@@ -722,7 +722,7 @@ test('Auto-detected languages outside the aligner list explain segment-only time
  await expect(page.getByText('Arabic · 句级时间戳')).toBeVisible()
  await expect(page.getByRole('button',{name:/查看 .*字词时间戳/})).toHaveCount(0)
  await page.getByRole('button',{name:'明细与字幕',exact:true}).click()
- await expect(page.getByTitle('下载 transcript.srt')).toBeVisible()
+ await expect(page.getByTitle('下载 auto-arabic.srt')).toBeVisible()
  await page.getByPlaceholder('搜索转写内容').fill('مرحبا')
  await expect(page.locator('.segments article')).toHaveCount(1)
  await page.screenshot({path:'/tmp/audio-intel-asr-auto-segment-desktop.png',fullPage:false})

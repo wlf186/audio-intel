@@ -63,6 +63,29 @@ def source_job(local, speakers=None):
     return db.get_job(job["id"])
 
 
+@pytest.mark.parametrize('grouped', [True, False])
+def test_new_enrollment_person_keeps_selected_group_and_source_history(local, grouped):
+    from audio_intel.voiceprint_groups import UNGROUPED_ID
+    job = source_job(local)
+    before = deepcopy(job)
+    with TestClient(api_module.create_app()) as client:
+        group_id = client.post('/api/v1/voiceprints/groups', json={'name': '工作组'}).json()['id']
+        body = {'name': '新声纹人员', **({'group_id': group_id} if grouped else {})}
+        created = client.post('/api/v1/voiceprints/people', json=body)
+        assert created.status_code == 201, created.text
+        person = created.json()
+        expected = group_id if grouped else UNGROUPED_ID
+        assert person['group_id'] == expected
+        enrolled = client.post(f"/api/v1/voiceprints/people/{person['id']}/samples/from-asr", json={'job_id': job['id'], 'segment_ids': [0]})
+        assert enrolled.status_code == 201, enrolled.text
+        assert all(sample['person_id'] == person['id'] for sample in enrolled.json()['items'])
+        assert db.get_voiceprint_person(person['id'])['group_id'] == expected
+        groups = client.get('/api/v1/voiceprints/groups').json()['items']
+        assert next(group for group in groups if group['id'] == expected)['person_count'] == 1
+        assert client.post('/api/v1/voiceprints/people', json={'name': '不可创建', 'group_id': 'missing'}).status_code == 422
+    assert db.get_job(job['id']) == before
+
+
 def export_bytes(local, job):
     output = local.jobs_dir / job["id"] / "output"
     return {item["name"]: (output / item["name"]).read_bytes() for item in job["result"]["artifacts"]}

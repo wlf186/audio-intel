@@ -2739,10 +2739,10 @@ def create_app() -> FastAPI:
     @app.get(
         "/api/v1/jobs/{job_id}/artifacts/{name}", response_class=FileResponse,
         tags=[JOB_TAG], summary="下载任务产物 / Download job artifact",
-        description=bilingual("名称必须来自成功任务结果的 `artifacts`，文件始终受鉴权和路径包含检查保护。", "The name must come from a successful result's `artifacts`; authentication and path-containment checks always apply."),
+        description=bilingual("名称必须来自成功任务结果的 `artifacts`，文件始终受鉴权和路径包含检查保护。ASR transcript.json/txt/srt/vtt 附件使用任务名主体加对应扩展名，原产物名称和 URL 不变。", "The name must come from a successful result's `artifacts`; authentication and path-containment checks always apply. ASR transcript.json/txt/srt/vtt attachments use the task basename plus the matching extension; artifact identifiers and URLs remain unchanged."),
         operation_id="getJobArtifact",
         responses={
-            200: {"description": "音频、JSON 或字幕文件 / Audio, JSON, or subtitle file", "content": {"application/octet-stream": {"schema": BINARY_SCHEMA}}},
+            200: {"description": "音频、JSON 或字幕文件 / Audio, JSON, or subtitle file", "headers": {"Content-Disposition": {"description": "UTF-8 附件文件名 / UTF-8 attachment filename", "schema": {"type": "string"}}}, "content": {"application/octet-stream": {"schema": BINARY_SCHEMA}}},
             **AUTH_RESPONSES, **NOT_FOUND_RESPONSE,
         },
     )
@@ -2755,7 +2755,11 @@ def create_app() -> FastAPI:
         path = Path(item["path"]).resolve()
         if settings.jobs_dir not in path.parents or not path.is_file():
             raise HTTPException(status_code=404, detail="Artifact file is missing")
-        return FileResponse(path, media_type=item.get("mime_type") or mimetypes.guess_type(path.name)[0], filename=path.name)
+        filename = path.name
+        if job["kind"] == "asr" and name in {"transcript.json", "transcript.txt", "transcript.srt", "transcript.vtt"}:
+            from .transcript_filename import transcript_filename
+            filename = transcript_filename(job["display_name"], job_id, name.rsplit(".", 1)[1])
+        return FileResponse(path, media_type=item.get("mime_type") or mimetypes.guess_type(path.name)[0], filename=filename)
 
     @app.get(
         "/api/v1/jobs/{job_id}/artifacts/{name}/waveform",

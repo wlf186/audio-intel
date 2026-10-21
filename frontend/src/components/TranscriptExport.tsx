@@ -7,14 +7,7 @@ import type {Job,TranscriptExportFormat} from '../lib/types'
 import {Modal} from './Modal'
 import {ActionPopover} from './ActionPopover'
 import {useCompactWorkspace} from '../hooks/useCompactWorkspace'
-
-function downloadName(response:Response,format:TranscriptExportFormat){
- const disposition=response.headers.get('Content-Disposition')||''
- const encoded=/filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1]
- let name=/filename="([^"]+)"/i.exec(disposition)?.[1]||`transcript.${format}`
- if(encoded){try{name=decodeURIComponent(encoded)}catch{/* Use the plain fallback for malformed headers. */}}
- return name.split(/[/\\]/).pop()?.replace(/[\x00-\x1f]/g,'')||`transcript.${format}`
-}
+import {transcriptDownloadName,transcriptFilename} from '../lib/transcriptFilename'
 
 export function TranscriptExport({job,formats=['pdf','json','txt','srt','vtt']}:{job:Job;formats?:TranscriptExportFormat[]}){
  const {t}=useTranslation()
@@ -49,7 +42,7 @@ export function TranscriptExport({job,formats=['pdf','json','txt','srt','vtt']}:
    const url=URL.createObjectURL(blob)
    const timer=setTimeout(()=>URL.revokeObjectURL(url),60_000)
    releaseDownload.current=()=>{clearTimeout(timer);URL.revokeObjectURL(url)}
-   const link=document.createElement('a');link.href=url;link.download=downloadName(response,format);document.body.append(link);link.click();link.remove()
+   const link=document.createElement('a');link.href=url;link.download=transcriptDownloadName(response,transcriptFilename(job.display_name,job.id,format));document.body.append(link);link.click();link.remove()
   }catch(cause){
    if(active.signal.aborted)return
    if(cause instanceof HttpError){
@@ -66,7 +59,7 @@ export function TranscriptExport({job,formats=['pdf','json','txt','srt','vtt']}:
  return <div className="transcript-export">
   {compact?<button className="primary export-mobile-trigger" onClick={()=>setOpen(true)}><Download size={16}/>{t('transcriptExport.open')}</button>:<>
    <div className="transcript-export-actions"><ActionPopover label={busy?t('video.pdfPreparing'):remaining?t('video.pdfRetryIn',{seconds:remaining}):t('transcriptExport.concise')} className="transcript-concise" icon={<Download size={16}/>} primary disabled={blocked} closeOnAction>{(['pdf','docx'] as const).filter(value=>formats.includes(value)).map(value=><button className="button" data-format={value} key={value} title={t(video?'video.pdfVideoHelp':'video.pdfAudioHelp')} disabled={blocked} onClick={()=>void download(value)}><Download size={14}/><span>{value==='docx'?'Word (DOCX)':'PDF'}<small>{t(value==='docx'?'transcriptExport.editable':'transcriptExport.fixedLayout')}</small></span></button>)}</ActionPopover>
-    <ActionPopover label={t('video.detailFormats')} className="transcript-export-details" closeOnAction>{(['json','txt','srt','vtt'] as const).filter(value=>formats.includes(value)).map(value=><button className="button" title={t('asr.results.downloadNamed',{name:`transcript.${value}`})} disabled={blocked} key={value} onClick={()=>void download(value)}><Download size={14}/><span>{value.toUpperCase()}<small>{t(value==='srt'||value==='vtt'?'video.subtitleFormat':'video.detailFormat')}</small></span></button>)}</ActionPopover>
+    <ActionPopover label={t('video.detailFormats')} className="transcript-export-details" closeOnAction>{(['json','txt','srt','vtt'] as const).filter(value=>formats.includes(value)).map(value=><button className="button" title={t('asr.results.downloadNamed',{name:transcriptFilename(job.display_name,job.id,value)})} disabled={blocked} key={value} onClick={()=>void download(value)}><Download size={14}/><span>{value.toUpperCase()}<small>{t(value==='srt'||value==='vtt'?'video.subtitleFormat':'video.detailFormat')}</small></span></button>)}</ActionPopover>
    </div><div className="transcript-redaction-controls">{redaction}<ActionPopover label={t('transcriptExport.replacements')} className="transcript-rules" icon={<Settings2 size={16}/>}>{editor}</ActionPopover></div>
   </>}
   {error&&(!compact||!open)?<p className="error" role="alert">{error}</p>:null}

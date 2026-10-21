@@ -182,7 +182,8 @@ def test_all_download_formats_default_on_auth_and_original_unchanged(local):
         for format in ("json", "txt", "srt", "vtt", "pdf", "docx"):
             response = client.post(url, json={"format": format, "replacements": [{"source": "广东移动", "target": "gy"}]})
             assert response.status_code == 200, response.text
-            assert "transcript." in response.headers["content-disposition"]
+            from urllib.parse import unquote
+            assert unquote(response.headers["content-disposition"]).endswith("个人隐私标题." + format)
             text = "\n".join(page.extract_text() for page in PdfReader(io.BytesIO(response.content)).pages) if format == "pdf" else response.text
             if format == 'docx':
                 document = Document(io.BytesIO(response.content))

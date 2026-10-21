@@ -63,6 +63,12 @@
     "scopeTitle": "声纹识别分组",
     "scopeHelp": "提交时固定所选分组的人员范围，之后移动或新增人员不会改变已提交的任务。",
     "allGroups": "全部分组（包含以后新增的分组）",
+    "scopeMode": "声纹识别范围",
+    "specifiedGroups": "指定分组",
+    "selectAllGroups": "全选当前分组",
+    "allGroupsHelp": "新任务使用全部分组，自动包含以后新增的分组。",
+    "specifiedGroupsHelp": "只使用勾选的分组；全选当前分组也不会自动包含以后新增的分组。切换模式会清空指定选择。",
+    "unavailable": "分组已不可用，请重新选择",
     "chooseAtLeastOne": "请至少选择一个声纹分组",
     "staleSelection": "已移除不存在的分组，请检查当前选择。"
   },

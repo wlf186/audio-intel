@@ -1,14 +1,16 @@
 import {useEffect,useMemo,useRef,useState} from 'react'
 import {useTranslation} from 'react-i18next'
 import {api,formatTime,HttpError} from '../lib/api'
-import type {Job,ResourceState,Segment,VoiceprintPerson} from '../lib/types'
+import type {Job,ResourceState,Segment,VoiceprintGroup,VoiceprintPerson} from '../lib/types'
+import {ungroupedId} from './VoiceprintGroups'
+import {VoiceprintGroupSelect} from './VoiceprintGroupSelect'
 import {enrollmentPerson} from '../lib/voiceprintEnrollment'
 import {voiceprintPersonLabel} from '../lib/presentation'
 import {Modal} from './Modal'
 import {ResourceStatePanel} from './ResourceStatePanel'
 
-type Props={job:Job;speakerId:string;initialSegmentIds?:number[];people:VoiceprintPerson[];peopleState:ResourceState;refreshPeople:()=>Promise<void>;refreshPeopleAndHotwords:()=>Promise<void>;onClose:()=>void;onSuccess:(count:number)=>void}
-export function VideoSpeakerEnrollment({job,speakerId,initialSegmentIds=[],people,peopleState,refreshPeople,refreshPeopleAndHotwords,onClose,onSuccess}:Props){
+type Props={job:Job;speakerId:string;initialSegmentIds?:number[];people:VoiceprintPerson[];peopleState:ResourceState;groups:VoiceprintGroup[];groupsState:ResourceState;refreshGroups:()=>Promise<void>;refreshPeople:()=>Promise<void>;refreshPeopleAndHotwords:()=>Promise<void>;onClose:()=>void;onSuccess:(count:number)=>void}
+export function VideoSpeakerEnrollment({job,speakerId,initialSegmentIds=[],people,peopleState,groups,groupsState,refreshGroups,refreshPeople,refreshPeopleAndHotwords,onClose,onSuccess}:Props){
  const {t}=useTranslation()
  const [step,setStep]=useState<'select'|'person'>('select')
  const [selected,setSelected]=useState<Set<number>>(()=>new Set(initialSegmentIds))
@@ -17,6 +19,7 @@ export function VideoSpeakerEnrollment({job,speakerId,initialSegmentIds=[],peopl
  const [name,setName]=useState('')
  const [note,setNote]=useState('')
  const [hotword,setHotword]=useState(true)
+ const [groupId,setGroupId]=useState(ungroupedId)
  const [ambiguous,setAmbiguous]=useState(false)
  const [busy,setBusy]=useState(false)
  const [error,setError]=useState('')
@@ -46,18 +49,19 @@ export function VideoSpeakerEnrollment({job,speakerId,initialSegmentIds=[],peopl
   setName(/^Speaker[ _]\d+$/i.test(identity.name)?'':identity.name);setNote(identity.note);setStep('person')
  }
  async function submit(){
-  if(submitting.current||peopleState!=='ready'||!selectedIds.length||personId==='__choose__')return
+  if(submitting.current||peopleState!=='ready'||!selectedIds.length||personId==='__choose__'||(!personId&&(groupsState!=='ready'||!groups.some(group=>group.id===groupId))))return
   submitting.current=true;setBusy(true);setError('')
   let created=false,creating=!personId
   try{
    let target=personId
-   if(!target){const person=await api.addVoiceprintPerson(name.trim(),note.trim()||null,hotword);target=person.id;created=true;creating=false;if(active.current)setPersonId(target)}
+   if(!target){const person=await api.addVoiceprintPerson(name.trim(),note.trim()||null,hotword,groupId);target=person.id;created=true;creating=false;if(active.current)setPersonId(target)}
    await api.addAsrSamples(target,job.id,selectedIds)
    // A completed import is not a failed import if refreshing the library fails.
    await (created?refreshPeopleAndHotwords():refreshPeople()).catch(()=>undefined)
    if(active.current)onSuccess(selectedIds.length)
   }catch(cause){
    if(active.current)setError(cause instanceof HttpError&&cause.status===409&&creating?t('voiceprintNames.personConflict'):(cause as Error).message)
+   if(creating&&cause instanceof HttpError&&cause.status===422)await refreshGroups().catch(()=>undefined)
    if(created)await refreshPeopleAndHotwords().catch(()=>undefined)
    else if(cause instanceof HttpError&&cause.status===409&&!creating)await refreshPeople().catch(()=>undefined)
   }finally{ submitting.current=false;if(active.current)setBusy(false) }
@@ -86,10 +90,11 @@ export function VideoSpeakerEnrollment({job,speakerId,initialSegmentIds=[],peopl
     <label>{t('asr.library.newPersonName')}<input disabled={busy} value={name} maxLength={80} onChange={event=>setName(event.target.value)}/></label>
     <label>{t('voiceprints.noteOptional')}<input disabled={busy} value={note} maxLength={20} onChange={event=>setNote(event.target.value)}/></label>
     <label className="toggle-label person-hotword-toggle"><input type="checkbox" disabled={busy} checked={hotword} onChange={event=>setHotword(event.target.checked)}/><span>{t('voiceprints.addToHotwords')}</span><small>{t('voiceprints.addToHotwordsHelp')}</small></label>
+    <VoiceprintGroupSelect groups={groups} state={groupsState} value={groupId} onChange={setGroupId} refresh={refreshGroups} disabled={busy}/>
    </>:null}
    {!selectedIds.length?<p role="alert">{t('video.selectionUnavailable')}</p>:null}
    </div>
-   <div className="modal-actions"><button className="button" disabled={busy} onClick={()=>{setError('');setStep('select')}}>{t('video.backToSamples')}</button><button className="primary" disabled={busy||peopleState!=='ready'||!selectedIds.length||personId==='__choose__'||(!personId&&!name.trim())||(Boolean(personId)&&!people.some(person=>person.id===personId))} onClick={()=>void submit()}>{t(busy?'voiceprints.saving':'asr.library.confirm')}</button></div>
+   <div className="modal-actions"><button className="button" disabled={busy} onClick={()=>{setError('');setStep('select')}}>{t('video.backToSamples')}</button><button className="primary" disabled={busy||peopleState!=='ready'||!selectedIds.length||personId==='__choose__'||(!personId&&(!name.trim()||groupsState!=='ready'||!groups.some(group=>group.id===groupId)))||(Boolean(personId)&&!people.some(person=>person.id===personId))} onClick={()=>void submit()}>{t(busy?'voiceprints.saving':'asr.library.confirm')}</button></div>
   </>}
  </Modal>
 }

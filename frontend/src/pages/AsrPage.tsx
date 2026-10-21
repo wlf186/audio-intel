@@ -7,7 +7,9 @@ import { Download, Layers, FileAudio, Pause, Pencil, Play, RotateCcw, Search, Up
 import { api, HttpError, size, formatTime, isUploadCancelled, sourceUrl, uploadLimitMessage, type SubmissionProgress as UploadProgress } from '../lib/api'
 import type { AsrStrengthCapability, AsrModelCapability, ComputeDevice, HotwordLibraryCapability, HotwordList, Job, JobDetailResource, JobResult, JobSummary, ResourceState, ResultRevealRequest, VideoScene, Segment, Speaker, VoiceprintGroup, VoiceprintPerson } from '../lib/types'
 import './asr.css'
-import {groupLabel} from '../components/VoiceprintGroups'
+import {groupLabel,ungroupedId} from '../components/VoiceprintGroups'
+import {VoiceprintGroupSelect} from '../components/VoiceprintGroupSelect'
+import {VoiceprintScope} from '../components/VoiceprintScope'
 import {TranscriptExport} from '../components/TranscriptExport'
 import {EnhancementSummary} from '../components/EnhancementSummary'
 import {VideoTimeline} from '../components/VideoTimeline'
@@ -237,6 +239,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const [newPersonName, setNewPersonName] = useState('')
   const [newPersonNote, setNewPersonNote] = useState('')
   const [newPersonHotword, setNewPersonHotword] = useState(true)
+  const [newPersonGroupId, setNewPersonGroupId] = useState(ungroupedId)
   const [currentTime, setCurrentTime] = useState(0)
   const [playing, setPlaying] = useState(false)
   const input = useRef<HTMLInputElement>(null)
@@ -601,6 +604,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     setNewPersonName(/^Speaker[ _]\d+$/i.test(identity.name) ? '' : identity.name)
     setNewPersonNote(identity.note)
     setNewPersonHotword(true)
+    setNewPersonGroupId(ungroupedId)
     setLibraryOpen(true)
   }
   const addToLibrary = async () => {
@@ -612,8 +616,9 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     try {
       let personId = targetPersonId
       if (!personId) {
+        if (voiceprintGroupsState!=='ready'||!voiceprintGroups.some(group=>group.id===newPersonGroupId)) throw new Error(t('voiceprintGroups.unavailable'))
         if (!newPersonName.trim()) throw new Error(t('asr.library.nameRequired'))
-        const person = await api.addVoiceprintPerson(newPersonName.trim(), newPersonNote.trim() || null, newPersonHotword)
+        const person = await api.addVoiceprintPerson(newPersonName.trim(), newPersonNote.trim() || null, newPersonHotword, newPersonGroupId)
         personId = person.id
         setTargetPersonId(personId)
         created = true
@@ -626,6 +631,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       if(!created)await refreshVoiceprints().catch(cause=>setResultError((cause as Error).message))
     } catch (cause) {
       setLibraryError(cause instanceof HttpError&&cause.status===409&&creatingPerson?t('voiceprintNames.personConflict'):(cause as Error).message)
+      if(creatingPerson&&cause instanceof HttpError&&cause.status===422)await refreshVoiceprintGroups().catch(()=>undefined)
       if(creatingPerson)libraryNameRef.current?.focus()
     } finally {
       if(created)await refreshPeopleAndHotwords().catch(cause=>setResultError((cause as Error).message))
@@ -1069,14 +1075,12 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       ) : null}
       {groupsOpen?<Modal title={t('voiceprintGroups.scopeTitle')} closeLabel={t('common.actions.cancel')} onClose={()=>setGroupsOpen(false)}>
         <p>{t('voiceprintGroups.scopeHelp')}</p>
-        <ResourceStatePanel state={voiceprintGroupsState} loadingLabel={t('voiceprintGroups.loading')} errorLabel={t('voiceprintGroups.failed')} retry={()=>void refreshVoiceprintGroups().catch(()=>{})}/>
+        <VoiceprintScope groups={voiceprintGroups} state={voiceprintGroupsState} mode={preferences.voiceprintGroupMode} ids={preferences.voiceprintGroupIds} refresh={refreshVoiceprintGroups} onChange={(mode,ids)=>{setGroupSelectionWarning(false);setPreferences(current=>{const next={...current,voiceprintGroupMode:mode,voiceprintGroupIds:ids};saveAsrPreferences(next);return next})}}/>
         {groupSelectionWarning?<p className="notice" role="status">{t('voiceprintGroups.staleSelection')}</p>:null}
-        <label className="group-choice"><input type="checkbox" checked={!manualGroups} disabled={voiceprintGroupsState!=='ready'} onChange={event=>{setGroupSelectionWarning(false);setPreferences(current=>{const next={...current,voiceprintGroupMode:event.target.checked?'all' as const:'selected' as const,voiceprintGroupIds:event.target.checked?[]:voiceprintGroups.map(group=>group.id)};saveAsrPreferences(next);return next})}}/>{t('voiceprintGroups.allGroups')}</label>
-        <div className="group-choice-list">{voiceprintGroupsState==='ready'?voiceprintGroups.map(group=><label className="group-choice" key={group.id}><input type="checkbox" checked={!manualGroups||preferences.voiceprintGroupIds.includes(group.id)} onChange={event=>{setGroupSelectionWarning(false);setPreferences(current=>{const selected=new Set(current.voiceprintGroupMode==='all'?voiceprintGroups.map(item=>item.id):current.voiceprintGroupIds);if(event.target.checked)selected.add(group.id);else selected.delete(group.id);const next={...current,voiceprintGroupMode:'selected' as const,voiceprintGroupIds:[...selected]};saveAsrPreferences(next);return next})}}/>{groupLabel(group,t('voiceprintGroups.ungrouped'))}<small>{group.person_count}</small></label>):null}</div>
         {groupSelectionIssue?<p className="error" role="alert">{groupSelectionIssue}</p>:null}
         <div className="modal-actions"><button className="primary" onClick={()=>setGroupsOpen(false)}>{t('common.actions.done')}</button></div>
       </Modal>:null}
-      {videoEnrollment&&selected&&videoEnrollment.jobId===selected.id?<VideoSpeakerEnrollment key={`${selected.id}:${videoEnrollment.speakerId}`} job={selected} speakerId={videoEnrollment.speakerId} initialSegmentIds={videoEnrollment.segmentIds} people={voiceprints} peopleState={voiceprintsState} refreshPeople={refreshVoiceprints} refreshPeopleAndHotwords={refreshPeopleAndHotwords} onClose={()=>setVideoEnrollment(undefined)} onSuccess={count=>{setVideoEnrollment(undefined);setResultNotice(t('video.enrolledCount',{count}))}}/>:null}
+      {videoEnrollment&&selected&&videoEnrollment.jobId===selected.id?<VideoSpeakerEnrollment key={`${selected.id}:${videoEnrollment.speakerId}`} job={selected} speakerId={videoEnrollment.speakerId} initialSegmentIds={videoEnrollment.segmentIds} people={voiceprints} peopleState={voiceprintsState} groups={voiceprintGroups} groupsState={voiceprintGroupsState} refreshGroups={refreshVoiceprintGroups} refreshPeople={refreshVoiceprints} refreshPeopleAndHotwords={refreshPeopleAndHotwords} onClose={()=>setVideoEnrollment(undefined)} onSuccess={count=>{setVideoEnrollment(undefined);setResultNotice(t('video.enrolledCount',{count}))}}/>:null}
       {libraryOpen ? (
         <Modal title={t('asr.library.title')} closeLabel={t('asr.library.close')} onClose={() => {if(!libraryBusy)setLibraryOpen(false)}}>
           <p>
@@ -1113,6 +1117,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
                 <span>{t('voiceprints.addToHotwords')}</span>
                 <small>{t('voiceprints.addToHotwordsHelp')}</small>
               </label>
+              <VoiceprintGroupSelect groups={voiceprintGroups} state={voiceprintGroupsState} value={newPersonGroupId} onChange={setNewPersonGroupId} refresh={refreshVoiceprintGroups} disabled={libraryBusy}/>
             </>
           ) : (
             <p className="notice" hidden={targetPersonId==='__choose__'}>
@@ -1120,7 +1125,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               {voiceprints.filter(person=>person.id===targetPersonId).map(voiceprintPersonLabel).join('')}
             </p>
           )}
-          <button className="primary" disabled={libraryBusy || targetPersonId==='__choose__' || (!targetPersonId && !newPersonName.trim())} onClick={addToLibrary}>
+          <button className="primary" disabled={libraryBusy || targetPersonId==='__choose__' || (!targetPersonId && (!newPersonName.trim()||voiceprintGroupsState!=='ready'||!voiceprintGroups.some(group=>group.id===newPersonGroupId)))} onClick={addToLibrary}>
             {libraryBusy ? t('voiceprints.saving') : t('asr.library.confirm')}
           </button>
         </Modal>
