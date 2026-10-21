@@ -59,7 +59,7 @@ curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
 
 Names use uppercase Latin word or Chinese pinyin initials: Vince Carter → VC, 刘亦菲 → LYF, Liu Yifei → LY, Marco → M. Collisions become VC-1, VC-2 in speaker order. Generic speaker numbers remain. Notes mask the middle `ceil(n/2)` Unicode characters: 01234567 → 01****67, 广东移动有限公司 → 广东****公司. Literal keyword replacements affect transcript text and timed words, are case-sensitive, longest-first and single-pass without chaining. Matched word spans merge in the export copy and retain their full time range. Empty targets delete the matched text.
 
-Redacted JSON contains transcript fields, speakers, segments/timed words and safe timing/model/video metadata; auxiliary identity/hotword snapshots and artifact paths are omitted. Redacted titles/file names are generic. Download transformations never modify stored jobs or historical artifacts. Stored audio and video images remain unchanged; names in body text only change when covered by explicit keywords. `redact=false` disables text redaction and keyword rules. Export-hidden pictures still become placeholders in PDF/DOCX, with their text retained. Original artifacts remain available; GET/HEAD PDF routes retain their existing text behavior and honor picture visibility.
+Redacted JSON contains transcript fields, speakers, segments/timed words and safe timing/model/video metadata; auxiliary identity/hotword snapshots and artifact paths are omitted. Redacted document titles remain generic, but attachment filenames always use the task basename plus export extension: `Recording_10.m4a` becomes `Recording_10.txt`, regardless of redaction. Legacy PDF GET/HEAD and ASR transcript.json/txt/srt/vtt downloads follow the same naming; artifact identifiers, URLs and saved filenames remain unchanged. Download transformations never modify stored jobs or historical artifacts. Stored audio and video images remain unchanged; names in body text only change when covered by explicit keywords. `redact=false` disables text redaction and keyword rules. Export-hidden pictures still become placeholders in PDF/DOCX, with their text retained. GET/HEAD PDF routes retain their existing text behavior and honor picture visibility.
 
 ```bash
 BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
@@ -67,22 +67,25 @@ JOB_ID=${JOB_ID:?export the completed ASR job ID first}
 curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"format":"txt","redact":true,"replacements":[{"source":"广东移动","target":"gy"}]}' \
-  "$BASE_URL/api/v1/jobs/$JOB_ID/transcript-export" -o transcript.txt
+  "$BASE_URL/api/v1/jobs/$JOB_ID/transcript-export" -o Recording_10.txt
 ```
 
 ```python
 import os
 from pathlib import Path
+from email.message import Message
 import httpx
 base = os.getenv("AUDIO_INTEL_BASE_URL", "http://127.0.0.1:20810")
 headers = {"Authorization": "Bearer " + os.environ["AUDIO_INTEL_API_KEY"]} if os.getenv("AUDIO_INTEL_API_KEY") else {}
 response = httpx.post(base + "/api/v1/jobs/" + os.environ["JOB_ID"] + "/transcript-export", headers=headers,
                       json={"format": "json", "redact": True, "replacements": [{"source": "广东移动", "target": "gy"}]}, timeout=300)
 response.raise_for_status()
-Path("transcript.json").write_bytes(response.content)
+disposition = Message()
+disposition["Content-Disposition"] = response.headers["Content-Disposition"]
+Path(Path(disposition.get_filename()).name).write_bytes(response.content)
 ```
 
-中文：界面全部转写下载默认脱敏。替换编辑器按行 `原词=替换词`，按第一个等号拆分，忽略空行、允许空替换词；错误显示行号。独立 localStorage `audio-intel:transcript-export:v1` 保存开关和原始编辑内容，刷新、重开、退出登录及资料库替换后保留；清空替换规则保留脱敏开关，只清空规则，可撤销（保留完整原始输入，包括错误内容）；下一次编辑、页面卸载或刷新后撤销失效。ASR 偏好使用 v7，兼容迁移旧版本（包括 v0.1.33 的 v4）。
+中文：界面全部转写下载默认脱敏，但下载文件名保留任务名称，去掉末尾音视频扩展名后加导出扩展名。上面的 Python 示例读取 UTF-8 响应头命名；Bash 的 `-o` 显式指定本地路径。替换编辑器按行 `原词=替换词`，按第一个等号拆分，忽略空行、允许空替换词；错误显示行号。独立 localStorage `audio-intel:transcript-export:v1` 保存开关和原始编辑内容，刷新、重开、退出登录及资料库替换后保留；清空替换规则保留脱敏开关，只清空规则，可撤销（保留完整原始输入，包括错误内容）；下一次编辑、页面卸载或刷新后撤销失效。ASR 偏好使用 v7，兼容迁移旧版本（包括 v0.1.33 的 v4）。
 
 
 ### DOCX 简洁导出 / Concise DOCX export
@@ -94,6 +97,7 @@ Path("transcript.json").write_bytes(response.content)
 ```python
 import os
 from pathlib import Path
+from email.message import Message
 import requests
 
 base = os.environ["AUDIO_INTEL_BASE_URL"].rstrip("/")
@@ -102,7 +106,9 @@ headers = {"Authorization": f"Bearer {os.environ['AUDIO_INTEL_API_KEY']}"} if os
 response = requests.post(f"{base}/api/v1/jobs/{job_id}/transcript-export",
     headers=headers, json={"format": "docx", "redact": True, "replacements": []}, timeout=120)
 response.raise_for_status()
-Path("transcript.docx").write_bytes(response.content)
+disposition = Message()
+disposition["Content-Disposition"] = response.headers["Content-Disposition"]
+Path(Path(disposition.get_filename()).name).write_bytes(response.content)
 ```
 
 English: The existing POST export accepts `format="docx"`; PDF remains the default. Capabilities advertise DOCX. The binary Word response uses its standard MIME type and UTF-8 filename. Audio paragraphs and illustrated video sections follow PDF semantics, including redaction and replacement rules. Export-hidden images are omitted from the package and replaced with placeholders without losing text, even when `redact=false`. Authentication and same-origin checks remain unchanged. An independent single renderer uses a five-minute, 64 MiB bounded memory cache; limits are 4,000,000 text characters and 128 MiB visible-image bytes. Oversize requests return 413, busy requests 429 with Retry-After 2. No new dependency, persistent artifact or database migration is required.

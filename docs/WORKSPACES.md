@@ -30,7 +30,11 @@ English: Desktop voiceprints use equal-width, independently scrolling people and
 
 转写下载的“脱敏导出”默认开启，规则每行 `原词=替换词`，最多 100 对，错误提示行号。独立 localStorage `audio-intel:transcript-export:v1` 长期保存开关和编辑内容，包括尚未修正的输入；刷新、重开、退出登录、资料库替换均保留。关闭开关停止姓名/备注处理和关键词替换，规则保留；“清空替换规则”仅清空规则、保留脱敏开关，可撤销至清空前的原始输入；继续编辑、离开页面或刷新后撤销失效。正文只替换明确关键词，任务原音和原图保持原样；PDF/DOCX 仍遵循画面隐藏设置。
 
-English: ASR v7 preferences migrate older settings, including published v0.1.33 schema v4, and persist either all future groups or explicit IDs. Invalid choices never widen scope. Library replacement resets group selection to all. New people default to the filtered group, or Ungrouped in the all-people view; creation/editing can choose a group. Export v1 preferences independently persist toggle/editor contents across logout and replacement; Clear replacement rules preserves the redaction toggle and offers exact-text undo until the next rule edit or page unmount. Disabling redaction disables every transformation without losing the rules. Loading/error/retry states remain explicit.
+识别分组用单选区分“全部分组（包含以后新增的分组）”与“指定分组”。指定模式下，“全选当前分组”支持全选、半选和全不选；手动选满也不包含未来分组。切换模式清空指定选择，关闭弹窗及刷新保留当前设置；开启声纹识别且指定范围为空时阻止提交。从转写结果向声纹库添加样本时，新建人员可选已有分组，默认“未分组”；弹窗内保留选择，重新打开重置，不跟随声纹库筛选，也不修改已有人员的分组。
+
+六种转写格式均按任务名主体加扩展名下载，包括脱敏导出。文档内部标题和正文继续按原规则脱敏；旧下载 URL 和磁盘产物名不变。
+
+English: ASR v7 preferences migrate older settings, including published v0.1.33 schema v4, and persist either all future groups or explicit IDs. Scope uses All groups / Specific groups radios. Specific mode has a tri-state select-all for current groups only; switching modes clears specific choices, while closing/reloading retains saved settings. An empty specific scope blocks submissions when recognition is enabled. Invalid choices never widen scope. Library replacement resets group selection to all. In the library, new people default to the filtered group, or Ungrouped in the all-people view. Audio/video enrollment instead defaults new people to Ungrouped, allows choosing an existing group, and resets that modal draft on reopening; existing memberships remain unchanged. All six transcript download formats use the task basename plus extension even with redaction enabled; internal titles/content remain redacted. Export v1 preferences independently persist toggle/editor contents across logout and replacement; Clear replacement rules preserves the redaction toggle and offers exact-text undo until the next rule edit or page unmount. Loading/error/retry states remain explicit.
 
 ## 处理选项 / Processing options
 

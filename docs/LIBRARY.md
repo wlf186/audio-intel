@@ -58,9 +58,9 @@ A `completed` receipt records the committed database transaction. While retired-
 
 ZIP v2 包含分组及归属，仍接受 v1。v1 新人员进入“未分组”；v2 合并按规范化组名匹配，已有同身份人员保留目标端分组并提示差异，替换恢复包内归属。分组变化使旧预览失效，需重新预览。导入统计中的分组数只计自建组。资料库替换备份与升级临时 SQLite 备份分别管理。
 
-ASR 默认使用全部分组，手动多选会长期记忆，提交时固定人员 ID；之后移动或新增人员不改变排队任务。资料库替换及恢复 ASR 默认配置恢复全部分组。已完成识别、TTS 参考及历史请求快照保持原样。
+ASR 默认使用全部分组，手动多选会长期记忆，提交时固定人员 ID；之后移动或新增人员不改变排队任务。资料库替换及恢复 ASR 默认配置恢复全部分组。已完成识别、TTS 参考及历史请求快照保持原样。从音视频转写结果添加样本时，新建人员可选择已有分组，默认“未分组”，与资料库筛选无关；弹窗重新打开后重置，选择已有人员不会改变其分组。
 
-English: Each person belongs to one group. Ungrouped is built-in and is the default for existing people and new people created in the all-people view. Creation/editing can choose a group; new people default to the currently filtered group. Filter and select people for atomic batch moves or confirmed per-person deletes. Group deletion moves members to Ungrouped without removing samples. ZIP v2 preserves groups, with v1 imports supported. Merge matches group names, retains existing target memberships with warnings, and replacement restores source membership; changed groups invalidate previews. Group counts exclude Ungrouped. ASR scope is snapshotted at acceptance. Persistent browser choices reset to all on library replacement; historical tasks remain unchanged.
+English: Each person belongs to one group. Ungrouped is built-in and is the default for existing people and new people created in the all-people view. Library creation/editing can choose a group; new people default to the currently filtered group. Audio/video enrollment defaults new people to Ungrouped regardless of library filtering, allows selecting an existing group, and resets the draft on reopening; existing people keep their membership. Filter and select people for atomic batch moves or confirmed per-person deletes. Group deletion moves members to Ungrouped without removing samples. ZIP v2 preserves groups, with v1 imports supported. Merge matches group names, retains existing target memberships with warnings, and replacement restores source membership; changed groups invalidate previews. Group counts exclude Ungrouped. ASR scope is snapshotted at acceptance. Persistent browser choices reset to all on library replacement; historical tasks remain unchanged.
 
 ## 查找与导入操作 / Finding people and importing
 
