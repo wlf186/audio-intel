@@ -142,7 +142,7 @@ export function SceneDetection({jobId,result,capability,onClose,onUpdated}:{jobI
  return <Modal className="scene-detection-modal" title={t('sceneDetection.title')} closeLabel={t('common.actions.close')} onClose={()=>{if(!applying&&!saving)onClose()}}>
   <div className="scene-detection-body" ref={scrollRoot} tabIndex={0} aria-label={t('sceneDetection.gallery')}>
    <p>{t('sceneDetection.intro')}</p>
-   {!video.scene_detection?<p className="scene-detection-note">{t('sceneDetection.legacy')}</p>:null}
+   {!video.scene_detection?<p className="scene-detection-note">{t('sceneDetection.legacy')}</p>:video.contract_version===1?<p className="scene-detection-note">{t('sceneDetection.legacyScreenshots')}</p>:null}
    <div className="scene-detection-controls">{(['min_change_percent','min_stable_seconds'] as const).map(key=><label key={key}>
     <span>{t(`sceneDetection.${key}`)}</span>
     <input type="number" min={capability[key].min} max={capability[key].max} step={capability[key].step} value={Number.isNaN(values[key])?'':values[key]} disabled={busy||stale} onChange={event=>setValues(value=>({...value,[key]:event.target.value===''?NaN:Number(event.target.value)}))}/>

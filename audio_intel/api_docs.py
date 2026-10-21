@@ -1360,7 +1360,7 @@ VIDEO_SCENE_EXAMPLE = {"id": "scene_1", "start": 0.0, "end": 3.2, "frame_time": 
 VIDEO_SCENES_EXAMPLE = {"revision": 1, "scenes": [{**VIDEO_SCENE_EXAMPLE, "paragraphs": [
     {"speaker": "Speaker 0", "speaker_label": "讲者", "start": 0.0, "end": 3.2,
      "text": "欢迎使用本地转写。", "segment_ids": [0]},
-]}]}
+]}, {"id": "scene_2", "start": 3.2, "end": 4.0, "frame_time": None, "image": None, "paragraphs": []}]}
 REQUEST_EXAMPLES.update({
     ("/api/v1/jobs/{job_id}/transcript-export", "post"): {
         "concise_pdf": {"summary": "简洁 PDF / Concise PDF", "value": {"format": "pdf", "redact": True}},
@@ -1369,6 +1369,8 @@ REQUEST_EXAMPLES.update({
     ("/api/v1/jobs/{job_id}/video-scene-previews", "post"): {
         "default": {"summary": "预览新的画面分段 / Preview new picture sections",
                     "value": {"revision": 1, "settings": {"min_change_percent": 3, "min_stable_seconds": 1}}},
+        "decimal_duration": {"summary": "小数保持时间 / Fractional stable duration",
+                             "value": {"revision": 1, "settings": {"min_change_percent": 3, "min_stable_seconds": .6}}},
     },
     ("/api/v1/voiceprints/people/{person_id}/samples/from-asr", "post"): {
         "video_sentences": {"summary": "视频原始语句入库 / Import original video sentences",
@@ -1414,9 +1416,11 @@ for _path in ("/api/v1/asr/jobs", "/api/v1/asr/video-jobs", "/v1/audio/transcrip
 
 
 RESULT_EXAMPLES["asr_video"] = {"summary": "视频图文转写 / Illustrated video transcript", "value": {
-    **RESULT_EXAMPLES["asr"]["value"], "video": {"contract_version": 1, "revision": 1, "duration": 3.2,
-        "time_origin": 0.0, "roi": None, "detector": "ffmpeg_scdet_phash_stability",
-        "scenes": [VIDEO_SCENE_EXAMPLE], "original_scenes": [VIDEO_SCENE_EXAMPLE]},
+    **RESULT_EXAMPLES["asr"]["value"], "video": {"contract_version": 2, "revision": 1, "duration": 4.0,
+        "time_origin": 0.0, "roi": None, "detector": "presentation-v3",
+        "scene_detection": {"min_change_percent": 3, "min_stable_seconds": 1},
+        "scenes": [{k:v for k,v in s.items() if k != 'paragraphs'} for s in VIDEO_SCENES_EXAMPLE['scenes']],
+        "original_scenes": [{k:v for k,v in s.items() if k != 'paragraphs'} for s in VIDEO_SCENES_EXAMPLE['scenes']]},
 }}
 JOB_EXAMPLES["video_queued"] = {"summary": "视频任务排队 / Queued video task", "value": {
     **JOB_EXAMPLES["queued"]["value"], "kind": "asr", "purpose": "video_transcription", "display_name": "lecture.mp4",

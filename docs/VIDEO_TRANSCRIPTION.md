@@ -22,9 +22,9 @@ Unfinished uploads expire after **24 idle hours** or **7 days from creation**, a
 
 ## 画面与讨论 / Images and discussion
 
-面向 PPT 讲解、屏幕录制。新任务使用 presentation-v2，按约 0.5 秒抽样，结合变化面积、候选持续时间与内容边缘保留率判断切换；同一页逐步显示内容尽量合并，保留稳定完整画面。旧任务重试继续使用基于 FFmpeg `scdet` 的 v1。非相邻的重复页面保留各自时间范围。默认最多 2,000 段，超过时明确失败并提示拆分源文件。这里的「关键帧」指内容代表画面，不是视频编码的 I 帧。
+面向 PPT 讲解、屏幕录制。新任务使用 presentation-v3，按约 0.5 秒抽样，结合变化面积、候选持续时间与内容边缘保留率判断切换；同一页逐步显示内容尽量合并，保留稳定完整画面。旧任务重试保留其原有 v1/v2 版本。非相邻的重复页面保留各自时间范围。默认最多 2,000 段，超过时明确失败并提示拆分源文件。这里的「关键帧」指内容代表画面，不是视频编码的 I 帧。
 
-Designed for slides and screen recordings. New tasks use presentation-v2: samples about every 0.5 seconds combine changed area, candidate duration and content retention. Incremental builds are merged where possible, retaining a stable complete frame. Legacy retries retain FFmpeg scdet-based v1. Nonadjacent repeated pages retain separate time ranges. More than 2,000 sections fails explicitly with a request to split the source. These are content representatives, not codec I-frames.
+Designed for slides and screen recordings. New tasks use presentation-v3: samples about every 0.5 seconds combine changed area, candidate duration and content retention. Incremental builds are merged where possible, retaining a stable complete frame. Historical retries retain their original v1/v2 detector. Nonadjacent repeated pages retain separate time ranges. More than 2,000 sections fails explicitly with a request to split the source. These are content representatives, not codec I-frames.
 
 视频时刻依据媒体 PTS，与音轨共用起点；音轨延迟以静音补齐，不按帧序号推算时间。跨页发言有完整可靠的逐词对齐时按词分配，否则整句归属时间重叠最多的一页，保持原文、不丢句。画面分析是启发式算法，不做 OCR 或语义理解；短于抽样/稳定窗口的页面、相似模板、复杂动画、镜头移动可能需要修正。带讲者小窗时可先框选 PPT 区域。
 

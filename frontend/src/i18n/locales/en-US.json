@@ -706,6 +706,7 @@
     "restoreAll": "Restore all",
     "title": "Picture detection",
     "intro": "Adjust the rules, preview, then apply. Only pictures are analyzed; audio is not transcribed again.",
+    "legacyScreenshots": "Current screenshots use the earlier detector. Preview and apply to enforce stable screenshot duration; unqualified pictures become placeholders.",
     "legacy": "This task used legacy detection without recorded controls. These settings apply to the new preview.",
     "min_change_percent": "Minimum picture change (%)",
     "min_stable_seconds": "Minimum new-picture duration (seconds)",
