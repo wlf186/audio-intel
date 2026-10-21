@@ -75,7 +75,7 @@
     "redact": "Redacted export",
     "replacements": "Keyword replacements",
     "rulesLabel": "Replacement rules (one source=target per line)",
-    "help": "Up to 100 pairs, 8000 characters per value. Case-sensitive, longest match first, without chained replacements. Turning redaction off disables all transformations. Settings persist in this browser. Audio and video images remain unchanged.",
+    "help": "Up to 100 pairs, 8000 characters per value. Case-sensitive, longest match first, without chained replacements. Turning redaction off disables text redaction and replacements; export-hidden pictures stay hidden. Settings persist in this browser. Original task audio and pictures remain unchanged.",
     "reset": "Reset export settings",
     "ruleError": "Line {{line}}: {{reason}}",
     "errors": {

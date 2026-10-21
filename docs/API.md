@@ -55,11 +55,11 @@ curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
 
 ## On-demand redacted transcript export / 按需脱敏导出
 
-`POST /api/v1/jobs/{job_id}/transcript-export` is a protected synchronous download for successful audio/video ASR. It needs no Idempotency-Key; cookie clients retain same-origin write checks. Body: `format` (`pdf`, `json`, `txt`, `srt`, `vtt`; default `pdf`), `redact` (default `true`), and `replacements` (default `[]`, at most 100 unique `{source,target}` pairs, 8000 characters per value). Undeclared fields and invalid/duplicate rules return `422`. PDF saturation returns `429` with Retry-After; oversized exports return `413`.
+`POST /api/v1/jobs/{job_id}/transcript-export` is a protected synchronous download for successful audio/video ASR. It needs no Idempotency-Key; cookie clients retain same-origin write checks. Body: `format` (`pdf`, `docx`, `json`, `txt`, `srt`, `vtt`; default `pdf`), `redact` (default `true`), and `replacements` (default `[]`, at most 100 unique `{source,target}` pairs, 8000 characters per value). Undeclared fields and invalid/duplicate rules return `422`. PDF/DOCX renderer saturation returns `429` with Retry-After; oversized exports return `413`.
 
 Names use uppercase Latin word or Chinese pinyin initials: Vince Carter → VC, 刘亦菲 → LYF, Liu Yifei → LY, Marco → M. Collisions become VC-1, VC-2 in speaker order. Generic speaker numbers remain. Notes mask the middle `ceil(n/2)` Unicode characters: 01234567 → 01****67, 广东移动有限公司 → 广东****公司. Literal keyword replacements affect transcript text and timed words, are case-sensitive, longest-first and single-pass without chaining. Matched word spans merge in the export copy and retain their full time range. Empty targets delete the matched text.
 
-Redacted JSON contains transcript fields, speakers, segments/timed words and safe timing/model/video metadata; auxiliary identity/hotword snapshots and artifact paths are omitted. Redacted titles/file names are generic. Download transformations never modify stored jobs or historical artifacts. Audio and video images remain unchanged; names in body text only change when covered by explicit keywords. `redact=false` disables **all** transformations, including keyword rules. The original artifact and GET/HEAD PDF routes remain raw backward-compatible surfaces.
+Redacted JSON contains transcript fields, speakers, segments/timed words and safe timing/model/video metadata; auxiliary identity/hotword snapshots and artifact paths are omitted. Redacted titles/file names are generic. Download transformations never modify stored jobs or historical artifacts. Stored audio and video images remain unchanged; names in body text only change when covered by explicit keywords. `redact=false` disables text redaction and keyword rules. Export-hidden pictures still become placeholders in PDF/DOCX, with their text retained. Original artifacts remain available; GET/HEAD PDF routes retain their existing text behavior and honor picture visibility.
 
 ```bash
 BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
@@ -83,6 +83,29 @@ Path("transcript.json").write_bytes(response.content)
 ```
 
 中文：界面全部转写下载默认脱敏。替换编辑器按行 `原词=替换词`，按第一个等号拆分，忽略空行、允许空替换词；错误显示行号。独立 localStorage `audio-intel:transcript-export:v1` 保存开关和原始编辑内容，刷新、重开、退出登录及资料库替换后保留；清空替换规则保留脱敏开关，只清空规则，可撤销（保留完整原始输入，包括错误内容）；下一次编辑、页面卸载或刷新后撤销失效。ASR 偏好使用 v7，兼容迁移旧版本（包括 v0.1.33 的 v4）。
+
+
+### DOCX 简洁导出 / Concise DOCX export
+
+`POST /api/v1/jobs/{job_id}/transcript-export` 的 `format` 新增 `docx`，默认仍为 `pdf`。能力接口的 `asr.transcript_export.formats` 声明支持格式；旧 PDF GET/HEAD 地址保持不变，不新增 DOCX GET 路由。音频合并相邻同说话人发言，视频按画面组织图文，使用已有脱敏、关键词替换与导出隐藏设置。隐藏图片不嵌入 DOCX，文字完整保留。仅支持已完成 ASR 任务。
+
+响应 MIME 为 `application/vnd.openxmlformats-officedocument.wordprocessingml.document`，带 `Content-Length`、UTF-8 `Content-Disposition` 与 `Cache-Control: no-store`。认证和同源写入规则与其他 POST 导出一致。生成器独立限制为一次并发，5 分钟内存缓存，总缓存不超过 64 MiB；正文上限 4,000,000 字符，引用的可见图片总量上限 128 MiB。超限 413，繁忙 429 并附 `Retry-After: 2`。缓存随结果、导出设置和任务更新时间变化，无持久导出文件。
+
+```python
+import os
+from pathlib import Path
+import requests
+
+base = os.environ["AUDIO_INTEL_BASE_URL"].rstrip("/")
+job_id = os.environ["AUDIO_INTEL_JOB_ID"]
+headers = {"Authorization": f"Bearer {os.environ['AUDIO_INTEL_API_KEY']}"} if os.environ.get("AUDIO_INTEL_API_KEY") else {}
+response = requests.post(f"{base}/api/v1/jobs/{job_id}/transcript-export",
+    headers=headers, json={"format": "docx", "redact": True, "replacements": []}, timeout=120)
+response.raise_for_status()
+Path("transcript.docx").write_bytes(response.content)
+```
+
+English: The existing POST export accepts `format="docx"`; PDF remains the default. Capabilities advertise DOCX. The binary Word response uses its standard MIME type and UTF-8 filename. Audio paragraphs and illustrated video sections follow PDF semantics, including redaction and replacement rules. Export-hidden images are omitted from the package and replaced with placeholders without losing text, even when `redact=false`. Authentication and same-origin checks remain unchanged. An independent single renderer uses a five-minute, 64 MiB bounded memory cache; limits are 4,000,000 text characters and 128 MiB visible-image bytes. Oversize requests return 413, busy requests 429 with Retry-After 2. No new dependency, persistent artifact or database migration is required.
 
 ## Native asynchronous lifecycle
 
@@ -545,7 +568,9 @@ curl --fail-with-body -sS "${AUTH[@]}" "$BASE_URL/api/v1/jobs/$JOB_ID/result" \
 
 对需要裁剪的参考音频，默认和手动选择均校验对齐时间及文本映射；无效对齐只重新计算一次，仍无效则明确失败。默认最多 15 秒、手动 3–30 秒不变；默认短样本不受手动区间的 3 秒下限影响。不会自动修改历史音频或参考转写。
 
-## Video transcription and concise PDF
+<a id="video-transcription-and-concise-pdf"></a>
+
+## Video transcription and concise PDF / DOCX
 
 See [the bilingual video guide](VIDEO_TRANSCRIPTION.md) for formats, limits, expiry, browser storage and detector tradeoffs. The original ASR endpoint remains compatible. New video tasks use the same ASR queue with `purpose=video_transcription`; global lists/SSE remain summary-only.
 
@@ -863,9 +888,9 @@ Result `video.scene_detection` records applied parameters; `video.automatic_scen
 
 `PATCH /api/v1/jobs/{job_id}/video-scenes` 新增 `action="set_export_visibility"`，同时提交 `revision` 与完整 `export_hidden_scene_ids` 数组（最多 2000 个当前画面 ID，不能重复；空列表恢复全部）。任务视频结果返回同名可选字段，历史缺失视为全部显示。未知 ID 返回 422，修订冲突返回 409；真正改变标记会递增视频修订号，不解码或改写图片。
 
-PDF（直接下载与 POST 导出）遵循标记，使用占位框并保留文字；JSON 保留标记，文字导出不受影响。该行为独立于 `redact`。应用变化后的检测参数会清空标记，同参数仅继承内容与时间均未变的画面。手工分段 API 也只继承未变画面的标记。
+PDF（直接下载与 POST 导出）和 DOCX 遵循标记，使用占位框并保留文字；JSON 保留标记，文字导出不受影响。该行为独立于 `redact`。应用变化后的检测参数会清空标记，同参数仅继承内容与时间均未变的画面。手工分段 API 也只继承未变画面的标记。
 
-English: PATCH video-scenes with `action="set_export_visibility"`, `revision`, and the complete `export_hidden_scene_ids` list (at most 2000 unique current picture IDs; empty restores all). The optional result field defaults to no hidden pictures for legacy tasks. Unknown IDs are 422 and stale revisions 409; actual changes increment the video revision without decoding or rewriting images. Both PDF routes honor markers independently of text redaction and preserve text; JSON includes markers. Changed detection parameters reset markers; unchanged detection and manual API edits retain only identical pictures and time ranges.
+English: PATCH video-scenes with `action="set_export_visibility"`, `revision`, and the complete `export_hidden_scene_ids` list (at most 2000 unique current picture IDs; empty restores all). The optional result field defaults to no hidden pictures for legacy tasks. Unknown IDs are 422 and stale revisions 409; actual changes increment the video revision without decoding or rewriting images. Both PDF routes and DOCX export honor markers independently of text redaction and preserve text; JSON includes markers. Changed detection parameters reset markers; unchanged detection and manual API edits retain only identical pictures and time ranges.
 
 ```python
 import requests
@@ -880,25 +905,3 @@ response = requests.patch(f"{base_url}/api/v1/jobs/{job_id}/video-scenes", heade
           "export_hidden_scene_ids": [video["scenes"][0]["id"]]})
 response.raise_for_status()
 ```
-
-### DOCX 简洁导出 / Concise DOCX export
-
-`POST /api/v1/jobs/{job_id}/transcript-export` 的 `format` 新增 `docx`，默认仍为 `pdf`。能力接口的 `asr.transcript_export.formats` 声明支持格式；旧 PDF GET/HEAD 地址保持不变，不新增 DOCX GET 路由。音频合并相邻同说话人发言，视频按画面组织图文，使用已有脱敏、关键词替换与导出隐藏设置。隐藏图片不嵌入 DOCX，文字完整保留。仅支持已完成 ASR 任务。
-
-响应 MIME 为 `application/vnd.openxmlformats-officedocument.wordprocessingml.document`，带 `Content-Length`、UTF-8 `Content-Disposition` 与 `Cache-Control: no-store`。认证和同源写入规则与其他 POST 导出一致。生成器独立限制为一次并发，5 分钟内存缓存，总缓存不超过 64 MiB；正文上限 4,000,000 字符，引用的可见图片总量上限 128 MiB。超限 413，繁忙 429 并附 `Retry-After: 2`。缓存随结果、导出设置和任务更新时间变化，无持久导出文件。
-
-```python
-import os
-from pathlib import Path
-import requests
-
-base = os.environ["AUDIO_INTEL_BASE_URL"].rstrip("/")
-job_id = os.environ["AUDIO_INTEL_JOB_ID"]
-headers = {"Authorization": f"Bearer {os.environ['AUDIO_INTEL_API_KEY']}"} if os.environ.get("AUDIO_INTEL_API_KEY") else {}
-response = requests.post(f"{base}/api/v1/jobs/{job_id}/transcript-export",
-    headers=headers, json={"format": "docx", "redact": True, "replacements": []}, timeout=120)
-response.raise_for_status()
-Path("transcript.docx").write_bytes(response.content)
-```
-
-English: The existing POST export accepts `format="docx"`; PDF remains the default. Capabilities advertise DOCX. The binary Word response uses its standard MIME type and UTF-8 filename. Audio paragraphs and illustrated video sections follow PDF semantics, including redaction and replacement rules. Export-hidden images are omitted from the package and replaced with placeholders without losing text, even when `redact=false`. Authentication and same-origin checks remain unchanged. An independent single renderer uses a five-minute, 64 MiB bounded memory cache; limits are 4,000,000 text characters and 128 MiB visible-image bytes. Oversize requests return 413, busy requests 429 with Retry-After 2. No new dependency, persistent artifact or database migration is required.

@@ -360,3 +360,29 @@ def test_visibility_never_follows_reused_ids_or_changed_manual_frames():
     for difference in ({'end':5}, {'frame_time':2}, {'image':'b.jpg'}):
         assert retained_hidden(previous, [{**original,**difference}]) == []
     assert retained_hidden({'scenes':[original]}, [original]) == []
+
+
+@pytest.mark.parametrize("detection_settings", [None, {"min_change_percent": 3, "min_stable_seconds": 1}])
+def test_video_frames_do_not_decode_images_with_pillow(tmp_path, monkeypatch, detection_settings):
+    from PIL import Image
+    from audio_intel.video_frames import decode, picture_at, save_picture
+
+    source = tmp_path / "pixel-boundary.mp4"
+    video_file(source)
+
+    def reject_file_decode(*args, **kwargs):
+        pytest.fail("Model video processing must consume decoded pixels, not Pillow image files")
+
+    monkeypatch.setattr(Image, "open", reject_file_decode)
+
+    class Context:
+        def progress(self, *args, **kwargs):
+            pass
+
+    audio, rate, result = decode(source, tmp_path / "audio.wav", tmp_path / "frames", None,
+                                 Context(), detection_settings=detection_settings)
+    assert rate == 16000 and len(audio) > 0
+    assert len(result["scenes"]) == 2
+    picture = picture_at(source, 1, {"x": 0, "y": 0, "width": .9, "height": .9})
+    name = save_picture(picture, tmp_path / "preview")
+    assert (tmp_path / "preview" / name).read_bytes().startswith(b"\xff\xd8")

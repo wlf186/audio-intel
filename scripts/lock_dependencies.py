@@ -26,6 +26,7 @@ PLATFORMS = {
 def compile_lock(
     name: str, source: str, platform: str, output: Path, *,
     torch_backend: str | None = None, upgrade: bool = False,
+    upgrade_packages: list[str] | None = None,
 ) -> None:
     command = [
         str(UV), "pip", "compile", "--python-version", "3.12",
@@ -36,6 +37,8 @@ def compile_lock(
         command[3:3] = ["--torch-backend", torch_backend or "cu130"]
     if upgrade:
         command.insert(3, "--upgrade")
+    for package in upgrade_packages or []:
+        command.extend(["--upgrade-package", package])
     subprocess.run(command, cwd=ROOT, check=True)
 
 
@@ -46,9 +49,15 @@ def main() -> None:
         "--upgrade", action="store_true",
         help="Upgrade all compatible dependencies instead of preserving versions from existing locks",
     )
+    parser.add_argument(
+        "--upgrade-package", action="append", default=[], metavar="PACKAGE",
+        help="Upgrade only this package; repeat for multiple packages or exact version constraints",
+    )
     arguments = parser.parse_args()
-    if arguments.check and arguments.upgrade:
-        parser.error("--check and --upgrade cannot be used together")
+    if arguments.check and (arguments.upgrade or arguments.upgrade_package):
+        parser.error("--check cannot be used with --upgrade or --upgrade-package")
+    if arguments.upgrade and arguments.upgrade_package:
+        parser.error("--upgrade and --upgrade-package cannot be used together")
     if not UV.is_file():
         raise SystemExit("Run ./service.sh setup api first so .runtime/bin/uv is available")
     failures: list[str] = []
@@ -67,6 +76,7 @@ def main() -> None:
                     compile_lock(
                         name, source, platform, output,
                         torch_backend=torch_backend, upgrade=arguments.upgrade,
+                        upgrade_packages=arguments.upgrade_package,
                     )
                     if arguments.check and (not destination.is_file() or not filecmp.cmp(output, destination, shallow=False)):
                         failures.append(str(destination.relative_to(ROOT)))

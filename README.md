@@ -37,9 +37,9 @@
 > [!IMPORTANT]
 > This is an independent, unofficial open-source project maintained on a non-commercial basis. It has not been authorized, sponsored, approved, or endorsed by CD PROJEKT RED, R. Talsorian Games, or any related rights holder. See the [brand and project status notice](BRAND_NOTICE.md).
 
-Separate audio/video creation tabs share the ASR queue. Audio keeps its 4 GiB limit; video supports resumable uploads up to 25 GiB, editable presentation images with matching discussion, and illustrated PDF/Word (DOCX). Audio offers concise PDF/Word while retaining detailed exports. See the [video transcription guide](docs/VIDEO_TRANSCRIPTION.md).
+Separate audio/video creation tabs share the ASR queue. Audio keeps its 4 GiB limit; video supports resumable uploads up to 25 GiB, adjustable picture detection, export visibility controls and matching discussion, and illustrated PDF/Word (DOCX). Audio offers concise PDF/Word while retaining detailed exports. See the [video transcription guide](docs/VIDEO_TRANSCRIPTION.md).
 
-Video results include a zoomable scene-and-waveform timeline. Task history shows per-job file usage and selected totals; enhancement details stay in a compact summary.
+Video results include a zoomable picture-and-waveform timeline with horizontal scrolling and click-to-read navigation. Picture detection previews load as you scroll; hidden export pictures remain marked in illustrated reading. Task history shows per-job file usage and selected totals; enhancement details stay in a compact summary.
 
 Voiceprint libraries support groups, scoped ASR recognition and batch move/delete. Transcript downloads support default-on name/note redaction and up to 100 keyword replacements, with persistent browser preferences. ZIP v2 includes groups and imports remain compatible with v1. Upgrade backups cover only necessary data and must be removed after complete acceptance; see [the upgrade guide](docs/UPGRADE.md).
 
@@ -175,7 +175,7 @@ See the [Linux installation guide](docs/INSTALL.md) or [native Windows guide](do
         │           VAD → optional CPU enhancement + VAD union
         │           ├── original audio → speaker diarization
         │           └── recognition audio → Qwen3-ASR → forced alignment
-        │           └── PDF / JSON / SRT / VTT / TXT
+        │           └── PDF / DOCX / JSON / SRT / VTT / TXT
         │
         └── SQLite WAL TTS queue ── TTS supervisor
                 └── reusable task executor

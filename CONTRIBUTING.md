@@ -93,6 +93,10 @@ git push origin HEAD:ci/stability/my-change
 
 Each job always uploads JUnit statistics as `<platform>-<job>-reports`; failed jobs additionally upload `<platform>-<job>-logs`, including available Playwright screenshots, traces and error contexts. Backend results are under `logs/ci/backend.xml`; browser results are `browser.xml`, with optional `stability.xml` alongside them. Stability traces use `logs/playwright-stability/` so they do not erase full-suite traces. Browser installation and test execution are separate steps. Compare job/step durations and test/skip counts; report queue wait separately. Parallel jobs add a small duplicate setup cost and require runner capacity, so measured wall-clock improvement is not a fixed guarantee.
 
+### v0.1.35 dependency audit recovery
+
+The DOCX candidate at `773db5eb277dbabcb4f59ae87e693dc883785504` passed functional checks on [Linux](https://github.com/wlf186/audio-intel/actions/runs/39533657917) and [Windows](https://github.com/wlf186/audio-intel/actions/runs/39533658124), but dependency audits rejected certifi 2026.7.22 and API Pillow 12.3.0. Upgrade certifi to 2026.10.19 in all locks and API Pillow to 13.0.0, preserving unrelated pins with `--upgrade-package`. Model runtimes retain their Gradio-compatible Pillow with the precise [documented VEX boundaries](docs/DEPENDENCIES.md#模型环境-pillow-vex--model-runtime-pillow-vex); API audits have no such exceptions. Run the real pixel-processing regression in the ASR runtime as well as API tests, regenerate both platform/profile locks and require fresh exact-SHA CI results. DOCX itself introduces no dependency.
+
 ### Deterministic asynchronous browser checks
 
 Use the shared `responseGate` fixture for controlled delays: create a gate, `await gate.hold()` in the intended route handler, wait for `gate.arrived` and the pending UI, then `gate.release()` at the precise point required by the scenario. Shared teardown releases gates before route-draining hooks, including after an assertion fails. Match the request method, path, parameters/body as appropriate; an unchanged row count or closed dialog alone cannot establish completion of a new request.

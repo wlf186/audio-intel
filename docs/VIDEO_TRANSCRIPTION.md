@@ -66,11 +66,13 @@ Original download serves the saved unenhanced playback WAV, including the audio 
 without changing listening state. Jobs without enhanced audio offer only original download;
 historical jobs without a saved original WAV show an unavailable explanation and are not backfilled.
 
-## PDF 与磁盘 / PDF and disk use
+<a id="pdf-与磁盘--pdf-and-disk-use"></a>
 
-音视频提供主操作「简洁导出」，可选择 PDF 或 Word（DOCX），次级「明细与字幕」保留 JSON、TXT、SRT、VTT。简洁 PDF 将相同 speaker ID 的相邻发言合并为一段，保留第一句开始与最后一句结束时间，不删改口头语、不做总结；同名但不同 ID 的说话人不会误合并。视频也支持 JSON、TXT、SRT、VTT，并提供图文简洁 PDF，按画面分段，画面下展示相应讨论。PDF 内嵌本地简体中文字体，无云服务或系统字体依赖。
+## 简洁导出与磁盘 / Concise export and disk use
 
-Audio and video offer a concise export menu with PDF and editable Word (DOCX) and a secondary details/subtitles menu. Adjacent speech with the same speaker ID merges with its combined time range; words and disfluencies are preserved. Equal names with different IDs do not merge. Video offers illustrated concise PDF, with images followed by their discussion. A bundled Chinese font keeps PDF rendering offline.
+音视频提供主操作「简洁导出」，可选择 PDF 或 Word（DOCX），次级「明细与字幕」保留 JSON、TXT、SRT、VTT。简洁 PDF/DOCX 将相同 speaker ID 的相邻发言合并为一段，保留第一句开始与最后一句结束时间，不删改口头语、不做总结；同名但不同 ID 的说话人不会误合并。视频也支持 JSON、TXT、SRT、VTT，并提供图文简洁 PDF/DOCX，按画面分段，画面下展示相应讨论。PDF 内嵌本地简体中文字体，无云服务或系统字体依赖。
+
+Audio and video offer a concise export menu with PDF and editable Word (DOCX) and a secondary details/subtitles menu. Adjacent speech with the same speaker ID merges with its combined time range; words and disfluencies are preserved. Equal names with different IDs do not merge. Video offers illustrated concise PDF/DOCX, with images followed by their discussion. A bundled Chinese font keeps PDF rendering offline.
 
 上传直接顺序追加到一份文件，校验并 fsync 后才确认偏移；不创建分片文件再拼接、不预分配 25 GiB，不在重试时重写已确认数据。提交时同盘重命名。画面分析保存最终代表 JPEG；v2 另保存有上限、可重建的低分辨率压缩特征缓存，不保存高分辨率抽样序列。原音复用一份归一化 WAV；实际应用人声增强时另存一份增强 WAV，约每小时 115 MB，旁路时不增加；临时目录和数据目录在同一文件系统时完成阶段直接移动，否则跨盘移动需一次复制。失败/取消后的工作目录由现有 worker 清理。PDF 按需在内存生成，单渲染并发、64 MiB LRU 缓存（5 分钟）；单份 PDF 输入上限为 400 万文本字符、128 MiB JPEG，超过返回 413 并提示拆分。预览最多两个解码器且不写磁盘。修改截图后清理不再被当前/原始分段引用的图片，删除任务清理其输入与结果。
 
@@ -107,9 +109,9 @@ Resume first verifies local bytes against the server manifest. Verification perc
 
 The reading UI no longer exposes manual section editing. Picture detection shows current pictures, generates detection previews and manages export visibility. Manual section-editing APIs retain revision checks; existing manual edits remain intact.
 
-PDF 下载通过一次 POST 接收完整内容后保存。429 按 Retry-After 等待后手动重试，413 表示超出导出上限，应拆分源文件重新转写；音频还可下载明细与字幕。401 重新登录后再导出，断网直接重试导出，无需重新转写。
+PDF/DOCX 下载通过一次 POST 接收完整内容后保存。429 按 Retry-After 等待后手动重试，413 表示超出导出上限，应拆分源文件重新转写；音频还可下载明细与字幕。401 重新登录后再导出，断网直接重试导出，无需重新转写。
 
-PDF uses a single POST and saves after the full response arrives. For 429, wait for Retry-After then export manually; for 413, split the source and transcribe smaller files, or use audio detail/subtitle exports. Sign in again after 401. Retry an interrupted download without submitting a new transcription.
+PDF/DOCX uses a single POST and saves after the full response arrives. For 429, wait for Retry-After then export manually; for 413, split the source and transcribe smaller files, or use audio detail/subtitle exports. Sign in again after 401. Retry an interrupted download without submitting a new transcription.
 
 命令行 `--pdf` 期间续传文件还保存已接受的 `job_id`，直到 PDF 完整写入临时文件、关闭并原子替换目标文件后才清除。轮询中断、下载失败、任务失败或取消均保留记录，重跑只查询原任务；确需新任务时使用新的 `--state`。已有完整 PDF 不会被失败下载破坏。省略 `--pdf` 时，提交成功即清除记录。旧记录可继续使用；恢复时沿用记录中的转写设置。
 
@@ -205,11 +207,11 @@ AUDIO_INTEL_BASE_URL=http://127.0.0.1:20810 \
 
 “画面检测”的当前画面每批展示 12 张，接近底部自动加载下一批。可勾选一张或多张、全选已加载画面，再选择“导出时隐藏”或“恢复导出”；“全部恢复”恢复所有画面。操作立即随任务保存，刷新或换浏览器后仍有效。保存失败保留选择；修订冲突需关闭并重新打开。
 
-隐藏仅影响导出：PDF 用“画面已隐藏”占位框替代图片，编号、时间和文字保留；JSON 携带隐藏标记，TXT/SRT/VTT 保持完整文字。阅读区、时间轴和原媒体不受影响。文字脱敏关闭时，画面隐藏仍生效。
+隐藏仅影响导出：PDF/DOCX 用“画面已隐藏”占位框替代图片，编号、时间和文字保留；JSON 携带隐藏标记，TXT/SRT/VTT 保持完整文字。图文阅读显示原图及“导出时隐藏”标记，时间轴和原媒体不变。文字脱敏关闭时，画面隐藏仍生效。
 
 候选检测预览须先应用，再设置隐藏。修改任一检测参数并成功应用会清除旧标记；单纯修改输入、恢复默认输入、预览或取消均不清除。同参数重新应用仅保留时间范围、代表帧时间和图片均一致的标记。保存隐藏设置会使尚未应用的预览失效；参数保留，可重新预览。
 
-English: Picture detection immediately shows current pictures and export-hidden badges. It loads 12 pictures per batch automatically near the bottom. Select individual or loaded pictures, then Hide in exports, Restore in exports or Restore all. Changes are saved with the task across browsers. Failed saves retain selection; revision conflicts require closing and reopening. PDF uses a Picture hidden placeholder while retaining section numbers, times and text; JSON includes markers and text formats remain complete. Reading, timeline and source media are unchanged. Picture hiding is independent of text redaction. Candidate previews must be applied before setting visibility. Applying changed detection parameters clears old markers; editing inputs, resetting inputs, previewing or cancelling does not. Unchanged parameters preserve markers only for identical time ranges, frame times and images. Saving visibility invalidates pending previews without clearing their input settings.
+English: Picture detection immediately shows current pictures and export-hidden badges. It loads 12 pictures per batch automatically near the bottom. Select individual or loaded pictures, then Hide in exports, Restore in exports or Restore all. Changes are saved with the task across browsers. Failed saves retain selection; revision conflicts require closing and reopening. PDF/DOCX use a Picture hidden placeholder while retaining section numbers, times and text; JSON includes markers and text formats remain complete. Illustrated reading shows original pictures with export-hidden badges; timeline and source media remain unchanged. Picture hiding is independent of text redaction. Candidate previews must be applied before setting visibility. Applying changed detection parameters clears old markers; editing inputs, resetting inputs, previewing or cancelling does not. Unchanged parameters preserve markers only for identical time ranges, frame times and images. Saving visibility invalidates pending previews without clearing their input settings.
 
 ### 可编辑 Word 导出 / Editable Word export
 

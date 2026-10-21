@@ -16,7 +16,7 @@ ASR and TTS ratios are stored independently in this site's `audio-intel:workbenc
 
 The top navigation identifies all five modules without duplicate visible page headings; a single accessible heading and named main region remain. Transcription and synthesis start with their tabs. Library tabs share a row with Library tools and wrap on narrow screens. Task history retains counts and filters; System status starts with its resources. Desktop people and sample panes scroll within the available height; alphabet navigation scrolls the people list without changing the selected person. See the [library guide](LIBRARY.md) for transfer and ordering rules.
 
-视频转写结果默认显示共用时间刻度的画面缩略图和波形。“画面目录”定位对应时间段的开头；点击波形按准确时间定位，拖动在松开后同步滚动、高亮正文。放大后用横向滚动条或触控板浏览，手机可横向拖动缩略图区；浏览不改变播放时间，“定位播放点”恢复跟随。主动定位逐句明细会清除搜索／说话人筛选，模式切换仍保留各自阅读位置和原有存储期限。PC 截图与文字并排，点击正文截图可放大；阅读模式与编辑或搜索／筛选共用工具栏。增强状态收在下载旁，点击查看设置强度及实际处理详情；较窄卡片使用“下载音频”菜单。音频结果仍默认展示波形。详见[音视频指南](VIDEO_TRANSCRIPTION.md)。
+视频转写结果默认显示共用时间刻度的画面缩略图和波形。“画面目录”定位对应时间段的开头；点击波形按准确时间定位，拖动在松开后同步滚动、高亮正文。放大后用横向滚动条或触控板浏览，手机可横向拖动缩略图区；浏览不改变播放时间，“定位播放点”恢复跟随。主动定位逐句明细会清除搜索／说话人筛选，模式切换仍保留各自阅读位置和原有存储期限。PC 截图与文字并排，点击正文截图可放大；阅读模式与画面检测或搜索／筛选共用工具栏。增强状态收在下载旁，点击查看设置强度及实际处理详情；较窄卡片使用“下载音频”菜单。音频结果仍默认展示波形。详见[音视频指南](VIDEO_TRANSCRIPTION.md)。
 
 Video results always show representative thumbnails above the waveform. The scene directory seeks to an interval start; waveform clicks seek to the exact time and reveal/highlight the matching reader content, with drag gestures revealing on release. Persistent timeline scrollbars, trackpads and touch drags over thumbnails browse the zoomed timeline without seeking; Locate playhead restores following. Explicit navigation clears detailed-reader search/speaker filters, while view changes retain independent bookmarks and existing storage lifetimes. Desktop frames sit beside text and open an enlarged view when clicked. Reading mode offers Picture detection; detailed mode offers search/filter controls. Manual section editing is API-only. Processing status opens its details beside audio downloads; narrow cards group both tracks into an audio-download menu. Audio results retain their default waveform. See the [audio/video guide](VIDEO_TRANSCRIPTION.md).
 
@@ -28,7 +28,7 @@ English: Desktop voiceprints use equal-width, independently scrolling people and
 
 声纹库在当前分组内提供批量勾选，切换视图清空勾选；新增人员默认当前筛选分组；全部人员视图默认“未分组”，新建和编辑时均可选择归属。ASR 的“选择分组”默认全部（包含之后新增分组），手动选择只记住指定 ID。加载失败可重试，失效 ID 移除后提示，全部失效时阻止提交，不能扩大到全部。localStorage ASR 偏好 v7 兼容迁移旧版（含正式版 v0.1.33 的 v4）；恢复参数默认和资料库替换恢复全部分组。
 
-转写下载的“脱敏导出”默认开启，规则每行 `原词=替换词`，最多 100 对，错误提示行号。独立 localStorage `audio-intel:transcript-export:v1` 长期保存开关和编辑内容，包括尚未修正的输入；刷新、重开、退出登录、资料库替换均保留。关闭开关停止姓名/备注处理和关键词替换，规则保留；“清空替换规则”仅清空规则、保留脱敏开关，可撤销至清空前的原始输入；继续编辑、离开页面或刷新后撤销失效。正文只替换明确关键词，音频和画面保持原样。
+转写下载的“脱敏导出”默认开启，规则每行 `原词=替换词`，最多 100 对，错误提示行号。独立 localStorage `audio-intel:transcript-export:v1` 长期保存开关和编辑内容，包括尚未修正的输入；刷新、重开、退出登录、资料库替换均保留。关闭开关停止姓名/备注处理和关键词替换，规则保留；“清空替换规则”仅清空规则、保留脱敏开关，可撤销至清空前的原始输入；继续编辑、离开页面或刷新后撤销失效。正文只替换明确关键词，任务原音和原图保持原样；PDF/DOCX 仍遵循画面隐藏设置。
 
 English: ASR v7 preferences migrate older settings, including published v0.1.33 schema v4, and persist either all future groups or explicit IDs. Invalid choices never widen scope. Library replacement resets group selection to all. New people default to the filtered group, or Ungrouped in the all-people view; creation/editing can choose a group. Export v1 preferences independently persist toggle/editor contents across logout and replacement; Clear replacement rules preserves the redaction toggle and offers exact-text undo until the next rule edit or page unmount. Disabling redaction disables every transformation without losing the rules. Loading/error/retry states remain explicit.
 
@@ -111,7 +111,7 @@ historical jobs without a saved original WAV show an unavailable explanation and
 
 窄屏声纹库使用人员列表与独立详情，点击人员进入 `#library/voiceprints/<id>`。返回按钮和浏览器后退恢复筛选、搜索、列表位置及字母索引位置；桌面仍同时显示两栏。详情优先展示已有样本，点击“添加样本”展开上传／录音表单。返回列表保留当前未提交文件或录音；切换人员、离开声纹库或切换分组时提示确认丢弃，正在录音或提交时受到保护。文件内容只保存在当前挂载页面的内存中，刷新不恢复未提交文件。
 
-音视频结果按任务及图文／逐句视图分别记录阅读锚点、位置、已加载数量和逐句搜索／说话人筛选。编辑分段后保留原内容，明确显示刷新状态，读取完成后恢复附近阅读位置。任务被删除后清除对应记录。
+音视频结果按任务及图文／逐句视图分别记录阅读锚点、位置、已加载数量和逐句搜索／说话人筛选。应用画面检测或更新导出隐藏设置后保留原内容，明确显示刷新状态，读取完成后恢复附近阅读位置。任务被删除后清除对应记录。
 
 这些导航记录保存到当前页签的 `sessionStorage`：刷新与切页保留，关闭页签、退出登录或鉴权失效清除。资料库替换只清除人员导航；导出设置、ASR 参数和桌面比例仍沿用各自长期 `localStorage` 周期。浏览器禁用存储时，当前页面仍可使用导航。
 

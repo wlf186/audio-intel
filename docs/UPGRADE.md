@@ -107,6 +107,24 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## v0.1.35 画面检测、阅读体验与 Word 导出
+
+从 v0.1.34 升级：**数据迁移：无**，schema v14、历史请求/结果与媒体不批量改写，无需额外升级备份。更早版本仍须覆盖中间版本的迁移要求。
+
+- 音视频简洁导出支持 PDF 与可编辑 DOCX，复用已有 python-docx；文本脱敏、关键词替换和画面隐藏保持一致。DOCX 不嵌入字体，不同 Word/WPS 字体环境可能产生分页差异。
+- 画面检测 v2 提供最小变化比例与最短保持时间，可预览后应用而无需重新转写。画面预览自动加载，支持批量隐藏/恢复导出图片；图文阅读显示标记，导出使用占位图并保留文字。手工分段仅保留 API。
+- 时间轴横向滚动、点击波形/缩略图定位阅读、紧凑处理状态及导航改善结果页空间；任务列表显示单项与勾选空间合计，清空关键词规则保留脱敏开关。
+- 新增只读任务占用和窗口波形接口；全局列表/SSE 保持摘要契约。画面检测实际参数、最近自动分段、隐藏画面 ID 为可选结果字段；历史缺失不代表使用了新默认参数。
+- API Pillow 升至 13.0.0；各环境 certifi 升至 2026.10.19，模型环境 Pillow 约束及 VEX 见[依赖维护](DEPENDENCIES.md#模型环境-pillow-vex--model-runtime-pillow-vex)。前端含 Vite 7.3.7 安全更新。
+
+按本页维护流程记录配置并等待空闲，停止全部原进程后更新源码；执行 `./service.sh setup all` 同步本次受影响的四个隔离环境和前端，复用已有模型及部署 profile，不切换 CPU/GPU 配置。恢复原 API、ASR/TTS supervisor 和 executor，并验证最终版本、全部新进程及历史任务。
+
+画面检测新增独立 localStorage 偏好，仅成功应用后保存，退出登录保留；弹窗草稿不持久化。导出偏好键与寿命不变，DOCX 格式选择不持久化，默认 PDF；清空规则的撤销仅在当前页面下一次编辑前有效。新视频使用 v2，历史重试保留原检测版本；特征缓存仅按需生成，不在启动时扫描全部视频。
+
+English: From v0.1.34 there is no database/file migration or extra upgrade backup. This release adds editable DOCX exports, tunable stable picture detection, export-hidden picture markers/placeholders, automatic preview loading, timeline-to-reader navigation and per-job/selected storage totals. Text remains intact when pictures are hidden, independently of text redaction. Manual section editing remains API-only. Historical jobs keep their saved semantics and optional metadata is not backfilled.
+
+API Pillow becomes 13.0.0 and all runtimes use certifi 2026.10.19; model-runtime Pillow remains constrained with documented, narrowly scoped VEX assessments. Vite is patched to 7.3.7. Stop the recorded instance, update source and run `./service.sh setup all` to sync affected environments/build the UI while preserving the existing profile and models, then restore and verify all original components. Earlier upgrades must cover intervening migrations. Picture detection preferences persist after successful apply and survive sign-out; dialog drafts and DOCX format selection do not persist. Export preference lifetime is unchanged and PDF remains the default. DOCX uses installed fonts, so pagination can vary across Word/WPS systems.
+
 ## v0.1.34 音频增强、原音下载与处理选项
 
 本轮还支持下载播放器中的原音 WAV（视频任务同样下载音轨）；试听切换与原音／增强音下载分组，手机分行显示。复用保存的文件，不补生成历史音轨；默认回放接口行为保持不变，仅新增 `download=true` 附件模式。
@@ -472,7 +490,7 @@ corepack pnpm@10.15.1 --dir frontend typecheck
 
 若真实模型、Torch、精度或设备路由发生变化，还必须执行真实 ASR、TTS 克隆和说话人分离回归，不能仅依赖 mock 测试。
 
-### 开发版：结果摘要、任务占用与视频时间轴
+### v0.1.35：结果摘要、任务占用与视频时间轴
 
 从 v0.1.34 更新：数据迁移无；SQLite schema v14、历史请求／结果和媒体均不改写，无额外升级备份要求。新增只读任务占用和窗口波形接口，原任务列表／SSE及产物波形契约保持兼容。需重建前端并重启原有API与工作进程，再按本文完成部署验收。导出偏好的存储键与周期不变；清空规则保留脱敏开关，撤销仅在当前页面下一次编辑之前有效。
 

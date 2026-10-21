@@ -66,6 +66,40 @@ API 锁和前端锁要求审计无已知漏洞。Qwen/Torch 当前精确约束�
 每周 CI 使用上述精确 allowlist；任何新增公告都必须先让流水线失败，再选择升级或新增带依据的 VEX。每次 Qwen 包发布时重新检查是否可解除 Transformers 固定版本与对应豁免。
 
 
-视频转写沿用 API/ASR 已固定的 PyAV 和 NumPy；显式依赖 Pillow 12.3.0。简洁 PDF 在 API 环境使用 ReportLab 4.5.1 与仓库内 Noto Sans SC 字体，不依赖系统字体或在线服务。浏览器分片 SHA-256 使用 @noble/hashes 2.0.1，在 Web Worker 运行。字体来源与许可证见 [第三方说明](../THIRD_PARTY_NOTICES.md)。模型、Transformers、精度和既有推理批次保持不变。
+视频转写沿用 API/ASR 已固定的 PyAV 和 NumPy；API 显式依赖 Pillow 13.0.0，ASR/模型环境因 Gradio 约束保留 12.3.0（见下方 VEX）。简洁 PDF 在 API 环境使用 ReportLab 4.5.1 与仓库内 Noto Sans SC 字体，不依赖系统字体或在线服务。浏览器分片 SHA-256 使用 @noble/hashes 2.0.1，在 Web Worker 运行。字体来源与许可证见 [第三方说明](../THIRD_PARTY_NOTICES.md)。模型、Transformers、精度和既有推理批次保持不变。
 
 API 环境固定使用 pypinyin 0.55.0 离线生成声纹人员的拼音排序与索引。姓氏读音覆盖只在排序时应用，不改写姓名、系统热词或历史快照；ASR/TTS/aligner 不安装该依赖。
+
+
+## v0.1.35 定向依赖更新 / Targeted dependency updates
+
+API 升级 Pillow 至 13.0.0；全部环境的 certifi 固定至 2026.10.19。DOCX 导出复用已有 python-docx 1.2.0，不新增依赖。模型、Torch、Transformers 和推理参数不变。API uses Pillow 13.0.0; every runtime locks certifi 2026.10.19. DOCX reuses existing python-docx 1.2.0. Model identities and inference settings are unchanged.
+
+只更新指定间接依赖，保留其余兼容锁版本：
+
+```bash
+.runtime/api/bin/python scripts/lock_dependencies.py --upgrade-package certifi==2026.10.19
+.runtime/api/bin/python scripts/lock_dependencies.py --check
+```
+
+`--upgrade-package` 可重复，接受包名或精确版本约束，不能与 `--check` 或全量 `--upgrade` 同用。Targeted upgrades preserve compatible unrelated lock entries; repeat the option for multiple packages. Check mode never upgrades.
+
+### 模型环境 Pillow VEX / Model-runtime Pillow VEX
+
+Gradio 6.17.3 要求 `pillow<13`，当前三个模型环境保留 Pillow 12.3.0。仅模型环境审计对下列公告设置精确例外，API 不使用这些例外。依据是当前服务的数据路径，不是包已修复；启用 Gradio 服务、接收图片或改变相关调用时必须重新评估。每次 Gradio/Qwen 更新重新检查兼容修复版。
+
+| Advisory | 当前不可达路径 / Unreachable operation |
+| --- | --- |
+| [CVE-2026-112895](https://github.com/python-pillow/Pillow/security/advisories/GHSA-p4wg-p73j-c528) | Pillow PDF append/page-tree parsing |
+| [CVE-2026-112400](https://github.com/python-pillow/Pillow/security/advisories/GHSA-65qm-jvmh-6pqg) | GIF seek after caught decompression-bomb error |
+| [CVE-2026-112397](https://github.com/python-pillow/Pillow/security/advisories/GHSA-58r4-6rv3-gfh8) | ImageMorph on a zero-width image |
+| [CVE-2026-112896](https://github.com/python-pillow/Pillow/security/advisories/GHSA-pchr-8j38-3x4p) | TIFF encoding with retained ColorMap metadata |
+| [CVE-2026-112897](https://github.com/python-pillow/Pillow/security/advisories/GHSA-q45j-58j2-45rg) | TIFF strip decoding |
+| [CVE-2026-112395](https://github.com/python-pillow/Pillow/security/advisories/GHSA-462x-pgg6-55fp) | Tiled TIFF decoding |
+| [CVE-2026-112404](https://github.com/python-pillow/Pillow/security/advisories/GHSA-c6hw-5grf-ff96) | TIFF tile/RGBA decoding |
+| [CVE-2026-112899](https://github.com/python-pillow/Pillow/security/advisories/GHSA-vx6w-vv9f-6gvg) | EPS/Ghostscript scaled rendering |
+| [CVE-2026-112403](https://github.com/python-pillow/Pillow/security/advisories/GHSA-8g5g-8vmr-9782) | Pillow JPEG decoding |
+
+ASR/aligner 仅向 Qwen 传音频数组，TTS 使用文本与本地音频；服务不启动 Gradio。`audio_intel/video_frames.py` 与 `video_detection.py` 通过 PyAV/NumPy 获取已解码像素，仅做变换与 JPEG 编码，不调用 Pillow 图片解码或上述操作。读取导出图片的 API 环境已升级。`test_video_frames_do_not_decode_images_with_pillow` 回归检查该边界。
+
+The exceptions apply only to model runtimes constrained by Gradio, whose service paths consume audio or decoded pixel arrays. Pillow file decoding, PDF append, TIFF encoding, GIF seeking, morphology and EPS rendering are not used there. API image readers use the patched version. These are bounded non-reachability assessments, not fixes to Pillow 12.3.0; new advisories still fail audits, and new image inputs or Gradio serving invalidate this assessment.

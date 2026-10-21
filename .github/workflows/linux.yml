@@ -56,7 +56,16 @@ jobs:
             --ignore-vuln PYSEC-2026-2288 \
             --ignore-vuln PYSEC-2026-2289 \
             --ignore-vuln PYSEC-2026-2290 \
-            --ignore-vuln PYSEC-2025-217
+            --ignore-vuln PYSEC-2025-217 \
+            --ignore-vuln GHSA-p4wg-p73j-c528 \
+            --ignore-vuln GHSA-65qm-jvmh-6pqg \
+            --ignore-vuln GHSA-58r4-6rv3-gfh8 \
+            --ignore-vuln GHSA-pchr-8j38-3x4p \
+            --ignore-vuln GHSA-q45j-58j2-45rg \
+            --ignore-vuln GHSA-462x-pgg6-55fp \
+            --ignore-vuln GHSA-c6hw-5grf-ff96 \
+            --ignore-vuln GHSA-vx6w-vv9f-6gvg \
+            --ignore-vuln GHSA-8g5g-8vmr-9782
         done
     - name: Upload test reports
       if: always()
