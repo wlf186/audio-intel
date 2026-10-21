@@ -13,7 +13,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('job_id')
     parser.add_argument('--min-change-percent', type=float)
-    parser.add_argument('--min-stable-seconds', type=float)
+    parser.add_argument('--min-stable-seconds', type=float, help='Stable screenshot duration, 0.5–5 seconds; e.g. 0.6')
     parser.add_argument('--apply', action='store_true', help='Replace current section/image edits after preview succeeds')
     args = parser.parse_args()
     if not args.job_id.isalnum():
@@ -39,6 +39,7 @@ def main() -> None:
             if item['state'] != 'ready':
                 raise RuntimeError(item.get('error') or item['state'])
             print('Sections:', len(item['scenes']))
+            print('Without stable pictures:', sum(scene['image'] is None for scene in item['scenes']))
             if args.apply:
                 saved = call('PATCH', root + '/video-scenes',
                              json={'revision': revision, 'action': 'apply_detection', 'preview_id': item['id']})

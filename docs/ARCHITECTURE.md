@@ -299,6 +299,8 @@ Video presentation-v2 separates low-resolution feature sampling, temporal candid
 
 视频 v2 将特征抽样、候选持续时间判断和正式截图分离；分块差分压缩缓存绑定源文件、ROI 和特征版本，按块读取，失配或损坏时重建。缓存可选且计入任务空间，旧任务重试保留 v1，音轨解码路径不变。
 
+The default presentation-v3 reuses v2 section boundaries and raw 0.5-second feature caches, then streams a separate per-section stable-picture selector. Its fixed reference, independent 0.4% significant-change tolerance and observed timestamp span enforce the configured hold duration without EOF padding or section crossing. The latest qualified run supplies its first real sampled frame; otherwise paired nullable picture fields produce a normal no-picture placeholder. Cache corruption resets the complete selection and falls back to streaming source samples. Version 2 video results and nullable preview URLs are supported throughout reads, edits, visibility, cleanup and exports. Historical v1/v2 retries retain their original behavior; only explicit preview application upgrades an existing result. Audio decoding is unchanged.
+
 API-managed disposable previews use one bounded CPU subprocess, immutable progress snapshots and complete process-tree cleanup. Preview receipts/images are temporary and expire on restart; successful feature caches survive. Reader leases protect active source/cache access from deletion. Applying a ready preview uses the existing speaker/result lock plus revision and updated_at checks, installs images before committing the new video section metadata, and preserves transcript and first-section snapshots. The ASR/TTS queues, job summary/SSE contract and SQLite schema are unchanged.
 
 预览由 API 管理独立 CPU 子进程，使用不可变进度文件和完整进程树回收；重启丢弃未应用预览、保留完整缓存。读取租约阻止处理中删除任务；应用使用结果锁及修订检查，先准备图片再提交分段元数据。队列、任务摘要/SSE 和数据库结构保持兼容。

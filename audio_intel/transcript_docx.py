@@ -55,9 +55,9 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     for index, item in enumerate(sections):
         if result.get('video'):
             document.add_heading(f"画面 {index + 1} · {timecode(item['start'])} – {timecode(item['end'])}", 1)
-            if item['id'] in hidden:
+            if not item.get('image') or item['id'] in hidden:
                 cell = document.add_table(rows=1, cols=1).cell(0, 0)
-                cell.text = '画面已隐藏 / Picture hidden'
+                cell.text = '无稳定画面 / No stable picture' if not item.get('image') else '画面已隐藏 / Picture hidden'
                 shade = OxmlElement('w:shd')
                 shade.set(qn('w:fill'), 'F0F2F4')
                 cell._tc.get_or_add_tcPr().append(shade)

@@ -5,11 +5,12 @@ import {detectionDefaults,loadDetection,saveDetection,validDetection,type SceneD
 import type {Job,JobResult,VideoScene} from '../lib/types'
 import {Modal} from './Modal'
 
-type Preview={id:string;state:'running'|'ready'|'failed'|'cancelled'|'applied';settings:SceneDetectionSettings;scenes?:Array<VideoScene&{preview_url:string}>;progress?:{phase:'scanning'|'detecting'|'images';completed:number;total:number}}
-function PreviewImage({url,label}:{url:string;label:string}){
+type Preview={id:string;state:'running'|'ready'|'failed'|'cancelled'|'applied';settings:SceneDetectionSettings;scenes?:Array<VideoScene&{preview_url:string|null}>;progress?:{phase:'scanning'|'detecting'|'selecting'|'images';completed:number;total:number}}
+function PreviewImage({url,label}:{url:string|null;label:string}){
  const {t}=useTranslation()
  const [error,setError]=useState(false)
  const [retry,setRetry]=useState(0)
+ if(!url)return <div className="video-no-frame">{t('video.noStableFrame')}</div>
  return error?<button className="button" onClick={()=>{setError(false);setRetry(x=>x+1)}}>{t('video.frameFailed')} · {t('common.actions.reload')}</button>:<img loading="lazy" src={`${url}?retry=${retry}`} alt={label} onError={()=>setError(true)}/>
 }
 export function SceneDetection({jobId,result,capability,onClose,onUpdated}:{jobId:string;result:JobResult;capability:SceneDetectionCapability;onClose:()=>void;onUpdated:(id:string,result:JobResult)=>void}){
@@ -160,11 +161,11 @@ export function SceneDetection({jobId,result,capability,onClose,onUpdated}:{jobI
    {preview?.state==='failed'?<p role="alert" className="error">{t('sceneDetection.failed')}</p>:null}
    {preview?.scenes?<p className="scene-detection-count" role="status">{t('sceneDetection.count',{before:video.scenes.length,after:preview.scenes.length})}</p>:null}
    {preview?<div className="scene-detection-actions"><button className="button" aria-pressed={current} onClick={()=>switchView(true)}>{t('sceneDetection.current')}</button><button className="button" aria-pressed={!current} onClick={()=>switchView(false)}>{t('sceneDetection.candidate')}</button></div>:<h3>{t('sceneDetection.current')}</h3>}
-   {current?<div className="scene-detection-actions"><button className="button" disabled={busy||stale} onClick={()=>setSelected(new Set(scenes.slice(0,visible).map(s=>s.id)))}>{t('sceneDetection.selectLoaded')}</button><button className="button" disabled={!selected.size||busy} onClick={()=>setSelected(new Set())}>{t('sceneDetection.clearSelection')}</button></div>:<p>{t('sceneDetection.applyBeforeHide')}</p>}
+   {current?<div className="scene-detection-actions"><button className="button" disabled={busy||stale} onClick={()=>setSelected(new Set(scenes.slice(0,visible).filter(s=>s.image).map(s=>s.id)))}>{t('sceneDetection.selectLoaded')}</button><button className="button" disabled={!selected.size||busy} onClick={()=>setSelected(new Set())}>{t('sceneDetection.clearSelection')}</button></div>:<p>{t('sceneDetection.applyBeforeHide')}</p>}
    <div className="scene-detection-grid">{scenes.slice(0,visible).map((scene,index)=><figure className={selected.has(scene.id)?'selected':''} key={`${current}:${scene.id}:${scene.image}`}>
-    {current?<label className="scene-detection-select"><input type="checkbox" checked={selected.has(scene.id)} disabled={busy||stale} onChange={()=>setSelected(previous=>{const next=new Set(previous);if(next.has(scene.id))next.delete(scene.id);else next.add(scene.id);return next})}/>{t('sceneDetection.selectPicture',{number:index+1})}</label>:null}
-    <PreviewImage url={current?`/api/v1/jobs/${jobId}/video-frames/${scene.image}`:(scene as VideoScene&{preview_url:string}).preview_url} label={t('video.scene',{number:index+1})}/>
-    <figcaption>{t('video.scene',{number:index+1})} · {formatTime(scene.start,false)}–{formatTime(scene.end,false)}{current&&hidden.has(scene.id)?<span className="scene-hidden-badge">{t('sceneDetection.hidden')}</span>:null}</figcaption>
+    {current?<label className="scene-detection-select"><input type="checkbox" checked={selected.has(scene.id)} disabled={busy||stale||!scene.image} onChange={()=>setSelected(previous=>{const next=new Set(previous);if(next.has(scene.id))next.delete(scene.id);else next.add(scene.id);return next})}/>{t('sceneDetection.selectPicture',{number:index+1})}</label>:null}
+    {scene.image?<PreviewImage url={current?`/api/v1/jobs/${jobId}/video-frames/${scene.image}`:(scene as VideoScene&{preview_url:string}).preview_url} label={t('video.scene',{number:index+1})}/>:<div className="video-no-frame">{t('video.noStableFrame')}</div>}
+    <figcaption>{t('video.scene',{number:index+1})}<span>{t('timeline.sceneRange')} {formatTime(scene.start,false)}–{formatTime(scene.end,false)}</span>{scene.frame_time!==null?<span>{t('timeline.frameTime')} {formatTime(scene.frame_time)}</span>:null}{current&&hidden.has(scene.id)?<span className="scene-hidden-badge">{t('sceneDetection.hidden')}</span>:null}</figcaption>
    </figure>)}</div>
    <div className="scene-detection-sentinel" ref={sentinel}><span>{t('sceneDetection.loaded',{count:Math.min(visible,scenes.length),total:scenes.length})}</span>{visible<scenes.length&&typeof IntersectionObserver==='undefined'?<button className="button" onClick={()=>setVisible(value=>value+12)}>{t('asr.results.loadMore')}</button>:null}</div>
    {manual&&preview?<label className="scene-detection-confirm"><input type="checkbox" checked={confirmed} onChange={event=>setConfirmed(event.target.checked)}/>{t('sceneDetection.replaceEdits')}</label>:null}

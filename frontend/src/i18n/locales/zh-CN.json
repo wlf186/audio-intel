@@ -87,6 +87,7 @@
     "example": "广东移动=gy"
   },
   "video": {
+    "noStableFrame": "无稳定画面",
     "sceneCount": "已展示 {{visible}} / {{total}} 个画面",
     "enrollHelp": "选择本任务中 {{speaker}} 的原始语句，每条分别保存为一个声纹样本。",
     "alreadyImported": "已加入声纹库",
@@ -699,7 +700,7 @@
     "min_change_percent": "最小画面变化比例（%）",
     "min_stable_seconds": "新画面最短保持时间（秒）",
     "min_change_percentHelp": "比例越低，越容易分出新画面。小于该比例的字幕、鼠标等变化会被忽略。",
-    "min_stable_secondsHelp": "时间越长，越容易忽略短暂闪过的画面。检测约每 0.5 秒抽样。",
+    "min_stable_secondsHelp": "达到设定时长的稳定画面才会成为截图；未达标显示无稳定画面，文字保留。支持 0.1 秒步进，约每 0.5 秒抽样，不足时长不会提前确认。",
     "reset": "恢复默认值",
     "preview": "预览检测",
     "cancel": "取消检测",
@@ -717,6 +718,7 @@
       "preparing": "正在准备检测…",
       "scanning": "首次准备：正在扫描原视频…",
       "detecting": "正在使用缓存计算分段…",
+      "selecting": "正在确认稳定截图…",
       "images": "正在准备预览截图…"
     }
   }

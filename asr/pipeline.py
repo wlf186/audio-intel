@@ -856,7 +856,8 @@ def process_job(context: JobContext) -> dict[str, Any]:
         from audio_intel.video_frames import decode as decode_video
         normalized = context.work_dir / "normalized.wav"
         audio, rate, video_result = decode_video(source, normalized, context.work_dir / "frames", request.get("video_roi"), context,
-            request.get("video_scene_detection") if request.get("video_detector") == "presentation-v2" else None)
+            request.get("video_scene_detection") if request.get("video_detector") in {"presentation-v2", "presentation-v3"} else None,
+            request.get("video_detector"))
     else:
         audio, rate = _mock_audio(source, normalized) if settings.mock_mode else decode_audio(source, normalized)
     duration = len(audio) / rate

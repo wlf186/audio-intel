@@ -179,9 +179,15 @@ Audio processing is a compact status button beside downloads; its popover shows 
 
 ## 结果页画面检测 / Picture detection in results
 
-在「任务与结果 → 图文阅读 → 画面检测」设置两项参数：**最小画面变化比例**默认 3%（0.5–50%），**新画面最短保持时间**默认 1 秒（0.5–5 秒）。比例越低越敏感，时间越长越容易忽略闪过的画面；具体范围与默认值以 capabilities 为准。presentation-v2 按约 0.5 秒抽样，相对当前页基准比较显著颜色变化面积，候选画面持续满足条件后才确认切换。小面积字幕、鼠标变化不绕过阈值；同页增量显示尽量合并。它仍是局部视觉启发式，不进行 OCR 或语义理解。
+在「任务与结果 → 图文阅读 → 画面检测」设置最小画面变化比例（默认 3%，0.5–50%）与新画面最短保持时间（默认 1 秒）。具体范围与默认值以 capabilities 为准。同页增量显示尽量合并。
 
-Open **Tasks & results → Illustrated reading → Picture detection**. Minimum picture change defaults to **3%** (0.5–50%); minimum new-picture duration defaults to **1 second** (0.5–5 seconds). Lower area thresholds detect more changes; longer durations ignore brief appearances. Capabilities owns the limits/defaults. The presentation-v2 detector samples about every 0.5 seconds, compares significant color changes against the current page, and confirms a consistent candidate only after the requested duration. Small subtitles/pointer changes cannot bypass these gates. Incremental builds are merged where possible; this remains a visual heuristic without OCR or semantic understanding.
+presentation-v3 将分段和截图确认分开：截图需要在同一分段内连续稳定达到用户配置的 `min_stable_seconds`，与音频、句子时长无关。截图使用独立的降噪容差（显著颜色变化面积低于 0.4%），小通知不能因低于分段面积阈值而绕过确认。多个合格区间采用最后一个区间的首个实际采样帧；短暂变化不覆盖已确认截图。无合格画面时 `image`、`frame_time` 和预览 `preview_url` 为 null，界面与 PDF/DOCX 显示“无稳定画面”，文字和时间段保留；这不是加载错误或导出隐藏。分段范围与截图时刻分别显示。
+
+保持时间范围仍为 0.5–5 秒，输入步进 0.1 秒（如 0.6）；约每 0.5 秒抽样，按实际时间跨度确认，不提前、跨分段或在片尾补足时长，因此非抽样间隔整数倍的设置可能等到下一个抽样点。检测仍是有容差的视觉启发式，不进行 OCR/通知语义识别。自动截图遵守此规则；明确手工指定截图的 API 保留原有语义。
+
+Presentation-v3 separates sections from screenshot confirmation. Automatic pictures require a continuous sampled stable interval inside one section lasting at least the configured `min_stable_seconds`, independently of audio or sentence length. A separate noise tolerance (significant RGB changes over less than 0.4% of pixels) prevents section-area settings from bypassing screenshot confirmation. The first actual sample of the latest qualifying interval represents the section; brief changes cannot overwrite it. Without a qualifying picture, `image`, `frame_time` and preview `preview_url` are null. The reader, detection dialog, timeline and PDF/DOCX show No stable picture while preserving text, ranges and navigation; this is distinct from loading failure and export hiding. Section ranges and capture times are labeled separately.
+
+Duration remains 0.5–5 seconds with a 0.1-second input step, including 0.6. Sampling remains about 0.5 seconds. Confirmation uses observed elapsed time without early acceptance, crossing sections or padding EOF; fractional settings may wait until the next sample. This remains a noise-tolerant visual heuristic without OCR or notification recognition. Explicit manual frame selection retains its API semantics.
 
 打开「画面检测」即显示当前画面及导出隐藏标记，无需先检测。点击「预览检测」后比较当前／候选画面，再点击「应用预览」；应用后弹窗保持打开。预览不改变结果，也不重跑音频转写；存在人工分段或截图修改时须勾选替换确认。其他客户端修改分段后必须重新预览。应用保留原转写文字、说话人和时间戳，更新画面及讨论归属。API 的 restore 操作恢复最近一次成功应用的自动分段；首次自动分段快照仍保留。旧结果不自动重算，旧任务重试沿用原算法。
 

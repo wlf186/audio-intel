@@ -365,6 +365,9 @@
 .scene-detection-grid figure{margin:0;min-width:0}
 .scene-detection-grid img{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#edf1f5;border-radius:6px}
 .scene-detection-grid figcaption{font-size:12px;line-height:1.5;padding:6px 0;overflow-wrap:anywhere}
+.scene-detection-grid figcaption>span{display:block}
+.video-no-frame{display:flex;align-items:center;justify-content:center;min-height:100px;aspect-ratio:16/9;padding:12px;box-sizing:border-box;background:var(--bg);color:var(--muted);border:1px solid var(--line);border-radius:6px;text-align:center}
+.timeline-no-frame{position:absolute;top:0;height:56px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:var(--panel);color:var(--muted);font-size:10px;text-align:center}
 .scene-detection-confirm{display:flex;align-items:center;gap:10px;min-height:44px}
 .scene-detection-confirm input{flex:0 0 22px;width:22px;height:22px}
 @media(max-width:600px){.scene-detection-controls{grid-template-columns:1fr}.scene-detection-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.scene-detection-modal{padding:20px 16px}}

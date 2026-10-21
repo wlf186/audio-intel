@@ -16,7 +16,8 @@ function Frame({jobId,scene}:{jobId:string;scene:VideoScene}){
  const {t}=useTranslation();const [error,setError]=useState(false);const [retry,setRetry]=useState(0);const [expanded,setExpanded]=useState(false)
  useEffect(()=>setError(false),[scene.image])
  const url=`/api/v1/jobs/${jobId}/video-frames/${scene.image}?retry=${retry}`
- const label=t('video.frameAt',{time:formatTime(scene.frame_time,false)})
+ const label=t('video.frameAt',{time:formatTime(scene.frame_time??0,false)})
+ if(!scene.image)return <div className="video-no-frame">{t('video.noStableFrame')}</div>
  return error?<p role="alert">{t('video.frameFailed')} <button className="button" onClick={()=>{setError(false);setRetry(value=>value+1)}}>{t('common.actions.reload')}</button></p>:<><button type="button" className="video-frame" aria-label={t('workspaceSplit.enlargeFrame')} title={t('workspaceSplit.enlargeFrame')} onClick={()=>setExpanded(true)}><img loading="lazy" src={url} alt={label} onError={()=>setError(true)}/></button>{expanded?<Modal title={label} closeLabel={t('common.actions.close')} className="video-frame-modal" onClose={()=>setExpanded(false)}><img src={url} alt={label} onError={()=>{setExpanded(false);setError(true)}}/></Modal>:null}</>
 }
 export function VideoTranscript({job,toolbar,onUpdated,onSeek,onRename,onEnroll,resource,reveal,currentTime=0,detectionCapability}:{job:Job;resource:VideoScenesResource;reveal?:{sceneId?:string;time:number;token:number};toolbar?:HTMLElement|null;onUpdated:(id:string,result:JobResult)=>void;onSeek:(time:number)=>void;onRename:(id:string)=>void;onEnroll:(id:string,segmentIds:number[])=>void;currentTime?:number;detectionCapability?:SceneDetectionCapability}){

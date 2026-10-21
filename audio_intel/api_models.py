@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .video_detection import SceneDetectionCapability, SceneDetectionSettings
 
@@ -654,12 +654,18 @@ class VideoSceneResponse(PublicModel):
     id: str
     start: float
     end: float
-    frame_time: float
-    image: str
+    frame_time: float | None = Field(description='截图实际采样时刻；无稳定画面时为空 / Actual sampled timestamp; null without a stable picture')
+    image: str | None = Field(description='截图文件名；无稳定画面时为空 / Frame filename; null without a stable picture')
+
+    @model_validator(mode='after')
+    def paired_picture(self):
+        if (self.frame_time is None) != (self.image is None):
+            raise ValueError('image and frame_time must both be present or both be null')
+        return self
 
 
 class VideoAnalysisResponse(PublicModel):
-    contract_version: Literal[1]
+    contract_version: Literal[1, 2]
     revision: int
     duration: float
     time_origin: float

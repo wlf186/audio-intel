@@ -21,7 +21,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .video_frames import crop_picture, features, picture_at, save_picture
 
-VERSION = 'presentation-v2'
+VERSION = 'presentation-v3'
+LEGACY_VERSION = 'presentation-v2'
 CACHE_VERSION = 1
 CACHE_LIMIT = 512 * 1024**2
 CHUNK_SIZE = 60
@@ -30,7 +31,7 @@ CHUNK_SIZE = 60
 class SceneDetectionSettings(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
     min_change_percent: float = Field(3, ge=.5, le=50, description='最小显著变化面积百分比，越低越敏感 / Minimum changed area percent; lower is more sensitive')
-    min_stable_seconds: float = Field(1, ge=.5, le=5, description='新画面最短保持秒数 / Minimum time a new picture must persist')
+    min_stable_seconds: float = Field(1, ge=.5, le=5, description='新画面及自动截图最短稳定秒数；无达标截图时为空 / Minimum stable seconds for a new picture and automatic screenshot; no qualifying screenshot returns null')
 
 
 class DetectionLimit(BaseModel):
@@ -50,7 +51,7 @@ class SceneDetectionCapability(BaseModel):
 def capability() -> dict:
     return {'detector': VERSION, 'preview': True,
             'min_change_percent': {'min': .5, 'max': 50, 'step': .5, 'default': 3},
-            'min_stable_seconds': {'min': .5, 'max': 5, 'step': .5, 'default': 1}}
+            'min_stable_seconds': {'min': .5, 'max': 5, 'step': .1, 'default': 1}}
 
 
 def thumbnail(frame: Any, roi: dict | None) -> np.ndarray:
@@ -258,8 +259,12 @@ def scan(source: Path, roi: dict | None, detector: Detector, writer: FeatureWrit
 
 
 def materialize(source: Path, scenes: list[dict], folder: Path, roi: dict | None, origin: float, progress: Callable, existing: list[dict] | None = None, existing_folder: Path | None = None) -> None:
-    reusable = {s['frame_time']: s['image'] for s in existing or []}
+    reusable = {s['frame_time']: s['image'] for s in existing or [] if s.get('image') and s.get('frame_time') is not None}
     for index, scene in enumerate(scenes):
+        if scene['frame_time'] is None:
+            scene['image'] = None
+            progress('images', index + 1, len(scenes))
+            continue
         name = reusable.get(scene['frame_time'])
         if name and existing_folder and (existing_folder / name).is_file():
             folder.mkdir(parents=True, exist_ok=True)
@@ -268,6 +273,54 @@ def materialize(source: Path, scenes: list[dict], folder: Path, roi: dict | None
             name = save_picture(picture_at(source, scene['frame_time'], roi, origin), folder)
         scene['image'] = name
         progress('images', index + 1, len(scenes))
+
+
+def select_representatives(samples, scenes: list[dict], hold: float, progress: Callable) -> None:
+    """Confirm an actual sampled frame inside one section, never an end-of-run flash.
+
+    The fixed reference prevents gradual drift from accumulating into a new picture.
+    A separate 0.4% noise tolerance keeps the section-area setting out of selection.
+    Only observed timestamps count; EOF and the next section cannot extend a run.
+    """
+    for scene in scenes:
+        scene.update(frame_time=None, image=None)
+    index = 0
+    reference = None
+    since = 0.
+    for timestamp, rgb in samples:
+        while index < len(scenes) and timestamp >= scenes[index]['end']:
+            index += 1
+            reference = None
+        if index == len(scenes):
+            break
+        if timestamp < scenes[index]['start']:
+            continue
+        if reference is None or difference(reference, rgb) >= .004:
+            reference = rgb.copy()
+            since = timestamp
+        if timestamp - since >= hold:
+            scenes[index]['frame_time'] = since
+        progress('selecting', timestamp, scenes[-1]['end'])
+
+
+def source_samples(source: Path, roi: dict | None):
+    last = -1.
+    with av.open(str(source)) as container:
+        stream = next(s for s in container.streams.video if not s.disposition & av.stream.Disposition.attached_pic)
+        origin = float(container.start_time or 0) / av.time_base
+        for frame in container.decode(stream):
+            timestamp = max(0., float(frame.time or 0) - origin)
+            if timestamp - last >= .49:
+                yield timestamp, thumbnail(frame, roi)
+                last = timestamp
+
+
+def stable_representatives(source: Path, cache: Path, roi: dict | None, scenes: list[dict], hold: float, progress: Callable) -> None:
+    try:
+        select_representatives(cached_samples(cache, source, roi), scenes, hold, progress)
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile, EOFError, zlib.error):
+        # Restart selection completely if a cache fails after yielding some samples.
+        select_representatives(source_samples(source, roi), scenes, hold, progress)
 
 
 def preview(request: dict, folder: Path, progress: Callable) -> dict:
@@ -285,13 +338,14 @@ def preview(request: dict, folder: Path, progress: Callable) -> dict:
         writer = FeatureWriter(cache, source, roi, request['min_free'])
         scan(source, roi, detector, writer, progress)
     detector.flush(request['duration'])
+    stable_representatives(source, cache, roi, detector.scenes, detector.settings.min_stable_seconds, progress)
     def image_progress(phase, completed, total):
         if shutil.disk_usage(folder).free < request['min_free']:
             raise OSError('Insufficient storage')
         progress(phase, completed, total)
     materialize(source, detector.scenes, folder / 'frames', roi, request['time_origin'], image_progress,
                 request.get('existing_scenes'), Path(request['existing_frames']))
-    return {'scenes': detector.scenes, 'settings': detector.settings.model_dump(), 'detector': VERSION, 'cache_hit': hit}
+    return {'scenes': detector.scenes, 'settings': detector.settings.model_dump(), 'detector': VERSION, 'contract_version': 2, 'cache_hit': hit}
 
 
 def main() -> None:

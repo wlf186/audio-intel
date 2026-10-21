@@ -155,7 +155,7 @@ def probe(source: Path) -> dict[str, Any]:
 
 
 def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | None, context: Any,
-           detection_settings: dict | None = None) -> tuple[Any, int, dict]:
+           detection_settings: dict | None = None, detector_version: str | None = None) -> tuple[Any, int, dict]:
     import soundfile as sf
 
     detector = PresentationDetector(frame_directory)
@@ -227,11 +227,15 @@ def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | No
     sf.write(normalized, values, 16000, format='WAV', subtype='PCM_16')
     detector.flush(end)
     if writer is not None:
-        from .video_detection import VERSION, materialize
+        from .video_detection import LEGACY_VERSION, VERSION, materialize, stable_representatives
         writer.finish(end, origin)
+        strict = detector_version != LEGACY_VERSION
+        if strict:
+            stable_representatives(source, frame_directory.parent / 'scene-features', roi, detector.scenes,
+                                   detector.settings.min_stable_seconds, lambda *args: None)
         materialize(source, detector.scenes, frame_directory, roi, origin, lambda *args: None)
-        return values, 16000, {'contract_version': 1, 'revision': 1, 'duration': end, 'time_origin': origin,
-                              'roi': roi, 'detector': VERSION, 'scene_detection': detection_settings,
+        return values, 16000, {'contract_version': 2 if strict else 1, 'revision': 1, 'duration': end, 'time_origin': origin,
+                              'roi': roi, 'detector': VERSION if strict else LEGACY_VERSION, 'scene_detection': detection_settings,
                               'scenes': detector.scenes, 'automatic_scenes': [dict(s) for s in detector.scenes],
                               'original_scenes': [dict(s) for s in detector.scenes]}
     return values, 16000, {'contract_version': 1, 'revision': 1, 'duration': end, 'time_origin': origin,

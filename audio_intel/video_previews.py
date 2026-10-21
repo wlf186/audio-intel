@@ -36,16 +36,17 @@ class PreviewRequest(BaseModel):
 
 
 class PreviewProgress(BaseModel):
-    phase: Literal['scanning', 'detecting', 'images']
+    phase: Literal['scanning', 'detecting', 'selecting', 'images']
     completed: float
     total: float
 
 
 class PreviewScene(VideoSceneResponse):
-    preview_url: str
+    preview_url: str | None
 
 
 class PreviewResponse(BaseModel):
+    contract_version: Literal[2] = 2
     id: str
     job_id: str
     revision: int
@@ -128,7 +129,7 @@ class PreviewManager:
                 result[key] = item[key]
         if item['state'] in {'ready', 'applied'}:
             result['scenes'] = [
-                {**s, 'preview_url': f"/api/v1/jobs/{item['job_id']}/video-scene-previews/{item['id']}/frames/{s['image']}"}
+                {**s, 'preview_url': f"/api/v1/jobs/{item['job_id']}/video-scene-previews/{item['id']}/frames/{s['image']}" if s['image'] else None}
                 for s in item['scenes']]
         return result
 
@@ -285,10 +286,12 @@ class PreviewManager:
                 folder = self.config.jobs_dir / job_id / 'output/frames'
                 folder.mkdir(parents=True, exist_ok=True)
                 required = sum((item['folder'] / 'frames' / s['image']).stat().st_size for s in item['scenes']
-                               if not (folder / s['image']).exists())
+                               if s['image'] and not (folder / s['image']).exists())
                 if shutil.disk_usage(folder).free - required < self.config.min_free_disk_bytes:
                     raise HTTPException(429, 'Insufficient storage to apply preview', headers={'Retry-After': '60'})
                 for scene in item['scenes']:
+                    if not scene['image']:
+                        continue
                     target = folder / scene['image']
                     if not target.exists():
                         created.append(target)
@@ -297,7 +300,7 @@ class PreviewManager:
                 hidden = retained_hidden(video, item['scenes']) if video.get('scene_detection') == item['settings'] else []
                 video.update(export_hidden_scene_ids=hidden)
                 video.update(scenes=copy.deepcopy(item['scenes']), automatic_scenes=copy.deepcopy(item['scenes']),
-                             scene_detection=item['settings'], detector=VERSION, revision=revision + 1,
+                             scene_detection=item['settings'], detector=VERSION, contract_version=2, revision=revision + 1,
                              applied_preview_id=item['id'])
                 with db.connect() as connection:
                     changed = connection.execute("UPDATE jobs SET result_json=?,updated_at=? WHERE id=? AND state='succeeded' AND updated_at=?",

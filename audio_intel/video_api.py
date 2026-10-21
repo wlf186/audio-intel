@@ -359,7 +359,7 @@ def register(app: Any, api: Any) -> None:
             try:
                 payload = {**caller, **hotwords, **scope, 'video_caller': caller, 'purpose': 'video_transcription',
                            'video_scene_detection': (body.video_scene_detection or SceneDetectionSettings()).model_dump(),
-                           'video_detector': 'presentation-v2',
+                           'video_detector': 'presentation-v3',
                            'model': selected['public_id'], 'language': language, 'compute_device': device,
                            'compute_device_name': device_name, 'export_formats': []}
                 job, replayed = await run_in_threadpool(store.complete, config, row, payload, api.idempotency_key_hash(key), fingerprint)
@@ -528,7 +528,7 @@ def register(app: Any, api: Any) -> None:
                 if body.action == 'split':
                     if len(values) >= 2000:
                         raise HTTPException(422, 'Maximum 2000 sections')
-                    other = {**scene, 'id': 'scene_' + uuid.uuid4().hex, 'start': moment, 'frame_time': -1}
+                    other = {**scene, 'id': 'scene_' + uuid.uuid4().hex, 'start': moment, 'frame_time': None, 'image': None}
                     scene['end'] = moment
                     values.insert(index + 1, other)
                 elif body.action == 'boundary':
@@ -541,8 +541,18 @@ def register(app: Any, api: Any) -> None:
             folder = config.jobs_dir / job_id / 'output/frames'
             before = {p.name for p in folder.glob('*.jpg')}
             try:
+                strict = video.get('detector') == 'presentation-v3'
+                if strict and body.action in {'merge_next', 'split', 'boundary'}:
+                    from .video_detection import materialize, stable_representatives
+                    affected = values[index:index + (2 if body.action in {'split', 'boundary'} else 1)]
+                    source = Path(job['request']['input_path'])
+                    stable_representatives(source, folder.parent / 'scene-features', video.get('roi'), affected,
+                                           video['scene_detection']['min_stable_seconds'], lambda *args: None)
+                    materialize(source, affected, folder, video.get('roi'), video.get('time_origin', 0), lambda *args: None)
                 for i, scene in enumerate(values):
-                    replace = not scene['start'] <= scene['frame_time'] < scene['end'] or body.action == 'frame' and i == index
+                    explicit = body.action == 'frame' and i == index
+                    moment = scene['frame_time']
+                    replace = explicit or (moment is not None and not scene['start'] <= moment < scene['end']) or (moment is None and not strict)
                     if replace:
                         moment = body.time if body.action == 'frame' and i == index else (scene['start'] + scene['end']) / 2
                         picture = picture_at(Path(job['request']['input_path']), moment, video.get('roi'), video.get('time_origin', 0))

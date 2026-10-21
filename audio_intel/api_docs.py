@@ -503,6 +503,17 @@ GET video-scenes for images/paragraphs; PATCH with revision for edits, reloading
 
 Picture detection settings come from `asr.video.scene_detection`: changed area defaults to 3% (0.5–50), new-picture duration to 1 second (0.5–5). Video submissions accept `video_scene_detection`. POST `/api/v1/jobs/{job_id}/video-scene-previews` with Idempotency-Key, revision and settings; GET with preview_id polls and DELETE cancels. Apply a ready preview by PATCHing video-scenes with action=apply_detection, preview_id and revision. First acceptance 202, replay 200, conflict 409, busy 429, expiry 410. One active calculation, eight previews, 30-minute lifetime, invalidated on restart. Latest automatic sections are automatic_scenes; original_scenes retains the initial snapshot. ASR is not rerun. Export-hidden picture IDs persist in video.export_hidden_scene_ids. PATCH video-scenes with action=set_export_visibility, revision and the complete export_hidden_scene_ids list; an empty list restores all. PDF/DOCX uses placeholders while keeping text; JSON includes the markers. Text redaction does not disable picture hiding. Applying changed detection settings clears markers; unchanged settings retain only identical pictures. The browser exposes detection and export visibility, while manual section editing remains API-only.
 
+presentation-v3 将分段和截图确认分开：截图需要在同一分段内连续稳定达到用户配置的 `min_stable_seconds`，与音频、句子时长无关。截图使用独立的降噪容差（显著颜色变化面积低于 0.4%），小通知不能因低于分段面积阈值而绕过确认。多个合格区间采用最后一个区间的首个实际采样帧；短暂变化不覆盖已确认截图。无合格画面时 `image`、`frame_time` 和预览 `preview_url` 为 null，界面与 PDF/DOCX 显示“无稳定画面”，文字和时间段保留；这不是加载错误或导出隐藏。分段范围与截图时刻分别显示。
+
+保持时间范围仍为 0.5–5 秒，输入步进 0.1 秒（如 0.6）；约每 0.5 秒抽样，按实际时间跨度确认，不提前、跨分段或在片尾补足时长，因此非抽样间隔整数倍的设置可能等到下一个抽样点。检测仍是有容差的视觉启发式，不进行 OCR/通知语义识别。自动截图遵守此规则；明确手工指定截图的 API 保留原有语义。
+
+Presentation-v3 separates sections from screenshot confirmation. Automatic pictures require a continuous sampled stable interval inside one section lasting at least the configured `min_stable_seconds`, independently of audio or sentence length. A separate noise tolerance (significant RGB changes over less than 0.4% of pixels) prevents section-area settings from bypassing screenshot confirmation. The first actual sample of the latest qualifying interval represents the section; brief changes cannot overwrite it. Without a qualifying picture, `image`, `frame_time` and preview `preview_url` are null. The reader, detection dialog, timeline and PDF/DOCX show No stable picture while preserving text, ranges and navigation; this is distinct from loading failure and export hiding. Section ranges and capture times are labeled separately.
+
+Duration remains 0.5–5 seconds with a 0.1-second input step, including 0.6. Sampling remains about 0.5 seconds. Confirmation uses observed elapsed time without early acceptance, crossing sections or padding EOF; fractional settings may wait until the next sample. This remains a noise-tolerant visual heuristic without OCR or notification recognition. Explicit manual frame selection retains its API semantics.
+
+New video results/applied previews use contract_version=2 with paired nullable image/frame_time (and nullable preview_url). Historical version 1 remains readable; v1/v2 retries preserve the saved detector. Preview responses publish contract_version=2 and the selecting progress phase. / 新任务和显式应用预览升级契约；不自动改写历史结果。
+
+
 
 ## 声纹人员与样本名称 / Voiceprint identities and sample names
 

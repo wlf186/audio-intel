@@ -23,7 +23,7 @@ def main() -> None:
     parser.add_argument('--device', choices=('cpu', 'gpu'))
     parser.add_argument('--language', default='Auto')
     parser.add_argument('--scene-min-change-percent', type=float, help='Minimum changed picture area, 0.5–50 percent')
-    parser.add_argument('--scene-min-stable-seconds', type=float, help='Minimum new-picture duration, 0.5–5 seconds')
+    parser.add_argument('--scene-min-stable-seconds', type=float, help='Minimum stable picture/screenshot duration, 0.5–5 seconds (0.1-second input step); no qualifying screenshot uses a placeholder')
     parser.add_argument('--pdf', type=Path, help='Wait for completion and download the concise PDF')
     parser.add_argument('--voiceprint-group', action='append', help='Eligible voiceprint group ID; repeat to select several, omit for all')
     parser.add_argument('--no-redact', action='store_true', help='Export original names, notes and text')

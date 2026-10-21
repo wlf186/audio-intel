@@ -201,7 +201,7 @@ def test_apply_conflict_auth_and_expiry_preserve_result(client,local):
 
 def test_legacy_retry_policy_and_submission_snapshot(client,local):
     job=completed_video(client,local)
-    assert job['request']['video_detector']=='presentation-v2'
+    assert job['request']['video_detector']=='presentation-v3'
     assert job['request']['video_scene_detection']=={'min_change_percent':3,'min_stable_seconds':1}
     # Historical caller snapshots omit the new optional field. Replaying the
     # same upload/key must not rewrite the persisted request to the new policy.

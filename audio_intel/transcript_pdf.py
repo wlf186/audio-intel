@@ -48,16 +48,17 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     label = ParagraphStyle('label', parent=body, fontSize=9, leading=14,
                            textColor=colors.HexColor('#4c5967'), spaceAfter=4, keepWithNext=True)
     class HiddenPicture(Flowable):
-        def __init__(self):
+        def __init__(self, text='画面已隐藏 / Picture hidden'):
             super().__init__()
             self.width, self.height = doc.width, 120
+            self.text = text
 
         def draw(self):
             self.canv.setFillColor(colors.HexColor('#f0f2f4'))
             self.canv.rect(0, 0, self.width, self.height, stroke=0, fill=1)
             self.canv.setFillColor(colors.HexColor('#4c5967'))
             self.canv.setFont('Transcript', 12)
-            self.canv.drawCentredString(self.width / 2, self.height / 2, '画面已隐藏 / Picture hidden')
+            self.canv.drawCentredString(self.width / 2, self.height / 2, self.text)
 
     hidden = set((result.get('video') or {}).get('export_hidden_scene_ids') or [])
     story: list[Any] = [Paragraph(html.escape(title), heading)]
@@ -66,7 +67,9 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
         if result.get('video'):
             story.append(Spacer(1, 14))
             story.append(Paragraph(f"画面 {index + 1} · {timecode(section['start'])} – {timecode(section['end'])}", label))
-            if section['id'] in hidden:
+            if not section.get('image'):
+                story.extend([HiddenPicture('无稳定画面 / No stable picture'), Spacer(1, 12)])
+            elif section['id'] in hidden:
                 story.extend([HiddenPicture(), Spacer(1, 12)])
             else:
                 name = section['image']

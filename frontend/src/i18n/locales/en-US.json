@@ -87,6 +87,7 @@
     "example": "Company name=Company"
   },
   "video": {
+    "noStableFrame": "No stable picture",
     "sceneCount": "Showing {{visible}} / {{total}} scenes",
     "enrollHelp": "Select original sentences by {{speaker}} in this task. Each sentence becomes a separate voiceprint sample.",
     "alreadyImported": "Already in voiceprint library",
@@ -709,7 +710,7 @@
     "min_change_percent": "Minimum picture change (%)",
     "min_stable_seconds": "Minimum new-picture duration (seconds)",
     "min_change_percentHelp": "Lower values detect more changes. Subtitles and pointer changes below this area are ignored.",
-    "min_stable_secondsHelp": "Longer durations ignore brief appearances. Pictures are sampled about every 0.5 seconds.",
+    "min_stable_secondsHelp": "Screenshots must remain stable for the configured duration; otherwise a No stable picture placeholder keeps the text. Input step: 0.1 seconds; sampling: about 0.5 seconds, with no early confirmation.",
     "reset": "Restore defaults",
     "preview": "Preview detection",
     "cancel": "Cancel detection",
@@ -727,6 +728,7 @@
       "preparing": "Preparing detection…",
       "scanning": "First-time preparation: scanning the original video…",
       "detecting": "Calculating sections from cached features…",
+      "selecting": "Confirming stable pictures…",
       "images": "Preparing preview images…"
     }
   }
