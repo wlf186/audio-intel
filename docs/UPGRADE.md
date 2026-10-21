@@ -107,7 +107,7 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
-## 开发版：转写下载命名与声纹分组 / Development: transcript names and voiceprint groups
+## v0.1.38 转写下载命名与声纹分组 / Transcript names and voiceprint groups
 
 从 v0.1.37 更新：数据迁移无，无需额外升级备份；没有历史文件批量改写。转写 PDF/DOCX/JSON/TXT/SRT/VTT 下载统一使用任务名主体加导出扩展名，脱敏不再隐藏附件文件名中的任务名称，正文和文档内部元数据的脱敏规则不变。旧下载 URL、磁盘产物名与历史结果保持不变。
 
