@@ -107,6 +107,16 @@ Python 会缓存已经导入的模块，首次使用时才导入的模块则可�
 
 English: A commit or GitHub Release does not refresh a running local process. Stop the existing instance before changing runtime code/dependencies, retain its configuration and original component state, then restore and verify it after the final code/tag changes. Verify the API version and the identities, creation times and paths of supervisors and executors; API health alone is insufficient. Keep local maintenance evidence so interrupted work can resume. Idle recycling manages used-executor resources, not deployment. Read-only release inspection does not authorize local lifecycle changes.
 
+## v0.1.36 转写任务切换修复
+
+从 v0.1.35 升级：**数据迁移：无**。不修改数据库、历史请求/结果、媒体文件或浏览器存储契约，无需额外升级备份；更早版本仍须覆盖中间版本的迁移要求。
+
+修复“任务与结果”中音频、视频任务反复切换后，旧视频缩略图和波形残留、重复叠加的问题。时间轴和图文阅读组件使用独立的任务标识，保留原有播放、定位及阅读位置逻辑。新增桌面和 390 px 手机端的缓存任务切换回归，覆盖音视频往返、不同视频互切、定位和阅读模式切换。
+
+按本页维护流程记录配置并等待空闲，停止原服务后更新源码，运行 `corepack pnpm@10.15.1 --dir frontend build` 重建前端，然后恢复原配置并验证 API、ASR/TTS supervisor、executor 和历史任务。依赖与模型未变化，无需重新下载模型或同步推理环境。刷新已打开的浏览器页面以加载修复。
+
+English: From v0.1.35 there is no database or historical-file migration and no extra upgrade backup is required. Repeated switching between cached audio/video results now removes the previous timeline instead of retaining or duplicating thumbnails and waveforms. Playback, reader bookmarks and browser-storage lifetimes are unchanged. Desktop and 390 px regression tests cover audio/video and video/video switching, seeking and reading modes. Stop the recorded service after it becomes idle, update source, rebuild the frontend with `corepack pnpm@10.15.1 --dir frontend build`, and restore and verify the original API, supervisors and executors. Dependencies and models are unchanged. Refresh browser pages; earlier upgrades must cover intervening migration requirements.
+
 ## v0.1.35 画面检测、阅读体验与 Word 导出
 
 从 v0.1.34 升级：**数据迁移：无**，schema v14、历史请求/结果与媒体不批量改写，无需额外升级备份。更早版本仍须覆盖中间版本的迁移要求。
