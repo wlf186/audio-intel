@@ -26,17 +26,18 @@ for(const width of [1440,390]){
   await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click();await expect(page.locator('.video-section')).toHaveCount(20)
   const root=page.locator('.video-transcript')
   await root.evaluate(element=>element.scrollTop=element.scrollHeight);await expect(page.locator('.video-section')).toHaveCount(40)
-  await page.getByRole('button',{name:'编辑分段',exact:true}).click()
   const target=page.locator('.video-section').nth(25);await target.scrollIntoViewIfNeeded()
-  await target.getByRole('button',{name:'更换截图',exact:true}).click()
+  await page.getByRole('button',{name:'画面检测',exact:true}).click()
+  await page.getByRole('checkbox',{name:'选择画面 1',exact:true}).check()
   const before=await target.boundingBox()
   const gate=responseGate();state.sceneHold=gate.hold
   try{
-   await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click();await gate.arrived
+   await page.getByRole('dialog').getByRole('button',{name:'导出时隐藏',exact:true}).click();await gate.arrived
+   await expect(page.getByRole('dialog').getByRole('status')).toContainText('已保存');await page.keyboard.press('Escape')
    await expect(root.getByRole('status')).toContainText('正在读取图文分段');await expect(page.locator('.video-section')).toHaveCount(40)
    gate.release();await expect(root).toHaveAttribute('aria-busy','false')
    await expect.poll(async()=>Math.abs((await target.boundingBox())!.y-before!.y)).toBeLessThanOrEqual(2)
-   await page.getByRole('button',{name:'完成编辑',exact:true}).click();await target.scrollIntoViewIfNeeded()
+   await target.scrollIntoViewIfNeeded()
    const position=await root.evaluate(element=>element.scrollTop)
    await page.getByRole('button',{name:'逐句明细',exact:true}).click();await page.getByRole('button',{name:'图文阅读',exact:true}).click()
    await expect(root).toHaveJSProperty('scrollTop',position)
@@ -59,14 +60,11 @@ for(const width of [1440,390]){
   if(width===390){await expect(page.locator('.samples-panel h2')).toBeInViewport();await page.goBack();await expect(page.getByLabel('搜索姓名或备注')).toHaveValue('曾');await expect(page.locator('.person-row')).toHaveCount(1)}
   await assertReachable(page,width);await page.screenshot({path:info.outputPath('people.png')});expect(errors).toEqual([])
  })
- test(`time validation and paragraph enrollment preserve context at ${width}px`,async({page})=>{
+ test(`paragraph enrollment preserves context without section edit controls at ${width}px`,async({page})=>{
   await page.setViewportSize({width,height:844})
   const {state,errors}=await uxFixture(page)
   await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click();await expect(page.locator('.video-section').first()).toBeVisible()
-  await page.getByRole('button',{name:'编辑分段',exact:true}).click();await page.getByRole('button',{name:'更换截图',exact:true}).first().click()
-  const dialog=page.getByRole('dialog');await dialog.getByRole('spinbutton').fill('-1');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeDisabled()
-  await dialog.getByLabel('时间（时:分:秒）').fill('00:00:00.500');await expect(dialog.getByRole('spinbutton')).toHaveValue('0.5');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeEnabled();await dialog.getByRole('spinbutton').fill('2');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeDisabled();await dialog.getByRole('spinbutton').fill('0');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeEnabled();await dialog.getByRole('button',{name:'取消',exact:true}).click()
-  await page.getByRole('button',{name:'拆分此段',exact:true}).first().click();await dialog.getByRole('spinbutton').fill('0');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeDisabled();await dialog.getByRole('spinbutton').fill('2');await expect(dialog.getByRole('button',{name:'保存',exact:true})).toBeDisabled();await dialog.getByRole('button',{name:'取消',exact:true}).click()
+  await expect(page.getByRole('button',{name:'编辑分段',exact:true})).toHaveCount(0)
   await page.locator('.video-section').nth(4).getByRole('button',{name:'加入声纹库',exact:true}).click()
   await expect(page.getByRole('dialog').getByRole('checkbox',{name:'选择片段 5',exact:true})).toBeChecked()
   expect(state.imports).toHaveLength(0);expect(errors).toEqual([])

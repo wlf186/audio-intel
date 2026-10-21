@@ -16,10 +16,10 @@ async function fixture(page:Page,locale='zh-CN'){
   window.EventSource=MockEventSource as unknown as typeof EventSource
   ;(window as EventWindow).emitJobEvent=(name,data)=>{for(const source of MockEventSource.instances)source.dispatchEvent(new MessageEvent(name,{data:JSON.stringify(data)}))}
  },locale)
- const state={revision:1,conflict:false,patches:[] as Array<{revision:number;action:string;scene_id?:string;time?:number}>,sceneReads:0,sceneDelay:undefined as Promise<void>|undefined,frameTime:2,advanceSceneOnSave:false}
+ const state={revision:1,conflict:false,patches:[] as Array<{revision:number;action:string;scene_id?:string;time?:number;export_hidden_scene_ids?:string[]}>,sceneReads:0,sceneDelay:undefined as Promise<void>|undefined,frameTime:2,advanceSceneOnSave:false,hidden:[] as string[]}
  const scenes=()=>[{id:'scene_1',start:0,end:10,frame_time:state.frameTime,image:`frame-${state.revision}.jpg`,paragraphs:[{speaker:'s0',speaker_label:'讲者',start:0,end:8,text:'Presentation discussion.',segment_ids:[0]}]},{id:'scene_2',start:10,end:20,frame_time:12,image:'frame2.jpg',paragraphs:[]}]
  const summary={id:'recovery-video',kind:'asr',purpose:'video_transcription',state:'succeeded',stage:'completed',progress:1,display_name:'Recovery fixture.mp4',created_at:'2026-10-10T00:00:00Z',updated_at:'2026-10-10T00:00:00Z',compute_device:'cpu'}
- const result=()=>({text:'Presentation discussion.',duration:20,language:'Chinese',timestamp_precision:'segment',speakers:[{id:'s0',label:'讲者'}],segments:[{id:0,start:0,end:8,speaker:'s0',text:'Presentation discussion.'}],artifacts:[],video:{contract_version:1,revision:state.revision,duration:20,time_origin:0,detector:'fixture',scenes:scenes(),original_scenes:scenes()}})
+ const result=()=>({text:'Presentation discussion.',duration:20,language:'Chinese',timestamp_precision:'segment',speakers:[{id:'s0',label:'讲者'}],segments:[{id:0,start:0,end:8,speaker:'s0',text:'Presentation discussion.'}],artifacts:[],video:{contract_version:1,revision:state.revision,duration:20,time_origin:0,detector:'fixture',export_hidden_scene_ids:state.hidden,scenes:scenes(),original_scenes:scenes()}})
  await page.route('**/api/v1/auth/session',route=>route.fulfill({json:{required:true,authenticated:true}}))
  await page.route('**/api/v1/capabilities',async route=>{const body=await capabilitiesFor(page);body.events={...body.events,sse:true};await route.fulfill({json:body})})
  await page.route(url=>url.pathname==='/api/v1/jobs',route=>route.fulfill({json:{items:[summary,{...summary,id:'other-video',display_name:'Other fixture.mp4'}],count:2,total:2,limit:100,offset:0,has_more:false}}))
@@ -30,6 +30,7 @@ async function fixture(page:Page,locale='zh-CN'){
    state.patches.push(route.request().postDataJSON())
    if(state.conflict)return route.fulfill({status:409,json:{detail:'Sections changed'}})
    if(state.advanceSceneOnSave){state.revision++;const patch=state.patches.at(-1)!;if(patch.action==='frame')state.frameTime=patch.time!}
+   if(state.patches.at(-1)?.action==='set_export_visibility')state.hidden=state.patches.at(-1)!.export_hidden_scene_ids!
    return route.fulfill({json:result()})
   }
   state.sceneReads++;await state.sceneDelay;return route.fulfill({json:{revision:state.revision,scenes:scenes()}})
@@ -39,30 +40,30 @@ async function fixture(page:Page,locale='zh-CN'){
  return {state,summary,async open(){await page.goto('/#asr');await page.getByRole('tab',{name:locale==='zh-CN'?'任务与结果':'Tasks & results',exact:true}).click();await expect(page.locator('.video-section')).toHaveCount(2)}}
 }
 
-for(const width of [1440,390])test(`frame save waits for refreshed scenes before restore at ${width}px`,async({page},info)=>{
+for(const width of [1440,390])test(`visibility save waits for refreshed scenes before reopening at ${width}px`,async({page},info)=>{
  const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  await page.setViewportSize({width,height:960})
  const f=await fixture(page);await f.open();f.state.advanceSceneOnSave=true
- await page.getByRole('button',{name:'编辑分段',exact:true}).click()
- await page.getByRole('button',{name:'更换截图',exact:true}).first().click()
- await page.getByRole('dialog').getByRole('spinbutton').fill('4')
+ await page.getByRole('button',{name:'画面检测',exact:true}).click()
+ await page.getByRole('checkbox',{name:'选择画面 1',exact:true}).check()
  const held=Promise.withResolvers<void>();f.state.sceneDelay=held.promise
  try{
-  await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click()
-  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await page.getByRole('dialog').getByRole('button',{name:'导出时隐藏',exact:true}).click()
+  await expect(page.getByRole('dialog').getByRole('status')).toContainText('已保存');await page.keyboard.press('Escape')
   await expect.poll(()=>f.state.sceneReads).toBeGreaterThanOrEqual(2)
-  const restore=page.getByRole('button',{name:'恢复自动分段',exact:true})
+  const restore=page.getByRole('button',{name:'画面检测',exact:true})
   await expect(restore).toBeDisabled()
   await expect(page.locator('.video-transcript [role=status]')).toContainText('正在读取图文分段')
   held.resolve()
-  await expect(page.locator('.video-section').first().getByRole('img',{name:'00:00:04 的视频画面',exact:true})).toBeVisible()
+  await expect(page.locator('.video-section').first().getByRole('img',{name:'00:00:02 的视频画面',exact:true})).toBeVisible()
   await restore.click()
-  const dialog=page.getByRole('dialog',{name:'恢复自动分段',exact:true})
+  const dialog=page.getByRole('dialog',{name:'画面检测',exact:true})
   await expect(dialog).toBeVisible()
-  await dialog.getByRole('button',{name:'保存',exact:true}).click()
+  await dialog.getByRole('button',{name:'全部恢复',exact:true}).click()
+  await expect(dialog.locator('.scene-hidden-badge')).toHaveCount(0);await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
   await expect(page.locator('.video-section')).toHaveCount(2)
-  expect(f.state.patches).toEqual([{revision:1,action:'frame',scene_id:'scene_1',time:4},{revision:2,action:'restore'}])
+  expect(f.state.patches).toEqual([{revision:1,action:'set_export_visibility',export_hidden_scene_ids:['scene_1']},{revision:2,action:'set_export_visibility',export_hidden_scene_ids:[]}])
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
   await page.screenshot({path:info.outputPath('restored-after-refresh.png')})
   expect(errors).toEqual([])
@@ -76,30 +77,32 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
   await page.setViewportSize({width,height:960})
   const f=await fixture(page,locale);await f.open()
   expect(await page.locator('.video-section .video-scene-actions').count()).toBe(0)
-  await page.getByRole('button',{name:zh?'编辑分段':'Edit sections',exact:true}).click()
-  await page.getByRole('button',{name:zh?'更换截图':'Change image',exact:true}).first().click()
-  const dialog=page.getByRole('dialog');await dialog.getByRole('spinbutton').fill('4')
+  await expect(page.getByRole('button',{name:zh?'编辑分段':'Edit sections',exact:true})).toHaveCount(0)
+  await page.getByRole('button',{name:zh?'画面检测':'Picture detection',exact:true}).click()
+  const dialog=page.getByRole('dialog')
+  const input=dialog.getByRole('spinbutton').first()
+  await input.fill('4')
+  await dialog.getByRole('checkbox').first().check()
   f.state.revision=2;f.summary.updated_at='2026-10-10T00:01:00Z'
   await page.evaluate(job=>(window as EventWindow).emitJobEvent('update',{jobs:[job],removed_job_ids:[]}),f.summary)
-  await expect(dialog.getByRole('button',{name:zh?'保存':'Save',exact:true})).toBeDisabled()
-  await expect(dialog.getByRole('spinbutton')).toHaveValue('4')
-  await expect(dialog.getByRole('alert')).toContainText(zh?'本次修改尚未保存':'have not been saved')
+  await expect(dialog.getByRole('button',{name:zh?'导出时隐藏':'Hide in exports',exact:true})).toBeDisabled()
+  await expect(input).toHaveValue('4')
+  await expect(dialog.getByRole('alert')).toContainText(zh?'关闭并重新打开':'Close and reopen')
   expect(f.state.patches).toHaveLength(0)
-  const discard=()=>dialog.getByRole('button',{name:zh?'放弃本次编辑并重新加载':'Discard this edit and reload',exact:true})
-  await discard().click();await expect(page.locator('.video-section')).toHaveCount(2)
-  const actions=[['frame',zh?'更换截图':'Change image'],['boundary',zh?'调整结束时间':'Adjust end time'],['split',zh?'拆分此段':'Split section'],['merge_next',zh?'与下一段合并':'Merge with next'],['restore',zh?'恢复自动分段':'Restore automatic sections']]
+  await page.keyboard.press('Escape')
+  await page.getByRole('button',{name:zh?'画面检测':'Picture detection',exact:true}).click()
+  await dialog.getByRole('checkbox').first().check()
   f.state.conflict=true
-  for(const [action,label] of actions){
-   await page.getByRole('button',{name:label,exact:true}).first().click()
-   const save=dialog.getByRole('button',{name:zh?'保存':'Save',exact:true})
-   await save.click();await expect(save).toBeDisabled()
-   expect(f.state.patches.at(-1)).toMatchObject({revision:2,action})
-   await discard().click();await expect(page.locator('.video-section')).toHaveCount(2)
-  }
+  const hide=dialog.getByRole('button',{name:zh?'导出时隐藏':'Hide in exports',exact:true})
+  await hide.click();await expect(hide).toBeDisabled()
+  expect(f.state.patches.at(-1)).toMatchObject({revision:2,action:'set_export_visibility'})
+  await expect(dialog.getByRole('checkbox').first()).toBeChecked()
+  await page.keyboard.press('Escape')
   f.state.conflict=false
-  await page.getByRole('button',{name:zh?'更换截图':'Change image',exact:true}).first().click()
-  await dialog.getByRole('button',{name:zh?'保存':'Save',exact:true}).click();await expect(dialog).toHaveCount(0)
-  await page.getByRole('button',{name:zh?'完成编辑':'Finish editing',exact:true}).click()
+  await page.getByRole('button',{name:zh?'画面检测':'Picture detection',exact:true}).click()
+  await dialog.getByRole('checkbox').first().check();await hide.click()
+  await expect(dialog.locator('.scene-hidden-badge')).toHaveCount(1)
+  await page.keyboard.press('Escape')
   await expect(page.locator('.video-section .video-scene-actions')).toHaveCount(0)
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
   expect(await page.locator('.video-transcript button:visible').evaluateAll(items=>items.filter(item=>item.getBoundingClientRect().height<44).length)).toBe(0)

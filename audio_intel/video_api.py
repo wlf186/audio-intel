@@ -12,7 +12,7 @@ import os
 import uuid
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
 from fastapi import Depends, Header, HTTPException, Query, Request, Response
@@ -111,7 +111,8 @@ from .transcript_export import TranscriptExportRequest
 
 class SceneEdit(StrictModel):
     revision: int = Field(ge=1, description='开始编辑时读取的修订号；不能用后台新修订替换 / Revision read when editing began; never substitute a newer background revision')
-    action: Literal['merge_next', 'split', 'boundary', 'frame', 'restore', 'apply_detection']
+    action: Literal['merge_next', 'split', 'boundary', 'frame', 'restore', 'apply_detection', 'set_export_visibility']
+    export_hidden_scene_ids: list[Annotated[str, Field(min_length=1, max_length=128)]] | None = Field(None, max_length=2000, description='完整的导出隐藏画面 ID 列表；空列表恢复全部 / Complete export-hidden picture IDs; empty restores all')
     preview_id: str | None = Field(None, pattern=r'^[a-f0-9]{32}$')
     scene_id: str | None = None
     time: float | None = Field(None, ge=0, description='视频起点后的秒数；拆分/边界严格位于区间内，截图允许左端点 / Seconds from video origin; split/boundary are strictly inside the interval, frame may use its left endpoint')
@@ -121,6 +122,13 @@ class SceneEdit(StrictModel):
     def detection_preview(self):
         if self.action == 'apply_detection' and not self.preview_id:
             raise ValueError('apply_detection requires preview_id')
+        if self.action == 'set_export_visibility':
+            if self.export_hidden_scene_ids is None:
+                raise ValueError('set_export_visibility requires export_hidden_scene_ids')
+            if len(set(self.export_hidden_scene_ids)) != len(self.export_hidden_scene_ids):
+                raise ValueError('Duplicate picture IDs')
+        elif self.export_hidden_scene_ids is not None:
+            raise ValueError('export_hidden_scene_ids requires set_export_visibility')
         return self
 
 
@@ -397,7 +405,7 @@ def register(app: Any, api: Any) -> None:
 
     @app.post('/api/v1/jobs/{job_id}/transcript-export', tags=tags, response_class=Response,
               operation_id='exportTranscript', summary='按需脱敏导出转写 / Export a transcript with optional redaction',
-              description='默认缩写姓名、遮盖备注；最多 100 对字面关键词替换（每项最多 8000 字）。关闭 redact 停止全部处理。只处理导出副本；音频和画面保持原样。\n\n**English:** Names are abbreviated and notes masked by default. Up to 100 literal replacements, 8000 characters per value. Disabling redact disables all transformations. Original results, audio and images remain unchanged.',
+              description='默认缩写姓名、遮盖备注；最多 100 对字面关键词替换（每项最多 8000 字）。关闭 redact 停止文字脱敏；任务中的导出隐藏画面标记仍生效，PDF 显示占位框。只处理导出副本；原音视频和图片文件保持原样。\n\n**English:** Names are abbreviated and notes masked by default. Up to 100 literal replacements, 8000 characters per value. Disabling redact disables text transformations; saved export-hidden pictures still use PDF placeholders. Original media remains unchanged.',
               responses={**errors, **api.NOT_FOUND_RESPONSE, **api.VALIDATION_RESPONSE,
                          200: {'description': '所选格式的下载 / Download in the selected format', 'content': {mime: {'schema': api.BINARY_SCHEMA} for mime in ('application/pdf', 'application/json', 'text/plain', 'application/x-subrip', 'text/vtt')}}})
     def transcript_export(job_id: str, body: TranscriptExportRequest, _: None = auth) -> Response:
@@ -460,11 +468,31 @@ def register(app: Any, api: Any) -> None:
             return Response(buffer.getvalue(), media_type='image/jpeg', headers={'Cache-Control': 'no-store'})
 
     @app.patch('/api/v1/jobs/{job_id}/video-scenes', tags=tags, response_model=JobResultResponse, responses=errors,
-               description='携带 revision 修订号进行合并、拆分、边界/截图调整、恢复或应用检测预览。冲突返回 409，请重新读取。\n\n**English:** Submit revision with merge_next, split, boundary, frame, restore or apply_detection (with preview_id). Stale revision returns 409; reload before retrying.',
+               description='携带 revision 修订号进行合并、拆分、边界/截图调整、恢复、应用检测预览或设置导出隐藏画面。冲突返回 409，请重新读取。\n\n**English:** Submit revision with merge_next, split, boundary, frame, restore apply_detection (with preview_id) or set_export_visibility (with export_hidden_scene_ids). Stale revision returns 409; reload before retrying.',
               summary='修正视频分段 / Edit presentation sections')
     def edit(job_id: str, body: SceneEdit, _: None = auth) -> dict:
         if body.action == 'apply_detection':
             return previews.apply(job_id, body.preview_id, body.revision)
+        if body.action == 'set_export_visibility':
+            with speaker_update_lock(job_id), task_reader(job_id):
+                job = completed(job_id, True)
+                result = copy.deepcopy(job['result'])
+                video = result['video']
+                if video['revision'] != body.revision:
+                    raise HTTPException(409, 'Sections changed; reload before editing')
+                hidden = set(body.export_hidden_scene_ids or [])
+                if not hidden <= {scene['id'] for scene in video['scenes']}:
+                    raise HTTPException(422, 'Picture IDs must belong to the current sections')
+                ordered = [scene['id'] for scene in video['scenes'] if scene['id'] in hidden]
+                if ordered == (video.get('export_hidden_scene_ids') or []):
+                    return result
+                video.update(export_hidden_scene_ids=ordered, revision=video['revision'] + 1)
+                with db.connect() as connection:
+                    changed = connection.execute("UPDATE jobs SET result_json=?,updated_at=? WHERE id=? AND state='succeeded' AND updated_at=?",
+                        (json.dumps(result, ensure_ascii=False), db.utcnow(), job_id, job['updated_at']))
+                    if changed.rowcount != 1:
+                        raise HTTPException(409, 'Task changed; reload before editing')
+                return result
         from .video_frames import picture_at, save_picture
         with picture_slot(), speaker_update_lock(job_id), task_reader(job_id):
             job = completed(job_id, True)
@@ -513,6 +541,8 @@ def register(app: Any, api: Any) -> None:
                         moment = body.time if body.action == 'frame' and i == index else (scene['start'] + scene['end']) / 2
                         picture = picture_at(Path(job['request']['input_path']), moment, video.get('roi'), video.get('time_origin', 0))
                         scene.update(image=save_picture(picture, folder), frame_time=moment)
+                from .video_visibility import retained_hidden
+                video['export_hidden_scene_ids'] = retained_hidden(job['result']['video'], values)
                 video['revision'] += 1
                 with db.connect() as connection:
                     changed = connection.execute("UPDATE jobs SET result_json=?,updated_at=? WHERE id=? AND state='succeeded' AND updated_at=?",

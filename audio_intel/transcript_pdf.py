@@ -30,7 +30,7 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Flowable
 
     if sum(len(segment.get('text', '')) for segment in result.get('segments', [])) > _max_text_chars:
         raise ValueError('Transcript exceeds PDF text budget; split the source')
@@ -47,26 +47,42 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     heading = ParagraphStyle('heading', parent=body, fontSize=17, leading=24, spaceAfter=18)
     label = ParagraphStyle('label', parent=body, fontSize=9, leading=14,
                            textColor=colors.HexColor('#4c5967'), spaceAfter=4, keepWithNext=True)
+    class HiddenPicture(Flowable):
+        def __init__(self):
+            super().__init__()
+            self.width, self.height = doc.width, 120
+
+        def draw(self):
+            self.canv.setFillColor(colors.HexColor('#f0f2f4'))
+            self.canv.rect(0, 0, self.width, self.height, stroke=0, fill=1)
+            self.canv.setFillColor(colors.HexColor('#4c5967'))
+            self.canv.setFont('Transcript', 12)
+            self.canv.drawCentredString(self.width / 2, self.height / 2, '画面已隐藏 / Picture hidden')
+
+    hidden = set((result.get('video') or {}).get('export_hidden_scene_ids') or [])
     story: list[Any] = [Paragraph(html.escape(title), heading)]
     sections = scene_transcripts(result) if result.get('video') else [{'paragraphs': paragraphs(result.get('segments', []))}]
     for index, section in enumerate(sections):
         if result.get('video'):
             story.append(Spacer(1, 14))
             story.append(Paragraph(f"画面 {index + 1} · {timecode(section['start'])} – {timecode(section['end'])}", label))
-            name = section['image']
-            if Path(name).name != name:
-                raise ValueError('Invalid frame name')
-            path = (output_dir / 'frames' / name).resolve()
-            if not path.is_relative_to((output_dir / 'frames').resolve()):
-                raise ValueError('Invalid frame path')
-            image_bytes += path.stat().st_size
-            if image_bytes > _max_image_bytes:
-                raise ValueError('Images exceed PDF resource budget; split the source')
-            picture = Image(str(path))
-            scale = min(doc.width / picture.imageWidth, 260 / picture.imageHeight)
-            picture.drawWidth = picture.imageWidth * scale
-            picture.drawHeight = picture.imageHeight * scale
-            story.extend([picture, Spacer(1, 12)])
+            if section['id'] in hidden:
+                story.extend([HiddenPicture(), Spacer(1, 12)])
+            else:
+                name = section['image']
+                if Path(name).name != name:
+                    raise ValueError('Invalid frame name')
+                path = (output_dir / 'frames' / name).resolve()
+                if not path.is_relative_to((output_dir / 'frames').resolve()):
+                    raise ValueError('Invalid frame path')
+                image_bytes += path.stat().st_size
+                if image_bytes > _max_image_bytes:
+                    raise ValueError('Images exceed PDF resource budget; split the source')
+                picture = Image(str(path))
+                scale = min(doc.width / picture.imageWidth, 260 / picture.imageHeight)
+                picture.drawWidth = picture.imageWidth * scale
+                picture.drawHeight = picture.imageHeight * scale
+                story.extend([picture, Spacer(1, 12)])
         for paragraph in section['paragraphs']:
             identity = html.escape(str(paragraph.get('speaker_label') or paragraph['speaker']))
             story.append(Paragraph(f"{identity}　{timecode(paragraph['start'])} – {timecode(paragraph['end'])}", label))

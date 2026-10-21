@@ -177,7 +177,6 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const [discardOpen,setDiscardOpen]=useState(false)
   const [videoReading,setVideoReading]=useState(()=>readAsrSession().videoReading)
   useEffect(()=>{saveAsrSession({view,videoReading})},[view,videoReading])
-  const [videoEditing,setVideoEditing]=useState(false)
   const [sceneReveal,setSceneReveal]=useState<{sceneId?:string;time:number;token:number}>()
   const [segmentReveal,setSegmentReveal]=useState<{time:number;token:number}>()
   const navigationSequence=useRef(0)
@@ -186,7 +185,6 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   useEffect(()=>{setSceneReveal(undefined);setSegmentReveal(undefined)},[selectedJobId])
   const [videoEnrollment,setVideoEnrollment]=useState<{jobId:string;speakerId:string;segmentIds:number[]}>()
   useEffect(()=>setVideoEnrollment(undefined),[selectedJobId])
-  useEffect(()=>setVideoEditing(false),[selectedJobId])
   const isVideoTab=view==='video'
   const file=isVideoTab?videoFile:audioFile
   const setFile=(next:File|undefined)=>{if(isVideoTab){setVideoFile(next);if(!resume)setVideoRoi(undefined)}else setAudioFile(next)}
@@ -928,7 +926,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               </p>
             ) : null}
             {result.video?<div className="video-view-tabs" role="group" aria-label={t('video.readingMode')}><button aria-pressed={videoReading} onClick={()=>{checkpointWorkspace();setSceneReveal(undefined);setSegmentReveal(undefined);setVideoReading(true)}}>{t('video.reading')}</button><button aria-pressed={!videoReading} onClick={()=>{checkpointWorkspace();setSceneReveal(undefined);setSegmentReveal(undefined);setVideoReading(false)}}>{t('video.details')}</button><div className="video-toolbar" ref={setVideoToolbar}/></div>:null}
-            {result.video&&videoReading?<VideoTranscript detectionCapability={videoCapability?.scene_detection} key={selected.id} job={selected} resource={videoScenes} reveal={sceneReveal} currentTime={currentTime} toolbar={videoToolbar} editing={videoEditing} onEditingChange={setVideoEditing} onUpdated={(id,next)=>{onJobResultUpdated(id,next);if(next.video?.applied_preview_id&&next.video.applied_preview_id!==result.video?.applied_preview_id)setSceneReveal({time:currentTime,token:++navigationSequence.current})}} onSeek={seconds=>{stopAt.current=undefined;seekWord(seconds)}} onEnroll={(speakerId,segmentIds)=>{audio.current?.pause();setVideoEnrollment({jobId:selected.id,speakerId,segmentIds})}} onRename={id=>{const segment=result.segments?.find(item=>item.speaker===id);if(segment)openRename(segment)}}/>:<>
+            {result.video&&videoReading?<VideoTranscript detectionCapability={videoCapability?.scene_detection} key={selected.id} job={selected} resource={videoScenes} reveal={sceneReveal} currentTime={currentTime} toolbar={videoToolbar} onUpdated={(id,next)=>{onJobResultUpdated(id,next);if(next.video?.applied_preview_id&&next.video.applied_preview_id!==result.video?.applied_preview_id)setSceneReveal({time:currentTime,token:++navigationSequence.current})}} onSeek={seconds=>{stopAt.current=undefined;seekWord(seconds)}} onEnroll={(speakerId,segmentIds)=>{audio.current?.pause();setVideoEnrollment({jobId:selected.id,speakerId,segmentIds})}} onRename={id=>{const segment=result.segments?.find(item=>item.speaker===id);if(segment)openRename(segment)}}/>:<>
             {result.video&&videoToolbar?createPortal(segmentTools,videoToolbar):segmentTools}
             {selectedSegments.size ? (
               <div className="segment-selection" aria-label={t('asr.results.selectionActions')}>

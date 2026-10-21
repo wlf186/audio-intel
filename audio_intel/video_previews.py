@@ -293,6 +293,9 @@ class PreviewManager:
                     if not target.exists():
                         created.append(target)
                         shutil.copyfile(item['folder'] / 'frames' / scene['image'], target)
+                from .video_visibility import retained_hidden
+                hidden = retained_hidden(video, item['scenes']) if video.get('scene_detection') == item['settings'] else []
+                video.update(export_hidden_scene_ids=hidden)
                 video.update(scenes=copy.deepcopy(item['scenes']), automatic_scenes=copy.deepcopy(item['scenes']),
                              scene_detection=item['settings'], detector=VERSION, revision=revision + 1,
                              applied_preview_id=item['id'])

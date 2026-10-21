@@ -667,6 +667,7 @@ class VideoAnalysisResponse(PublicModel):
     detector: str
     scenes: list[VideoSceneResponse]
     original_scenes: list[VideoSceneResponse]
+    export_hidden_scene_ids: list[str] = Field(default_factory=list, description='仅导出隐藏的当前画面 ID；缺失表示全部显示 / Current picture IDs hidden only in exports; absent means all visible')
     automatic_scenes: list[VideoSceneResponse] | None = Field(None, description='最近一次应用的自动分段 / Most recently applied automatic sections')
     scene_detection: SceneDetectionSettings | None = Field(None, description='当前自动检测参数；历史缺失表示未记录 / Applied detection settings; absent in legacy results')
 

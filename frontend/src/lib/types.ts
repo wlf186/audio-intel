@@ -1,6 +1,6 @@
 export type VideoParagraph={speaker:string;speaker_label:string;start:number;end:number;text:string;segment_ids:number[]}
 export type VideoScene={id:string;start:number;end:number;frame_time:number;image:string;paragraphs?:VideoParagraph[]}
-export type VideoResult={contract_version:1;revision:number;duration:number;scenes:VideoScene[];original_scenes:VideoScene[];automatic_scenes?:VideoScene[];scene_detection?:import('./sceneDetection').SceneDetectionSettings|null;applied_preview_id?:string}
+export type VideoResult={contract_version:1;revision:number;duration:number;scenes:VideoScene[];original_scenes:VideoScene[];export_hidden_scene_ids?:string[];automatic_scenes?:VideoScene[];scene_detection?:import('./sceneDetection').SceneDetectionSettings|null;applied_preview_id?:string}
 import type {VideoCapability} from './videoUpload'
 import type {ReferenceRangeCapability} from './referenceRanges'
 export type JobState='queued'|'running'|'succeeded'|'failed'|'cancelled'

@@ -128,6 +128,7 @@ test('scene edits refresh the shared timeline and reader revision @timing',async
   if(route.request().method()==='PATCH'){
    const request=route.request().postDataJSON()
    expect(request.revision).toBe(1)
+   state.job.result!.video!.export_hidden_scene_ids=request.export_hidden_scene_ids
    state.job.result!.video!.revision=2
    state.job.result!.video!.scenes[0].image='revised-frame.jpg'
    return route.fulfill({json:state.job.result})
@@ -138,11 +139,13 @@ test('scene edits refresh the shared timeline and reader revision @timing',async
  })
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  await expect(page.locator('.video-section')).toHaveCount(20)
- await page.getByRole('button',{name:'编辑分段',exact:true}).click()
- await page.getByRole('button',{name:'更换截图',exact:true}).first().click()
- await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click();await gate.arrived
+ await page.getByRole('button',{name:'画面检测',exact:true}).click()
+ await page.getByRole('checkbox',{name:'选择画面 1',exact:true}).check()
+ await page.getByRole('dialog').getByRole('button',{name:'导出时隐藏',exact:true}).click()
+ await expect(page.getByRole('dialog').getByRole('status')).toContainText('已保存')
+ await page.keyboard.press('Escape');await gate.arrived
  await expect(page.locator('.video-transcript')).toHaveAttribute('aria-busy','true')
- await expect(page.getByRole('button',{name:'更换截图',exact:true}).first()).toBeDisabled()
+ await expect(page.getByRole('button',{name:'画面检测',exact:true})).toBeDisabled()
  gate.release()
  await expect(page.locator('.video-section .video-frame img').first()).toHaveAttribute('src',/revised-frame.jpg/)
  await expect(page.locator('.timeline-tiles img').first()).toHaveAttribute('src',/revised-frame.jpg/)
@@ -160,15 +163,17 @@ test('failed scene refresh retains the reader and retries without stale editing 
  })
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  await expect(page.locator('.video-section')).toHaveCount(20)
- await page.getByRole('button',{name:'编辑分段',exact:true}).click()
- await page.getByRole('button',{name:'更换截图',exact:true}).first().click()
- await page.getByRole('dialog').getByRole('button',{name:'保存',exact:true}).click()
+ await page.getByRole('button',{name:'画面检测',exact:true}).click()
+ await page.getByRole('checkbox',{name:'选择画面 1',exact:true}).check()
+ await page.getByRole('dialog').getByRole('button',{name:'导出时隐藏',exact:true}).click()
+ await expect(page.getByRole('dialog').getByRole('status')).toContainText('已保存')
+ await page.keyboard.press('Escape')
  await expect(page.locator('.video-transcript [role=alert]')).toContainText('Scenes temporarily unavailable')
  await expect(page.locator('.video-section')).toHaveCount(20)
- await expect(page.getByRole('button',{name:'更换截图',exact:true}).first()).toBeDisabled()
+ await expect(page.getByRole('button',{name:'画面检测',exact:true})).toBeDisabled()
  await page.locator('.video-transcript [role=alert]').getByRole('button').click()
  await expect(page.locator('.video-transcript [role=alert]')).toHaveCount(0)
- await expect(page.getByRole('button',{name:'更换截图',exact:true}).first()).toBeEnabled()
+ await expect(page.getByRole('button',{name:'画面检测',exact:true})).toBeEnabled()
  expect(reads).toBe(3)
  expect(errors).toEqual([])
 })

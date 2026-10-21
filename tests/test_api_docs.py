@@ -534,7 +534,7 @@ def test_video_binary_contracts_and_examples(tmp_path, monkeypatch):
         for example in examples.values():
             model.model_validate(example['value'])
         if model is SceneEdit:
-            assert set(examples) == {'merge_next', 'split', 'boundary', 'frame', 'restore', 'apply_detection'}
+            assert set(examples) == {'merge_next', 'split', 'boundary', 'frame', 'restore', 'apply_detection', 'set_export_visibility'}
     for name, model in [('VideoUploadResponse', VideoUploadResponse), ('VideoScenesResponse', VideoScenesResponse)]:
         model.model_validate(schema['components']['schemas'][name]['example'])
     JobResultResponse.model_validate(RESULT_EXAMPLES['asr_video']['value'])

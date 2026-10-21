@@ -857,3 +857,26 @@ Preview settings example: `{"revision":1,"settings":{"min_change_percent":3,"min
 Result `video.scene_detection` records applied parameters; `video.automatic_scenes` records the latest applied automatic sections. `scenes` remains the editable current set and `original_scenes` retains the initial snapshot. `restore` restores `automatic_scenes`, falling back to the initial snapshot for legacy results. Missing legacy parameters do not imply the new defaults were used. Applying preserves the original ASR segments, words and speaker data. Preview generation never changes the job result. CLI examples: `scripts/preview_video_scenes.py JOB_ID` previews; explicit `--apply` saves. `scripts/submit_video.py` also accepts `--scene-min-change-percent` and `--scene-min-stable-seconds`.
 
 结果新增实际参数和最近一次自动分段；首次快照保留。恢复操作优先使用最近一次自动分段，旧结果沿用首次快照。历史缺失参数不表示使用过新默认值。应用不改原始转写文字、词与说话人；预览不改任务结果。CLI 默认只预览，显式 `--apply` 才更新。
+
+
+### 视频导出画面标记 / Video export visibility
+
+`PATCH /api/v1/jobs/{job_id}/video-scenes` 新增 `action="set_export_visibility"`，同时提交 `revision` 与完整 `export_hidden_scene_ids` 数组（最多 2000 个当前画面 ID，不能重复；空列表恢复全部）。任务视频结果返回同名可选字段，历史缺失视为全部显示。未知 ID 返回 422，修订冲突返回 409；真正改变标记会递增视频修订号，不解码或改写图片。
+
+PDF（直接下载与 POST 导出）遵循标记，使用占位框并保留文字；JSON 保留标记，文字导出不受影响。该行为独立于 `redact`。应用变化后的检测参数会清空标记，同参数仅继承内容与时间均未变的画面。手工分段 API 也只继承未变画面的标记。
+
+English: PATCH video-scenes with `action="set_export_visibility"`, `revision`, and the complete `export_hidden_scene_ids` list (at most 2000 unique current picture IDs; empty restores all). The optional result field defaults to no hidden pictures for legacy tasks. Unknown IDs are 422 and stale revisions 409; actual changes increment the video revision without decoding or rewriting images. Both PDF routes honor markers independently of text redaction and preserve text; JSON includes markers. Changed detection parameters reset markers; unchanged detection and manual API edits retain only identical pictures and time ranges.
+
+```python
+import requests
+base_url = "http://127.0.0.1:20810"
+api_key = "YOUR_API_KEY"
+job_id = "YOUR_JOB_ID"
+headers = {"Authorization": f"Bearer {api_key}"}
+job = requests.get(f"{base_url}/api/v1/jobs/{job_id}", headers=headers).json()
+video = job["result"]["video"]
+response = requests.patch(f"{base_url}/api/v1/jobs/{job_id}/video-scenes", headers=headers,
+    json={"revision": video["revision"], "action": "set_export_visibility",
+          "export_hidden_scene_ids": [video["scenes"][0]["id"]]})
+response.raise_for_status()
+```

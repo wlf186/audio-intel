@@ -302,3 +302,8 @@ Video presentation-v2 separates low-resolution feature sampling, temporal candid
 API-managed disposable previews use one bounded CPU subprocess, immutable progress snapshots and complete process-tree cleanup. Preview receipts/images are temporary and expire on restart; successful feature caches survive. Reader leases protect active source/cache access from deletion. Applying a ready preview uses the existing speaker/result lock plus revision and updated_at checks, installs images before committing the new video section metadata, and preserves transcript and first-section snapshots. The ASR/TTS queues, job summary/SSE contract and SQLite schema are unchanged.
 
 预览由 API 管理独立 CPU 子进程，使用不可变进度文件和完整进程树回收；重启丢弃未应用预览、保留完整缓存。读取租约阻止处理中删除任务；应用使用结果锁及修订检查，先准备图片再提交分段元数据。队列、任务摘要/SSE 和数据库结构保持兼容。
+
+
+Video export visibility is optional task-result metadata (`video.export_hidden_scene_ids`) with no schema migration or historical backfill. Revision-checked writes share the job result lock and deletion lease. Automatic/original scene snapshots and media files remain intact. Applying changed detection settings clears markers; otherwise markers are matched by interval, frame time and image, never by reused scene ID alone. PDF renders placeholders without opening hidden image files, and its result-based cache identity includes the markers. JSON exports carry the metadata; reading and timeline continue to show source pictures.
+
+中文：视频导出隐藏状态仅记录任务结果中的画面 ID，不迁移数据库、不回填历史任务。修订锁和读取租约保护写入。参数变化后应用清空标记，否则通过时间范围、截图时间与图片匹配继承，不能仅凭重用的编号继承。PDF 不读取隐藏图片，缓存包含标记；JSON 携带标记，阅读和时间轴继续显示原图。

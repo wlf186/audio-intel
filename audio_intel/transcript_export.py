@@ -165,7 +165,7 @@ def export_result(result: dict[str, Any], policy: TranscriptExportRequest) -> di
     exported.update(text=replacer.text(str(result.get("text", ""))), speakers=speakers, segments=segments)
     if result.get("video"):
         video = result["video"]
-        exported["video"] = {key: deepcopy(video[key]) for key in ("revision", "duration", "time_origin", "roi") if key in video}
+        exported["video"] = {key: deepcopy(video[key]) for key in ("revision", "duration", "time_origin", "roi", "export_hidden_scene_ids") if key in video}
         for key in ("scenes", "original_scenes"):
             if key in video:
                 exported["video"][key] = [{field: deepcopy(scene[field]) for field in ("id", "start", "end", "frame_time", "image") if field in scene} for scene in video[key]]

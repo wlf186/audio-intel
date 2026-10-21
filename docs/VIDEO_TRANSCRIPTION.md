@@ -30,9 +30,9 @@ Designed for slides and screen recordings. New tasks use presentation-v2: sample
 
 Media PTS provides a shared audio/video origin; delayed audio is padded with silence. Speech crossing a page boundary is split at aligned words only when alignment covers the original text; otherwise the whole sentence goes to the page with greatest time overlap. No text is dropped. Detection is heuristic, without OCR or semantic understanding. Very short pages, similar templates, complex animation or camera movement may need correction. Crop to the slide region when a speaker inset interferes.
 
-结果支持与下一段合并、拆分、调整结束时间、更换截图和恢复自动分段。修订号避免覆盖其他客户端的修改；遇到冲突，关闭编辑器并重新加载分段。原始逐句文本与说话人快照保持可查看。
+前端通过“画面检测”管理检测结果和导出隐藏画面。与下一段合并、拆分、调整结束时间、更换截图和恢复自动分段仅保留 API 支持。修订号避免覆盖其他客户端的修改；遇到冲突，关闭编辑器并重新加载分段。原始逐句文本与说话人快照保持可查看。
 
-Results support merge-next, split, boundary adjustment, replacement images and restoration of automatic sections. Revision checks prevent overwriting another client's edits; on conflict, close the editor and reload sections. Original detailed text and speaker snapshots remain accessible.
+The frontend no longer exposes manual section editing. Backend APIs retain merge-next, split, boundary adjustment, replacement images and restoration of automatic sections, with revision checks preventing concurrent overwrites. Original detailed text and speaker snapshots remain accessible.
 
 ## 音频增强 / Audio enhancement
 
@@ -103,9 +103,9 @@ On Windows use `.runtime\api\Scripts\python.exe`. Optional `--device` overrides 
 
 Resume first verifies local bytes against the server manifest. Verification percentages use confirmed bytes as their total; upload percentages use the whole file and resume at the confirmed offset. Both stages can be paused and neither represents inference progress.
 
-图文阅读默认隐藏分段修改按钮，点击“编辑分段”后可修改，点击“完成编辑”回到阅读。弹窗固定打开时的 revision 与时间范围；后台修订变化或保存返回 409 时保留输入、禁用保存。点击“放弃本次编辑并重新加载”明确丢弃未保存输入，读取最新分段后再编辑，不自动覆盖其他客户端。
+图文阅读不再提供“编辑分段”及手工修改按钮。使用“画面检测”查看当前结果、预览新检测并管理导出画面。手工分段编辑 API 继续支持修订检查；历史人工编辑不会自动消失。
 
-Reading mode hides section edits. Choose Edit sections to modify them, then Finish editing to return. Dialogs retain their opening revision and time range. Background revision changes or HTTP 409 preserve the draft and disable saving; Discard this edit and reload explicitly drops the draft before loading current sections. No automatic replay overwrites another client's changes.
+The reading UI no longer exposes manual section editing. Picture detection shows current pictures, generates detection previews and manages export visibility. Manual section-editing APIs retain revision checks; existing manual edits remain intact.
 
 PDF 下载通过一次 POST 接收完整内容后保存。429 按 Retry-After 等待后手动重试，413 表示超出导出上限，应拆分源文件重新转写；音频还可下载明细与字幕。401 重新登录后再导出，断网直接重试导出，无需重新转写。
 
@@ -117,9 +117,9 @@ With CLI `--pdf`, the journal retains the accepted `job_id` until the download i
 
 编辑模式 / Editing mode:
 
-![桌面视频分段编辑 / Desktop section editing](assets/video-transcription/edit-1440.png)
 
-![390px 视频分段编辑 / 390px section editing](assets/video-transcription/edit-390.png)
+
+
 
 ## 从视频加入声纹库 / Add video speech to the voiceprint library
 
@@ -149,11 +149,11 @@ English: Select voiceprint groups for audio/video; eligible people are fixed at 
 
 图文阅读和逐句明细分别记住当前任务的位置与已加载数量，刷新页面也可继续阅读；逐句搜索和说话人筛选一并恢复。编辑、合并、拆分后以分段 ID 和时间恢复附近位置。刷新期间保留旧内容并显示状态，修改按钮暂时禁用；失败时可重试。记录只在当前页签 sessionStorage 保存，退出登录或鉴权失效清除，详见[工作台指南](WORKSPACES.md)。
 
-更换截图、拆分和调整结束时间支持秒数与 `hh:mm:ss.sss`，两者同步；提供 ±0.1 秒及“使用播放位置”。截图时刻允许等于分段起点，必须小于终点；拆分与边界必须严格在对应范围内。非法输入即时提示并禁用保存，服务端继续校验范围与修订号。
+手工更换截图、拆分和调整结束时间现在仅通过 API 提供，时间参数使用秒数。截图时刻允许等于分段起点，必须小于终点；拆分与边界必须严格在对应范围内。服务端继续校验范围与修订号。
 
 桌面保留 PDF 快捷按钮和“明细与字幕”菜单；窄屏使用“导出转写”弹窗统一选择 PDF/TXT/SRT/VTT/JSON、脱敏开关和替换规则。菜单支持点击外部或 Escape 关闭，不改变阅读滚动。规则错误即时显示；仅在脱敏开启时阻止下载，关闭开关可继续导出原文。声纹入库分两步，显示已选数量、固定操作区，回到上一步保留勾选。
 
-English: Each task/view retains its reading anchor and loaded count across navigation/reload, including segment filters. Edited sections restore a nearby ID/time anchor. Refresh keeps old content visible, disables editing and provides retry on failure. Current-tab sessionStorage clears on logout/auth invalidation. Time fields accept synchronized seconds and hh:mm:ss.sss, with ±0.1 and current-playback controls. Invalid ranges disable Save; server validation remains authoritative. Narrow screens consolidate transcript formats/redaction/rules into one export dialog. Desktop menus dismiss on outside click/Escape. Invalid rules block downloads only when redaction is enabled. Enrollment preselects clicked-paragraph sentences, retains selections between its two steps and keeps footer actions reachable.
+English: Each task/view retains its reading anchor and loaded count across navigation/reload, including segment filters. Edited sections restore a nearby ID/time anchor. Refresh keeps old content visible, disables editing and provides retry on failure. Current-tab sessionStorage clears on logout/auth invalidation. Manual frame/section edits are API-only and accept seconds; server time-range and revision validation remains authoritative. Narrow screens consolidate transcript formats/redaction/rules into one export dialog. Desktop menus dismiss on outside click/Escape. Invalid rules block downloads only when redaction is enabled. Enrollment preselects clicked-paragraph sentences, retains selections between its two steps and keeps footer actions reachable.
 
 高级设置分别配置 `speech_enhancement_strength`（0–2，默认 1）与 `background_denoise_strength`（0–1，GTCRN 默认 0.5），视频提交 JSON 保存两项力度。Capabilities 公布实际范围／默认值；仅影响新提交任务，暂停上传保留原参数。Advanced strengths and reset share audio ASR preferences; paused uploads keep their saved snapshot.
 
@@ -181,9 +181,9 @@ Audio processing is a compact status button beside downloads; its popover shows 
 
 Open **Tasks & results → Illustrated reading → Picture detection**. Minimum picture change defaults to **3%** (0.5–50%); minimum new-picture duration defaults to **1 second** (0.5–5 seconds). Lower area thresholds detect more changes; longer durations ignore brief appearances. Capabilities owns the limits/defaults. The presentation-v2 detector samples about every 0.5 seconds, compares significant color changes against the current page, and confirms a consistent candidate only after the requested duration. Small subtitles/pointer changes cannot bypass these gates. Incremental builds are merged where possible; this remains a visual heuristic without OCR or semantic understanding.
 
-先点击「预览检测」，查看当前／候选画面数量、时间和缩略图，再点击「应用预览」。预览不改变结果，也不重跑音频转写；存在人工分段或截图修改时须勾选替换确认。其他客户端修改分段后必须重新预览。应用保留原转写文字、说话人和时间戳，更新画面及讨论归属。「恢复自动分段」恢复最近一次成功应用的自动分段；首次自动分段快照仍保留。旧结果不自动重算，旧任务重试沿用原算法。
+打开「画面检测」即显示当前画面及导出隐藏标记，无需先检测。点击「预览检测」后比较当前／候选画面，再点击「应用预览」；应用后弹窗保持打开。预览不改变结果，也不重跑音频转写；存在人工分段或截图修改时须勾选替换确认。其他客户端修改分段后必须重新预览。应用保留原转写文字、说话人和时间戳，更新画面及讨论归属。API 的 restore 操作恢复最近一次成功应用的自动分段；首次自动分段快照仍保留。旧结果不自动重算，旧任务重试沿用原算法。
 
-Preview the count, times and images before applying. Preview leaves the result unchanged and does not rerun ASR. Replacing manual sections or images requires explicit confirmation. Concurrent edits require a new preview. Apply preserves transcript text, speaker identities and timestamps while updating picture boundaries and discussion grouping. Restore automatic sections restores the most recently applied detection; the first automatic snapshot remains available. Legacy results are not recomputed automatically and retries retain their original detector.
+Opening Picture detection shows current pictures immediately. Preview the candidate count, times and images before applying; applying keeps the dialog open for export visibility selection. Preview leaves the result unchanged and does not rerun ASR. Replacing manual sections or images requires explicit confirmation. Concurrent edits require a new preview. Apply preserves transcript text, speaker identities and timestamps while updating picture boundaries and discussion grouping. The backend restore action restores the most recently applied detection; the first automatic snapshot remains available. Legacy results are not recomputed automatically and retries retain their original detector.
 
 应用成功后，浏览器在独立的 `audio-intel:video-scene-detection:v1` localStorage 中保存这两项参数，刷新、关闭浏览器或退出登录后保留，用于该浏览器后续提交的视频；其他浏览器使用各自偏好。已有任务优先显示自己的实际设置。「恢复默认值」只重置待预览参数，重新预览并应用后才更新任务和偏好。未应用草稿关闭弹窗即丢弃。新建页不增加控件，暂停上传继续使用上传开始时保存的参数。
 
@@ -199,3 +199,14 @@ AUDIO_INTEL_BASE_URL=http://127.0.0.1:20810 \
   .runtime/api/bin/python scripts/preview_video_scenes.py 0123456789abcdef0123456789abcdef \
   --min-change-percent 3 --min-stable-seconds 1
 ```
+
+
+## 导出画面显示 / Export picture visibility
+
+“画面检测”的当前画面每批展示 12 张，接近底部自动加载下一批。可勾选一张或多张、全选已加载画面，再选择“导出时隐藏”或“恢复导出”；“全部恢复”恢复所有画面。操作立即随任务保存，刷新或换浏览器后仍有效。保存失败保留选择；修订冲突需关闭并重新打开。
+
+隐藏仅影响导出：PDF 用“画面已隐藏”占位框替代图片，编号、时间和文字保留；JSON 携带隐藏标记，TXT/SRT/VTT 保持完整文字。阅读区、时间轴和原媒体不受影响。文字脱敏关闭时，画面隐藏仍生效。
+
+候选检测预览须先应用，再设置隐藏。修改任一检测参数并成功应用会清除旧标记；单纯修改输入、恢复默认输入、预览或取消均不清除。同参数重新应用仅保留时间范围、代表帧时间和图片均一致的标记。保存隐藏设置会使尚未应用的预览失效；参数保留，可重新预览。
+
+English: Picture detection immediately shows current pictures and export-hidden badges. It loads 12 pictures per batch automatically near the bottom. Select individual or loaded pictures, then Hide in exports, Restore in exports or Restore all. Changes are saved with the task across browsers. Failed saves retain selection; revision conflicts require closing and reopening. PDF uses a Picture hidden placeholder while retaining section numbers, times and text; JSON includes markers and text formats remain complete. Reading, timeline and source media are unchanged. Picture hiding is independent of text redaction. Candidate previews must be applied before setting visibility. Applying changed detection parameters clears old markers; editing inputs, resetting inputs, previewing or cancelling does not. Unchanged parameters preserve markers only for identical time ranges, frame times and images. Saving visibility invalidates pending previews without clearing their input settings.

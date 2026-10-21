@@ -35,7 +35,7 @@ export async function uxFixture(page:Page){
  await page.route(url=>url.pathname==='/api/v1/jobs',route=>route.fulfill({json:{items:[summary],count:1,total:1,has_more:false}}))
  await page.route('**/api/v1/jobs/ux-video',route=>route.fulfill({json:job}))
  await page.route('**/api/v1/jobs/ux-video/video-scenes',async route=>{
-  if(route.request().method()==='PATCH'){const body=route.request().postDataJSON();state.patches.push(body);job.result!.video!.revision++;return route.fulfill({json:job.result})}
+  if(route.request().method()==='PATCH'){const body=route.request().postDataJSON();state.patches.push(body);job.result!.video!.revision++;if(body.action==='set_export_visibility')job.result!.video!.export_hidden_scene_ids=body.export_hidden_scene_ids;return route.fulfill({json:job.result})}
   await state.sceneHold?.()
   return route.fulfill({json:{revision:job.result!.video!.revision,scenes}})
  })
