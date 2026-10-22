@@ -1409,7 +1409,8 @@ test('running task shows safe cancellation and becomes deletable after shutdown'
  expect(errors).toEqual([])
 })
 
-test('first TTS submission appears immediately and survives a stale poll',async({page})=>{
+for(const width of [1440,390])test(`first TTS submission appears immediately and survives a stale poll at ${width}px`,{tag:'@timing'},async({page,responseGate},testInfo)=>{
+ await page.setViewportSize({width,height:900})
  await page.clock.install()
  await page.clock.pauseAt(new Date())
  const errors:string[]=[]
@@ -1420,14 +1421,17 @@ test('first TTS submission appears immediately and survives a stale poll',async(
  const running={...queued,state:'running',stage:'synthesizing',progress:.25,started_at:now,attempts:1}
  let jobsRequests=0
  let submitted=false
- let markStaleStarted:()=>void=()=>{}
- let releaseStale:()=>void=()=>{}
- const staleStarted=new Promise<void>(resolve=>{markStaleStarted=resolve})
- const staleGate=new Promise<void>(resolve=>{releaseStale=resolve})
+ const authGate=responseGate()
+ const initialJobsGate=responseGate()
+ const staleGate=responseGate()
+ await page.route('**/api/v1/auth/session',async route=>{
+  await authGate.hold()
+  await route.fulfill({json:{required:false,authenticated:true}})
+ })
  await routeJobList(page,async route=>{
   jobsRequests+=1
-  if(jobsRequests===1)return route.fulfill({json:{items:[]}})
-  if(!submitted){markStaleStarted();await staleGate;return route.fulfill({json:{items:[]}})}
+  if(jobsRequests===1){await initialJobsGate.hold();return route.fulfill({json:{items:[]}})}
+  if(!submitted){await staleGate.hold();return route.fulfill({json:{items:[]}})}
   return route.fulfill({json:{items:[running]}})
  })
  await page.route('**/api/v1/tts/jobs',route=>{expect(route.request().headers()['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);submitted=true;return route.fulfill({status:202,json:queued})})
@@ -1436,30 +1440,49 @@ test('first TTS submission appears immediately and survives a stale poll',async(
  await page.goto('/#tts')
  await expect(page).toHaveTitle(/Sandevistan-Audio/)
  await expect(page.getByRole('main',{name:'语音合成',exact:true})).toBeVisible()
+ await authGate.arrived
+ // The shell can render before authentication installs the polling interval.
+ // Reproduce that ordering instead of relying on a fast session response.
  await page.clock.runFor(5000)
- await staleStarted
+ expect(jobsRequests).toBe(0)
+ authGate.release()
+ await initialJobsGate.arrived
+ await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+ await expect(page.locator('.tts-task-list').getByText('正在加载任务…',{exact:true})).toBeVisible()
+ const initialJobsResponse=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v1/jobs')
+ initialJobsGate.release()
+ expect(await (await initialJobsResponse).finished()).toBeNull()
+ await expect(page.locator('.tts-task-list').getByText('合成完成后可在这里试听和下载',{exact:true})).toBeVisible()
+ await page.getByRole('tab',{name:'文本合成',exact:true}).click()
+ expect(jobsRequests).toBe(1)
+ // Advance only once authenticated jobs have rendered, so the interval exists.
+ await page.clock.runFor(5000)
+ await staleGate.arrived
  await page.getByRole('button',{name:'生成语音'}).click()
  await page.getByRole('button',{name:'查看本次任务'}).click()
- const queueItem=page.locator('.tts-recent-jobs .job-mini').filter({hasText:'首次合成即时入列'})
+ const queueItem=page.locator(width===390?'.tts-task-status .job-mini':'.tts-recent-jobs .job-mini').filter({hasText:'首次合成即时入列'})
  await expect(queueItem).toBeVisible({timeout:1000})
  await expect(queueItem).toBeInViewport()
  await expect(queueItem).toContainText('等待处理')
  await expect(queueItem).toContainText('队列第 2 / 4')
  await expect(queueItem).toContainText('预计剩余 30 秒–2 分钟')
  const staleResponse=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v1/jobs')
- releaseStale()
- await staleResponse
+ staleGate.release()
+ expect(await (await staleResponse).finished()).toBeNull()
  await expect(queueItem).toBeVisible()
  await expect(queueItem).toContainText('等待处理')
  // Polling runs every five seconds; drive it instead of racing a five-second assertion timeout.
  const runningResponse=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/v1/jobs')
  await page.clock.runFor(5000)
- await runningResponse
+ expect(await (await runningResponse).finished()).toBeNull()
  await expect(queueItem).toContainText('正在处理',{timeout:5000})
- await page.screenshot({path:'/tmp/audio-intel-tts-first-submit-after.png',fullPage:false})
- await page.setViewportSize({width:390,height:844})
- expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
- await page.screenshot({path:'/tmp/audio-intel-tts-first-submit-mobile.png',fullPage:false})
+ if(width===390){
+  const picker=page.locator('.tts-task-picker select')
+  await expect(picker).toHaveValue(queued.id)
+  expect((await picker.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+ }
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+ await page.screenshot({path:testInfo.outputPath('tts-first-submit.png'),fullPage:false})
  expect(errors).toEqual([])
 })
 
