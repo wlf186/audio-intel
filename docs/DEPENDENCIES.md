@@ -4,7 +4,7 @@
 
 | 环境 | 关键版本 | 用途 |
 |---|---|---|
-| api | Python 3.12、FastAPI 0.141.1、Uvicorn 0.52.4、pypdf 6.19.0 | API、队列管理、文档解析、测试与前端托管 |
+| api | Python 3.12、FastAPI 0.141.1、Uvicorn 0.52.4、pypdf 6.21.2 | API、队列管理、文档解析、测试与前端托管 |
 | asr | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-asr 0.0.6、Transformers 4.57.6 | ASR、ForcedAligner、VAD、CPU 人声增强、说话人分离 |
 | tts | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-tts 0.1.1、Transformers 4.57.3 | 0.6B/1.7B Base、CustomVoice 与 VoiceDesign 推理 |
 | aligner | PyTorch 2.11.0+cu130（full）或 2.11.0+cpu（CPU-only）、qwen-asr 0.0.6、Transformers 4.57.6 | TTS 默认参考截取及手动声纹区间的按需对齐 |
@@ -70,6 +70,12 @@ API 锁和前端锁要求审计无已知漏洞。Qwen/Torch 当前精确约束�
 
 API 环境固定使用 pypinyin 0.55.0 离线生成声纹人员的拼音排序与索引。姓氏读音覆盖只在排序时应用，不改写姓名、系统热词或历史快照；ASR/TTS/aligner 不安装该依赖。
 
+
+## v0.1.38 PDF 解析依赖更新 / PDF parser update
+
+v0.1.38 候选 `8103d0dd25b72b8ecb0c982448673e3975949d22` 的[Linux 标签检查](https://github.com/wlf186/audio-intel/actions/runs/39703554657/job/119578150991)通过后端测试后，在依赖审计中报告 pypdf 6.19.0 的五条公告：CVE-2026-113792、CVE-2026-113795、CVE-2026-113793、CVE-2026-113794、CVE-2026-113786。API 固定升级至 [pypdf 6.21.2](https://github.com/py-pdf/pypdf/releases/tag/6.21.2)，重新生成并验证 Linux/Windows、full/CPU-only 全部锁，保留其他包版本。PDF 导入和转写 PDF 导出沿用既有回归；新增 UniGB-UTF16 横排/竖排中文提取用例，旧版会把 `中文转写测试` 读成乱码。模型环境及推理设置不变，无数据迁移或历史文档重算。
+
+The API pins pypdf 6.21.2 after the candidate tag audit reported five advisories against 6.19.0. Regenerate and check all platform/profile locks while preserving unrelated versions. Verify document imports, transcript PDF exports and horizontal/vertical UniGB-UTF16 text extraction, then require fresh main and tag CI for the corrected commit. Historical document snapshots and model environments remain unchanged.
 
 ## v0.1.35 定向依赖更新 / Targeted dependency updates
 

@@ -498,6 +498,45 @@ def test_document_download_problem_contains_retry_delay(document_client):
     assert response.json()['retry_after_seconds'] == int(response.headers['Retry-After'])
 
 
+@pytest.mark.parametrize('encoding', ['/UniGB-UTF16-H', '/UniGB-UTF16-V'])
+def test_pdf_unigb_utf16_text_is_preserved(tmp_path: Path, encoding: str) -> None:
+    from pypdf import PdfWriter
+    from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject, TextStringObject
+
+    writer = PdfWriter()
+    page = writer.add_blank_page(612, 792)
+    descendant = DictionaryObject({
+        NameObject('/Type'): NameObject('/Font'),
+        NameObject('/Subtype'): NameObject('/CIDFontType0'),
+        NameObject('/BaseFont'): NameObject('/STSong-Light'),
+        NameObject('/CIDSystemInfo'): DictionaryObject({
+            NameObject('/Registry'): TextStringObject('Adobe'),
+            NameObject('/Ordering'): TextStringObject('GB1'),
+            NameObject('/Supplement'): NumberObject(4),
+        }),
+        NameObject('/DW'): NumberObject(1000),
+    })
+    # Without a ToUnicode map, the declared CID encoding must decode the text.
+    font = DictionaryObject({
+        NameObject('/Type'): NameObject('/Font'),
+        NameObject('/Subtype'): NameObject('/Type0'),
+        NameObject('/BaseFont'): NameObject('/STSong-Light'),
+        NameObject('/Encoding'): NameObject(encoding),
+        NameObject('/DescendantFonts'): ArrayObject([writer._add_object(descendant)]),
+    })
+    page[NameObject('/Resources')] = DictionaryObject({
+        NameObject('/Font'): DictionaryObject({NameObject('/F1'): writer._add_object(font)}),
+    })
+    text = '中文转写测试'
+    stream = DecodedStreamObject()
+    stream.set_data(f'BT /F1 12 Tf 50 700 Td <{text.encode("utf-16-be").hex()}> Tj ET'.encode('ascii'))
+    page[NameObject('/Contents')] = writer._add_object(stream)
+    path = tmp_path / 'unigb.pdf'
+    writer.write(path)
+
+    assert extract(path, 100000, 100000)['text'].strip() == text
+
+
 def test_pdf_blank_bookmark_does_not_create_an_audio_item(tmp_path):
     from pypdf import PdfWriter
     from pypdf.generic import NameObject, DecodedStreamObject, DictionaryObject
