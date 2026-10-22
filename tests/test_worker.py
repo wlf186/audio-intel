@@ -39,6 +39,18 @@ def _wait_for_executor_pid(path, predicate=lambda _pid: True, timeout: float = 8
     raise AssertionError(f"Timed out waiting for executor PID at {path}")
 
 
+def _wait_for_mock_completion(job_id: str):
+    # Native Windows runners can spend over eight seconds synthesizing a mock
+    # waveform in a fresh executor. Completion is not a latency contract; keep
+    # cancellation, executor-startup and idle/recycle deadlines independent.
+    job = _wait_for_job(
+        job_id, lambda job: job["state"] in {"succeeded", "failed", "cancelled"},
+        timeout=30,
+    )
+    assert job["state"] == "succeeded", job
+    return job
+
+
 def _stop_test_supervisor(supervisor) -> None:
     # The worker's bounded termination primitive can return survivors; its own
     # shutdown drains them before declaring success. Test teardown must do the
@@ -49,6 +61,35 @@ def _stop_test_supervisor(supervisor) -> None:
         remaining = worker_module._terminate_remaining(remaining)
     assert remaining == [], f"Test supervisor cleanup left processes: {remaining}"
     supervisor.wait(timeout=5)
+
+
+@pytest.mark.parametrize("outcome", ["succeeded", "failed", "cancelled", "running"])
+def test_mock_completion_handles_slow_success_and_terminal_failure(monkeypatch, outcome) -> None:
+    clock = [0.0]
+
+    def advance(seconds):
+        clock[0] += seconds
+
+    def read_job(_job_id):
+        # Emulate the observed 94% writing stage beyond the old eight-second
+        # completion window, without slowing the test or changing worker code.
+        state = outcome if clock[0] >= 9 or outcome in {"failed", "cancelled"} else "running"
+        return {"state": state, "stage": "writing_audio", "progress": .94}
+
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(time, "sleep", advance)
+    monkeypatch.setattr(db_module, "get_job", read_job)
+    if outcome == "succeeded":
+        assert _wait_for_mock_completion("next")["state"] == "succeeded"
+        assert 9 <= clock[0] < 9.1
+    elif outcome == "running":
+        with pytest.raises(AssertionError, match="Timed out waiting for job next"):
+            _wait_for_mock_completion("next")
+        assert 30 <= clock[0] < 30.1
+    else:
+        with pytest.raises(AssertionError, match=outcome):
+            _wait_for_mock_completion("next")
+        assert clock[0] == 0
 
 
 @pytest.mark.parametrize("exits", [True, False])
@@ -251,7 +292,7 @@ def test_supervised_worker_cancels_running_job_and_continues(tmp_path, monkeypat
         assert not psutil.pid_exists(initial_executor_pid)
         assert not (local.temp_dir / first["id"]).exists()
 
-        completed = _wait_for_job(second["id"], lambda job: job["state"] == "succeeded")
+        completed = _wait_for_mock_completion(second["id"])
         assert completed["result"]["duration"] > 0
         assert supervisor.poll() is None
         assert _wait_for_executor_pid(
@@ -320,25 +361,14 @@ def test_worker_reuses_executor_for_queue_then_recycles_once_when_idle(
             "use_voiceprint_library": False, "export_formats": ["json"],
         }
 
-    def wait_for_completion(job_id: str):
-        # Native Windows runners can spend over eight seconds synthesizing the
-        # mock waveform in a fresh executor. Completion is not a latency contract;
-        # keep the separate idle/recycle deadlines below unchanged.
-        job = _wait_for_job(
-            job_id, lambda job: job["state"] in {"succeeded", "failed", "cancelled"},
-            timeout=30,
-        )
-        assert job["state"] == "succeeded", job
-        return job
-
     try:
         initial_pid = _wait_for_executor_pid(metadata)
         tracked.add(initial_pid)
         first = db_module.create_job(kind, "first", request("第一批", long=True))
         second = db_module.create_job(kind, "second", request("第二批"))
 
-        wait_for_completion(first["id"])
-        wait_for_completion(second["id"])
+        _wait_for_mock_completion(first["id"])
+        _wait_for_mock_completion(second["id"])
         assert _wait_for_executor_pid(metadata) == initial_pid
 
         replacement_pid = _wait_for_executor_pid(
@@ -350,7 +380,7 @@ def test_worker_reuses_executor_for_queue_then_recycles_once_when_idle(
         assert _wait_for_executor_pid(metadata) == replacement_pid
 
         third = db_module.create_job(kind, "third", request("回收后继续"))
-        wait_for_completion(third["id"])
+        _wait_for_mock_completion(third["id"])
         assert supervisor.poll() is None
         assert not (local.temp_dir / first["id"]).exists()
         assert not (local.temp_dir / second["id"]).exists()
