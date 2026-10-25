@@ -11,12 +11,13 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from .transcript import paragraphs, scene_transcripts
+from .transcript import reading_sections
 from .utils import timecode
 
 _lock = threading.Lock()
 _render_lock = threading.Lock()
 _cache: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
+_cache_generation = 0
 _cache_limit = 64 * 1024**2
 _font_ready = False
 _max_image_bytes = 128 * 1024**2
@@ -44,6 +45,7 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                             topMargin=44, bottomMargin=44, title=title, author='Sandevistan-Audio')
     body = ParagraphStyle('body', fontName='Transcript', fontSize=10.5, leading=17,
                           wordWrap='CJK', spaceAfter=12, alignment=TA_LEFT)
+    original_style = ParagraphStyle('original', parent=body, fontSize=9, leading=14, textColor=colors.HexColor('#667085'), leftIndent=12, spaceAfter=14)
     heading = ParagraphStyle('heading', parent=body, fontSize=17, leading=24, spaceAfter=18)
     label = ParagraphStyle('label', parent=body, fontSize=9, leading=14,
                            textColor=colors.HexColor('#4c5967'), spaceAfter=4, keepWithNext=True)
@@ -62,7 +64,7 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
 
     hidden = set((result.get('video') or {}).get('export_hidden_scene_ids') or [])
     story: list[Any] = [Paragraph(html.escape(title), heading)]
-    sections = scene_transcripts(result) if result.get('video') else [{'paragraphs': paragraphs(result.get('segments', []))}]
+    sections = reading_sections(result)
     for index, section in enumerate(sections):
         if result.get('video'):
             story.append(Spacer(1, 14))
@@ -90,6 +92,8 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
             identity = html.escape(str(paragraph.get('speaker_label') or paragraph['speaker']))
             story.append(Paragraph(f"{identity}　{timecode(paragraph['start'])} – {timecode(paragraph['end'])}", label))
             story.append(Paragraph(html.escape(paragraph['text']).replace('\n', '<br/>'), body))
+            if 'original_text' in paragraph:
+                story.append(Paragraph('原文 / Original<br/>' + html.escape(paragraph['original_text']).replace('\n', '<br/>'), original_style))
         if not section['paragraphs']:
             story.append(Paragraph('此段无识别语音 / No recognized speech', body))
 
@@ -106,6 +110,7 @@ def download(title: str, result: dict[str, Any], output_dir: Path, cache_variant
     key = hashlib.sha256(json.dumps([str(output_dir), title, result, cache_variant], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     now = time.monotonic()
     with _lock:
+        generation = _cache_generation
         for old in [k for k, (expiry, _) in _cache.items() if expiry <= now]:
             del _cache[old]
         cached = _cache.get(key)
@@ -117,7 +122,7 @@ def download(title: str, result: dict[str, Any], output_dir: Path, cache_variant
     try:
         payload = render(title, result, output_dir)
         with _lock:
-            if len(payload) <= _cache_limit:
+            if generation == _cache_generation and len(payload) <= _cache_limit:
                 while _cache and sum(len(data) for _, data in _cache.values()) + len(payload) > _cache_limit:
                     _cache.popitem(last=False)
                 _cache[key] = (time.monotonic() + 300, payload)

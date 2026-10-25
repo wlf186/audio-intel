@@ -56,7 +56,7 @@ test('waveform commits reveal lazy readers, clear detail filters and preserve pa
  await reader.evaluate(node=>{node.scrollTop=0})
  await expect(page.locator('.video-section').first()).toBeInViewport()
  await page.getByRole('button',{name:'逐句明细',exact:true}).click()
- await page.getByRole('button',{name:'图文阅读',exact:true}).click()
+ await page.getByRole('button',{name:'原文',exact:true}).click()
  await expect.poll(()=>reader.evaluate(node=>node.scrollTop)).toBe(0)
  await page.getByRole('button',{name:'逐句明细',exact:true}).click()
  await page.getByPlaceholder('搜索转写内容').fill('第 1 段')

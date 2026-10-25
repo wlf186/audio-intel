@@ -34,11 +34,21 @@ class Replacement(BaseModel):
 class TranscriptExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     format: Literal["pdf", "docx", "json", "txt", "srt", "vtt"] = "pdf"
+    text_version: Literal["original", "optimized", "comparison"] = "original"
+    optimization_id: str | None = Field(None, pattern=r"^[a-f0-9]{32}$")
     redact: bool = Field(True, description="缩写姓名、遮盖备注并替换正文 / Abbreviate names, mask notes and replace transcript keywords")
     replacements: list[Replacement] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode="after")
     def unique(self):
+        if self.text_version != 'original':
+            if not self.optimization_id:
+                raise ValueError('optimization_id is required for optimized exports')
+            allowed = ('pdf', 'docx') if self.text_version == 'comparison' else ('pdf', 'docx', 'txt')
+            if self.format not in allowed:
+                raise ValueError('This format requires the original transcript')
+        elif self.optimization_id:
+            raise ValueError('optimization_id requires an optimized text_version')
         if len({rule.source for rule in self.replacements}) != len(self.replacements):
             raise ValueError("Duplicate replacement source")
         return self
@@ -133,7 +143,7 @@ def export_result(result: dict[str, Any], policy: TranscriptExportRequest) -> di
         return deepcopy(result)
     replacer = LiteralReplacer(policy.replacements)
     # Unknown historical metadata can contain source text, identities or file paths.
-    safe_fields = ("language", "duration", "timestamp_precision", "diarization_mode", "model", "model_name", "model_revision", "compute_device", "compute_device_name", "precision", "quantized")
+    safe_fields = ("_optimized", "text_version", "language", "duration", "timestamp_precision", "diarization_mode", "model", "model_name", "model_revision", "compute_device", "compute_device_name", "precision", "quantized")
     exported = {key: deepcopy(result[key]) for key in safe_fields if key in result}
     identities = list(result.get("speakers", []))
     known = {speaker["id"] for speaker in identities}
@@ -159,6 +169,8 @@ def export_result(result: dict[str, Any], policy: TranscriptExportRequest) -> di
         item = {key: deepcopy(segment[key]) for key in ("id", "start", "end", "speaker", "timestamp_precision") if key in segment}
         original = str(segment.get("text", ""))
         item.update(text=replacer.text(original), speaker_label=labels.get(item.get("speaker"), "Speaker"))
+        if "original_text" in segment:
+            item["original_text"] = replacer.text(segment["original_text"])
         if "words" in segment:
             item["words"] = replacer.words(segment["words"], original)
         segments.append(item)
@@ -183,3 +195,29 @@ def format_transcript(result: dict[str, Any], format: str) -> str:
     if format == "vtt":
         return "WEBVTT\n\n" + "\n\n".join(f"{timecode(x['start'])} --> {timecode(x['end'])}\n<v {html.escape(x['speaker_label'], quote=False)}>{html.escape(x['text'], quote=False)}" for x in segments)
     raise ValueError("Unsupported transcript format")
+
+
+def optimized_export_result(job: dict, policy: TranscriptExportRequest) -> dict:
+    from . import optimization_engine as engine, optimization_store as store
+    from fastapi import HTTPException
+    run = store.get(policy.optimization_id or '')
+    if run['job_id'] != job['id']:
+        raise HTTPException(404, 'Optimization not found')
+    if not run['published'] or run['state'] != 'succeeded':
+        raise HTTPException(409, '请等待优化稿完成 / A completed draft is required')
+    try:
+        draft = engine.reading_result(job['result'], run['id'], complete=True)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    result = deepcopy(job['result'])
+    result.update(_optimized=True, text_version=policy.text_version)
+    result['segments'] = []
+    for paragraph in draft['paragraphs']:
+        item = {key: paragraph[key] for key in ('speaker', 'speaker_label', 'start', 'end', 'text')}
+        item['id'] = paragraph['ordinal']
+        if policy.text_version == 'comparison':
+            item['original_text'] = paragraph['original_text']
+        result['segments'].append(item)
+    result['text'] = '\n'.join(p['text'] for p in result['segments'])
+    result.pop('artifacts', None)
+    return export_result(result, policy)

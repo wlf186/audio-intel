@@ -85,6 +85,8 @@ def purge_jobs(job_ids: list[str], compact: bool = True) -> dict[str, Any]:
                 if job["state"] == "running":
                     failed.append({"id": job_id, "code": "running", "message": "运行中的任务不能删除，请先取消并等待任务结束"})
                     continue
+                from .optimization_api import stop_for_purge
+                stop_for_purge(job_id)
                 paths = [
                     _owned_job_path(settings.jobs_dir, job_id),
                     _owned_job_path(settings.temp_dir, job_id),

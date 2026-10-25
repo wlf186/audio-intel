@@ -68,7 +68,7 @@ test('2000 scene overview only loads visible thumbnails and shares one scenes re
  await expect(page.locator('.timeline-load-state')).toHaveCount(0)
  expect(images.size).toBeLessThan(64)
  expect(sceneReads).toBe(1)
- await page.getByRole('button',{name:'逐句明细',exact:true}).click();await page.getByRole('button',{name:'图文阅读',exact:true}).click()
+ await page.getByRole('button',{name:'逐句明细',exact:true}).click();await page.getByRole('button',{name:'原文',exact:true}).click()
  await expect(page.locator('.video-section')).toHaveCount(20)
  expect(sceneReads).toBe(1)
  expect(errors).toEqual([])

@@ -24,7 +24,7 @@ const jobLimit=100
 const initialJobHistoryQuery:JobHistoryQuery={kind:'all',state:'all',search:'',limit:25,offset:0}
 function pageFromHash(current=location.hash):Page{const hash=current.slice(1);const value=(hash==='library'?'voiceprints':hash.startsWith('library/')?hash.split('/')[1]:hash) as Page;return pages.has(value)?value:'asr'}
 function resetPageScroll(){document.querySelector<HTMLElement>('#main-content')?.scrollTo({top:0,left:0,behavior:'auto'});window.scrollTo({top:0,left:0,behavior:'auto'})}
-function sameJobSnapshot(current:JobSummary,next:JobSummary){return current.updated_at===next.updated_at&&current.state===next.state&&current.stage===next.stage&&current.progress===next.progress&&current.attempts===next.attempts&&current.error_code===next.error_code&&current.error_message===next.error_message&&current.started_at===next.started_at&&current.finished_at===next.finished_at}
+function sameJobSnapshot(current:JobSummary,next:JobSummary){return current.optimization?.id===next.optimization?.id&&current.optimization?.revision===next.optimization?.revision&&current.updated_at===next.updated_at&&current.state===next.state&&current.stage===next.stage&&current.progress===next.progress&&current.attempts===next.attempts&&current.error_code===next.error_code&&current.error_message===next.error_message&&current.started_at===next.started_at&&current.finished_at===next.finished_at}
 function jobVersion(job:JobSummary){return job.updated_at||job.created_at}
 function summaryOf(job:Job):JobSummary{const {request:_,result:__,...summary}=job;return summary}
 

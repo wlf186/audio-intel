@@ -313,6 +313,7 @@ class AsrEnhancementResult(PublicModel):
 
 
 class AsrCapability(PublicModel):
+    transcript_optimization: dict[str, Any] = Field(default_factory=dict, description="可选 Ollama 表达优化 / Optional Ollama expression optimization")
     audio_enhancement: AsrEnhancementCapability = Field(description="本地 ASR 人声增强能力与模型可用性 / Local ASR speech enhancement capability and model availability")
     audio_formats: list[str]
     concise_pdf: bool
@@ -771,6 +772,7 @@ class JobEstimate(PublicModel):
 
 
 class JobSummaryResponse(PublicModel):
+    optimization: dict[str, Any] | None = None
     purpose: str | None = None
     id: str
     kind: JobKind

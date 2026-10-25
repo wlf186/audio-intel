@@ -12,7 +12,7 @@ import {readReaderBookmark} from '../lib/workspaceSession'
 import {readingIndex,revealReadingNode} from '../lib/readerNavigation'
 import {useReaderBookmark} from '../hooks/useReaderBookmark'
 
-function Frame({jobId,scene}:{jobId:string;scene:VideoScene}){
+export function Frame({jobId,scene}:{jobId:string;scene:Pick<VideoScene,'image'|'frame_time'>}){
  const {t}=useTranslation();const [error,setError]=useState(false);const [retry,setRetry]=useState(0);const [expanded,setExpanded]=useState(false)
  useEffect(()=>setError(false),[scene.image])
  const url=`/api/v1/jobs/${jobId}/video-frames/${scene.image}?retry=${retry}`

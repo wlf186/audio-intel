@@ -65,7 +65,7 @@ for(const width of [1440,390])test(`cached ASR task switching removes previous m
  await expect(page.locator('.segments')).toBeVisible()
  await expect(page.locator('.video-transcript')).toHaveCount(0)
  await expect(page.locator('.video-timeline')).toHaveCount(1)
- await page.getByRole('button',{name:'图文阅读',exact:true}).click()
+ await page.getByRole('button',{name:'原文',exact:true}).click()
  await expect(page.locator('.video-transcript')).toBeVisible()
  await expect(page.locator('.video-timeline')).toHaveCount(1)
  await page.screenshot({path:info.outputPath(`switch-video-${width}.png`),fullPage:true})

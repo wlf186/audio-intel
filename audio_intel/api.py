@@ -536,7 +536,9 @@ def public_job_summary(job: dict[str, Any], context: dict[str, Any] | None = Non
 def public_jobs(items: list[dict[str, Any]], *, summary: bool = False) -> list[dict[str, Any]]:
     context = queue_context(include_history=any(item.get("state") in {"queued", "running"} for item in items))
     render = public_job_summary if summary else public_job
-    return [render(item, context) for item in items]
+    from .optimization_store import summaries
+    optimization = summaries([item["id"] for item in items])
+    return [{**render(item, context), **({"optimization": optimization[item["id"]]} if item["id"] in optimization else {})} for item in items]
 
 
 def event_semantic_key(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -1273,6 +1275,7 @@ def create_app() -> FastAPI:
                 "default_model": default_model["public_id"],
                 "models": model_capabilities,
                 "diarization": "CAM++ single-active-speaker",
+                "transcript_optimization": {"supported": True, "provider": "ollama", "minimum_context": 16384, "output_tokens": 4096, "text_versions": ["original", "optimized", "comparison"]},
                 "speaker_count": {"min": 1, "max": 15, "default": "auto"},
                 "voiceprint_library": True,
                 "languages": ASR_LANGUAGES,
@@ -2960,6 +2963,8 @@ def create_app() -> FastAPI:
     register_video_routes(app, sys.modules[__name__])
     from .library_api import register as register_library_routes
     register_library_routes(app, sys.modules[__name__])
+    from .optimization_api import register as register_optimization_routes
+    register_optimization_routes(app, sys.modules[__name__])
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa(full_path: str) -> Response:

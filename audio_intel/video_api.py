@@ -416,7 +416,11 @@ def register(app: Any, api: Any) -> None:
         try:
             with speaker_update_lock(job_id), task_reader(job_id):
                 job = completed(job_id)
-                result = export_result(job['result'], body)
+                if body.text_version == 'original':
+                    result = export_result(job['result'], body)
+                else:
+                    from .transcript_export import optimized_export_result
+                    result = optimized_export_result(job, body)
                 title = 'Transcript' if body.redact else job['display_name']
                 if body.format in ('pdf', 'docx'):
                     variant = hashlib.sha256(json.dumps([job['updated_at'], body.model_dump()], sort_keys=True).encode()).hexdigest()
@@ -435,7 +439,11 @@ def register(app: Any, api: Any) -> None:
             raise HTTPException(413, str(exc)) from exc
         except (BlockingIOError, RuntimeError) as exc:
             raise HTTPException(429, str(exc), headers={'Retry-After': '2'}) from exc
-        filename = quote(transcript_filename(job['display_name'], job_id, body.format), safe='')
+        download_name = transcript_filename(job['display_name'], job_id, body.format)
+        if body.text_version != 'original':
+            suffix = '优化稿' if body.text_version == 'optimized' else '对照版'
+            download_name = download_name[:-(len(body.format) + 1)] + '-' + suffix + '.' + body.format
+        filename = quote(download_name, safe='')
         return Response(payload, media_type=MIME_TYPES[body.format], headers={'Content-Length': str(len(payload)), 'Content-Disposition': f"attachment; filename*=UTF-8''{filename}", 'Cache-Control': 'no-store'})
 
     @app.get('/api/v1/jobs/{job_id}/video-scenes', tags=tags, response_model=VideoScenesResponse, responses=errors,

@@ -10,12 +10,13 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from .transcript import paragraphs, scene_transcripts
+from .transcript import reading_sections
 from .utils import timecode
 
 _lock = threading.Lock()
 _render_lock = threading.Lock()
 _cache: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
+_cache_generation = 0
 _cache_limit = 64 * 1024**2
 _max_image_bytes = 128 * 1024**2
 _max_text_chars = 4_000_000
@@ -26,7 +27,7 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     from docx.image.image import Image
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
-    from docx.shared import Mm, Pt
+    from docx.shared import Mm, Pt, RGBColor
 
     if sum(len(segment.get('text', '')) for segment in result.get('segments', [])) > _max_text_chars:
         raise ValueError('Transcript exceeds DOCX text budget; split the source')
@@ -49,7 +50,7 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     normal.paragraph_format.line_spacing = 1.2
     document.add_heading(title, 0)
     hidden = set((result.get('video') or {}).get('export_hidden_scene_ids') or [])
-    sections = scene_transcripts(result) if result.get('video') else [{'paragraphs': paragraphs(result.get('segments', []))}]
+    sections = reading_sections(result)
     image_bytes = 0
     frame_root = (output_dir / 'frames').resolve()
     for index, item in enumerate(sections):
@@ -79,7 +80,14 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
             label = document.add_paragraph()
             label.paragraph_format.keep_with_next = True
             label.add_run(f"{paragraph.get('speaker_label') or paragraph['speaker']}　{timecode(paragraph['start'])} – {timecode(paragraph['end'])}").bold = True
-            document.add_paragraph(paragraph['text'])
+            optimized = document.add_paragraph(paragraph['text'])
+            if 'original_text' in paragraph:
+                optimized.paragraph_format.keep_with_next = True
+                original = document.add_paragraph()
+                original.paragraph_format.left_indent = Mm(4)
+                run = original.add_run('原文 / Original\n' + paragraph['original_text'])
+                run.font.size = Pt(9)
+                run.font.color.rgb = RGBColor.from_string('667085')
         if not item['paragraphs']:
             document.add_paragraph('此段无识别语音 / No recognized speech')
     stream = io.BytesIO()
@@ -91,6 +99,7 @@ def download(title: str, result: dict[str, Any], output_dir: Path, cache_variant
     key = hashlib.sha256(json.dumps([str(output_dir), title, result, cache_variant], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     now = time.monotonic()
     with _lock:
+        generation = _cache_generation
         for old in [k for k, (expiry, _) in _cache.items() if expiry <= now]:
             del _cache[old]
         cached = _cache.get(key)
@@ -102,7 +111,7 @@ def download(title: str, result: dict[str, Any], output_dir: Path, cache_variant
     try:
         payload = render(title, result, output_dir)
         with _lock:
-            if len(payload) <= _cache_limit:
+            if generation == _cache_generation and len(payload) <= _cache_limit:
                 while _cache and sum(len(data) for _, data in _cache.values()) + len(payload) > _cache_limit:
                     _cache.popitem(last=False)
                 _cache[key] = (time.monotonic() + 300, payload)

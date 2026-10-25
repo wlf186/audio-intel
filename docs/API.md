@@ -113,6 +113,25 @@ Path(Path(disposition.get_filename()).name).write_bytes(response.content)
 
 English: The existing POST export accepts `format="docx"`; PDF remains the default. Capabilities advertise DOCX. The binary Word response uses its standard MIME type and UTF-8 filename. Audio paragraphs and illustrated video sections follow PDF semantics, including redaction and replacement rules. Export-hidden images are omitted from the package and replaced with placeholders without losing text, even when `redact=false`. Authentication and same-origin checks remain unchanged. An independent single renderer uses a five-minute, 64 MiB bounded memory cache; limits are 4,000,000 text characters and 128 MiB visible-image bytes. Oversize requests return 413, busy requests 429 with Retry-After 2. No new dependency, persistent artifact or database migration is required.
 
+## Optional expression optimization / 可选表达优化
+
+Configure an explicitly selected Ollama service in System → Expression optimization; the feature is disabled by default and has no cloud fallback. Discovery and verification use synthetic text, never historical transcripts. See the [complete setup, limits and lifecycle](EXPRESSION_OPTIMIZATION.md).
+
+- Protected configuration: `GET/PUT /api/v1/settings/transcript-optimization`, `POST .../discover` and `POST .../verify`. Enabling requires a matching, unexpired verification token or the unchanged saved verified profile. Changing the URL, model or proxy policy invalidates verification.
+- Completed ordinary audio/video ASR: `GET/POST /api/v1/jobs/{job_id}/transcript-optimization`, `POST .../pause`, `POST .../resume`, `GET .../result?run_id=...`, and `DELETE ...?purge=true`. Creation requires `Idempotency-Key`, with 202/200/409/429 semantics and `Retry-After` on capacity failures. Pause/resume bodies contain `run_id`. Status supports ETag/304. Partial results are marked `complete=false`; API restart pauses interrupted generation.
+- Capability discovery adds `asr.transcript_optimization`. Job lists and SSE carry optimization summaries only, without draft/source text. Original ASR results, timed subtitles and voiceprint references are unchanged.
+- `POST /api/v1/jobs/{job_id}/transcript-export` accepts `text_version="original"` (default), `"optimized"`, or `"comparison"`. Non-original requests require the completed `optimization_id`; optimized exports allow PDF/DOCX/TXT and comparisons PDF/DOCX. Unsupported combinations return 422, unfinished or stale drafts 409. Redaction and replacements apply to both sides. Filenames append `-优化稿` or `-对照版` to the task basename.
+
+中文：在系统状态明确选择并验证 Ollama 后启用；独立单并发队列，最多 5 个排队任务。原文始终保留，暂停保存检查点，重新生成成功后才替换旧稿。默认原文导出兼容已有客户端；优化稿不用于精确字幕或声纹。SQLite v14→v15 仅新增独立表，升级仅需一致的 SQLite 备份，不复制媒体。阅读偏好属于当前浏览器工作会话，最多 200 个任务，退出登录和删除任务时清理。
+
+```bash
+# First configure and enable a verified model in System; use a completed ASR task.
+.runtime/api/bin/python scripts/optimize_transcript.py \
+  --url "${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}" --job "$JOB_ID"
+```
+
+Authentication is read from `AUDIO_INTEL_API_KEY`; the example stops on terminal failure or pause. It does not enable the feature or modify the original transcript.
+
 ## Native asynchronous lifecycle
 
 The following submission endpoints require an `Idempotency-Key` header containing 8–128 characters:

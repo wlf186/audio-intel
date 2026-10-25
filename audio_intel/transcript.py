@@ -19,7 +19,7 @@ def join_text(left: str, right: str) -> str:
     return left + (' ' if space else '') + right
 
 
-def paragraphs(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def paragraphs(segments: list[dict[str, Any]], *, include_sources: bool = False) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     for segment in segments:
         if not segment.get('text'):
@@ -32,10 +32,17 @@ def paragraphs(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
         else:
             output.append({key: segment.get(key) for key in ('speaker', 'speaker_label', 'start', 'end', 'text')})
             output[-1]['segment_ids'] = [segment['id']]
+        if include_sources:
+            output[-1].setdefault('sources', []).append({
+                'segment_id': segment['id'], 'text': segment['text'],
+                'start_offset': segment.get('_start_offset', 0),
+                'end_offset': segment.get('_end_offset', len(segment['text'])),
+                'start': segment['start'], 'end': segment['end'],
+            })
     return output
 
 
-def scene_transcripts(result: dict[str, Any]) -> list[dict[str, Any]]:
+def scene_transcripts(result: dict[str, Any], *, include_sources: bool = False) -> list[dict[str, Any]]:
     scenes = result.get('video', {}).get('scenes', [])
     buckets: list[list[dict[str, Any]]] = [[] for _ in scenes]
     if not scenes:
@@ -81,11 +88,24 @@ def scene_transcripts(result: dict[str, Any]) -> list[dict[str, Any]]:
         positions.append(len(text))
         for i, word in enumerate(words):
             index = owner(word['start'], word['end'])
-            part = {**segment, 'start': word['start'], 'end': word['end'], 'text': text[positions[i]:positions[i + 1]]}
+            part = {**segment, 'start': word['start'], 'end': word['end'], 'text': text[positions[i]:positions[i + 1]], '_start_offset': positions[i], '_end_offset': positions[i + 1]}
             # Recombine aligned words without inventing inter-word whitespace.
             target = buckets[index]
             if target and target[-1]['id'] == segment['id']:
-                target[-1] = {**target[-1], 'text': target[-1]['text'] + part['text'], 'end': part['end']}
+                target[-1] = {**target[-1], 'text': target[-1]['text'] + part['text'], 'end': part['end'], '_end_offset': part['_end_offset']}
             else:
                 target.append(part)
-    return [{**scene, 'paragraphs': paragraphs(bucket)} for scene, bucket in zip(scenes, buckets)]
+    return [{**scene, 'paragraphs': paragraphs(bucket, include_sources=include_sources)} for scene, bucket in zip(scenes, buckets)]
+
+
+def reading_sections(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Reading drafts retain paired paragraphs instead of lossless re-merging."""
+    if not result.get('_optimized'):
+        return scene_transcripts(result) if result.get('video') else [{'paragraphs': paragraphs(result.get('segments', []))}]
+    scenes = [{**scene, 'paragraphs': []} for scene in result.get('video', {}).get('scenes', [])]
+    if not scenes:
+        return [{'paragraphs': result.get('segments', [])}]
+    for paragraph in result.get('segments', []):
+        owner = max(range(len(scenes)), key=lambda i: max(0, min(paragraph['end'], scenes[i]['end']) - max(paragraph['start'], scenes[i]['start'])))
+        scenes[owner]['paragraphs'].append(paragraph)
+    return scenes

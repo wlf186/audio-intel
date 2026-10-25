@@ -66,6 +66,7 @@ ASR 使用固定的“新建音频转写 / 新建视频转写 / 任务与结果�
 | 范围 | 能力 |
 | --- | --- |
 | **本地语音识别** | Qwen3-ASR 0.6B/1.7B、FSMN-VAD、CAM++ 说话人分离、句段与字词时间戳，简洁 PDF/Word（DOCX），以及 JSON/SRT/VTT/TXT 明细导出 |
+| **可选表达优化** | 自行配置 Ollama 并验证模型，生成可暂停续跑的阅读稿，支持原文对照及脱敏 PDF/DOCX/TXT 导出；默认关闭 |
 | **说话人与声纹** | 声纹人员通过姓名＋备注区分同名，样本支持按来源命名和重命名；自定义及声纹衍生热词表改善领域词汇，已完成任务保留不可变快照 |
 | **本地语音工作室** | Qwen3-TTS 0.6B/1.7B、预置音色、一次性或声纹库声音克隆（可选 3–30 秒声纹参考区间）、1.7B VoiceDesign，以及 WAV/FLAC/MP3 输出 |
 | **文档语音合成** | EPUB、TXT、Markdown、文本 PDF、DOCX、XLSX、PPTX，结构／字数分段预览、导入复用与批量移除、检查点恢复及带专辑标签的流式 ZIP / 完整 MP3 下载 |
@@ -240,6 +241,7 @@ curl --fail-with-body -sS \
 | [资料库迁移](docs/LIBRARY.md) | 声纹与热词完整 ZIP 导出导入、合并/替换、拼音排序和 A–Z 索引 |
 | [工作台布局](docs/WORKSPACES.md) | PC 可拖动分栏、分别记住布局、紧凑资料库和视频图文阅读 |
 | [人声增强](docs/ASR_ENHANCEMENT.md) | 离线降噪、轻声增益、回放对比、API 控制与配对验证 |
+| [表达优化](docs/EXPRESSION_OPTIMIZATION.md) | Ollama 配置、保真整理、暂停续跑、原文对照、导出与 API |
 | [API](docs/API.md) | 原生异步与 OpenAI 兼容使用契约 |
 | [架构与能力](docs/ARCHITECTURE.md) | 管线、模型、设备、加速、队列、进度和取消 |
 | [局域网 HTTPS](docs/HTTPS.md) | 项目 CA、证书信任、SAN 更新和指纹核对 |

@@ -1,3 +1,6 @@
+import {useOptimization} from '../hooks/useOptimization'
+import {OptimizationControls} from '../components/OptimizationControls'
+import {OptimizationReader,OptimizationComparison} from '../components/OptimizationReader'
 import {loadDetection} from '../lib/sceneDetection'
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {createPortal} from 'react-dom'
@@ -258,12 +261,13 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const visibleJobs = useMemo(() => visibleWorkspaceJobs(asrJobs, selectedSummary?.id), [asrJobs, selectedSummary?.id])
   const detail = selectedSummary ? jobDetails[selectedSummary.id] : undefined
   const selected = detail?.job
+  const optimization = useOptimization(selected?.id, view==='results'&&selected?.state==='succeeded', selected?.updated_at)
   const result = selected?.result
   const videoScenes=useVideoScenes(selected?.id,result)
   const enhancedAudio=result?.audio_enhancement?.playback_url
   const originalDownloadUrl=result?.playback_url?`${result.playback_url}${result.playback_url.includes('?')?'&':'?'}download=true`:undefined
   const playbackUrl=enhancedPlayback&&enhancedAudio?enhancedAudio:result?.playback_url||selected?.source_url||(selected?sourceUrl(selected.id):undefined)
-  useReaderBookmark(selectedSummary?`${selectedSummary.id}:segments`:'',segmentList,{active:view==='results'&&!videoReading||view==='results'&&!result?.video,ready:Boolean(result)&&query===deferredQuery,visibleCount:visibleSegmentCount,query:deferredQuery.trim().toLocaleLowerCase(),speakerFilter})
+  useReaderBookmark(selectedSummary?`${selectedSummary.id}:segments`:'',segmentList,{active:!optimization.view&&(view==='results'&&!videoReading||view==='results'&&!result?.video),ready:Boolean(result)&&query===deferredQuery,visibleCount:visibleSegmentCount,query:deferredQuery.trim().toLocaleLowerCase(),speakerFilter})
   const speakerById = useMemo(() => new Map((result?.speakers || []).map((speaker) => [speaker.id, speaker])), [result?.speakers])
   const alignmentDowngraded = Boolean(selected?.request.language === 'Auto' && selected.request.align === true && result?.timestamp_precision === 'segment' && result.language && !alignerLanguages.includes(result.language))
   const duration = result?.duration || 0
@@ -805,7 +809,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           </>:jobsReady&&!jobsError?<p>{t('asr.results.empty')}</p>:null}
           <button className="button asr-manage" onClick={onManageJobs}>{t('asr.workspace.manage')}</button>
         </aside>
-      <section ref={resultPanel} tabIndex={-1} hidden={!jobsReady&&!selectedSummary} className={`result-panel${result?.video?' video-result':''}`} data-module="TRANSCRIPT_CORE / TRN_01">
+      <section ref={resultPanel} tabIndex={-1} hidden={!jobsReady&&!selectedSummary} className={`result-panel${result?.video?' video-result':''}${optimization.view?' optimized-view':''}`} data-module="TRANSCRIPT_CORE / TRN_01">
         {resultNotice?<p className="notice" role="status">{resultNotice}</p>:null}
         {resultError?<div className="error" role="alert"><p>{resultError}</p><button className="button" onClick={()=>void refreshPeopleAndHotwords().then(()=>setResultError('')).catch(cause=>setResultError((cause as Error).message))}>{t('common.actions.retry')}</button></div>:null}
         {selectedSummary&&selectedSummary.state!=='succeeded'?<div className="asr-task-status" role="status">
@@ -837,7 +841,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               <span>
                 {String(result.model_name || selected.request.model || 'Qwen3-ASR')} · {formatTime(duration)} · {(result.compute_device || selected.request.compute_device || 'gpu').toString().toUpperCase()} {result.precision || ''}
               </span></div>
-              <TranscriptExport key={selected.id} job={selected} formats={transcriptExportFormats}/>
+              <TranscriptExport key={selected.id} job={selected} formats={transcriptExportFormats} optimizationId={optimization.status?.published?.id} optimizedView={optimization.view}/>
             </div>
             <audio
               ref={audio}
@@ -932,8 +936,9 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
                 }}>{t('asr.results.retryPlayback')}</button>
               </p>
             ) : null}
-            {result.video?<div className="video-view-tabs" role="group" aria-label={t('video.readingMode')}><button aria-pressed={videoReading} onClick={()=>{checkpointWorkspace();setSceneReveal(undefined);setSegmentReveal(undefined);setVideoReading(true)}}>{t('video.reading')}</button><button aria-pressed={!videoReading} onClick={()=>{checkpointWorkspace();setSceneReveal(undefined);setSegmentReveal(undefined);setVideoReading(false)}}>{t('video.details')}</button><div className="video-toolbar" ref={setVideoToolbar}/></div>:null}
-            {result.video&&videoReading?<VideoTranscript detectionCapability={videoCapability?.scene_detection} key={`video-transcript:${selected.id}`} job={selected} resource={videoScenes} reveal={sceneReveal} currentTime={currentTime} toolbar={videoToolbar} onUpdated={(id,next)=>{onJobResultUpdated(id,next);if(next.video?.applied_preview_id&&next.video.applied_preview_id!==result.video?.applied_preview_id)setSceneReveal({time:currentTime,token:++navigationSequence.current})}} onSeek={seconds=>{stopAt.current=undefined;seekWord(seconds)}} onEnroll={(speakerId,segmentIds)=>{audio.current?.pause();setVideoEnrollment({jobId:selected.id,speakerId,segmentIds})}} onRename={id=>{const segment=result.segments?.find(item=>item.speaker===id);if(segment)openRename(segment)}}/>:<>
+            <OptimizationControls controller={optimization} video={Boolean(result.video)} videoReading={videoReading} onOriginal={()=>{checkpointWorkspace();setSceneReveal(undefined);setSegmentReveal(undefined);setVideoReading(true)}} onDetails={()=>{checkpointWorkspace();setSceneReveal(undefined);setSegmentReveal(undefined);setVideoReading(false)}}>{result.video?<div className="video-toolbar" ref={setVideoToolbar}/>:null}</OptimizationControls>
+            {optimization.compare?<OptimizationComparison key={`compare:${selected.id}`} job={selected} controller={optimization}/>:null}
+            {optimization.view?<OptimizationReader key={`optimized:${selected.id}`} job={selected} controller={optimization}/>:result.video&&videoReading?<VideoTranscript detectionCapability={videoCapability?.scene_detection} key={`video-transcript:${selected.id}`} job={selected} resource={videoScenes} reveal={sceneReveal} currentTime={currentTime} toolbar={videoToolbar} onUpdated={(id,next)=>{onJobResultUpdated(id,next);if(next.video?.applied_preview_id&&next.video.applied_preview_id!==result.video?.applied_preview_id)setSceneReveal({time:currentTime,token:++navigationSequence.current})}} onSeek={seconds=>{stopAt.current=undefined;seekWord(seconds)}} onEnroll={(speakerId,segmentIds)=>{audio.current?.pause();setVideoEnrollment({jobId:selected.id,speakerId,segmentIds})}} onRename={id=>{const segment=result.segments?.find(item=>item.speaker===id);if(segment)openRename(segment)}}/>:<>
             {result.video&&videoToolbar?createPortal(segmentTools,videoToolbar):segmentTools}
             {selectedSegments.size ? (
               <div className="segment-selection" aria-label={t('asr.results.selectionActions')}>

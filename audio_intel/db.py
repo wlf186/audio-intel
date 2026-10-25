@@ -441,6 +441,8 @@ def init_db() -> None:
         migrate_library_imports(db)
         from .voiceprint_groups import migrate as migrate_voiceprint_groups
         migrate_voiceprint_groups(db)
+        from .optimization_store import migrate as migrate_optimizations
+        migrate_optimizations(db)
         db.execute(
             """CREATE TABLE IF NOT EXISTS queue_sequence (
                singleton INTEGER PRIMARY KEY CHECK(singleton=1),value INTEGER NOT NULL)"""
@@ -1154,6 +1156,7 @@ def event_revision(job_limit: int = 100) -> dict[str, Any]:
                ) ORDER BY worker.kind"""
         ).fetchall()
     return {
+        "optimizations": _optimization_revisions([row["id"] for row in jobs]),
         "jobs": [tuple(row) for row in jobs],
         "workers": [tuple(row) for row in workers],
     }
@@ -1438,3 +1441,11 @@ def delete_voice_record(voice_id: str) -> None:
     person = get_voiceprint_person(voice_id)
     if person is not None:
         delete_voiceprint_person_record(person["id"])
+
+
+def _optimization_revisions(job_ids: list[str]) -> list:
+    if not job_ids:
+        return []
+    with connect() as connection:
+        placeholders = ",".join("?" for _ in job_ids)
+        return [tuple(row) for row in connection.execute(f"SELECT id,revision FROM transcript_optimizations WHERE job_id IN ({placeholders}) ORDER BY id", job_ids)]

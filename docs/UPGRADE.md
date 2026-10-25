@@ -525,3 +525,11 @@ corepack pnpm@10.15.1 --dir frontend typecheck
 本次无数据库结构迁移，不批量改写历史结果或媒体，无需额外升级备份。新视频使用 presentation-v2；旧任务重试沿用 v1，用户可在结果页显式预览并应用 v2。最近一次自动分段和实际参数是新增可选结果字段，首次自动快照保留。任务目录新增可重建特征缓存；旧任务按需生成，不在启动时扫描全部视频。浏览器新增独立的画面检测 localStorage 偏好，成功应用后保存，退出登录仍保留；弹窗草稿不持久化。更新后按本页维护流程重新构建前端并刷新 API、supervisor 和 executor。
 
 No schema migration, automatic historical rewrite or extra upgrade backup is required. New videos use presentation-v2; legacy retries retain v1, with explicit result-side preview/apply available. Applied settings/latest automatic sections are optional result additions and the initial snapshot remains intact. Rebuildable feature caches are created per job on demand, not by scanning all videos at startup. A separate browser localStorage preference persists successful choices across sign-out; dialog drafts are not persisted. Rebuild the frontend and refresh API, supervisors and executors using the maintenance procedure above.
+
+## v0.1.39：表达优化与 SQLite v15
+
+本次仅新增独立优化配置、任务与段落表，历史转写和媒体不改写。按上文备份 SQLite，启动自动迁移 v14 → v15。默认禁用；在系统状态验证模型后启用。阅读切换属于浏览器工作会话，退出登录清理。详见 [表达优化](EXPRESSION_OPTIMIZATION.md)。验收完成后清理本次临时数据库备份。
+
+从 v0.1.38 升级需要数据库备份，不需要复制媒体或重算历史转写。已完成 v15 迁移的开发实例无需重复迁移；仅修正文档、前端或无数据改写的代码时无需新增升级备份。更新后重建前端，并按原配置刷新 API、ASR/TTS supervisors 和 executors。失败时保留升级备份，按匹配的源码与数据库恢复，不能自动降级 v15。
+
+English: v0.1.39 adds optional Ollama transcript cleanup and schema v15. Upgrading from v0.1.38 requires a consistent SQLite-only backup before first startup; no media copy or historical retranscription is needed. Already migrated v15 development instances need no repeated migration or additional backup for changes without data migration. The feature remains disabled until explicitly configured and enabled. Rebuild the frontend and refresh every recorded service process. Retain backups on failed acceptance and restore matching source/database versions rather than automatically downgrading v15.

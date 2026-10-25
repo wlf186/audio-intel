@@ -18,6 +18,7 @@ export async function uxFixture(page:Page){
  const job:Job={id:'ux-video',kind:'asr',purpose:'video_transcription',state:'succeeded',stage:'completed',progress:1,display_name:'很长的中文文件名 · 产品季度评审会议与操作流程介绍.mp4',created_at:now,updated_at:now,request:{model:'qwen3-asr-0.6b',compute_device:'cpu'},result:{duration:120,language:'Chinese',speakers:[{id:'s0',label:'Alice'}],segments:scenes.map((scene,i)=>({id:i,start:scene.start,end:scene.end,speaker:'s0',speaker_label:'Alice',text:scene.paragraphs![0].text,words:[]})),waveform:[.2,.4,.3],artifacts:[],playback_url:'/api/v1/jobs/ux-video/playback',video:{contract_version:1,revision:1,duration:120,scenes,original_scenes:structuredClone(scenes)}}}
  const state={people,groups,job,exports:[] as unknown[],created:[] as Record<string,unknown>[],patches:[] as Record<string,unknown>[],imports:[] as Record<string,unknown>[],groupError:false,sceneHold:undefined as (()=>Promise<void>)|undefined,auth:{required:true,authenticated:true}}
  const caps=await capabilitiesFor(page);caps.events.sse=false
+ await page.route('**/api/v1/jobs/*/transcript-optimization',route=>route.fulfill({json:{enabled:false,published:null,candidate:null}}))
  await page.route('**/api/v1/auth/session',route=>route.fulfill({json:state.auth}))
  await page.route('**/api/v1/auth/logout',route=>{state.auth.authenticated=false;return route.fulfill({status:204})})
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:caps}))

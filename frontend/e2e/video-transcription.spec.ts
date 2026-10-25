@@ -97,7 +97,7 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  await closeTranscriptExport(page)
  await page.getByRole('button',{name:'逐句明细',exact:true}).click()
  await expect(page.locator('.segments article').first()).toBeVisible()
- await page.getByRole('button',{name:'图文阅读',exact:true}).click()
+ await page.getByRole('button',{name:'原文',exact:true}).click()
  await expect(page.locator('.video-section')).toHaveCount(2)
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  const smallTargets=await page.locator('.video-transcript button:visible,.transcript-export button:visible,.asr-tabs button:visible').evaluateAll(items=>items.filter(item=>item.getBoundingClientRect().height<44).map(item=>item.textContent))

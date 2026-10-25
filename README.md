@@ -66,6 +66,7 @@ Transcription results support entering speaker names and optional notes manually
 | Area | Capabilities |
 | --- | --- |
 | **Local speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, concise PDF/Word (DOCX), and detailed JSON/SRT/VTT/TXT export |
+| **Optional transcript cleanup** | User-configured Ollama, verified model context, resumable reading drafts, original/draft comparison and redacted PDF/DOCX/TXT exports; disabled by default |
 | **Speaker intelligence** | Voiceprints distinguish namesakes by notes and support named, renameable samples; custom and voiceprint-derived hotword lists improve domain vocabulary while completed tasks retain immutable snapshots |
 | **Local voice studio** | Qwen3-TTS 0.6B/1.7B, preset voices, one-off or library-based voice cloning with optional 3–30 second library reference ranges, 1.7B VoiceDesign, and WAV/FLAC/MP3 output |
 | **Document synthesis** | EPUB, TXT, Markdown, text PDF, DOCX, XLSX and PPTX; structural/length previews, reusable imports with bulk removal, checkpoint recovery, and album-tagged ZIP / complete MP3 downloads |
@@ -238,6 +239,7 @@ Add `Authorization: Bearer $AUDIO_INTEL_API_KEY` when authentication is configur
 | [Library transfer](docs/LIBRARY.md) | Voiceprints and hotwords, full ZIP transfer, merge/replacement, pinyin sorting and A–Z index |
 | [Workspace layout](docs/WORKSPACES.md) | Resizable desktop panes, independent layout preferences, compact library and video reading |
 | [Speech enhancement](docs/ASR_ENHANCEMENT.md) | Offline denoising, quiet-speech gain, playback comparison, API controls and paired validation |
+| [Expression optimization](docs/EXPRESSION_OPTIMIZATION.md) | Ollama setup, faithful cleanup, pause/resume, comparison, exports and API |
 | [API](docs/API.md) | Native asynchronous and OpenAI-compatible usage contracts |
 | [Architecture and capabilities](docs/ARCHITECTURE.md) | Pipelines, models, devices, acceleration, queues, progress, and cancellation |
 | [Local HTTPS](docs/HTTPS.md) | Project CA, certificate trust, SAN renewal, and fingerprint verification |
