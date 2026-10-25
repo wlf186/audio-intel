@@ -38,7 +38,7 @@ export function TranscriptExport({job,formats=['pdf','json','txt','srt','vtt'],o
   const active=new AbortController();controller.current=active
   setBusy(true);setError('')
   try{
-   const response=await requestResponse(`/api/v1/jobs/${job.id}/transcript-export`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({format,text_version:textVersion,...(textVersion!=='original'?{optimization_id:optimizationId}:{}),redact:preferences.redact,replacements:parsed.rules}),signal:active.signal})
+   const response=await requestResponse(`/api/v1/jobs/${job.id}/transcript-export`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({format,...(textVersion!=='original'?{text_version:textVersion,optimization_id:optimizationId}:{}),redact:preferences.redact,replacements:parsed.rules}),signal:active.signal})
    const blob=await response.blob()
    if(active.signal.aborted)return
    releaseDownload.current?.()
