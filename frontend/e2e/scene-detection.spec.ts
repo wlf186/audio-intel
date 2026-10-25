@@ -39,23 +39,32 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US'])test(`pictur
  await expect(modal.locator('.scene-detection-count')).toContainText(zh?'预览 2 段':'Preview: 2')
  expect(applies).toBe(0)
  expect(state.job.result!.video!.revision).toBe(1)
+ // Slow transitions and sample their intermediate colors so contrast cannot depend on runner speed.
+ await page.addStyleTag({content:'.scene-detection-footer button{transition-duration:10s}'})
  await change.fill('5')
  const apply=modal.getByRole('button',{name:zh?'应用预览':'Apply preview',exact:true})
  await expect(apply).toBeDisabled()
+ await apply.evaluate(element=>element.getAnimations().forEach(animation=>animation.finish()))
  await change.fill('4')
  await expect(apply).toBeEnabled()
+ await apply.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>resolve())))
  for(const hover of [false,true]){
   if(hover)await apply.hover()
   const contrast=await apply.evaluate(element=>{
-   const style=getComputedStyle(element)
    const luminance=(color:string)=>{
     const rgb=color.match(/[\d.]+/g)!.slice(0,3).map(Number).map(value=>{const channel=value/255;return channel<=.04045?channel/12.92:((channel+.055)/1.055)**2.4})
     return rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722
    }
-   const foreground=luminance(style.color),background=luminance(style.backgroundColor)
-   return (Math.max(foreground,background)+.05)/(Math.min(foreground,background)+.05)
+   const transitions=element.getAnimations().filter(animation=>animation instanceof CSSTransition&&['color','background-color'].includes(animation.transitionProperty))
+   return Math.min(...[0,.25,.5,.75,1].map(fraction=>{
+    for(const animation of transitions)animation.currentTime=Number(animation.effect!.getTiming().duration)*fraction
+    const style=getComputedStyle(element)
+    const foreground=luminance(style.color),background=luminance(style.backgroundColor)
+    return (Math.max(foreground,background)+.05)/(Math.min(foreground,background)+.05)
+   }))
   })
   expect(contrast).toBeGreaterThanOrEqual(4.5)
+  await apply.evaluate(element=>element.getAnimations().forEach(animation=>animation.finish()))
  }
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  for(const button of await modal.locator('button:visible').all()){

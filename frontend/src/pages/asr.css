@@ -378,6 +378,8 @@
 .scene-detection-footer .scene-detection-actions{margin:8px 0}
 .scene-detection-footer p{margin:4px 0}
 .scene-detection-footer .primary,.scene-detection-footer .button{min-height:44px;padding:8px 12px;white-space:normal}
+/* Keep state changes readable while the action becomes enabled or is hovered. */
+.scene-detection-footer .primary{transition:none}
 .scene-detection-footer .primary:disabled{opacity:1;filter:none;background:var(--panel-3);border-color:var(--line-hot);color:var(--muted);box-shadow:none}
 .scene-detection-grid figure{padding:6px;border:1px solid var(--line)}
 .scene-detection-grid figure.selected{border-color:var(--cyan);background:var(--panel-3)}
