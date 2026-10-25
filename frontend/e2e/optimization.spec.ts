@@ -1,4 +1,4 @@
-import {test,expect} from './fixtures'
+import {test,expect,capabilitiesFor} from './fixtures'
 import {uxFixture} from './ux-fixtures'
 for(const width of [1440,390])test(`optimization reading and comparison ${width}`,async({page},testInfo)=>{
  await page.setViewportSize({width,height:900})
@@ -222,5 +222,26 @@ for(const width of [1440,390])test(`optimization task switch rejects an older dr
  await expect(page.locator('.optimization-reader')).toContainText('第二任务专属优化正文')
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  await page.screenshot({path:testInfo.outputPath('optimization-task-switch.png')})
+ expect(errors).toEqual([])
+})
+
+for(const width of [1440,390])for(const declared of [false,true])test(`unsupported optimization does not request resources at ${width}px declared=${declared}`,{tag:'@timing'},async({page})=>{
+ await page.setViewportSize({width,height:900})
+ await page.clock.install()
+ await page.clock.pauseAt(new Date())
+ const {errors}=await uxFixture(page)
+ const caps=await capabilitiesFor(page)
+ caps.events.sse=false
+ if(!declared)delete caps.asr.transcript_optimization
+ await page.route('**/api/v1/capabilities',route=>route.fulfill({json:caps}))
+ let reads=0
+ page.on('request',request=>{if(request.url().includes('/transcript-optimization'))reads++})
+ await page.goto('/#asr')
+ await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+ await expect(page.locator('.video-section').first()).toBeVisible()
+ await expect(page.getByRole('button',{name:'优化稿',exact:true})).toBeDisabled()
+ await page.clock.runFor(4000)
+ expect(reads).toBe(0)
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  expect(errors).toEqual([])
 })

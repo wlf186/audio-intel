@@ -17,7 +17,7 @@ export async function uxFixture(page:Page){
  const scenes:VideoScene[]=Array.from({length:60},(_,i)=>({id:`scene-${i}`,start:i*2,end:(i+1)*2,frame_time:i*2+.5,image:`frame-${i}.jpg`,paragraphs:[{speaker:'s0',speaker_label:'Alice',start:i*2,end:(i+1)*2,text:`第 ${i+1} 段，在图文阅读和逐句明细之间切换，并保留正在阅读的位置。`,segment_ids:[i]}]}))
  const job:Job={id:'ux-video',kind:'asr',purpose:'video_transcription',state:'succeeded',stage:'completed',progress:1,display_name:'很长的中文文件名 · 产品季度评审会议与操作流程介绍.mp4',created_at:now,updated_at:now,request:{model:'qwen3-asr-0.6b',compute_device:'cpu'},result:{duration:120,language:'Chinese',speakers:[{id:'s0',label:'Alice'}],segments:scenes.map((scene,i)=>({id:i,start:scene.start,end:scene.end,speaker:'s0',speaker_label:'Alice',text:scene.paragraphs![0].text,words:[]})),waveform:[.2,.4,.3],artifacts:[],playback_url:'/api/v1/jobs/ux-video/playback',video:{contract_version:1,revision:1,duration:120,scenes,original_scenes:structuredClone(scenes)}}}
  const state={people,groups,job,exports:[] as unknown[],created:[] as Record<string,unknown>[],patches:[] as Record<string,unknown>[],imports:[] as Record<string,unknown>[],groupError:false,sceneHold:undefined as (()=>Promise<void>)|undefined,auth:{required:true,authenticated:true}}
- const caps=await capabilitiesFor(page);caps.events.sse=false
+ const caps=await capabilitiesFor(page,{transcriptOptimization:true});caps.events.sse=false
  await page.route('**/api/v1/jobs/*/transcript-optimization',route=>route.fulfill({json:{enabled:false,published:null,candidate:null}}))
  await page.route('**/api/v1/auth/session',route=>route.fulfill({json:state.auth}))
  await page.route('**/api/v1/auth/logout',route=>{state.auth.authenticated=false;return route.fulfill({status:204})})

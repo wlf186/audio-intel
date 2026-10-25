@@ -76,5 +76,11 @@ function snapshots(page:Page){
  if(!readers)throw new Error('Import test from ./fixtures when using API fixture snapshots')
  return readers
 }
-export function capabilitiesFor(page:Page){return snapshots(page).capabilities()}
+// Legacy speech fixtures opt out of the optional Ollama workflow explicitly.
+// Tests of live API responses still use the real endpoint, without this helper.
+export async function capabilitiesFor(page:Page,options:{transcriptOptimization?:boolean}={}){
+ const value=await snapshots(page).capabilities()
+ if(value.asr.transcript_optimization&&!options.transcriptOptimization)value.asr.transcript_optimization.supported=false
+ return value
+}
 export function systemFor(page:Page){return snapshots(page).system()}
