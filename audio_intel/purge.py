@@ -17,7 +17,12 @@ from .db import (
 
 def _allocated_bytes_for_entry(path: Path) -> int:
     """Return allocated bytes where available, falling back to logical size."""
-    stat = path.lstat()
+    try:
+        stat = path.lstat()
+    except FileNotFoundError:
+        # SQLite can remove WAL/SHM files between the existence check and lstat.
+        # The same race occurs when another cleanup removes a scanned entry.
+        return 0
     blocks = getattr(stat, "st_blocks", None)
     return blocks * 512 if blocks is not None else stat.st_size
 
