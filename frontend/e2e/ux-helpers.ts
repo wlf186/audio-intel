@@ -42,7 +42,7 @@ export async function downloadConcise(page:Page,format:'pdf'|'docx'='pdf'){
  await openTranscriptExport(page)
  const modal=page.locator('.transcript-export-modal')
  if(await modal.isVisible()){
-  await modal.locator('select').selectOption(format)
+  await modal.locator('.export-format').selectOption(format)
   await modal.locator('.modal-actions .primary').click()
  }else{
   await page.locator('.transcript-concise>button').click()

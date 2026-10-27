@@ -71,8 +71,7 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  expect(Buffer.concat(originalChunks)).toEqual(await originalResponse.body())
 
  await openTranscriptExport(page)
- if(width===390){await expect(page.locator('.transcript-export-modal select option')).toHaveCount(6);await closeTranscriptExport(page)}
- else{await page.getByRole('button',{name:'明细与字幕',exact:true}).click();await expect(page.locator('.transcript-export-details-panel button')).toHaveCount(4);await page.keyboard.press('Escape')}
+ await expect(page.locator('.transcript-export-modal .export-format option')).toHaveCount(6);await closeTranscriptExport(page)
  await expect(page.getByRole('button',{name:'编辑分段',exact:true})).toHaveCount(0)
  await page.getByRole('button',{name:'画面检测',exact:true}).click()
  const detection=page.getByRole('dialog')

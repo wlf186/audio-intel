@@ -53,8 +53,8 @@ async function expectNavigationLayout(page:Page,width:number,labels:string[],mod
   const lastBox=buttons.at(-1)!.getBoundingClientRect()
   return {columns:getComputedStyle(element).gridTemplateColumns.split(' ').length,tabWidth:firstBox.width,reservedWidth:navigationBox.right-lastBox.right}
  })
- expect(slots.columns).toBe(width>900?6:5)
- expect(Math.abs(slots.reservedWidth-(width>900?slots.tabWidth:0))).toBeLessThanOrEqual(1)
+ expect(slots.columns).toBe(5)
+ expect(Math.abs(slots.reservedWidth)).toBeLessThanOrEqual(1)
  const firstButton=navigation.getByRole('button').first()
  expect(await firstButton.evaluate(element=>getComputedStyle(element).display)).toBe(stacked?'flex':'grid')
  if(stacked)expect(await firstButton.evaluate(element=>getComputedStyle(element).flexDirection)).toBe('column')

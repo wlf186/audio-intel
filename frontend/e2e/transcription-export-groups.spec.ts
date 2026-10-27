@@ -63,11 +63,10 @@ async function chooseTask(page:Page,id:'audio'|'video',width:number){
  await expect(page.locator('.result-head')).toContainText(id==='audio'?'Recording_10.m4a':'用户旅程版.mp4')
 }
 
-async function exportFormat(page:Page,format:string,width:number){
+async function exportFormat(page:Page,format:string,_width:number){
  if(format==='pdf'||format==='docx')return downloadConcise(page,format)
  await openTranscriptExport(page)
- if(width===390){await page.locator('.transcript-export-modal select').selectOption(format);await page.locator('.transcript-export-modal .modal-actions .primary').click()}
- else {await page.getByRole('button',{name:'明细与字幕',exact:true}).click();await page.getByRole('button',{name:new RegExp('^'+format.toUpperCase())}).click()}
+ await page.locator('.transcript-export-modal .export-format').selectOption(format);await page.locator('.transcript-export-modal .modal-actions .primary').click()
 }
 
 for(const width of [1440,390]){

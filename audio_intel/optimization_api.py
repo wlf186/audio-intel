@@ -57,11 +57,14 @@ class OptimizationSummary(BaseModel):
     job_id: str
     state: Literal['queued', 'running', 'pausing', 'paused', 'failed', 'succeeded', 'deleting']
     published: bool
+    requires_regeneration: bool = False
     model: str
+    rewrite_mode: Literal['polish', 'rewrite', 'editorial'] | None = None
     total_chars: int
     completed_chars: int
     completed_units: int
     total_units: int
+    needs_review_units: int = 0
     activity_chars: int
     progress: float
     revision: int
@@ -79,6 +82,7 @@ class OptimizationStatus(BaseModel):
 class CreateRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     regenerate: bool = False
+    rewrite_mode: Literal['polish', 'rewrite', 'editorial'] = Field('rewrite', description='自然润色 / polish; 流畅重写 / rewrite (default); 深度成稿 / editorial. Saved per run; resume retains it.')
 
 
 class RunRequest(BaseModel):
@@ -104,6 +108,9 @@ class OptimizedParagraph(BaseModel):
     end: float
     original_text: str
     text: str | None
+    omitted: bool = False
+    review_status: Literal['accepted', 'needs_review'] | None = None
+    review_reason: Literal['review_failed', 'invalid_output'] | None = None
     sources: list[SourceSpan]
     segment_ids: list[int]
 
@@ -112,7 +119,9 @@ class OptimizedResult(BaseModel):
     run_id: str
     complete: bool
     model: str
+    rewrite_mode: Literal['polish', 'rewrite', 'editorial'] | None = None
     paragraphs: list[OptimizedParagraph]
+    needs_review_units: int = 0
     scenes: list[dict[str, Any]]
 
 
@@ -138,7 +147,7 @@ def owned(job_id: str, run_id: str) -> dict:
 
 def error_message(exc: Exception) -> str:
     if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
-        return '模型响应超时，可继续重试 / Model response timed out; resume to retry'
+        return '模型响应超时，请检查服务后继续 / Model response timed out; check the service and resume'
     if isinstance(exc, httpx.HTTPStatusError):
         return f'Ollama HTTP {exc.response.status_code}，请检查服务和模型 / Check the service and model'
     if isinstance(exc, httpx.RequestError):
@@ -179,7 +188,14 @@ class Manager:
         try:
             run = store.get(run_id)
             profile = run['config']
-            await self.check_model(profile)
+            for attempt in range(3):
+                try:
+                    await self.check_model(profile)
+                    break
+                except (httpx.TransportError, httpx.HTTPStatusError, TimeoutError) as exc:
+                    if attempt == 2 or (isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500 and exc.response.status_code != 429):
+                        raise
+                    await asyncio.sleep(2 ** attempt)
             job = parent(run['job_id'])
             if engine.source_hash(job['result']) != run['source_hash']:
                 raise ValueError('原文已变化，请重新生成 / Source changed; regenerate')
@@ -187,43 +203,34 @@ class Manager:
             hotwords = run['hotwords']
 
             async def process(batch, before, after):
+                reason = None
                 for attempt in range(3):
                     try:
                         output = await engine.generate(profile, batch, hotwords, before, after, lambda count: store.activity(run_id, count))
                         if not store.checkpoint(run_id, output):
                             raise asyncio.CancelledError()
                         return
-                    except (engine.InvalidOutput, json.JSONDecodeError) as exc:
-                        if len(batch) > 1:
-                            middle = len(batch) // 2
-                            await process(batch[:middle], before, batch[middle]['original_text'][:300])
-                            await process(batch[middle:], batch[middle - 1]['original_text'][-300:], after)
-                            return
+                    except engine.ReviewFailed:
+                        reason = 'review_failed'
+                        break
+                    except (engine.InvalidOutput, json.JSONDecodeError):
                         if attempt == 2:
-                            raise exc
+                            reason = 'invalid_output'
+                            break
                     except (httpx.TransportError, httpx.HTTPStatusError, TimeoutError) as exc:
                         if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500 and exc.response.status_code != 429:
                             raise
                         if attempt == 2:
                             raise
                     await asyncio.sleep(2 ** attempt)
+                if not store.checkpoint(run_id, [(batch[0]['ordinal'], batch[0]['original_text'])], review_reason=reason):
+                    raise asyncio.CancelledError()
 
-            index = 0
-            while index < len(units):
-                if units[index]['text'] is not None:
-                    index += 1
+            from .optimization_policy import context
+            for index, unit in enumerate(units):
+                if unit['text'] is not None:
                     continue
-                before = ''.join(p['original_text'] for p in units[max(0, index - 2):index])[-300:]
-                stop, batch = index, []
-                while stop < len(units) and units[stop]['text'] is None and len(batch) < 32:
-                    proposed = batch + [units[stop]]
-                    after = ''.join(p['original_text'] for p in units[stop + 1:stop + 3])[:300]
-                    if batch and (sum(len(p['original_text']) for p in proposed) > 2400 or not engine.fits(profile, proposed, hotwords, before, after)):
-                        break
-                    batch = proposed; stop += 1
-                after = ''.join(p['original_text'] for p in units[stop:stop + 2])[:300]
-                await process(batch, before, after)
-                index = stop
+                await process([unit], context(units[:index], before=True), context(units[index + 1:]))
             if engine.source_hash(parent(run['job_id'])['result']) != run['source_hash']:
                 raise ValueError('Source changed; regenerate / 原文已变化，请重新生成')
             if store.publish(run_id):
@@ -231,6 +238,9 @@ class Manager:
         except asyncio.CancelledError:
             store.transition(run_id, 'paused', ('running', 'pausing'), '已暂停 / Paused')
             raise
+        except (httpx.TransportError, httpx.HTTPStatusError, TimeoutError) as exc:
+            recoverable = not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code == 429 or exc.response.status_code >= 500
+            store.transition(run_id, 'paused' if recoverable else 'failed', ('running',), error_message(exc))
         except Exception as exc:
             store.transition(run_id, 'failed', ('running',), error_message(exc))
 
@@ -335,7 +345,7 @@ def register(app, api):
                     await manager.stop(job_id)
             return value
 
-    @app.get(jobs, summary='读取优化状态 / Get optimization status', description=api.bilingual('读取优化状态', 'Return the published draft and candidate summary. Supports ETag polling.'), operation_id='getOptimizationStatus', tags=[TAG], response_model=OptimizationStatus, responses=errors)
+    @app.get(jobs, summary='读取优化状态 / Get optimization status', description=api.bilingual('读取优化状态', 'Return published/candidate summaries including needs_review_units. Supports ETag polling.'), operation_id='getOptimizationStatus', tags=[TAG], response_model=OptimizationStatus, responses=errors)
     def status(job_id: str, request: Request, response: Response, _: None = auth):
         parent(job_id)
         value = public_status(job_id)
@@ -346,16 +356,19 @@ def register(app, api):
         response.headers['Cache-Control'] = 'no-store'
         return value
 
-    @app.post(jobs, summary='创建优化任务 / Create optimization', description=api.bilingual('创建优化任务', 'Requires Idempotency-Key. Returns 202 on creation, 200 on replay, 409 on conflict and 429 at queue capacity.'), operation_id='createTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, status_code=202, responses=errors)
+    @app.post(jobs, summary='创建优化任务 / Create optimization', description=api.bilingual('创建优化任务', 'Requires Idempotency-Key. rewrite_mode selects polish/rewrite/editorial (default rewrite), saved in the run snapshot and idempotency fingerprint. Returns 202 on creation, 200 on replay, 409 on conflict and 429 at queue capacity.'), operation_id='createTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, status_code=202, responses=errors)
     async def create(job_id: str, body: CreateRequest, response: Response, idempotency_key: str = Header(..., alias='Idempotency-Key'), _: None = auth):
         key = api.validate_idempotency_key(idempotency_key)
         async with manager.gate:
-            if store.replay(job_id, key, body.regenerate):
+            if store.replay(job_id, key, body.regenerate, body.rewrite_mode if 'rewrite_mode' in body.model_fields_set else None):
                 response.status_code = 200
                 return public_status(job_id)
-            config = store.settings()
+            config = {**store.settings(), 'prompt_version': engine.PROMPT_VERSION, 'rewrite_mode': body.rewrite_mode}
             if not config.get('enabled'):
                 raise HTTPException(409, '请在系统状态启用表达优化 / Enable expression optimization in System')
+            candidate = store.status(job_id)['candidate']
+            if body.regenerate and candidate and candidate['requires_regeneration']:
+                await manager.stop(job_id)
             def prepare():
                 with reader_lease(job_id), speaker_update_lock(job_id):
                     job = parent(job_id)
@@ -380,7 +393,7 @@ def register(app, api):
             await manager.stop(job_id)
             return public_status(job_id)
 
-    @app.post(jobs + '/resume', summary='继续优化 / Resume optimization', description=api.bilingual('继续优化', 'Resume from committed checkpoints after model and source verification.'), operation_id='resumeTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, responses=errors)
+    @app.post(jobs + '/resume', summary='继续优化 / Resume optimization', description=api.bilingual('继续优化', 'Resume from saved checkpoints including retained originals after model and source verification. Obsolete policy candidates require explicit regeneration (409).'), operation_id='resumeTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, responses=errors)
     async def resume(job_id: str, body: RunRequest, _: None = auth):
         async with manager.gate:
             if not store.settings().get('enabled'):
@@ -395,7 +408,7 @@ def register(app, api):
             store.resume(body.run_id)
             return public_status(job_id)
 
-    @app.get(jobs + '/result', summary='读取优化稿 / Read optimized transcript', description=api.bilingual('读取优化稿', 'Read source-mapped paragraphs and current picture grouping. Partial results are explicitly marked.'), operation_id='getOptimizedTranscript', tags=[TAG], response_model=OptimizedResult, responses=errors)
+    @app.get(jobs + '/result', summary='读取优化稿 / Read optimized transcript', description=api.bilingual('读取优化稿', 'Read source-mapped paragraphs and current picture grouping. text=null is pending; omitted=true with text="" is a reviewed filler omission. review_status=needs_review retains the exact original after bounded review/output failures; accepted means current-policy checks passed, not a quality guarantee. Null review_status is pending or unknown historical metadata. needs_review_units counts retained paragraphs, which do not prevent completion. Historical drafts remain readable. Partial results are explicitly marked.'), operation_id='getOptimizedTranscript', tags=[TAG], response_model=OptimizedResult, responses=errors)
     def result(job_id: str, run_id: str = Query(..., pattern=r'^[a-f0-9]{32}$'), _: None = auth):
         with reader_lease(job_id), speaker_update_lock(job_id):
             owned(job_id, run_id)

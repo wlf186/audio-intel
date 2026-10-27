@@ -1,14 +1,18 @@
 import {useState,type ReactNode} from 'react'
 import {useTranslation} from 'react-i18next'
-import {Sparkles} from 'lucide-react'
+import {Sparkles,MoreHorizontal} from 'lucide-react'
 import type {OptimizationController} from '../hooks/useOptimization'
 import {ActionPopover} from './ActionPopover'
 import {ConfirmDialog} from './ConfirmDialog'
+import {Modal} from './Modal'
+import {readRewriteMode,saveRewriteMode,rewriteModes,type RewriteMode} from '../lib/optimization'
+import type {ReadingMode} from '../lib/workspaceSession'
 import './optimization.css'
 
-export function OptimizationControls({controller,video,videoReading,onOriginal,onDetails,children}:{controller:OptimizationController;video:boolean;videoReading:boolean;onOriginal:()=>void;onDetails:()=>void;children?:ReactNode}){
+export function OptimizationControls({controller,video,videoReading,onOriginal,onDetails,onModeChange,tools,children}:{controller:OptimizationController;video:boolean;videoReading:boolean;onOriginal:()=>void;onDetails:()=>void;onModeChange:(mode:ReadingMode)=>void;tools?:ReactNode;children?:ReactNode}){
  const {t}=useTranslation()
- const [confirm,setConfirm]=useState<'delete'|'regenerate'>()
+ const [confirm,setConfirm]=useState<'delete'|'regenerate'|'create'>()
+ const [rewriteMode,setRewriteMode]=useState<RewriteMode>(readRewriteMode)
  const {status,error,busy,view}=controller
  const current=status?.candidate
  const available=Boolean(status?.published||current?.completed_units)
@@ -16,20 +20,26 @@ export function OptimizationControls({controller,video,videoReading,onOriginal,o
  return <>
   <div className="optimization-toolbar">
    <div className="optimization-modes" role="group" aria-label={t('optimization.readingMode')}>
-    <button aria-pressed={!view&&(!video||videoReading)} onClick={()=>{controller.setOptimized(false);onOriginal()}}>{t('optimization.original')}</button>
-    <button aria-pressed={view} disabled={!available} onClick={()=>controller.setOptimized(true)}>{t('optimization.draft')}</button>
-    {video?<button aria-pressed={!view&&!videoReading} onClick={()=>{controller.setOptimized(false);onDetails()}}>{t('video.details')}</button>:null}
+    <button aria-pressed={!view} onClick={()=>{onModeChange('original');onOriginal()}}>{t('optimization.original')}</button>
+    <button aria-pressed={controller.mode==='optimized'} disabled={!available} onClick={()=>onModeChange('optimized')}>{t('optimization.draft')}</button>
+    <button aria-pressed={controller.compare} disabled={!available} onClick={()=>onModeChange('comparison')}>{t('optimization.compare')}</button>
    </div>
+   {tools}
    <div className="optimization-actions">
-    {status?.enabled&&!status.published&&!current?<button className="button" disabled={!status?.enabled||busy} onClick={()=>void controller.action('create')}><Sparkles size={15}/>{t('optimization.start')}</button>:null}
-    {available?<button className="button" onClick={()=>controller.setCompare(true)}>{t('optimization.compare')}</button>:null}
-    {current||status?.published?<ActionPopover label={t('optimization.more')} closeOnAction><button className="button" disabled={busy||!status?.enabled||Boolean(current&&current.state!=='failed')} onClick={()=>setConfirm('regenerate')}>{t('optimization.regenerate')}</button><button className="button danger-action" disabled={busy} onClick={()=>setConfirm('delete')}>{t('optimization.delete')}</button></ActionPopover>:null}
+    {status?.enabled&&!status.published&&!current?<button className="button" disabled={!status?.enabled||busy} onClick={()=>{setRewriteMode(readRewriteMode());setConfirm('create')}}><Sparkles size={15}/>{t('optimization.start')}</button>:null}
+    {video&&!view?<button className="button" aria-pressed={!videoReading} onClick={()=>{onModeChange('original');videoReading?onDetails():onOriginal()}}>{t(videoReading?'video.details':'video.reading')}</button>:null}
+    {current||status?.published?<ActionPopover label={t('optimization.more')} icon={<MoreHorizontal size={18}/>} className="optimization-more" closeOnAction><button className="button" disabled={busy||!status?.enabled||Boolean(current&&current.state!=='failed'&&!current.requires_regeneration)} onClick={()=>{setRewriteMode(readRewriteMode());setConfirm('regenerate')}}>{t('optimization.regenerate')}</button><button className="button danger-action" disabled={busy} onClick={()=>setConfirm('delete')}>{t('optimization.delete')}</button></ActionPopover>:null}
     {status&&!status.enabled?<a className="button" href="#system">{t('optimization.configure')}</a>:null}
    </div>
    {!view?children:null}
   </div>
-  {current?<div className="optimization-progress" role="status"><div><strong>{t(`optimization.states.${current.state}`)}</strong><span>{t('optimization.progress',{done:current.completed_units,total:current.total_units,percent:Math.floor(current.progress*100)})}</span>{current.state==='running'?<small>{current.activity_chars?t('optimization.generating',{count:current.activity_chars}):t('optimization.waitingModel')}</small>:null}</div><progress value={current.completed_chars} max={Math.max(1,current.total_chars)}/><div className="optimization-progress-actions">{active?<button className="button" disabled={busy||current.state==='pausing'} onClick={()=>void controller.action('pause')}>{t('optimization.pause')}</button>:current.state==='paused'||current.state==='failed'?<button className="button" disabled={busy||!status?.enabled} onClick={()=>void controller.action('resume')}>{t('optimization.resume')}</button>:null}{status?.published&&current.completed_units>0?<button className="button" onClick={controller.previewCandidate}>{t('optimization.preview')}</button>:null}{status?.published&&controller.selected?.id===current.id?<button className="button" onClick={controller.showPublished}>{t('optimization.published')}</button>:null}</div>{current.error?<p className="error">{current.error}</p>:null}</div>:null}
+  {current?<div className="optimization-progress" role="status"><div><strong>{t(`optimization.states.${current.state}`)}</strong><span>{t('optimization.progress',{done:current.completed_units,total:current.total_units,percent:Math.floor(current.progress*100)})}</span>{current.needs_review_units?<small>{t('optimization.retainedProgress',{count:current.needs_review_units})}</small>:null}{current.state==='running'?<small>{current.activity_chars?t('optimization.generating',{count:current.activity_chars}):t('optimization.waitingModel')}</small>:null}</div><progress value={current.completed_chars} max={Math.max(1,current.total_chars)}/><div className="optimization-progress-actions">{active?<button className="button" disabled={busy||current.state==='pausing'} onClick={()=>void controller.action('pause')}>{t('optimization.pause')}</button>:current.state==='paused'||current.state==='failed'?<button className="button" disabled={busy||!status?.enabled||current.requires_regeneration} onClick={()=>void controller.action('resume')}>{t('optimization.resume')}</button>:null}{status?.published&&current.completed_units>0?<button className="button" onClick={controller.previewCandidate}>{t('optimization.preview')}</button>:null}{status?.published&&controller.selected?.id===current.id?<button className="button" onClick={controller.showPublished}>{t('optimization.published')}</button>:null}</div>{current.requires_regeneration?<p className="notice">{t('optimization.oldPolicy')}</p>:null}{current.error?<p className="error">{current.error}</p>:null}</div>:null}
+
   {error?<p className="error" role="alert">{error} <button className="button" onClick={controller.retry}>{t('common.actions.retry')}</button></p>:null}
-  {confirm?<ConfirmDialog title={t(confirm==='delete'?'optimization.delete':'optimization.regenerate')} description={t(confirm==='delete'?'optimization.deleteHelp':'optimization.regenerateHelp')} confirmLabel={t(confirm==='delete'?'optimization.delete':'optimization.regenerate')} busy={busy} danger={confirm==='delete'} onClose={()=>setConfirm(undefined)} onConfirm={()=>{void controller.action(confirm);setConfirm(undefined)}}/>:null}
+  {confirm==='delete'?<ConfirmDialog title={t('optimization.delete')} description={t('optimization.deleteHelp')} confirmLabel={t('optimization.delete')} busy={busy} danger onClose={()=>setConfirm(undefined)} onConfirm={()=>{void controller.action('delete');setConfirm(undefined)}}/>:confirm?<Modal className="optimization-mode-modal" title={t(confirm==='create'?'optimization.start':'optimization.regenerate')} closeLabel={t('common.actions.close')} onClose={()=>setConfirm(undefined)}>
+   <fieldset className="optimization-mode-choices"><legend>{t('optimization.chooseMode')}</legend>{rewriteModes.map(mode=><label key={mode}><input type="radio" name="rewrite-mode" value={mode} checked={rewriteMode===mode} onChange={()=>{setRewriteMode(mode);saveRewriteMode(mode)}}/><span><strong>{t(`optimization.rewriteModes.${mode}.label`)}</strong><small>{t(`optimization.rewriteModes.${mode}.help`)}</small></span></label>)}</fieldset>
+   {confirm==='regenerate'?<p>{t('optimization.regenerateHelp')}</p>:null}
+   <div className="modal-actions"><button className="button" onClick={()=>setConfirm(undefined)}>{t('common.actions.cancel')}</button><button className="primary" disabled={busy} onClick={()=>{void controller.action(confirm,rewriteMode);setConfirm(undefined)}}>{t(confirm==='create'?'optimization.begin':'optimization.regenerate')}</button></div>
+  </Modal>:null}
  </>
 }

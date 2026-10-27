@@ -22,7 +22,7 @@ export function useReaderBookmark(key:string,root:RefObject<HTMLDivElement|null>
   if(!options.active){restore.current=true;return}
   if(!element||!options.ready||!restore.current)return
   const saved=readReaderBookmark(key)
-  if(saved&&saved.query===options.query&&saved.speakerFilter===options.speakerFilter){
+  if(saved&&(saved.query||'')===(options.query||'')&&(saved.speakerFilter||'all')===(options.speakerFilter||'all')){
    if(!saved.anchorId){element.scrollTop=saved.scrollTop;restore.current=false;return}
    const items=[...element.querySelectorAll<HTMLElement>('[data-reader-id]')]
    const anchor=items.find(item=>item.dataset.readerId===saved.anchorId)||items.find(item=>Number(item.dataset.readerTime)>=saved.time)||items.at(-1)

@@ -122,28 +122,29 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
   })
   await f.open()
   await openTranscriptExport(page)
-  const exportButton=page.locator(width===390?'.transcript-export-modal .modal-actions .primary':'.transcript-concise>button')
-  await downloadConcise(page);await expect(exportButton).toBeDisabled();await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'繁忙':'busy');await expect(exportButton).toBeEnabled()
-  status=413;await downloadConcise(page);await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'上限':'limit')
-  status=0;await downloadConcise(page);await expect(page.locator('.transcript-export [role=alert]')).toContainText(zh?'中断':'interrupted')
+  const exportButton=page.locator('.transcript-export-modal .modal-actions .primary')
+  await downloadConcise(page);await expect(exportButton).toBeDisabled();await expect(page.locator('.transcript-export-modal [role=alert]')).toContainText(zh?'繁忙':'busy');await expect(exportButton).toBeEnabled()
+  status=413;await downloadConcise(page);await expect(page.locator('.transcript-export-modal [role=alert]')).toContainText(zh?'上限':'limit')
+  status=0;await downloadConcise(page);await expect(page.locator('.transcript-export-modal [role=alert]')).toContainText(zh?'中断':'interrupted')
   status=200;const downloading=page.waitForEvent('download');await downloadConcise(page);const download=await downloading;expect(download.suggestedFilename()).toBe('讲座.pdf');expect(await download.failure()).toBeNull()
   expect(methods).toEqual(['POST','POST','POST','POST'])
-  await expect(page.locator('.transcript-export [role=alert]')).toHaveCount(0)
+  await expect(page.locator('.transcript-export-modal [role=alert]')).toHaveCount(0)
   await page.screenshot({path:testInfo.outputPath('export.png'),fullPage:true})
   status=401;await downloadConcise(page);await expect(page.getByRole('heading',{name:zh?'访问验证':'Access verification',exact:true})).toBeVisible()
   expect(errors).toEqual([])
  })
 }
 
-test('switching tasks aborts a pending PDF without downloading stale content',async({page})=>{
- const f=await fixture(page);let release!:()=>void;const held=new Promise<void>(resolve=>{release=resolve});let downloads=0
+test('switching tasks aborts a pending PDF without downloading stale content',async({page,responseGate})=>{
+ const f=await fixture(page),held=responseGate();let downloads=0
  page.on('download',()=>downloads++)
- await page.route('**/transcript-export',async route=>{await held;await route.fulfill({contentType:'application/pdf',body:'%PDF-old'}).catch(()=>undefined)})
+ await page.route('**/transcript-export',async route=>{await held.hold();await route.fulfill({contentType:'application/pdf',body:'%PDF-old'}).catch(()=>undefined)})
  await f.open();const requested=page.waitForRequest('**/transcript-export')
  await downloadConcise(page);const request=await requested
  const failed=page.waitForEvent('requestfailed',{predicate:failed=>failed===request})
+ await page.locator('.transcript-export-modal .modal-close').click()
  await page.getByRole('button',{name:/Other fixture.mp4/}).click()
- await expect(page.locator('.transcript-export button.primary')).toBeEnabled();release();await failed
+ await expect(page.locator('.transcript-export button.primary')).toBeEnabled();held.release();await failed
  await expect(page.locator('.transcript-export button.primary')).toBeEnabled();expect(downloads).toBe(0)
 })
 

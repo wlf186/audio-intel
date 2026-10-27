@@ -740,6 +740,11 @@
     }
   },
   "optimization": {
+    "chooseMode": "Choose editing style",
+    "begin": "Start optimization",
+    "currentMode": "Editing style: {{mode}}",
+    "legacyMode": "Legacy policy",
+    "rewriteModes": {"polish": {"label": "Natural polish", "help": "Remove verbal clutter, repetition and awkward phrasing while retaining a conversational tone."}, "rewrite": {"label": "Fluent rewrite", "help": "Recommended. Reorganize sentences into a clear, fluent conversational transcript."}, "editorial": {"label": "Editorial rewrite", "help": "Restructure each passage into concise, polished prose while retaining all information."}},
     "title": "Expression optimization",
     "settingsHelp": "Connect Ollama to turn transcripts into clear, natural written conversation. The original transcript is retained.",
     "url": "Service URL",
@@ -776,7 +781,7 @@
     "preview": "Preview this generation",
     "published": "View completed draft",
     "progress": "Completed {{done}} / {{total}} paragraphs · {{percent}}%",
-    "generating": "Received {{count}} characters in this batch",
+    "generating": "Editing and reviewing this paragraph; {{count}} characters received",
     "waitingModel": "Waiting for model response…",
     "search": "Search optimized text",
     "pendingParagraph": "This paragraph has not been optimized yet",
@@ -792,6 +797,21 @@
       "failed": "Optimization failed",
       "succeeded": "Optimized",
       "deleting": "Cleaning up"
-    }
+    },
+    "omitted": "Filler omitted",
+    "noSceneText": "No optimized text remains in this scene.",
+    "allOmitted": "Only fillers were omitted. No reading text remains; the original is still available.",
+    "needsReviewBadge": "Original retained · Needs review",
+    "completedWithReview": "Completed; {{count}} paragraphs retained for review",
+    "allRetained": "Processing complete; all original paragraphs retained",
+    "retainedProgress": "{{count}} original paragraphs retained for review",
+    "viewNeedsReview": "Review {{count}} retained paragraphs",
+    "paragraphFilter": "Paragraph filter",
+    "filterAll": "All",
+    "filterChanged": "Changed",
+    "filterReview": "Needs review",
+    "changeSummary": "{{changed}} edited · {{omitted}} omitted · {{unchanged}} unchanged",
+    "oldPolicy": "This candidate uses an older editing policy. Regenerate from Optimization options; the completed draft is retained.",
+    "exportPending": "This draft is incomplete. Export the original, or view the completed draft to export the previous version."
   }
 }

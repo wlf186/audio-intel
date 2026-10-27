@@ -171,6 +171,8 @@ def export_result(result: dict[str, Any], policy: TranscriptExportRequest) -> di
         item.update(text=replacer.text(original), speaker_label=labels.get(item.get("speaker"), "Speaker"))
         if "original_text" in segment:
             item["original_text"] = replacer.text(segment["original_text"])
+            if segment.get('review_status') == 'needs_review':
+                item['review_status'] = 'needs_review'
         if "words" in segment:
             item["words"] = replacer.words(segment["words"], original)
         segments.append(item)
@@ -213,10 +215,15 @@ def optimized_export_result(job: dict, policy: TranscriptExportRequest) -> dict:
     result.update(_optimized=True, text_version=policy.text_version)
     result['segments'] = []
     for paragraph in draft['paragraphs']:
+        if paragraph['omitted'] and policy.text_version == 'optimized':
+            continue
         item = {key: paragraph[key] for key in ('speaker', 'speaker_label', 'start', 'end', 'text')}
         item['id'] = paragraph['ordinal']
+        if paragraph['omitted']:
+            item['text'] = '已省略纯占位语 / Filler omitted'
         if policy.text_version == 'comparison':
             item['original_text'] = paragraph['original_text']
+            item['review_status'] = paragraph['review_status']
         result['segments'].append(item)
     result['text'] = '\n'.join(p['text'] for p in result['segments'])
     result.pop('artifacts', None)

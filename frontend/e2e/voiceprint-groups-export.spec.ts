@@ -143,24 +143,25 @@ for(const width of [1440,390])test(`redaction export preference, validation and 
  await openTranscriptExport(page)
  await expect(panel.getByRole('checkbox',{name:'脱敏导出',exact:true})).toBeChecked()
  const editor=page.getByLabel('替换规则（每行 原词=替换词）',{exact:true})
- const openRules=async()=>{if(width===1440)await panel.getByRole('button',{name:'关键词替换',exact:true}).click();await expect(page.locator('.transcript-rule-editor')).toContainText('导出隐藏画面的设置仍生效')}
+ const openRules=async()=>{if(!await panel.locator('.export-replacement-options').getAttribute('open').then(value=>value!==null))await panel.locator('.export-replacement-options summary').click();await expect(page.locator('.transcript-rule-editor')).toContainText('导出隐藏画面的设置仍生效')}
  await openRules();await editor.fill('广东移动=gy\ncontact=reach')
  let downloading=page.waitForEvent('download');await downloadConcise(page);await downloading
  expect(state.exports.at(-1)).toEqual({format:'pdf',redact:true,replacements:[{source:'广东移动',target:'gy'},{source:'contact',target:'reach'}]})
+ await expect(page.locator('.transcript-export-modal')).toHaveCount(0)
+ await openTranscriptExport(page)
  await panel.getByRole('checkbox',{name:'脱敏导出',exact:true}).uncheck()
- if(width===1440)await openRules()
+ await openRules()
  await editor.fill('bad syntax')
- if(width===1440){await panel.getByRole('button',{name:'明细与字幕',exact:true}).click();await expect(editor).toBeHidden()}
- else await page.locator('.transcript-export-modal select').selectOption('json')
- downloading=page.waitForEvent('download');await (width===1440?page.getByRole('button',{name:/^JSON/}):page.locator('.transcript-export-modal .modal-actions .primary')).click();await downloading
+ await page.locator('.transcript-export-modal .export-format').selectOption('json')
+ downloading=page.waitForEvent('download');await page.locator('.transcript-export-modal .modal-actions .primary').click();await downloading
  expect(state.exports.at(-1)).toEqual({format:'json',redact:false,replacements:[]})
  await page.reload();await page.getByRole('tab',{name:'任务与结果',exact:true}).click();await openTranscriptExport(page)
  await expect(panel.getByRole('checkbox',{name:'脱敏导出',exact:true})).not.toBeChecked()
  await openRules();await expect(editor).toHaveValue('bad syntax')
  await panel.getByRole('checkbox',{name:'脱敏导出',exact:true}).check()
- if(width===390)await page.locator('.transcript-export-modal select').selectOption('pdf')
- await expect(page.locator(width===390?'.transcript-export-modal .modal-actions .primary':'.transcript-concise>button')).toBeDisabled()
- if(width===1440)await openRules()
+ await page.locator('.transcript-export-modal .export-format').selectOption('pdf')
+ await expect(page.locator('.transcript-export-modal .modal-actions .primary')).toBeDisabled()
+ await openRules()
  await expect(page.getByRole('alert')).toContainText('第 1 行')
  expect(state.exports).toHaveLength(2)
  await editor.fill('广东移动=gy')
@@ -169,8 +170,7 @@ for(const width of [1440,390])test(`redaction export preference, validation and 
  await expect(editor).toHaveValue('');await expect(panel.getByRole('checkbox',{name:'脱敏导出',exact:true})).toBeChecked()
  await page.getByRole('button',{name:'撤销',exact:true}).click();await expect(editor).toHaveValue('广东移动=gy')
  await editor.fill('invalid before clear')
- if(width===1440){await page.keyboard.press('Escape');await panel.getByRole('checkbox',{name:'脱敏导出',exact:true}).uncheck();await openRules()}
- else await panel.getByRole('checkbox',{name:'脱敏导出',exact:true}).uncheck()
+ await panel.getByRole('checkbox',{name:'脱敏导出',exact:true}).uncheck()
  await page.getByRole('button',{name:'清空替换规则',exact:true}).click()
  await expect(panel.getByRole('checkbox',{name:'脱敏导出',exact:true})).not.toBeChecked()
  await page.getByRole('button',{name:'撤销',exact:true}).click();await expect(editor).toHaveValue('invalid before clear')

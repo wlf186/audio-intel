@@ -730,6 +730,11 @@
     }
   },
   "optimization": {
+    "chooseMode": "选择改写档位",
+    "begin": "开始优化",
+    "currentMode": "改写档位：{{mode}}",
+    "legacyMode": "旧版策略",
+    "rewriteModes": {"polish": {"label": "自然润色", "help": "清理口头冗余、重复和病句，保留自然交流语气。"}, "rewrite": {"label": "流畅重写", "help": "默认推荐。充分重组句式与表达，形成清晰流畅的对谈稿。"}, "editorial": {"label": "深度成稿", "help": "更充分地梳理段落结构，使用紧凑书面表达，保留完整信息。"}},
     "title": "表达优化",
     "settingsHelp": "连接 Ollama，将转写整理为清楚、自然的文字聊天记录。原始转写始终保留。",
     "url": "服务地址",
@@ -766,7 +771,7 @@
     "preview": "预览本次生成",
     "published": "查看已完成稿",
     "progress": "已完成 {{done}} / {{total}} 段 · {{percent}}%",
-    "generating": "当前批次已收到 {{count}} 字",
+    "generating": "正在整理并复核当前段，已收到 {{count}} 字",
     "waitingModel": "正在等待模型响应…",
     "search": "搜索优化稿内容",
     "pendingParagraph": "此段尚未优化",
@@ -782,6 +787,21 @@
       "failed": "优化失败",
       "succeeded": "优化完成",
       "deleting": "正在清理"
-    }
+    },
+    "omitted": "已省略纯占位语",
+    "noSceneText": "此画面没有可保留的优化正文。",
+    "allOmitted": "纯占位语已省略，没有需要保留的正文。原文仍可查看。",
+    "needsReviewBadge": "保留原文·待核对",
+    "completedWithReview": "已完成，其中 {{count}} 段保留原文待核对",
+    "allRetained": "处理完成，全部保留原文",
+    "retainedProgress": "已保留 {{count}} 段原文待核对",
+    "viewNeedsReview": "查看 {{count}} 段待核对",
+    "paragraphFilter": "段落筛选",
+    "filterAll": "全部",
+    "filterChanged": "有变动",
+    "filterReview": "待核对",
+    "changeSummary": "调整 {{changed}} 段 · 省略 {{omitted}} 段 · 未改动 {{unchanged}} 段",
+    "oldPolicy": "此候选使用旧版整理规则，请在优化选项中重新优化。已完成稿会保留。",
+    "exportPending": "当前稿尚未完成，可先导出原文；查看已完成稿后可导出上一版。"
   }
 }

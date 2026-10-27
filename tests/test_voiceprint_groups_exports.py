@@ -46,7 +46,7 @@ def test_groups_migration_default_atomic_moves_and_delete(local):
     with db.connect() as connection:
         assert tuple(connection.execute("SELECT * FROM voiceprint_people").fetchone()) == original
         assert not connection.execute("PRAGMA foreign_key_check").fetchall()
-        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 15
+        assert connection.execute("SELECT version FROM schema_meta").fetchone()[0] == 16
     group = groups.create_group(" Team A ")
     with pytest.raises(sqlite3.IntegrityError):
         groups.create_group("Ｔeam A")

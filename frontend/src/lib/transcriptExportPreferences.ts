@@ -1,11 +1,25 @@
-export type TranscriptExportPreferences={redact:boolean;rules:string}
+import type {TranscriptExportFormat} from './types'
+export type TranscriptTextVersion='original'|'optimized'|'comparison'
+export type TranscriptExportPreferences={redact:boolean;rules:string;textVersion?:TranscriptTextVersion;formatByVersion?:Partial<Record<TranscriptTextVersion,TranscriptExportFormat>>}
 export type TranscriptReplacement={source:string;target:string}
 export const transcriptExportPreferencesKey='audio-intel:transcript-export:v1'
 export const defaultTranscriptExportPreferences:TranscriptExportPreferences={redact:true,rules:''}
-export function loadTranscriptExportPreferences():TranscriptExportPreferences{
- try{const value=JSON.parse(localStorage.getItem(transcriptExportPreferencesKey)||'null');return{redact:typeof value?.redact==='boolean'?value.redact:true,rules:typeof value?.rules==='string'?value.rules:''}}catch{return{...defaultTranscriptExportPreferences}}
+const versions:TranscriptTextVersion[]=['original','optimized','comparison']
+const formats:TranscriptExportFormat[]=['pdf','docx','txt','srt','vtt','json']
+export function exportFormats(version:TranscriptTextVersion,available:TranscriptExportFormat[]){return available.filter(value=>version==='original'||value==='pdf'||value==='docx'||version==='optimized'&&value==='txt')}
+export function preferredExportFormat(preferences:TranscriptExportPreferences,version:TranscriptTextVersion,available:TranscriptExportFormat[]):TranscriptExportFormat{
+ const allowed=exportFormats(version,available),saved=preferences.formatByVersion?.[version]
+ return saved&&allowed.includes(saved)?saved:allowed.includes('pdf')?'pdf':allowed[0]||'pdf'
 }
-export function saveTranscriptExportPreferences(value:TranscriptExportPreferences){try{localStorage.setItem(transcriptExportPreferencesKey,JSON.stringify(value))}catch{/* Keep the current controls usable without browser storage. */}}
+export function loadTranscriptExportPreferences():TranscriptExportPreferences{
+ try{
+  const value=JSON.parse(localStorage.getItem(transcriptExportPreferencesKey)||'null')
+  const formatByVersion:Partial<Record<TranscriptTextVersion,TranscriptExportFormat>>={}
+  for(const version of versions)if(formats.includes(value?.formatByVersion?.[version]))formatByVersion[version]=value.formatByVersion[version]
+  return{redact:typeof value?.redact==='boolean'?value.redact:true,rules:typeof value?.rules==='string'?value.rules:'',textVersion:versions.includes(value?.textVersion)?value.textVersion:undefined,formatByVersion}
+ }catch{return{...defaultTranscriptExportPreferences}}
+}
+export function saveTranscriptExportPreferences(value:TranscriptExportPreferences){try{localStorage.setItem(transcriptExportPreferencesKey,JSON.stringify(value))}catch{/* Keep controls usable without browser storage. */}}
 export function parseTranscriptRules(raw:string):{rules:TranscriptReplacement[];errorLine?:number;error?:'syntax'|'duplicate'|'limit'|'length'}{
  const rules:TranscriptReplacement[]=[]
  const seen=new Set<string>()

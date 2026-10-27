@@ -186,7 +186,7 @@ def test_deployment_docs_keep_full_and_cpu_profile_contracts() -> None:
     assert "complete executor process tree to exit" in architecture
     assert "2.11.0+cu130（full）" in dependencies
     assert "2.11.0+cpu（CPU-only）" in dependencies
-    assert "SQLite schema v15 data" in agents
+    assert "SQLite schema v16 data" in agents
 
 
 def test_api_markdown_examples_use_public_contract_values() -> None:
@@ -266,7 +266,7 @@ def test_current_transcription_documentation_matches_public_entrypoints():
     assert lifecycle.count('- `POST ') == 8
     for name in ('INSTALL.md', 'WINDOWS.md'):
         text = (ROOT / 'docs' / name).read_text(encoding='utf-8')
-        assert '自动迁移到 schema v15' in text
+        assert '自动迁移到 schema v16' in text
         assert '自动迁移到 schema v11' not in text
     guide = (ROOT / 'docs/VIDEO_TRANSCRIPTION.md').read_text(encoding='utf-8')
     for suffix in video_uploads.VIDEO_FORMATS:

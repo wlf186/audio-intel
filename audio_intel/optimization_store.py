@@ -9,8 +9,9 @@ from typing import Any
 
 from fastapi import HTTPException
 from . import db
+from .optimization_policy import PROMPT_VERSION, DEFAULT_MODE
 
-SUMMARY = 'id,job_id,state,published,model,total_chars,completed_chars,completed_units,total_units,activity_chars,error,revision,created_at,updated_at'
+SUMMARY = "COALESCE(json_extract(config_json, '$.prompt_version'), 1) AS prompt_version,json_extract(config_json, '$.rewrite_mode') AS rewrite_mode," + 'id,job_id,state,published,model,total_chars,completed_chars,completed_units,total_units,needs_review_units,activity_chars,error,revision,created_at,updated_at'
 ACTIVE = ('queued', 'running', 'pausing')
 
 
@@ -49,6 +50,18 @@ def migrate(connection: sqlite3.Connection) -> None:
         );
         UPDATE schema_meta SET version=15 WHERE version<15;
     ''')
+    # Add result metadata separately from immutable source/configuration snapshots.
+    with connection:
+        connection.execute('BEGIN IMMEDIATE')
+        for table, columns in {
+            'optimization_units': {'review_status': 'TEXT', 'review_reason': 'TEXT'},
+            'transcript_optimizations': {'needs_review_units': 'INTEGER NOT NULL DEFAULT 0'},
+        }.items():
+            existing = {row[1] for row in connection.execute(f'PRAGMA table_info({table})')}
+            for name, declaration in columns.items():
+                if name not in existing:
+                    connection.execute(f'ALTER TABLE {table} ADD COLUMN {name} {declaration}')
+        connection.execute('UPDATE schema_meta SET version=16 WHERE version<16')
 
 
 def settings() -> dict:
@@ -65,6 +78,8 @@ def save_settings(value: dict) -> None:
 def summary(row: Any) -> dict:
     item = dict(row)
     item['published'] = bool(item['published'])
+    version = item.pop('prompt_version')
+    item['requires_regeneration'] = not item['published'] and version != PROMPT_VERSION
     item['progress'] = item['completed_chars'] / max(1, item['total_chars'])
     return item
 
@@ -98,23 +113,27 @@ def get(run_id: str) -> dict:
 
 def units(run_id: str) -> list[dict]:
     with db.connect() as connection:
-        rows = connection.execute('SELECT ordinal,source_json,optimized_text FROM optimization_units WHERE run_id=? ORDER BY ordinal', (run_id,)).fetchall()
-    return [{**json.loads(row['source_json']), 'ordinal': row['ordinal'], 'text': row['optimized_text']} for row in rows]
+        rows = connection.execute('SELECT ordinal,source_json,optimized_text,review_status,review_reason FROM optimization_units WHERE run_id=? ORDER BY ordinal', (run_id,)).fetchall()
+    return [{**json.loads(row['source_json']), 'ordinal': row['ordinal'], 'text': row['optimized_text'],
+             'review_status': row['review_status'], 'review_reason': row['review_reason']} for row in rows]
 
 
-def replay(job_id: str, key: str, regenerate: bool) -> bool:
+def replay(job_id: str, key: str, regenerate: bool, rewrite_mode: str | None = None) -> bool:
     with db.connect() as connection:
         row = connection.execute('SELECT fingerprint FROM transcript_optimizations WHERE job_id=? AND key_hash=?', (job_id, digest(key))).fetchone()
     if row is None:
         return False
-    if row['fingerprint'] != digest({'regenerate': regenerate}):
+    fingerprints = [digest({'regenerate': regenerate, 'rewrite_mode': rewrite_mode or DEFAULT_MODE})]
+    if rewrite_mode is None:
+        fingerprints.append(digest({'regenerate': regenerate}))
+    if row['fingerprint'] not in fingerprints:
         raise HTTPException(409, 'Idempotency key conflict')
     return True
 
 
 def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: str, hotwords: list[str], paragraphs: list[dict], minimum_free: int = 0) -> tuple[str, bool]:
     import shutil
-    fingerprint = digest({'regenerate': regenerate})
+    fingerprint = digest({'regenerate': regenerate, **({'rewrite_mode': config['rewrite_mode']} if 'rewrite_mode' in config else {})})
     key_hash = digest(key)
     with db.connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
@@ -126,8 +145,8 @@ def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: s
         parent = connection.execute('SELECT state FROM jobs WHERE id=?', (job_id,)).fetchone()
         if not parent or parent['state'] != 'succeeded':
             raise HTTPException(409, 'Completed transcription required / 需要已完成的转写')
-        old = connection.execute('SELECT state,published FROM transcript_optimizations WHERE job_id=?', (job_id,)).fetchall()
-        if any(row['state'] in ACTIVE or row['state'] == 'paused' for row in old):
+        old = connection.execute('SELECT state,published,config_json FROM transcript_optimizations WHERE job_id=?', (job_id,)).fetchall()
+        if any(row['state'] in ACTIVE or (row['state'] == 'paused' and not (regenerate and json.loads(row['config_json']).get('prompt_version', 1) != PROMPT_VERSION)) for row in old):
             raise HTTPException(409, 'Resume or delete the existing optimization / 请继续或删除现有优化任务')
         if old and not regenerate:
             raise HTTPException(409, 'Set regenerate=true / 请明确选择重新优化')
@@ -169,17 +188,25 @@ def resume(run_id: str) -> None:
         connection.commit()
 
 
-def checkpoint(run_id: str, values: list[tuple[int, str]]) -> bool:
+def checkpoint(run_id: str, values: list[tuple[int, str]], *, review_reason: str | None = None) -> bool:
+    if review_reason not in (None, 'review_failed', 'invalid_output'):
+        raise ValueError('Unknown review reason')
     with db.connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
         row = connection.execute("SELECT job_id FROM transcript_optimizations WHERE id=? AND state='running'", (run_id,)).fetchone()
         if not row:
             return False
         for ordinal, text in values:
-            connection.execute('UPDATE optimization_units SET optimized_text=? WHERE run_id=? AND ordinal=? AND optimized_text IS NULL', (text, run_id, ordinal))
+            if review_reason:
+                source = connection.execute('SELECT source_json FROM optimization_units WHERE run_id=? AND ordinal=?', (run_id, ordinal)).fetchone()
+                if source is None or text != json.loads(source[0])['original_text']:
+                    raise ValueError('Review fallback must preserve the exact original')
+            connection.execute('UPDATE optimization_units SET optimized_text=?,review_status=?,review_reason=? WHERE run_id=? AND ordinal=? AND optimized_text IS NULL',
+                               (text, 'needs_review' if review_reason else 'accepted', review_reason, run_id, ordinal))
         completed = connection.execute('SELECT source_json FROM optimization_units WHERE run_id=? AND optimized_text IS NOT NULL', (run_id,)).fetchall()
         count = sum(len(json.loads(p[0])['original_text']) for p in completed)
-        connection.execute('UPDATE transcript_optimizations SET completed_chars=?,completed_units=?,activity_chars=0,revision=revision+1,updated_at=? WHERE id=?', (count, len(completed), db.utcnow(), run_id))
+        needs_review = connection.execute("SELECT count(*) FROM optimization_units WHERE run_id=? AND review_status='needs_review'", (run_id,)).fetchone()[0]
+        connection.execute('UPDATE transcript_optimizations SET completed_chars=?,completed_units=?,needs_review_units=?,activity_chars=0,revision=revision+1,updated_at=? WHERE id=?', (count, len(completed), needs_review, db.utcnow(), run_id))
         connection.commit()
     return True
 

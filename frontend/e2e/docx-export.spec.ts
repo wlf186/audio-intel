@@ -17,19 +17,11 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US'])for(const vi
  await page.goto('/#asr')
  await page.getByRole('tab',{name:locale==='zh-CN'?'任务与结果':'Tasks & results',exact:true}).click()
  await openTranscriptExport(page)
- if(width===1440){
-  await page.locator('.transcript-concise>button').click()
-  await expect(page.locator('.transcript-concise-panel')).toContainText('Word (DOCX)')
-  await assertReachable(page,width)
-  await page.screenshot({path:info.outputPath('concise-menu.png')})
-  await page.keyboard.press('Escape')
- }else{
-  await page.locator('.transcript-export-modal select').selectOption('docx')
-  await assertReachable(page,width)
-  await page.screenshot({path:info.outputPath('word-mobile.png')})
- }
+ await page.locator('.transcript-export-modal .export-format').selectOption('docx')
+ await assertReachable(page,width)
+ await page.screenshot({path:info.outputPath('word-export.png')})
  await downloadConcise(page,'docx')
- await expect(page.locator('.transcript-export [role=alert]')).toContainText('503')
+ await expect(page.locator('.transcript-export-modal [role=alert]')).toContainText('503')
  failed=false
  const waiting=page.waitForEvent('download')
  await downloadConcise(page,'docx')
@@ -37,7 +29,7 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US'])for(const vi
  expect(download.suggestedFilename()).toBe('转写.docx')
  expect(await download.failure()).toBeNull()
  expect(bodies).toEqual([{format:'docx',redact:true,replacements:[]},{format:'docx',redact:true,replacements:[]}])
- await expect(page.locator('.transcript-export [role=alert]')).toHaveCount(0)
+ await expect(page.locator('.transcript-export-modal [role=alert]')).toHaveCount(0)
  await assertReachable(page,width)
  expect(errors).toEqual([])
 })
@@ -49,7 +41,6 @@ for(const width of [1440,390])test(`older capabilities do not offer DOCX ${width
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:caps}))
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  await openTranscriptExport(page)
- if(width===1440){await page.locator('.transcript-concise>button').click();await expect(page.locator('.transcript-concise-panel [data-format=docx]')).toHaveCount(0)}
- else await expect(page.locator('.transcript-export-modal option[value=docx]')).toHaveCount(0)
+ await expect(page.locator('.transcript-export-modal option[value=docx]')).toHaveCount(0)
  expect(errors).toEqual([])
 })

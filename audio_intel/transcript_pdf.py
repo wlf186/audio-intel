@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .transcript import reading_sections
+from .transcript_diff import text_changes
 from .utils import timecode
 
 _lock = threading.Lock()
@@ -27,13 +28,13 @@ _max_text_chars = 4_000_000
 def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_LEFT
-    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Flowable
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Flowable, Table, TableStyle
 
-    if sum(len(segment.get('text', '')) for segment in result.get('segments', [])) > _max_text_chars:
+    if sum(len(segment.get('text', '')) + len(segment.get('original_text', '')) for segment in result.get('segments', [])) > _max_text_chars:
         raise ValueError('Transcript exceeds PDF text budget; split the source')
     image_bytes = 0
     global _font_ready
@@ -41,7 +42,8 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
         pdfmetrics.registerFont(TTFont('Transcript', str(Path(__file__).parent / 'assets/fonts/NotoSansSC.ttf')))
         _font_ready = True
     stream = io.BytesIO()
-    doc = SimpleDocTemplate(stream, pagesize=A4, rightMargin=48, leftMargin=48,
+    page_size = landscape(A4) if result.get('text_version') == 'comparison' else A4
+    doc = SimpleDocTemplate(stream, pagesize=page_size, rightMargin=48, leftMargin=48,
                             topMargin=44, bottomMargin=44, title=title, author='Sandevistan-Audio')
     body = ParagraphStyle('body', fontName='Transcript', fontSize=10.5, leading=17,
                           wordWrap='CJK', spaceAfter=12, alignment=TA_LEFT)
@@ -91,16 +93,31 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
         for paragraph in section['paragraphs']:
             identity = html.escape(str(paragraph.get('speaker_label') or paragraph['speaker']))
             story.append(Paragraph(f"{identity}　{timecode(paragraph['start'])} – {timecode(paragraph['end'])}", label))
-            story.append(Paragraph(html.escape(paragraph['text']).replace('\n', '<br/>'), body))
+            if paragraph.get('review_status') == 'needs_review':
+                story.append(Paragraph('保留原文·待核对 / Original retained · Needs review', original_style))
             if 'original_text' in paragraph:
-                story.append(Paragraph('原文 / Original<br/>' + html.escape(paragraph['original_text']).replace('\n', '<br/>'), original_style))
+                left, right = text_changes(paragraph['original_text'], paragraph['text'])
+                def marked(parts, removed):
+                    return ''.join((f'<font color="#9c3a32"><strike>{html.escape(text)}</strike></font>' if removed else f'<font color="#12634b">{html.escape(text)}</font>') if changed else html.escape(text) for text, changed in parts).replace('\n', '<br/>')
+                table = Table([
+                    [Paragraph('原文 / Original', label), Paragraph('改写 / Rewritten', label)],
+                    [Paragraph(marked(left, True), body), Paragraph(marked(right, False), body)],
+                ], colWidths=[doc.width / 2] * 2, repeatRows=1, splitByRow=1, splitInRow=1)
+                table.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f0f2f4')),
+                    ('LINEAFTER', (0, 0), (0, -1), .5, colors.HexColor('#d0d5dd')),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 10), ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+                    ('TOPPADDING', (0, 0), (-1, -1), 8), ('BOTTOMPADDING', (0, 0), (-1, -1), 8)]))
+                story.extend([table, Spacer(1, 12)])
+            else:
+                story.append(Paragraph(html.escape(paragraph['text']).replace('\n', '<br/>'), body))
         if not section['paragraphs']:
-            story.append(Paragraph('此段无识别语音 / No recognized speech', body))
+            story.append(Paragraph(('此段无优化正文 / No optimized text in this section' if result.get('_optimized') else '此段无识别语音 / No recognized speech'), body))
 
     def page_number(canvas: Any, document: Any) -> None:
         canvas.setFont('Transcript', 8)
         canvas.setFillColor(colors.HexColor('#66717b'))
-        canvas.drawRightString(A4[0] - 48, 24, str(document.page))
+        canvas.drawRightString(page_size[0] - 48, 24, str(document.page))
 
     doc.build(story, onFirstPage=page_number, onLaterPages=page_number)
     return stream.getvalue()

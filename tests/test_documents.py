@@ -630,7 +630,7 @@ def test_v10_migration_preserves_historical_jobs_and_queue(tmp_path, monkeypatch
         connection.execute('UPDATE schema_meta SET version=10')
     db.init_db()
     with db.connect() as connection:
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 15
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 16
         assert tuple(connection.execute('SELECT * FROM jobs WHERE id=?', (job['id'],)).fetchone()) == before
         assert tuple(connection.execute('SELECT * FROM queue_sequence').fetchone()) == sequence
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()

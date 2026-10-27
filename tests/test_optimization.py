@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+import httpx
 
 from docx import Document
 from fastapi.testclient import TestClient
@@ -20,7 +21,183 @@ from test_voiceprint_groups_exports import local
 
 
 PROFILE = {'base_url': 'http://ollama.invalid:11434', 'use_proxy': False, 'model': 'test-model', 'enabled': True,
-           'context_length': 32768, 'model_context_length': 131072, 'model_digest': 'test-digest', 'prompt_version': 1, 'verified_at': '2026-10-23T00:00:00+00:00'}
+           'context_length': 32768, 'model_context_length': 131072, 'model_digest': 'test-digest', 'prompt_version': engine.PROMPT_VERSION, 'verified_at': '2026-10-23T00:00:00+00:00'}
+
+
+@pytest.mark.parametrize('rejected', [{0}, {1, 2}, {3}, {0, 1, 2, 3}])
+def test_review_fallback_completes_without_changing_source(configured, monkeypatch, rejected):
+    data = source(4)
+    identifier = job(data)
+    before = deepcopy(db.get_job(identifier))
+    calls = []
+    async def generate(profile, batch, *args):
+        unit = batch[0]
+        calls.append(unit['ordinal'])
+        if unit['ordinal'] in rejected:
+            raise engine.ReviewFailed('Unreliable rewrite')
+        return [(unit['ordinal'], unit['original_text'].replace('那个', ''))]
+    monkeypatch.setattr(engine, 'generate', generate)
+    with TestClient(api.create_app()) as client:
+        assert start(client, identifier).status_code == 202
+        published = wait(client, identifier, lambda s: bool(s['published']))['published']
+        assert published['needs_review_units'] == len(rejected)
+        assert published['completed_units'] == 4 and published['progress'] == 1
+        result = client.get(url(identifier)+'/result', params={'run_id': published['id']}).json()
+        assert result['complete'] and result['needs_review_units'] == len(rejected)
+        for unit in result['paragraphs']:
+            fallback = unit['ordinal'] in rejected
+            assert unit['review_status'] == ('needs_review' if fallback else 'accepted')
+            assert unit['review_reason'] == ('review_failed' if fallback else None)
+            assert not unit['omitted']
+            if fallback:
+                assert unit['text'] == unit['original_text']
+            assert unit['sources'][0]['text'] == unit['original_text']
+        assert not store.checkpoint(published['id'], [(0, 'late mutation')])
+    assert calls == [0, 1, 2, 3]
+    assert db.get_job(identifier) == before
+
+
+def test_invalid_output_falls_back_after_bounded_retries(configured, monkeypatch):
+    calls = []
+    async def generate(profile, batch, *args):
+        calls.append(batch[0]['ordinal'])
+        if batch[0]['ordinal'] == 0:
+            raise engine.InvalidOutput('truncated')
+        return [(1, batch[0]['original_text'])]
+    monkeypatch.setattr(engine, 'generate', generate)
+    identifier = job(source(2))
+    with TestClient(api.create_app()) as client:
+        start(client, identifier)
+        run = wait(client, identifier, lambda s: bool(s['published']))['published']
+        assert run['needs_review_units'] == 1
+        units = store.units(run['id'])
+        assert units[0]['review_reason'] == 'invalid_output'
+        assert units[0]['text'] == units[0]['original_text']
+        assert units[1]['review_status'] == 'accepted'
+    assert calls == [0, 0, 0, 1]
+
+
+def test_network_pause_restart_and_resume_keeps_fallback_checkpoint(configured, monkeypatch):
+    calls = []
+    unavailable = True
+    async def generate(profile, batch, *args):
+        unit = batch[0]
+        calls.append(unit['ordinal'])
+        if unit['ordinal'] == 0:
+            raise engine.ReviewFailed('review failed')
+        if unavailable:
+            raise httpx.ConnectError('offline')
+        return [(unit['ordinal'], unit['original_text'])]
+    monkeypatch.setattr(engine, 'generate', generate)
+    identifier = job(source(3))
+    with TestClient(api.create_app()) as client:
+        start(client, identifier)
+        run = wait(client, identifier, lambda s: bool(s['candidate'] and s['candidate']['state']=='paused'))['candidate']
+        assert run['needs_review_units'] == run['completed_units'] == 1
+        assert not store.status(identifier)['published']
+        assert store.units(run['id'])[1]['text'] is None
+    unavailable = False
+    with TestClient(api.create_app()) as client:
+        assert client.post(url(identifier)+'/resume', json={'run_id': run['id']}).status_code == 200
+        published = wait(client, identifier, lambda s: bool(s['published']))['published']
+        assert published['needs_review_units'] == 1 and published['completed_units'] == 3
+        assert store.units(run['id'])[0]['review_status'] == 'needs_review'
+    assert calls == [0, 1, 1, 1, 1, 2]
+
+
+def test_checkpoint_rejects_changed_fallback_and_does_not_double_count(configured):
+    identifier = job(source(2))
+    run, _ = store.create(identifier, 'checkpoint-review-key', False, PROFILE, engine.source_hash(source(2)), [], engine.prepare_units(source(2)))
+    store.transition(run, 'running', ('queued',))
+    with pytest.raises(ValueError, match='exact original'):
+        store.checkpoint(run, [(0, 'unverified rewrite')], review_reason='review_failed')
+    text = store.units(run)[0]['original_text']
+    assert store.checkpoint(run, [(0, text)], review_reason='review_failed')
+    assert store.checkpoint(run, [(0, text)], review_reason='review_failed')
+    assert store.get(run)['needs_review_units'] == store.get(run)['completed_units'] == 1
+    store.transition(run, 'paused', ('running',))
+    assert not store.checkpoint(run, [(1, store.units(run)[1]['original_text'])], review_reason='review_failed')
+    assert store.units(run)[1]['text'] is None
+
+
+def test_storage_failure_never_becomes_completed_fallback(configured, monkeypatch):
+    def fail(*args, **kwargs):
+        raise OSError('disk unavailable')
+    monkeypatch.setattr(store, 'checkpoint', fail)
+    identifier = job(source(2))
+    with TestClient(api.create_app()) as client:
+        start(client, identifier)
+        state = wait(client, identifier, lambda s: bool(s['candidate'] and s['candidate']['state']=='failed'))
+        assert state['published'] is None
+        assert state['candidate']['completed_units'] == state['candidate']['needs_review_units'] == 0
+
+
+@pytest.mark.parametrize('code, expected, attempts', [(400, 'failed', 1), (429, 'paused', 3), (503, 'paused', 3)])
+def test_provider_errors_do_not_become_paragraph_fallback(configured, monkeypatch, code, expected, attempts):
+    calls = []
+    async def generate(*args):
+        calls.append(code)
+        response = httpx.Response(code, request=httpx.Request('POST', 'http://model.invalid/api/chat'))
+        response.raise_for_status()
+    monkeypatch.setattr(engine, 'generate', generate)
+    identifier = job(source(2))
+    with TestClient(api.create_app()) as client:
+        start(client, identifier)
+        state = wait(client, identifier, lambda s: bool(s['candidate'] and s['candidate']['state']==expected))
+        assert state['published'] is None
+        assert state['candidate']['completed_units'] == state['candidate']['needs_review_units'] == 0
+    assert len(calls) == attempts
+
+
+def test_v15_review_migration_preserves_legacy_text_and_unknown_status(configured):
+    identifier = job(source(2))
+    with TestClient(api.create_app()) as client:
+        start(client, identifier)
+        run = wait(client, identifier, lambda s: bool(s['published']))['published']['id']
+    with db.connect() as connection:
+        before = [tuple(row) for row in connection.execute('SELECT run_id,ordinal,source_json,optimized_text FROM optimization_units')]
+        connection.execute('ALTER TABLE optimization_units DROP COLUMN review_status')
+        connection.execute('ALTER TABLE optimization_units DROP COLUMN review_reason')
+        connection.execute('ALTER TABLE transcript_optimizations DROP COLUMN needs_review_units')
+        connection.execute('UPDATE schema_meta SET version=15')
+    db.init_db()
+    db.init_db()
+    with db.connect() as connection:
+        assert [tuple(row) for row in connection.execute('SELECT run_id,ordinal,source_json,optimized_text FROM optimization_units')] == before
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 16
+        assert not connection.execute('PRAGMA foreign_key_check').fetchall()
+    assert all(unit['review_status'] is None and unit['review_reason'] is None for unit in store.units(run))
+    assert store.status(identifier)['published']['needs_review_units'] == 0
+
+
+def test_fallback_export_markers_only_in_comparison_with_redaction(configured, monkeypatch):
+    async def reject(*args):
+        raise engine.ReviewFailed('unreliable')
+    monkeypatch.setattr(engine, 'generate', reject)
+    identifier = job(source(2))
+    with TestClient(api.create_app()) as client:
+        start(client, identifier)
+        run = wait(client, identifier, lambda s: bool(s['published']))['published']['id']
+        for version in ('optimized', 'comparison'):
+            for format in (('txt','pdf','docx') if version=='optimized' else ('pdf','docx')):
+                response = client.post(f'/api/v1/jobs/{identifier}/transcript-export', json={
+                    'format': format, 'text_version': version, 'optimization_id': run,
+                    'redact': True, 'replacements': [{'source': '阿特拉斯', 'target': '项目甲'}]})
+                assert response.status_code == 200, response.text[:200]
+                if format == 'docx':
+                    text = docx_text(response.content)
+                elif format == 'pdf':
+                    text = '\n'.join(p.extract_text() for p in PdfReader(io.BytesIO(response.content)).pages)
+                else:
+                    text = response.text
+                assert ('Needs review' in text) == (version == 'comparison')
+                assert '项目甲' in text and '阿特拉斯' not in text and 'Mike Smith' not in text
+                assert '15万元' in text and '50万元' in text
+
+
+def docx_text(content):
+    document = Document(io.BytesIO(content))
+    return '\n'.join([p.text for p in document.paragraphs] + [cell.text for table in document.tables for row in table.rows for cell in row.cells])
 
 
 def source(count=8):
@@ -97,6 +274,8 @@ def test_configuration_verification_binding_and_auth(local, monkeypatch):
         schema = client.get('/openapi.json').json()
         assert root in schema['paths']
         assert 'text_version' in schema['components']['schemas']['TranscriptExportRequest']['properties']
+        for model, fields in {'OptimizationSummary': ['needs_review_units'], 'OptimizedResult': ['needs_review_units'], 'OptimizedParagraph': ['review_status', 'review_reason']}.items():
+            assert all(field in schema['components']['schemas'][model]['properties'] for field in fields)
 
 
 def test_units_source_coverage_scene_splits_and_long_speech():
@@ -135,7 +314,7 @@ def test_v14_migration_preserves_history_queue_and_idempotency(local):
     assert {identifier: db.get_job(identifier) for identifier in before} == before
     assert not store.settings()['enabled']
     with db.connect() as connection:
-        assert connection.execute('SELECT min(version) FROM schema_meta').fetchone()[0] == 15
+        assert connection.execute('SELECT min(version) FROM schema_meta').fetchone()[0] == 16
         assert tuple(connection.execute('SELECT * FROM job_idempotency').fetchone()) == receipt
         assert tuple(connection.execute('SELECT * FROM queue_sequence').fetchone()) == sequence
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
@@ -182,11 +361,13 @@ def test_complete_idempotency_summary_exports_latest_and_cleanup(configured):
         response = client.post(export,json=body)
         assert response.status_code == 200, response.text
         document = Document(io.BytesIO(response.content))
-        text = '\n'.join(p.text for p in document.paragraphs)
+        text = docx_text(response.content)
         assert '原文 / Original' in text and '平台' in text and 'Mike Smith' not in text
-        originals = [p for p in document.paragraphs if p.text.startswith('原文 / Original')]
-        assert len(originals) == 8 and originals[0].runs[0].font.size.pt == 9
-        assert str(originals[0].runs[0].font.color.rgb) == '667085'
+        assert len(document.tables) == 8
+        assert document.tables[0].cell(0,0).text == '原文 / Original'
+        assert document.sections[0].page_width > document.sections[0].page_height
+        assert document.styles['Normal'].font.size.pt == 11
+        assert any(r.font.strike for r in document.tables[0].cell(1,0).paragraphs[0].runs)
         response = client.post(export,json={**body,'format':'pdf'})
         assert response.status_code == 200
         pdf = '\n'.join(p.extract_text() for p in PdfReader(io.BytesIO(response.content)).pages)
@@ -256,7 +437,7 @@ def test_failed_regeneration_retains_published_and_parent_purge(configured,monke
             assert connection.execute('SELECT COUNT(*) FROM optimization_units').fetchone()[0]==0
 
 
-def test_adaptive_split_and_restart_recovery(configured,monkeypatch):
+def test_single_paragraph_checkpoints_and_restart_recovery(configured,monkeypatch):
     calls=[]
     async def small(profile,batch,*args):
         calls.append(len(batch))
@@ -268,7 +449,7 @@ def test_adaptive_split_and_restart_recovery(configured,monkeypatch):
     with TestClient(api.create_app()) as client:
         start(client,identifier)
         state=wait(client,identifier,lambda s:bool(s['published']))
-        assert state['published']['completed_units']==8 and max(calls)>2
+        assert state['published']['completed_units']==8 and max(calls)==1
         run=state['published']['id']
     with db.connect() as connection:
         connection.execute("UPDATE transcript_optimizations SET published=0,state='running' WHERE id=?",(run,))
@@ -293,7 +474,7 @@ def test_video_comparison_images_redaction_and_scene_reassignment(configured):
         assert response.status_code==200,response.status_code
         document=Document(io.BytesIO(response.content))
         assert len(document.inline_shapes)==1
-        assert sum(p.text.startswith('原文 / Original') for p in document.paragraphs)==4
+        assert sum(len(table.columns)==2 for table in document.tables)==4
         result['video']['scenes'][0]['end']=9;result['video']['scenes'][1]['start']=9
         db.update_job(identifier,result_json=result)
         draft=client.get(url(identifier)+'/result',params={'run_id':run}).json()
@@ -308,16 +489,25 @@ def test_stream_contract_truncation_and_coverage(monkeypatch):
     payload = engine.payload_for(profile,batch,['Atlas'],'','')
     assert payload['think'] is False and payload['options']['num_predict']==4096
     assert payload['options']['num_ctx']==16384
-    async def run(reason, paragraphs):
-        event={'message':{'content':json.dumps({'paragraphs':paragraphs})},'done':True,'done_reason':reason}
-        transport=httpx.MockTransport(lambda request:httpx.Response(200,content=(json.dumps(event)+'\n').encode()))
-        monkeypatch.setattr(engine,'client',lambda config:httpx.AsyncClient(base_url='http://test/',transport=transport))
-        return await engine.generate(profile,batch,['Atlas'],'','',None)
-    assert asyncio.run(run('stop',[{'id':'p1','text':'预算15万元，不是50万元。'}]))==[(0,'预算15万元，不是50万元。')]
+    async def run(reason, candidate):
+        calls = []
+        def respond(request):
+            calls.append(json.loads(request.content))
+            value = candidate if len(calls) == 1 else {'verdict':'pass','source_quote':'','candidate_quote':'','reason':''}
+            event = {'message': {'content': json.dumps(value)}, 'done': True, 'done_reason': reason}
+            return httpx.Response(200, content=(json.dumps(event)+'\n').encode())
+        transport = httpx.MockTransport(respond)
+        monkeypatch.setattr(engine, 'client', lambda config: httpx.AsyncClient(base_url='http://test/', transport=transport))
+        value = await engine.generate(profile,batch,['Atlas'],'','',None)
+        assert len(calls) == 2
+        return value
+    assert asyncio.run(run('stop',{'action':'keep','text':'预算15万元，不是50万元。'}))==[(0,'预算15万元，不是50万元。')]
     with pytest.raises(engine.InvalidOutput):
-        asyncio.run(run('length',[{'id':'p1','text':'预算15万元'}]))
+        asyncio.run(run('length',{'action':'keep','text':'预算15万元'}))
     with pytest.raises(engine.InvalidOutput):
-        asyncio.run(run('stop',[{'id':'p2','text':'错误段落'}]))
+        asyncio.run(run('stop',{'action':'omit','text':''}))
+    with pytest.raises(engine.InvalidOutput):
+        asyncio.run(run('stop',{'paragraphs':[{'id':'p2','text':'错误段落'}]}))
 
 
 def test_queue_limit_and_settings_are_independent(local):
@@ -348,3 +538,231 @@ asyncio.run(run())
     environment = dict(os.environ, AUDIO_INTEL_LOAD_ENV='0', AUDIO_INTEL_DATA_DIR=str(local.data_dir),
                        AUDIO_INTEL_TEMP_DIR=str(local.temp_dir), TMPDIR=str(local.temp_dir))
     subprocess.run([sys.executable, '-O', '-c', code], env=environment, check=True, timeout=15)
+
+
+def test_review_repairs_factual_loss_once_and_requires_grounded_evidence(monkeypatch):
+    original = '那个预算15万元，不是50万元，如果审批失败就不做。'
+    bad = '预算50万元，已经开始。'
+    good = '预算15万元，不是50万元。如果审批失败就不做。'
+    issue = {'source_quote':'不是50万元','candidate_quote':'预算50万元','reason':'改变了金额和否定'}
+    replies = [dict(action='keep',text=bad),dict(verdict='fact',**issue),dict(action='keep',text=good),dict(verdict='pass',source_quote='',candidate_quote='',reason='')]
+    seen=[]
+    async def structured(config,payload,activity):
+        seen.append(deepcopy(payload))
+        return replies.pop(0)
+    monkeypatch.setattr(engine,'structured',structured)
+    batch=[{'id':'p1','ordinal':0,'speaker':'s1','original_text':original}]
+    assert asyncio.run(engine.generate(PROFILE,batch,[],[],[],None))==[(0,good)]
+    repair=json.loads(seen[2]['messages'][1]['content'])
+    assert repair['issues']==[{'kind':'fact',**issue}] and repair['previous_draft']['text']==bad
+    assert len(seen)==4
+    with pytest.raises(engine.InvalidOutput):
+        engine.validate_review({**issue,'verdict':'fact','source_quote':'原文没说的话'},original,bad)
+    with pytest.raises(engine.InvalidOutput):
+        engine.validate_review({**issue,'verdict':'pass'},original,bad)
+
+
+def test_review_failure_is_bounded_and_does_not_publish_unreviewed_text(monkeypatch):
+    calls=[]
+    async def structured(config,payload,activity):
+        calls.append(payload)
+        return {'action':'keep','text':'预算50万元。'} if len(calls)%2 else {'verdict':'fact','source_quote':'15万元','candidate_quote':'50万元','reason':'金额被改变'}
+    monkeypatch.setattr(engine,'structured',structured)
+    with pytest.raises(engine.ReviewFailed):
+        asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s1','original_text':'预算15万元。'}],[],[],[],None))
+    assert len(calls)==4
+
+
+def test_omission_guard_and_meaningful_response(monkeypatch):
+    from audio_intel.optimization_policy import omission_candidate,context
+    assert omission_candidate('嗯嗯嗯。') and omission_candidate('那个，呃。')
+    for text in ('天山竹叶。','嗯，不同意。','对，知道了。','15万元','？','那个项目没通过'):
+        assert not omission_candidate(text)
+        with pytest.raises(engine.InvalidOutput):engine.validate_draft({'action':'omit','text':''},text)
+    # Lexical eligibility alone is not permission to omit a meaningful response.
+    replies=[{'action':'omit','text':''},{'verdict':'fact','source_quote':'嗯','candidate_quote':'','reason':'回答前一位说话人的询问，应保留'},
+             {'action':'keep','text':'嗯。'},{'verdict':'pass','source_quote':'','candidate_quote':'','reason':''}]
+    async def structured(*args):return replies.pop(0)
+    monkeypatch.setattr(engine,'structured',structured)
+    assert asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s2','original_text':'嗯。'}],[],[{'speaker':'s1','text':'你同意吗？'}],[],None))==[(0,'嗯。')]
+    values=[{'speaker':'s1','original_text':'字'*800},{'speaker':'s2','original_text':'回应'}]
+    result=context(values,before=True)
+    assert sum(len(x['text']) for x in result)==600 and result[-1]['speaker']=='s2' and result[0]['truncated']
+
+
+def test_omitted_units_are_completed_and_exported_with_explicit_comparison(configured,monkeypatch):
+    async def omit(profile,batch,*args):return [(p['ordinal'],'') for p in batch]
+    monkeypatch.setattr(engine,'generate',omit)
+    data=source(2)
+    for segment in data['segments']:segment['text']='呃。'
+    identifier=job(data)
+    with TestClient(api.create_app()) as client:
+        start(client,identifier)
+        state=wait(client,identifier,lambda s:bool(s['published']))
+        run=state['published']['id']
+        assert state['published']['progress']==1 and state['published']['completed_units']==2
+        result=client.get(url(identifier)+'/result',params={'run_id':run}).json()
+        assert all(p['omitted'] and p['text']=='' for p in result['paragraphs'])
+        endpoint=f'/api/v1/jobs/{identifier}/transcript-export'
+        text=client.post(endpoint,json={'format':'txt','text_version':'optimized','optimization_id':run,'redact':False})
+        assert text.status_code==200 and '呃' not in text.text
+        response=client.post(endpoint,json={'format':'docx','text_version':'comparison','optimization_id':run,'redact':False})
+        assert response.status_code==200
+        content=docx_text(response.content)
+        assert '已省略纯占位语' in content and '呃。' in content
+
+
+def test_old_candidate_regeneration_retains_published_and_connection_profile(configured):
+    identifier=job()
+    with TestClient(api.create_app()) as client:
+        start(client,identifier)
+        published=wait(client,identifier,lambda s:bool(s['published']))['published']['id']
+        legacy={**PROFILE,'prompt_version':1}
+        # Simulate a candidate checkpoint created before the policy upgrade.
+        candidate,_=store.create(identifier,'old-candidate',True,legacy,engine.source_hash(source()),['Atlas'],engine.prepare_units(source()))
+        store.transition(candidate,'paused',('queued',))
+        store.save_settings(legacy)
+        state=client.get(url(identifier)).json()
+        assert state['candidate']['requires_regeneration']
+        response=start(client,identifier,True,'new-policy-key')
+        assert response.status_code==202,response.text
+        state=wait(client,identifier,lambda s:bool(s['published'] and s['published']['id']!=published))
+        assert store.get(state['published']['id'])['config']['prompt_version']==engine.PROMPT_VERSION
+        assert store.settings()['prompt_version']==1
+
+
+def test_identical_source_still_receives_language_review(monkeypatch):
+    calls=[]
+    async def structured(config,payload,activity):
+        calls.append(payload)
+        return {'action':'keep','text':'负责那个项'} if len(calls)%2 else {'verdict':'pass','source_quote':'','candidate_quote':'','reason':''}
+    monkeypatch.setattr(engine,'structured',structured)
+    value=asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s1','original_text':'负责那个项'}],[],[],[],None))
+    assert value==[(0,'负责那个项')] and len(calls)==2
+
+
+def test_unchanged_stutters_get_one_style_repair_without_becoming_a_fact_failure(monkeypatch):
+    calls=[]
+    async def structured(config,payload,activity):
+        calls.append(payload)
+        return {'action':'keep','text':'我我还没还没到。'} if len(calls)%2 else {'verdict':'pass','source_quote':'','candidate_quote':'','reason':''}
+    monkeypatch.setattr(engine,'structured',structured)
+    assert asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s1','original_text':'我我还没还没到。'}],[],[],[],None))==[(0,'我我还没还没到。')]
+    assert len(calls)==4
+
+
+def test_cli_regeneration_waits_for_new_draft_and_preserves_omission_contract(monkeypatch,capsys):
+    import runpy
+    import urllib.request
+    old={'id':'old','state':'succeeded'}
+    pending={'published':old,'candidate':{'id':'new','state':'running'}}
+    responses=[pending,pending,{'published':{'id':'new','state':'succeeded'},'candidate':None},
+               {'run_id':'new','paragraphs':[{'text':'','omitted':True,'original_text':'呃。'}]}]
+    calls=[]
+    def urlopen(request,timeout):
+        calls.append(request)
+        return io.BytesIO(json.dumps(responses.pop(0)).encode())
+    monkeypatch.setattr(urllib.request,'urlopen',urlopen)
+    monkeypatch.setattr(time,'sleep',lambda _:None)
+    monkeypatch.setattr(sys,'argv',['optimize_transcript.py','--url','http://test','--job','job','--regenerate'])
+    runpy.run_path('scripts/optimize_transcript.py',run_name='__main__')
+    assert json.loads(calls[0].data)=={'regenerate':True}
+    assert calls[-1].full_url.endswith('run_id=new')
+    assert json.loads(capsys.readouterr().out)['paragraphs'][0]['omitted']
+
+
+@pytest.mark.parametrize('mode', ['polish', 'rewrite', 'editorial'])
+def test_rewrite_modes_snapshot_and_idempotency(configured, mode):
+    identifier = job(source(2))
+    with TestClient(api.create_app()) as client:
+        response = client.post(url(identifier), json={'rewrite_mode': mode}, headers={'Idempotency-Key':'mode-snapshot-test'})
+        assert response.status_code == 202
+        published = wait(client, identifier, lambda s: bool(s['published']))['published']
+        assert published['rewrite_mode'] == mode
+        assert store.get(published['id'])['config']['rewrite_mode'] == mode
+        result = client.get(url(identifier)+'/result', params={'run_id': published['id']}).json()
+        assert result['rewrite_mode'] == mode
+        assert client.post(url(identifier), json={'rewrite_mode':mode}, headers={'Idempotency-Key':'mode-snapshot-test'}).status_code == 200
+        other = 'polish' if mode != 'polish' else 'editorial'
+        assert client.post(url(identifier), json={'rewrite_mode':other}, headers={'Idempotency-Key':'mode-snapshot-test'}).status_code == 409
+        assert client.post(url(identifier), json={'rewrite_mode':'unknown'}, headers={'Idempotency-Key':'invalid-mode-key'}).status_code == 422
+        caps = client.get('/api/v1/capabilities').json()['asr']['transcript_optimization']
+        assert caps['rewrite_modes'] == ['polish','rewrite','editorial']
+        assert caps['default_rewrite_mode'] == 'rewrite'
+
+
+def test_legacy_idempotency_replay_without_mode_still_works(configured):
+    identifier = job(source(2))
+    legacy = {**PROFILE, 'prompt_version':3}
+    legacy.pop('rewrite_mode', None)
+    run, _ = store.create(identifier, 'legacy-mode-key', False, legacy, engine.source_hash(source(2)), [], engine.prepare_units(source(2)))
+    store.transition(run, 'paused', ('queued',))
+    with TestClient(api.create_app()) as client:
+        assert client.post(url(identifier), json={}, headers={'Idempotency-Key':'legacy-mode-key'}).status_code == 200
+        assert client.post(url(identifier), json={'rewrite_mode':'rewrite'}, headers={'Idempotency-Key':'legacy-mode-key'}).status_code == 409
+        assert store.get(run)['config'] == legacy
+
+
+def test_style_repair_keeps_reviewed_candidate_when_second_draft_loses_facts(monkeypatch):
+    original = '那个预算15万元，不是50万元。'
+    first = '预算15万元，不是50万元。'
+    replies = [{'action':'keep','text':first},
+               {'verdict':'style','source_quote':'预算15万元','candidate_quote':'预算15万元','reason':'还可以进一步理顺句式'},
+               {'action':'keep','text':'预算50万元。'},
+               {'verdict':'fact','source_quote':'不是50万元','candidate_quote':'预算50万元','reason':'改变了金额'}]
+    async def structured(*args): return replies.pop(0)
+    monkeypatch.setattr(engine, 'structured', structured)
+    assert asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s1','original_text':original}],[],[],[],None)) == [(0,first)]
+    assert not replies
+
+
+def test_style_repair_invalid_output_preserves_reviewed_candidate(monkeypatch):
+    calls = 0
+    async def structured(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 1: return {'action':'keep','text':'预算15万元。'}
+        if calls == 2: return {'verdict':'style','source_quote':'预算15万元','candidate_quote':'预算15万元','reason':'理顺表达'}
+        raise engine.InvalidOutput('truncated')
+    monkeypatch.setattr(engine, 'structured', structured)
+    assert asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s1','original_text':'那个预算15万元。'}],[],[],[],None)) == [(0,'预算15万元。')]
+
+
+def test_trailing_question_is_not_accepted_as_a_fact_even_when_reviewer_passes(monkeypatch):
+    calls = 0
+    async def structured(*args):
+        nonlocal calls
+        calls += 1
+        if calls % 2: return {'action':'keep','text':'他今天会过来。'}
+        return {'verdict':'pass','source_quote':'','candidate_quote':'','reason':''}
+    monkeypatch.setattr(engine, 'structured', structured)
+    with pytest.raises(engine.ReviewFailed):
+        asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s1','original_text':'他今天过来是吧？'}],[],[],[],None))
+    assert calls == 4
+
+
+@pytest.mark.parametrize('original,bad,good,issue', [
+    ('他做多模态，主要是输电。设备分输电、变电、配电。', '他主要做输电多模态，其次是配电。',
+     '他主要做输电多模态。设备分输电、变电、配电三类。',
+     {'source_quote':'设备分输电、变电、配电。','candidate_quote':'其次是配电','reason':'分类不代表覆盖范围或优先级'}),
+    ('下午答辩改到两点了吗？', '下午答辩能改到两点吗？', '下午的答辩已经改到两点了吗？',
+     {'source_quote':'改到两点了吗','candidate_quote':'能改到两点吗','reason':'确认既有安排被改成请求更改'})])
+def test_relationship_and_question_meaning_repaired_from_evidence(monkeypatch, original, bad, good, issue):
+    replies = [{'action':'keep','text':bad}, {'verdict':'fact',**issue},
+               {'action':'keep','text':good}, {'verdict':'pass','source_quote':'','candidate_quote':'','reason':''}]
+    seen = []
+    async def structured(config, payload, activity):
+        seen.append(deepcopy(payload))
+        return replies.pop(0)
+    monkeypatch.setattr(engine, 'structured', structured)
+    assert asyncio.run(engine.generate(PROFILE, [{'ordinal':0,'speaker':'a','original_text':original}], [], [], [], None)) == [(0,good)]
+    repair = json.loads(seen[2]['messages'][1]['content'])
+    assert repair['issues'] == [{'kind':'fact',**issue}]
+    assert not replies
+
+
+def test_review_budget_includes_expanded_examples(monkeypatch):
+    unit = {'ordinal':0,'speaker':'a','original_text':'预算15万元。'}
+    assert engine.fits(PROFILE, [unit], [])
+    monkeypatch.setattr(engine, 'REVIEW_EXAMPLES', [({'target':{'text':'文'*12000}}, {'source_quote':'','candidate_quote':'','reason':'','verdict':'pass'})])
+    assert not engine.fits(PROFILE, [unit], [])

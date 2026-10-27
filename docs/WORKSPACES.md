@@ -28,7 +28,7 @@ English: Desktop voiceprints use equal-width, independently scrolling people and
 
 声纹库在当前分组内提供批量勾选，切换视图清空勾选；新增人员默认当前筛选分组；全部人员视图默认“未分组”，新建和编辑时均可选择归属。ASR 的“选择分组”默认全部（包含之后新增分组），手动选择只记住指定 ID。加载失败可重试，失效 ID 移除后提示，全部失效时阻止提交，不能扩大到全部。localStorage ASR 偏好 v7 兼容迁移旧版（含正式版 v0.1.33 的 v4）；恢复参数默认和资料库替换恢复全部分组。
 
-转写下载的“脱敏导出”默认开启，规则每行 `原词=替换词`，最多 100 对，错误提示行号。独立 localStorage `audio-intel:transcript-export:v1` 长期保存开关和编辑内容，包括尚未修正的输入；刷新、重开、退出登录、资料库替换均保留。关闭开关停止姓名/备注处理和关键词替换，规则保留；“清空替换规则”仅清空规则、保留脱敏开关，可撤销至清空前的原始输入；继续编辑、离开页面或刷新后撤销失效。正文只替换明确关键词，任务原音和原图保持原样；PDF/DOCX 仍遵循画面隐藏设置。
+转写下载的“脱敏导出”默认开启，规则每行 `原词=替换词`，最多 100 对，错误提示行号。独立 localStorage `audio-intel:transcript-export:v1` 长期保存开关和编辑内容，包括尚未修正的输入，以及最近导出内容和原文／优化稿／对照稿各自的格式；刷新、重开、退出登录、资料库替换均保留。关闭开关停止姓名/备注处理和关键词替换，规则保留；“清空替换规则”仅清空规则、保留脱敏开关，可撤销至清空前的原始输入；继续编辑、离开页面或刷新后撤销失效。正文只替换明确关键词，任务原音和原图保持原样；PDF/DOCX 仍遵循画面隐藏设置。
 
 识别分组用单选区分“全部分组（包含以后新增的分组）”与“指定分组”。指定模式下，“全选当前分组”支持全选、半选和全不选；手动选满也不包含未来分组。切换模式清空指定选择，关闭弹窗及刷新保留当前设置；开启声纹识别且指定范围为空时阻止提交。从转写结果向声纹库添加样本时，新建人员可选已有分组，默认“未分组”；弹窗内保留选择，重新打开重置，不跟随声纹库筛选，也不修改已有人员的分组。
 
@@ -138,3 +138,5 @@ English: Picture detection immediately shows current pictures, loads more on scr
 音视频任务的桌面“简洁导出”菜单提供 PDF（固定排版）和 Word（DOCX，可编辑），明细与字幕入口保留。手机在原导出弹窗选择 DOCX，默认 PDF；不新增格式偏好存储。
 
 English: The desktop Concise export menu offers PDF (fixed layout) and Word (DOCX, editable), alongside the existing details/subtitles menu. Mobile uses the existing format selector, defaulting to PDF, without new format-preference storage.
+
+表达优化通过同一选择对话框提供自然润色、流畅重写（默认）、深度成稿。`audio-intel:optimization-preferences:v1` 长期记忆最后所选档位，刷新、重开、退出登录和资料库替换后保留；任务中使用的档位是服务端快照，改浏览器偏好不会改写已有稿件。导出偏好首次沿用当前阅读内容，之后优先使用已保存选择；不可用选择临时回退而不覆盖偏好。准备成功触发下载后弹窗自动关闭，失败则保留选项。

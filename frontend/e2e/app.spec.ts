@@ -721,8 +721,10 @@ test('Auto-detected languages outside the aligner list explain segment-only time
  await expect(page.getByLabel('时间戳')).toHaveValue('word')
  await expect(page.getByText('Arabic · 句级时间戳')).toBeVisible()
  await expect(page.getByRole('button',{name:/查看 .*字词时间戳/})).toHaveCount(0)
- await page.getByRole('button',{name:'明细与字幕',exact:true}).click()
- await expect(page.getByTitle('下载 auto-arabic.srt')).toBeVisible()
+ await page.getByRole('button',{name:'导出转写',exact:true}).click()
+ await page.locator('.export-format').selectOption('srt')
+ await expect(page.getByRole('dialog').getByRole('button',{name:'下载',exact:true})).toBeEnabled()
+ await page.locator('.transcript-export-modal .modal-close').click()
  await page.getByPlaceholder('搜索转写内容').fill('مرحبا')
  await expect(page.locator('.segments article')).toHaveCount(1)
  await page.screenshot({path:'/tmp/audio-intel-asr-auto-segment-desktop.png',fullPage:false})
@@ -1274,7 +1276,7 @@ test('API key login and logout use an ephemeral browser session',async({page})=>
   const navigationBox=element.getBoundingClientRect();const buttons=[...element.querySelectorAll('button')]
   return {tabWidth:buttons[0].getBoundingClientRect().width,reservedWidth:navigationBox.right-buttons.at(-1)!.getBoundingClientRect().right}
  })
- expect(Math.abs(authenticatedSlots.reservedWidth-authenticatedSlots.tabWidth)).toBeLessThanOrEqual(1)
+ expect(Math.abs(authenticatedSlots.reservedWidth)).toBeLessThanOrEqual(1)
  expect((await page.locator('.language-switcher.header').boundingBox())!.width).toBe(38)
  expect((await page.getByRole('link',{name:'打开 API 文档'}).boundingBox())!.width).toBe(38)
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(1024)

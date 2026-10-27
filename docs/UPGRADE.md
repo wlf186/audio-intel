@@ -526,6 +526,24 @@ corepack pnpm@10.15.1 --dir frontend typecheck
 
 No schema migration, automatic historical rewrite or extra upgrade backup is required. New videos use presentation-v2; legacy retries retain v1, with explicit result-side preview/apply available. Applied settings/latest automatic sections are optional result additions and the initial snapshot remains intact. Rebuildable feature caches are created per job on demand, not by scanning all videos at startup. A separate browser localStorage preference persists successful choices across sign-out; dialog drafts are not persisted. Rebuild the frontend and refresh API, supervisors and executors using the maintenance procedure above.
 
+## v0.1.40：分档改写、左右对照与桌面阅读布局（策略 v4）
+
+桌面端合并播放、音轨及下载操作，统一阅读模式、搜索和说话人筛选；矮屏使用紧凑时间轴，保留更多正文空间。导航按实际五个入口分配宽度，导出弹窗恢复 560px 桌面宽度。移动端保持控件可触达、弹窗正文滚动与底部下载操作。此次布局调整不改变浏览器偏好寿命。
+
+English: v0.1.40 includes three rewrite strengths, side-by-side comparison and export, persistent export preferences, and compact desktop reading controls. Upgrade from v0.1.39 requires a consistent SQLite-only backup for schema v15 → v16 before startup; no media copy or historical rewrite is required. Already migrated v16 development instances need no additional migration backup. Rebuild the UI and refresh all previously running API, supervisor and executor processes. Browser preference lifetime remains unchanged.
+
+从已迁移至 SQLite v16 的开发版本更新，无数据库迁移或历史内容改写，无需额外升级备份；从 v0.1.39 更新仍须执行下面的 v15→v16 备份和迁移要求。重建前端并刷新全部原运行进程。新任务提供三档改写，默认流畅重写，所选档位持久化到任务配置；旧完成稿显示旧版策略，旧候选须明确重新生成。
+
+导出偏好在既有 localStorage v1 中增加内容及各内容格式，脱敏与规则完整保留。新增优化档位偏好独立保存，均在退出登录后保留；页面阅读会话和草稿清理寿命不变。成功下载自动关闭弹窗，错误可原地重试；对照 PDF/Word 改为横向 A4 左右双栏，普通导出不变。详见[表达优化](EXPRESSION_OPTIMIZATION.md)。
+
+### v0.1.40 包含的策略 v3 与 SQLite v16 迁移
+
+从 v0.1.39 或 v2 开发版本更新前，停止服务并创建一致的 SQLite 备份；v15 → v16 仅增加优化段落核对状态、原因码和任务摘要计数，不需要复制媒体。迁移可重复执行，历史正文、来源及配置快照保持不变；历史无核对记录保持未知。
+
+新生成逐段改写和复核；某段修正后仍未通过或格式重试耗尽时，原样保存该段并标记待核对，继续整稿。网络故障重试耗尽后暂停并保留检查点，修复后可继续。已完成稿仍可阅读，旧策略候选需明确重新生成。普通优化导出保持干净正文，对照导出显示待核对标记。三态阅读、共享搜索和阅读位置的浏览器会话寿命不变；新的段落筛选仅保留在当前页面，切换阅读模式或任务后重置。
+
+模型、依赖锁和 ASR/TTS 推理不变。重建前端并按上方维护流程恢复、验收全部原运行进程及历史数据。验收成功后清理此次数据库备份；失败时保留备份，回退必须使用匹配源码与数据库，不自动降级 v16。详见[表达优化](EXPRESSION_OPTIMIZATION.md)。
+
 ## v0.1.39：表达优化与 SQLite v15
 
 本次仅新增独立优化配置、任务与段落表，历史转写和媒体不改写。按上文备份 SQLite，启动自动迁移 v14 → v15。默认禁用；在系统状态验证模型后启用。阅读切换属于浏览器工作会话，退出登录清理。详见 [表达优化](EXPRESSION_OPTIMIZATION.md)。验收完成后清理本次临时数据库备份。

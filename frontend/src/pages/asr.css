@@ -252,7 +252,7 @@
 @media(min-width:1024px){.asr-workspace .video-result{height:auto;min-height:100%;scrollbar-gutter:stable}.asr-workspace .asr-results{overflow:auto}.asr-workspace .video-result .video-transcript{flex:1;min-height:280px;max-height:70dvh}}
 .video-result .asr-enhancement-row{padding:6px 12px;margin:0;gap:8px 12px;align-items:center}
 .video-result .asr-enhancement-row .player-row{padding:0;min-height:44px;gap:6px;flex-wrap:nowrap;border:0}
-.video-result .asr-enhancement-row .player-row>span:last-child,.video-result .asr-enhancement-row .player-row .grow{display:none}
+.video-result .asr-enhancement-row .player-row .grow{display:none}
 .video-result .asr-enhancement-row .player-row strong,.video-result .asr-enhancement-row .player-row>span{font-size:11px;white-space:nowrap}
 .timeline-toolbar .timeline-scene-picker{display:block;min-height:44px;max-width:180px;width:180px;margin:0 auto 0 0}
 .timeline-toolbar>span{flex-shrink:0}
@@ -394,3 +394,17 @@
 .transcript-concise-panel{display:grid;gap:8px;min-width:190px}
 .transcript-concise-panel .button{justify-content:flex-start;min-height:44px}
 .transcript-concise-panel small{display:block;color:var(--muted);font-size:11px}
+
+/* One transport row for audio and video, with a compact desktop timeline. */
+.asr-workspace .asr-enhancement-row{padding:4px 12px;gap:8px 12px}
+.asr-workspace .asr-enhancement-row .player-row{padding:0;min-height:44px;gap:6px;flex-wrap:nowrap;border:0}
+.asr-workspace .asr-enhancement-row .player-row .grow{display:none}
+.asr-workspace .asr-enhancement-row .player-row strong,.asr-workspace .asr-enhancement-row .player-row>span{font-size:11px;white-space:nowrap}
+@media(min-width:1200px) and (max-height:900px) and (pointer:fine){
+ .asr-workspace.workbench.hud-page{padding-top:8px;padding-bottom:8px;gap:8px}
+ .asr-workspace .result-head{min-height:52px;padding:4px 12px}
+ .asr-workspace .wave-area{padding-top:4px;padding-bottom:0}
+ .asr-workspace .waveform{height:48px}
+ .asr-workspace .timeline-waveform{height:28px}
+ .asr-workspace .timeline-scenes,.asr-workspace .timeline-scene{height:32px;min-height:0}
+}

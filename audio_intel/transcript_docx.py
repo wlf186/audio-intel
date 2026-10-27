@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .transcript import reading_sections
+from .transcript_diff import text_changes
 from .utils import timecode
 
 _lock = threading.Lock()
@@ -25,11 +26,13 @@ _max_text_chars = 4_000_000
 def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     from docx import Document
     from docx.image.image import Image
+    from docx.enum.section import WD_ORIENT
+    from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from docx.shared import Mm, Pt, RGBColor
 
-    if sum(len(segment.get('text', '')) for segment in result.get('segments', [])) > _max_text_chars:
+    if sum(len(segment.get('text', '')) + len(segment.get('original_text', '')) for segment in result.get('segments', [])) > _max_text_chars:
         raise ValueError('Transcript exceeds DOCX text budget; split the source')
     document = Document()
     properties = document.core_properties
@@ -37,7 +40,9 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
         setattr(properties, name, '')
     properties.title = title
     section = document.sections[0]
-    section.page_width, section.page_height = Mm(210), Mm(297)
+    comparison = result.get('text_version') == 'comparison'
+    section.orientation = WD_ORIENT.LANDSCAPE if comparison else WD_ORIENT.PORTRAIT
+    section.page_width, section.page_height = (Mm(297), Mm(210)) if comparison else (Mm(210), Mm(297))
     section.left_margin = section.right_margin = Mm(18)
     section.top_margin = section.bottom_margin = Mm(18)
     for name in ('Normal', 'Title', 'Heading 1'):
@@ -73,23 +78,45 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                 # Read the validated bytes, avoiding filename metadata in the package.
                 stream = io.BytesIO(path.read_bytes())
                 picture = Image.from_file(stream)
-                scale = min(int(Mm(174)) / picture.width, int(Mm(100)) / picture.height)
+                scale = min(int(section.page_width - section.left_margin - section.right_margin) / picture.width, int(Mm(100)) / picture.height)
                 stream.seek(0)
                 document.add_picture(stream, width=int(picture.width * scale), height=int(picture.height * scale))
         for paragraph in item['paragraphs']:
             label = document.add_paragraph()
             label.paragraph_format.keep_with_next = True
             label.add_run(f"{paragraph.get('speaker_label') or paragraph['speaker']}　{timecode(paragraph['start'])} – {timecode(paragraph['end'])}").bold = True
-            optimized = document.add_paragraph(paragraph['text'])
+            if paragraph.get('review_status') == 'needs_review':
+                label.add_run('　保留原文·待核对 / Original retained · Needs review').italic = True
             if 'original_text' in paragraph:
-                optimized.paragraph_format.keep_with_next = True
-                original = document.add_paragraph()
-                original.paragraph_format.left_indent = Mm(4)
-                run = original.add_run('原文 / Original\n' + paragraph['original_text'])
-                run.font.size = Pt(9)
-                run.font.color.rgb = RGBColor.from_string('667085')
+                table = document.add_table(rows=2, cols=2)
+                table.autofit = False
+                column_width = int((section.page_width - section.left_margin - section.right_margin) / 2)
+                for column in table.columns:
+                    column.width = column_width
+                for row in table.rows:
+                    for cell in row.cells:
+                        cell.width = column_width
+                        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+                table.rows[0]._tr.get_or_add_trPr().append(OxmlElement('w:tblHeader'))
+                for cell, title in zip(table.rows[0].cells, ('原文 / Original', '改写 / Rewritten')):
+                    cell.paragraphs[0].add_run(title).bold = True
+                    shade = OxmlElement('w:shd'); shade.set(qn('w:fill'), 'F0F2F4')
+                    cell._tc.get_or_add_tcPr().append(shade)
+                changes = text_changes(paragraph['original_text'], paragraph['text'])
+                for index, (cell, parts) in enumerate(zip(table.rows[1].cells, changes)):
+                    content = cell.paragraphs[0]
+                    content.paragraph_format.keep_together = False
+                    content.paragraph_format.keep_with_next = False
+                    for text, changed in parts:
+                        run = content.add_run(text)
+                        if changed:
+                            run.font.color.rgb = RGBColor.from_string('9C3A32' if index == 0 else '12634B')
+                            run.font.strike = index == 0
+                document.add_paragraph().paragraph_format.space_after = Pt(4)
+            else:
+                document.add_paragraph(paragraph['text'])
         if not item['paragraphs']:
-            document.add_paragraph('此段无识别语音 / No recognized speech')
+            document.add_paragraph(('此段无优化正文 / No optimized text in this section' if result.get('_optimized') else '此段无识别语音 / No recognized speech'))
     stream = io.BytesIO()
     document.save(stream)
     return stream.getvalue()

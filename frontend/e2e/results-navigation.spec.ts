@@ -26,7 +26,7 @@ for(const [width,height,minimum] of [[1280,720,180],[1440,800,260],[1470,830,280
  await expect(waveform).toHaveAttribute('data-window-end','60')
  expect(Math.abs((await reader.boundingBox())!.height-initial.height)).toBeLessThanOrEqual(1)
  await page.getByRole('button',{name:zh?'逐句明细':'Segment details',exact:true}).click()
- await expect(page.locator('.video-toolbar input')).toBeVisible()
+ await expect(page.locator('.transcript-tools input')).toBeVisible()
  if(width>=1024)expect((await page.locator('.segments').boundingBox())!.height).toBeGreaterThanOrEqual(minimum)
  for(const control of await page.locator('.asr-enhancement-row button:visible,.asr-enhancement-row a:visible,.timeline-toolbar button:visible,.timeline-toolbar select').all()){
   const box=(await control.boundingBox())!
@@ -143,7 +143,7 @@ test('short desktop windows scroll the page without clipping result controls',as
  await page.getByRole('combobox',{name:'画面目录',exact:true}).selectOption('scene-40')
  await expect(page.locator('.video-section[data-reader-id="scene-40"] .video-paragraph')).toBeInViewport()
  await page.getByRole('button',{name:'逐句明细',exact:true}).click()
- await expect(page.locator('.video-toolbar input')).toBeVisible()
+ await expect(page.locator('.transcript-tools input')).toBeVisible()
  expect(await page.locator('.video-result').evaluate(node=>node.scrollHeight-node.clientHeight)).toBeLessThanOrEqual(1)
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(1280)
  expect(errors).toEqual([])

@@ -1,0 +1,36 @@
+import {test,expect} from './fixtures'
+import {uxFixture} from './ux-fixtures'
+
+for(const [width,height] of [[1280,720],[1440,900],[1920,1080],[390,844]])for(const video of [false,true])for(const locale of ['zh-CN','en-US'])test(`reading space and aligned controls ${width} ${video?'video':'audio'} ${locale}`,async({page},info)=>{
+ await page.setViewportSize({width,height})
+ await page.addInitScript(locale=>localStorage.setItem('audio-intel:ui-locale:v1',locale),locale)
+ const {state,errors}=await uxFixture(page)
+ if(!video){state.job.purpose='transcription';delete state.job.result!.video}
+ const run={id:'layout',job_id:state.job.id,state:'succeeded',published:true,model:'test',rewrite_mode:'rewrite',total_chars:100,completed_chars:100,completed_units:1,total_units:1,activity_chars:0,progress:1,revision:1,error:null}
+ await page.route('**/api/v1/jobs/*/transcript-optimization',route=>route.fulfill({json:{enabled:true,published:run,candidate:null}}))
+ await page.route('**/transcript-optimization/result?*',route=>route.fulfill({json:{run_id:'layout',complete:true,model:'test',paragraphs:[{id:'p1',ordinal:0,speaker:'s0',speaker_label:'Alice',start:0,end:2,original_text:'那个我们我们周五先测试。',text:'我们周五先测试。',segment_ids:[0]}],scenes:[]}}))
+ await page.goto('/#asr');await page.getByRole('tab',{name:locale==='zh-CN'?'任务与结果':'Tasks & results',exact:true}).click()
+ const reading=page.locator(video?'.video-transcript':'.segments')
+ await expect(reading).toContainText('第 1 段')
+ await expect(page.locator('.media-loading')).toHaveCount(0)
+ if(video)await expect(page.locator('.timeline-load-state')).toHaveCount(0)
+ if(width>=1280)expect((await reading.boundingBox())!.height).toBeGreaterThanOrEqual(220)
+ await page.screenshot({path:info.outputPath('original.png')})
+ await page.getByRole('button',{name:locale==='zh-CN'?'对照':'Compare',exact:true}).click()
+ await expect(page.locator('.optimization-paragraph')).toBeVisible()
+ if(width>=1280)expect((await page.locator('.optimization-reader').boundingBox())!.height).toBeGreaterThanOrEqual(220)
+ await page.locator('.transcript-tools input').fill('不存在的内容')
+ await expect(page.locator('.optimization-paragraph')).toHaveCount(0)
+ await page.locator('.transcript-tools input').fill('')
+ await expect(page.locator('.optimization-paragraph')).toBeVisible()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()
+ await page.screenshot({path:info.outputPath('comparison.png')})
+ await page.getByRole('button',{name:locale==='zh-CN'?'导出转写':'Export transcript',exact:true}).click()
+ const dialog=page.getByRole('dialog')
+ await expect(dialog).toBeVisible()
+ if(width>=1280)expect((await dialog.boundingBox())!.width).toBe(560)
+ await expect(dialog.getByRole('button',{name:locale==='zh-CN'?'下载':'Download',exact:true})).toBeInViewport()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()
+ await page.screenshot({path:info.outputPath('export.png')})
+ expect(errors).toEqual([])
+})

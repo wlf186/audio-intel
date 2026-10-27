@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Create and poll a transcript reading draft (configure Ollama in System first)."""
+"""Create and poll a transcript reading draft (configure Ollama in System first).
+
+Completed results may include needs_review_units: these paragraphs retain their
+exact original text and do not change the successful exit status. A paused run
+can be resumed after restoring the model service.
+"""
 import argparse
 import json
 import os
@@ -12,7 +17,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--url', required=True)
     parser.add_argument('--job', required=True)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--regenerate', action='store_true', help='Explicitly replace the candidate; retain the published draft until success')
+    mode.add_argument('--resume', action='store_true', help='Resume a candidate using its saved policy and checkpoints')
+    parser.add_argument('--rewrite-mode', choices=['polish', 'rewrite', 'editorial'], help='Editing style; defaults to rewrite for new runs')
     args = parser.parse_args()
+    if args.resume and args.rewrite_mode:
+        parser.error('--resume uses the saved mode; use --regenerate to change it')
     root = args.url.rstrip('/') + '/api/v1/jobs/' + args.job + '/transcript-optimization'
     headers = {'Content-Type': 'application/json', 'Idempotency-Key': str(uuid.uuid4())}
     if os.environ.get('AUDIO_INTEL_API_KEY'):
@@ -21,10 +32,18 @@ def main():
         request = urllib.request.Request(root + path, headers=headers, data=None if body is None else json.dumps(body).encode())
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)
-    call(body={'regenerate': False})
+    if args.resume:
+        status = call()
+        candidate = status['candidate']
+        if not candidate or candidate.get('requires_regeneration'):
+            raise SystemExit('No resumable candidate; use --regenerate for an obsolete policy')
+        status = call('/resume', {'run_id': candidate['id']})
+    else:
+        status = call(body={'regenerate': args.regenerate, **({'rewrite_mode': args.rewrite_mode} if args.rewrite_mode else {})})
+    target = (status['candidate'] or status['published'])['id']
     while True:
         status = call()
-        if status['published']:
+        if status['published'] and status['published']['id'] == target:
             print(json.dumps(call('/result?run_id='+status['published']['id']), ensure_ascii=False, indent=2))
             return
         candidate = status['candidate']
