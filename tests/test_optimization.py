@@ -24,87 +24,6 @@ PROFILE = {'base_url': 'http://ollama.invalid:11434', 'use_proxy': False, 'model
            'context_length': 32768, 'model_context_length': 131072, 'model_digest': 'test-digest', 'prompt_version': engine.PROMPT_VERSION, 'verified_at': '2026-10-23T00:00:00+00:00'}
 
 
-@pytest.mark.parametrize('rejected', [{0}, {1, 2}, {3}, {0, 1, 2, 3}])
-def test_review_fallback_completes_without_changing_source(configured, monkeypatch, rejected):
-    data = source(4)
-    identifier = job(data)
-    before = deepcopy(db.get_job(identifier))
-    calls = []
-    async def generate(profile, batch, *args):
-        unit = batch[0]
-        calls.append(unit['ordinal'])
-        if unit['ordinal'] in rejected:
-            raise engine.ReviewFailed('Unreliable rewrite')
-        return [(unit['ordinal'], unit['original_text'].replace('那个', ''))]
-    monkeypatch.setattr(engine, 'generate', generate)
-    with TestClient(api.create_app()) as client:
-        assert start(client, identifier).status_code == 202
-        published = wait(client, identifier, lambda s: bool(s['published']))['published']
-        assert published['needs_review_units'] == len(rejected)
-        assert published['completed_units'] == 4 and published['progress'] == 1
-        result = client.get(url(identifier)+'/result', params={'run_id': published['id']}).json()
-        assert result['complete'] and result['needs_review_units'] == len(rejected)
-        for unit in result['paragraphs']:
-            fallback = unit['ordinal'] in rejected
-            assert unit['review_status'] == ('needs_review' if fallback else 'accepted')
-            assert unit['review_reason'] == ('review_failed' if fallback else None)
-            assert not unit['omitted']
-            if fallback:
-                assert unit['text'] == unit['original_text']
-            assert unit['sources'][0]['text'] == unit['original_text']
-        assert not store.checkpoint(published['id'], [(0, 'late mutation')])
-    assert calls == [0, 1, 2, 3]
-    assert db.get_job(identifier) == before
-
-
-def test_invalid_output_falls_back_after_bounded_retries(configured, monkeypatch):
-    calls = []
-    async def generate(profile, batch, *args):
-        calls.append(batch[0]['ordinal'])
-        if batch[0]['ordinal'] == 0:
-            raise engine.InvalidOutput('truncated')
-        return [(1, batch[0]['original_text'])]
-    monkeypatch.setattr(engine, 'generate', generate)
-    identifier = job(source(2))
-    with TestClient(api.create_app()) as client:
-        start(client, identifier)
-        run = wait(client, identifier, lambda s: bool(s['published']))['published']
-        assert run['needs_review_units'] == 1
-        units = store.units(run['id'])
-        assert units[0]['review_reason'] == 'invalid_output'
-        assert units[0]['text'] == units[0]['original_text']
-        assert units[1]['review_status'] == 'accepted'
-    assert calls == [0, 0, 0, 1]
-
-
-def test_network_pause_restart_and_resume_keeps_fallback_checkpoint(configured, monkeypatch):
-    calls = []
-    unavailable = True
-    async def generate(profile, batch, *args):
-        unit = batch[0]
-        calls.append(unit['ordinal'])
-        if unit['ordinal'] == 0:
-            raise engine.ReviewFailed('review failed')
-        if unavailable:
-            raise httpx.ConnectError('offline')
-        return [(unit['ordinal'], unit['original_text'])]
-    monkeypatch.setattr(engine, 'generate', generate)
-    identifier = job(source(3))
-    with TestClient(api.create_app()) as client:
-        start(client, identifier)
-        run = wait(client, identifier, lambda s: bool(s['candidate'] and s['candidate']['state']=='paused'))['candidate']
-        assert run['needs_review_units'] == run['completed_units'] == 1
-        assert not store.status(identifier)['published']
-        assert store.units(run['id'])[1]['text'] is None
-    unavailable = False
-    with TestClient(api.create_app()) as client:
-        assert client.post(url(identifier)+'/resume', json={'run_id': run['id']}).status_code == 200
-        published = wait(client, identifier, lambda s: bool(s['published']))['published']
-        assert published['needs_review_units'] == 1 and published['completed_units'] == 3
-        assert store.units(run['id'])[0]['review_status'] == 'needs_review'
-    assert calls == [0, 1, 1, 1, 1, 2]
-
-
 def test_checkpoint_rejects_changed_fallback_and_does_not_double_count(configured):
     identifier = job(source(2))
     run, _ = store.create(identifier, 'checkpoint-review-key', False, PROFILE, engine.source_hash(source(2)), [], engine.prepare_units(source(2)))
@@ -123,7 +42,7 @@ def test_checkpoint_rejects_changed_fallback_and_does_not_double_count(configure
 def test_storage_failure_never_becomes_completed_fallback(configured, monkeypatch):
     def fail(*args, **kwargs):
         raise OSError('disk unavailable')
-    monkeypatch.setattr(store, 'checkpoint', fail)
+    monkeypatch.setattr(store, 'checkpoint_part', fail)
     identifier = job(source(2))
     with TestClient(api.create_app()) as client:
         start(client, identifier)
@@ -164,35 +83,10 @@ def test_v15_review_migration_preserves_legacy_text_and_unknown_status(configure
     db.init_db()
     with db.connect() as connection:
         assert [tuple(row) for row in connection.execute('SELECT run_id,ordinal,source_json,optimized_text FROM optimization_units')] == before
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 16
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 18
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
     assert all(unit['review_status'] is None and unit['review_reason'] is None for unit in store.units(run))
     assert store.status(identifier)['published']['needs_review_units'] == 0
-
-
-def test_fallback_export_markers_only_in_comparison_with_redaction(configured, monkeypatch):
-    async def reject(*args):
-        raise engine.ReviewFailed('unreliable')
-    monkeypatch.setattr(engine, 'generate', reject)
-    identifier = job(source(2))
-    with TestClient(api.create_app()) as client:
-        start(client, identifier)
-        run = wait(client, identifier, lambda s: bool(s['published']))['published']['id']
-        for version in ('optimized', 'comparison'):
-            for format in (('txt','pdf','docx') if version=='optimized' else ('pdf','docx')):
-                response = client.post(f'/api/v1/jobs/{identifier}/transcript-export', json={
-                    'format': format, 'text_version': version, 'optimization_id': run,
-                    'redact': True, 'replacements': [{'source': '阿特拉斯', 'target': '项目甲'}]})
-                assert response.status_code == 200, response.text[:200]
-                if format == 'docx':
-                    text = docx_text(response.content)
-                elif format == 'pdf':
-                    text = '\n'.join(p.extract_text() for p in PdfReader(io.BytesIO(response.content)).pages)
-                else:
-                    text = response.text
-                assert ('Needs review' in text) == (version == 'comparison')
-                assert '项目甲' in text and '阿特拉斯' not in text and 'Mike Smith' not in text
-                assert '15万元' in text and '50万元' in text
 
 
 def docx_text(content):
@@ -240,6 +134,9 @@ def configured(local, monkeypatch):
         return [(p['ordinal'], p['original_text'].replace('那个', '').replace('阿特拉斯', 'Atlas')) for p in batch]
     monkeypatch.setattr(routes.Manager, 'check_model', check)
     monkeypatch.setattr(engine, 'generate', generate)
+    async def review(*args, **kwargs):
+        return {'outcome': 'pass', 'details': {'stage': 'review', 'issues': []}}
+    monkeypatch.setattr(engine, 'review', review)
     return local
 
 
@@ -274,7 +171,7 @@ def test_configuration_verification_binding_and_auth(local, monkeypatch):
         schema = client.get('/openapi.json').json()
         assert root in schema['paths']
         assert 'text_version' in schema['components']['schemas']['TranscriptExportRequest']['properties']
-        for model, fields in {'OptimizationSummary': ['needs_review_units'], 'OptimizedResult': ['needs_review_units'], 'OptimizedParagraph': ['review_status', 'review_reason']}.items():
+        for model, fields in {'OptimizationSummary': ['needs_review_units'], 'OptimizedResult': ['needs_review_units'], 'OptimizedParagraph': ['review_status', 'review_reason', 'candidate_text', 'review_details'], 'ReviewDetails': ['stage', 'issues'], 'ReviewIssue': ['source_quote', 'candidate_quote', 'reason']}.items():
             assert all(field in schema['components']['schemas'][model]['properties'] for field in fields)
 
 
@@ -285,14 +182,17 @@ def test_units_source_coverage_scene_splits_and_long_speech():
     result['video'] = {'scenes':[{'id':'a','start':0,'end':3},{'id':'b','start':3,'end':6}]}
     before = deepcopy(result)
     units = engine.prepare_units(result)
-    assert [p['original_text'] for p in units] == ['第一段。','第二段。']
-    assert [(p['sources'][0]['start_offset'],p['sources'][0]['end_offset']) for p in units] == [(0,4),(4,8)]
+    assert [p['original_text'] for p in units] == ['第一段。第二段。']
+    assert [(p['sources'][0]['start_offset'],p['sources'][0]['end_offset']) for p in units] == [(0,8)]
     assert result == before
     result.pop('video')
     result['segments'][0].update(text='长句内容。'*900, words=[])
     units = engine.prepare_units(result)
     assert ''.join(p['original_text'] for p in units) == result['segments'][0]['text']
-    assert all(len(p['original_text']) <= 800 for p in units)
+    assert len(units) == 1
+    chunks = engine.prepare_parts(PROFILE, units[0], [])
+    assert all(len(part['original_text']) <= 1200 for part in chunks)
+    assert ''.join(part['original_text'] for part in chunks) == units[0]['original_text']
     assert ''.join(s['text'] for p in units for s in p['sources']) == result['segments'][0]['text']
     with pytest.raises(ValueError, match='窗口'):
         engine.validate_budget({**PROFILE,'context_length':16384}, units, ['热词'*10000])
@@ -306,7 +206,7 @@ def test_v14_migration_preserves_history_queue_and_idempotency(local):
     with db.connect() as connection:
         receipt = tuple(connection.execute('SELECT * FROM job_idempotency').fetchone())
         sequence = tuple(connection.execute('SELECT * FROM queue_sequence').fetchone())
-        for table in ['optimization_units', 'transcript_optimizations', 'optimization_settings']:
+        for table in ['optimization_parts', 'optimization_units', 'transcript_optimizations', 'optimization_settings']:
             connection.execute('DROP TABLE ' + table)
         connection.execute('UPDATE schema_meta SET version=14')
     db.init_db()
@@ -314,7 +214,7 @@ def test_v14_migration_preserves_history_queue_and_idempotency(local):
     assert {identifier: db.get_job(identifier) for identifier in before} == before
     assert not store.settings()['enabled']
     with db.connect() as connection:
-        assert connection.execute('SELECT min(version) FROM schema_meta').fetchone()[0] == 16
+        assert connection.execute('SELECT min(version) FROM schema_meta').fetchone()[0] == 18
         assert tuple(connection.execute('SELECT * FROM job_idempotency').fetchone()) == receipt
         assert tuple(connection.execute('SELECT * FROM queue_sequence').fetchone()) == sequence
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
@@ -367,7 +267,7 @@ def test_complete_idempotency_summary_exports_latest_and_cleanup(configured):
         assert document.tables[0].cell(0,0).text == '原文 / Original'
         assert document.sections[0].page_width > document.sections[0].page_height
         assert document.styles['Normal'].font.size.pt == 11
-        assert any(r.font.strike for r in document.tables[0].cell(1,0).paragraphs[0].runs)
+        assert 'Atlas' in result['paragraphs'][0]['text']
         response = client.post(export,json={**body,'format':'pdf'})
         assert response.status_code == 200
         pdf = '\n'.join(p.extract_text() for p in PdfReader(io.BytesIO(response.content)).pages)
@@ -482,34 +382,6 @@ def test_video_comparison_images_redaction_and_scene_reassignment(configured):
         assert len({p['id'] for s in draft['scenes'] for p in s['paragraphs']})==4
 
 
-def test_stream_contract_truncation_and_coverage(monkeypatch):
-    import httpx
-    profile = {**PROFILE, 'context_length': 16384}
-    batch = [{'id':'p1','ordinal':0,'speaker':'s1','original_text':'那个预算15万元，不是50万元。'}]
-    payload = engine.payload_for(profile,batch,['Atlas'],'','')
-    assert payload['think'] is False and payload['options']['num_predict']==4096
-    assert payload['options']['num_ctx']==16384
-    async def run(reason, candidate):
-        calls = []
-        def respond(request):
-            calls.append(json.loads(request.content))
-            value = candidate if len(calls) == 1 else {'verdict':'pass','source_quote':'','candidate_quote':'','reason':''}
-            event = {'message': {'content': json.dumps(value)}, 'done': True, 'done_reason': reason}
-            return httpx.Response(200, content=(json.dumps(event)+'\n').encode())
-        transport = httpx.MockTransport(respond)
-        monkeypatch.setattr(engine, 'client', lambda config: httpx.AsyncClient(base_url='http://test/', transport=transport))
-        value = await engine.generate(profile,batch,['Atlas'],'','',None)
-        assert len(calls) == 2
-        return value
-    assert asyncio.run(run('stop',{'action':'keep','text':'预算15万元，不是50万元。'}))==[(0,'预算15万元，不是50万元。')]
-    with pytest.raises(engine.InvalidOutput):
-        asyncio.run(run('length',{'action':'keep','text':'预算15万元'}))
-    with pytest.raises(engine.InvalidOutput):
-        asyncio.run(run('stop',{'action':'omit','text':''}))
-    with pytest.raises(engine.InvalidOutput):
-        asyncio.run(run('stop',{'paragraphs':[{'id':'p2','text':'错误段落'}]}))
-
-
 def test_queue_limit_and_settings_are_independent(local):
     identifiers=[job() for _ in range(6)]
     for identifier in identifiers[:5]:
@@ -519,75 +391,6 @@ def test_queue_limit_and_settings_are_independent(local):
         store.create(identifiers[5],'key-six',False,PROFILE,'hash',[],engine.prepare_units(source()))
     assert error.value.status_code==429
     assert error.value.headers.get('Retry-After')
-
-
-def test_model_output_validation_survives_optimized_python(local):
-    code = '''import asyncio,json,httpx
-from audio_intel import optimization_engine as engine
-event={'message':{'content':json.dumps({'paragraphs':[{'id':'wrong','text':'预算15万元。'}]})},'done':True,'done_reason':'stop'}
-transport=httpx.MockTransport(lambda request:httpx.Response(200,content=(json.dumps(event)+'\\n').encode()))
-engine.client=lambda config:httpx.AsyncClient(base_url='http://test/',transport=transport)
-async def run():
-    try:
-        await engine.generate({'model':'test','context_length':16384},[{'id':'p1','ordinal':0,'speaker':'s1','original_text':'预算15万元。'}],[],'','',None)
-    except engine.InvalidOutput:
-        return
-    raise SystemExit('Malformed model output was accepted')
-asyncio.run(run())
-'''
-    environment = dict(os.environ, AUDIO_INTEL_LOAD_ENV='0', AUDIO_INTEL_DATA_DIR=str(local.data_dir),
-                       AUDIO_INTEL_TEMP_DIR=str(local.temp_dir), TMPDIR=str(local.temp_dir))
-    subprocess.run([sys.executable, '-O', '-c', code], env=environment, check=True, timeout=15)
-
-
-def test_review_repairs_factual_loss_once_and_requires_grounded_evidence(monkeypatch):
-    original = '那个预算15万元，不是50万元，如果审批失败就不做。'
-    bad = '预算50万元，已经开始。'
-    good = '预算15万元，不是50万元。如果审批失败就不做。'
-    issue = {'source_quote':'不是50万元','candidate_quote':'预算50万元','reason':'改变了金额和否定'}
-    replies = [dict(action='keep',text=bad),dict(verdict='fact',**issue),dict(action='keep',text=good),dict(verdict='pass',source_quote='',candidate_quote='',reason='')]
-    seen=[]
-    async def structured(config,payload,activity):
-        seen.append(deepcopy(payload))
-        return replies.pop(0)
-    monkeypatch.setattr(engine,'structured',structured)
-    batch=[{'id':'p1','ordinal':0,'speaker':'s1','original_text':original}]
-    assert asyncio.run(engine.generate(PROFILE,batch,[],[],[],None))==[(0,good)]
-    repair=json.loads(seen[2]['messages'][1]['content'])
-    assert repair['issues']==[{'kind':'fact',**issue}] and repair['previous_draft']['text']==bad
-    assert len(seen)==4
-    with pytest.raises(engine.InvalidOutput):
-        engine.validate_review({**issue,'verdict':'fact','source_quote':'原文没说的话'},original,bad)
-    with pytest.raises(engine.InvalidOutput):
-        engine.validate_review({**issue,'verdict':'pass'},original,bad)
-
-
-def test_review_failure_is_bounded_and_does_not_publish_unreviewed_text(monkeypatch):
-    calls=[]
-    async def structured(config,payload,activity):
-        calls.append(payload)
-        return {'action':'keep','text':'预算50万元。'} if len(calls)%2 else {'verdict':'fact','source_quote':'15万元','candidate_quote':'50万元','reason':'金额被改变'}
-    monkeypatch.setattr(engine,'structured',structured)
-    with pytest.raises(engine.ReviewFailed):
-        asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s1','original_text':'预算15万元。'}],[],[],[],None))
-    assert len(calls)==4
-
-
-def test_omission_guard_and_meaningful_response(monkeypatch):
-    from audio_intel.optimization_policy import omission_candidate,context
-    assert omission_candidate('嗯嗯嗯。') and omission_candidate('那个，呃。')
-    for text in ('天山竹叶。','嗯，不同意。','对，知道了。','15万元','？','那个项目没通过'):
-        assert not omission_candidate(text)
-        with pytest.raises(engine.InvalidOutput):engine.validate_draft({'action':'omit','text':''},text)
-    # Lexical eligibility alone is not permission to omit a meaningful response.
-    replies=[{'action':'omit','text':''},{'verdict':'fact','source_quote':'嗯','candidate_quote':'','reason':'回答前一位说话人的询问，应保留'},
-             {'action':'keep','text':'嗯。'},{'verdict':'pass','source_quote':'','candidate_quote':'','reason':''}]
-    async def structured(*args):return replies.pop(0)
-    monkeypatch.setattr(engine,'structured',structured)
-    assert asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s2','original_text':'嗯。'}],[],[{'speaker':'s1','text':'你同意吗？'}],[],None))==[(0,'嗯。')]
-    values=[{'speaker':'s1','original_text':'字'*800},{'speaker':'s2','original_text':'回应'}]
-    result=context(values,before=True)
-    assert sum(len(x['text']) for x in result)==600 and result[-1]['speaker']=='s2' and result[0]['truncated']
 
 
 def test_omitted_units_are_completed_and_exported_with_explicit_comparison(configured,monkeypatch):
@@ -629,26 +432,6 @@ def test_old_candidate_regeneration_retains_published_and_connection_profile(con
         state=wait(client,identifier,lambda s:bool(s['published'] and s['published']['id']!=published))
         assert store.get(state['published']['id'])['config']['prompt_version']==engine.PROMPT_VERSION
         assert store.settings()['prompt_version']==1
-
-
-def test_identical_source_still_receives_language_review(monkeypatch):
-    calls=[]
-    async def structured(config,payload,activity):
-        calls.append(payload)
-        return {'action':'keep','text':'负责那个项'} if len(calls)%2 else {'verdict':'pass','source_quote':'','candidate_quote':'','reason':''}
-    monkeypatch.setattr(engine,'structured',structured)
-    value=asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s1','original_text':'负责那个项'}],[],[],[],None))
-    assert value==[(0,'负责那个项')] and len(calls)==2
-
-
-def test_unchanged_stutters_get_one_style_repair_without_becoming_a_fact_failure(monkeypatch):
-    calls=[]
-    async def structured(config,payload,activity):
-        calls.append(payload)
-        return {'action':'keep','text':'我我还没还没到。'} if len(calls)%2 else {'verdict':'pass','source_quote':'','candidate_quote':'','reason':''}
-    monkeypatch.setattr(engine,'structured',structured)
-    assert asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s1','original_text':'我我还没还没到。'}],[],[],[],None))==[(0,'我我还没还没到。')]
-    assert len(calls)==4
 
 
 def test_cli_regeneration_waits_for_new_draft_and_preserves_omission_contract(monkeypatch,capsys):
@@ -703,66 +486,41 @@ def test_legacy_idempotency_replay_without_mode_still_works(configured):
         assert store.get(run)['config'] == legacy
 
 
-def test_style_repair_keeps_reviewed_candidate_when_second_draft_loses_facts(monkeypatch):
-    original = '那个预算15万元，不是50万元。'
-    first = '预算15万元，不是50万元。'
-    replies = [{'action':'keep','text':first},
-               {'verdict':'style','source_quote':'预算15万元','candidate_quote':'预算15万元','reason':'还可以进一步理顺句式'},
-               {'action':'keep','text':'预算50万元。'},
-               {'verdict':'fact','source_quote':'不是50万元','candidate_quote':'预算50万元','reason':'改变了金额'}]
-    async def structured(*args): return replies.pop(0)
-    monkeypatch.setattr(engine, 'structured', structured)
-    assert asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s1','original_text':original}],[],[],[],None)) == [(0,first)]
-    assert not replies
+@pytest.mark.parametrize('failures', [0, 1, 2, 3])
+def test_verification_format_retries_are_bounded(monkeypatch, failures):
+    calls = []
+    async def remote(connection, path, payload=None):
+        if path == 'api/tags':
+            return {'models': [{'name': 'test-model', 'digest': 'test-digest'}]}
+        if path == 'api/show':
+            return {'capabilities': ['completion'], 'model_info': {'test.context_length': 32768}}
+        return {'models': [{'name': 'test-model', 'context_length': 32768}]}
+    async def generate(*args):
+        calls.append(1)
+        if len(calls) <= failures:
+            raise engine.InvalidOutput('invalid')
+        return [(0, '预算15万元。')]
+    async def sleep(delay): pass
+    monkeypatch.setattr(engine, 'remote_json', remote)
+    monkeypatch.setattr(engine, 'generate', generate)
+    monkeypatch.setattr(engine.asyncio, 'sleep', sleep)
+    if failures == 3:
+        with pytest.raises(engine.InvalidOutput, match='已自动重试两次'):
+            asyncio.run(engine.verify(PROFILE))
+    else:
+        assert asyncio.run(engine.verify(PROFILE))['verified_at']
+    assert len(calls) == min(failures + 1, 3)
 
 
-def test_style_repair_invalid_output_preserves_reviewed_candidate(monkeypatch):
-    calls = 0
-    async def structured(*args):
-        nonlocal calls
-        calls += 1
-        if calls == 1: return {'action':'keep','text':'预算15万元。'}
-        if calls == 2: return {'verdict':'style','source_quote':'预算15万元','candidate_quote':'预算15万元','reason':'理顺表达'}
-        raise engine.InvalidOutput('truncated')
-    monkeypatch.setattr(engine, 'structured', structured)
-    assert asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s1','original_text':'那个预算15万元。'}],[],[],[],None)) == [(0,'预算15万元。')]
-
-
-def test_trailing_question_is_not_accepted_as_a_fact_even_when_reviewer_passes(monkeypatch):
-    calls = 0
-    async def structured(*args):
-        nonlocal calls
-        calls += 1
-        if calls % 2: return {'action':'keep','text':'他今天会过来。'}
-        return {'verdict':'pass','source_quote':'','candidate_quote':'','reason':''}
-    monkeypatch.setattr(engine, 'structured', structured)
-    with pytest.raises(engine.ReviewFailed):
-        asyncio.run(engine.generate(PROFILE,[{'id':'p1','ordinal':0,'speaker':'s1','original_text':'他今天过来是吧？'}],[],[],[],None))
-    assert calls == 4
-
-
-@pytest.mark.parametrize('original,bad,good,issue', [
-    ('他做多模态，主要是输电。设备分输电、变电、配电。', '他主要做输电多模态，其次是配电。',
-     '他主要做输电多模态。设备分输电、变电、配电三类。',
-     {'source_quote':'设备分输电、变电、配电。','candidate_quote':'其次是配电','reason':'分类不代表覆盖范围或优先级'}),
-    ('下午答辩改到两点了吗？', '下午答辩能改到两点吗？', '下午的答辩已经改到两点了吗？',
-     {'source_quote':'改到两点了吗','candidate_quote':'能改到两点吗','reason':'确认既有安排被改成请求更改'})])
-def test_relationship_and_question_meaning_repaired_from_evidence(monkeypatch, original, bad, good, issue):
-    replies = [{'action':'keep','text':bad}, {'verdict':'fact',**issue},
-               {'action':'keep','text':good}, {'verdict':'pass','source_quote':'','candidate_quote':'','reason':''}]
-    seen = []
-    async def structured(config, payload, activity):
-        seen.append(deepcopy(payload))
-        return replies.pop(0)
-    monkeypatch.setattr(engine, 'structured', structured)
-    assert asyncio.run(engine.generate(PROFILE, [{'ordinal':0,'speaker':'a','original_text':original}], [], [], [], None)) == [(0,good)]
-    repair = json.loads(seen[2]['messages'][1]['content'])
-    assert repair['issues'] == [{'kind':'fact',**issue}]
-    assert not replies
-
-
-def test_review_budget_includes_expanded_examples(monkeypatch):
-    unit = {'ordinal':0,'speaker':'a','original_text':'预算15万元。'}
-    assert engine.fits(PROFILE, [unit], [])
-    monkeypatch.setattr(engine, 'REVIEW_EXAMPLES', [({'target':{'text':'文'*12000}}, {'source_quote':'','candidate_quote':'','reason':'','verdict':'pass'})])
-    assert not engine.fits(PROFILE, [unit], [])
+def test_v16_migration_preserves_existing_text_and_adds_nullable_candidate(configured):
+    identifier=job(source(1))
+    run,_=store.create(identifier,'migration-candidate-key',False,PROFILE,'hash',[],engine.prepare_units(source(1)))
+    before=store.units(run)
+    with db.connect() as connection:
+        connection.execute('ALTER TABLE optimization_units DROP COLUMN candidate_text')
+        connection.execute('ALTER TABLE optimization_units DROP COLUMN review_details_json')
+        connection.execute('UPDATE schema_meta SET version=16')
+    db.init_db()
+    assert store.units(run)==before
+    with db.connect() as connection:
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0]==18

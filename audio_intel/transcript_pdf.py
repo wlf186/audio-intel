@@ -11,7 +11,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from .transcript import reading_sections
+from .transcript import comparison_source_text, reading_sections
 from .transcript_diff import text_changes
 from .utils import timecode
 
@@ -66,6 +66,8 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
 
     hidden = set((result.get('video') or {}).get('export_hidden_scene_ids') or [])
     story: list[Any] = [Paragraph(html.escape(title), heading)]
+    if result.get('review_notice'):
+        story.append(Paragraph(html.escape(result['review_notice']), original_style))
     sections = reading_sections(result)
     for index, section in enumerate(sections):
         if result.get('video'):
@@ -93,10 +95,19 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
         for paragraph in section['paragraphs']:
             identity = html.escape(str(paragraph.get('speaker_label') or paragraph['speaker']))
             story.append(Paragraph(f"{identity}　{timecode(paragraph['start'])} – {timecode(paragraph['end'])}", label))
+            if paragraph.get('merged_source_count', 0) > 1:
+                story.append(Paragraph(f"合并 {paragraph['merged_source_count']} 条来源 / Merged sources", label))
+            if paragraph.get('generation_method') in ('basic_cleanup', 'mixed'):
+                story.append(Paragraph('包含基础整理 / Includes basic cleanup', original_style))
             if paragraph.get('review_status') == 'needs_review':
-                story.append(Paragraph('保留原文·待核对 / Original retained · Needs review', original_style))
+                story.append(Paragraph('待核对 / Needs review', original_style))
+            if paragraph.get('review_note'):
+                story.append(Paragraph(html.escape(paragraph['review_note']), original_style))
             if 'original_text' in paragraph:
-                left, right = text_changes(paragraph['original_text'], paragraph['text'])
+                if result.get('optimization_policy', 0) >= 6:
+                    left, right = [(comparison_source_text(paragraph), False)], [(paragraph['text'], False)]
+                else:
+                    left, right = text_changes(paragraph['original_text'], paragraph['text'])
                 def marked(parts, removed):
                     return ''.join((f'<font color="#9c3a32"><strike>{html.escape(text)}</strike></font>' if removed else f'<font color="#12634b">{html.escape(text)}</font>') if changed else html.escape(text) for text, changed in parts).replace('\n', '<br/>')
                 table = Table([
@@ -111,7 +122,9 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                 story.extend([table, Spacer(1, 12)])
             else:
                 story.append(Paragraph(html.escape(paragraph['text']).replace('\n', '<br/>'), body))
-        if not section['paragraphs']:
+        for link in section.get('linked_paragraphs', []):
+            story.append(Paragraph(f"本画面文字已并入画面 {link['scene_number']} 的成稿（{timecode(link['start'])}） / Text included in the earlier group", original_style))
+        if not section['paragraphs'] and not section.get('linked_paragraphs'):
             story.append(Paragraph(('此段无优化正文 / No optimized text in this section' if result.get('_optimized') else '此段无识别语音 / No recognized speech'), body))
 
     def page_number(canvas: Any, document: Any) -> None:

@@ -1,10 +1,12 @@
 import {useCallback,useEffect,useLayoutEffect,useRef,type RefObject} from 'react'
 import {readReaderBookmark,saveReaderBookmark} from '../lib/workspaceSession'
 
-type Options={active:boolean;ready:boolean;visibleCount:number;query?:string;speakerFilter?:string}
+type Options={revision?:number;active:boolean;ready:boolean;visibleCount:number;query?:string;speakerFilter?:string}
 export function useReaderBookmark(key:string,root:RefObject<HTMLDivElement|null>,options:Options){
  const current=useRef({key,...options});current.current={key,...options}
  const restore=useRef(true)
+ const previousRevision=useRef(options.revision)
+ if(previousRevision.current!==options.revision){previousRevision.current=options.revision;restore.current=true}
  const previousKey=useRef(key)
  const previousFilter=useRef(`${options.query||''}\n${options.speakerFilter||''}`)
  if(previousKey.current!==key){previousKey.current=key;restore.current=true}
@@ -15,7 +17,11 @@ export function useReaderBookmark(key:string,root:RefObject<HTMLDivElement|null>
   if(!element||!info.key||!info.active||!info.ready||restore.current)return
   const top=element.getBoundingClientRect().top
   const anchor=[...element.querySelectorAll<HTMLElement>('[data-reader-id]')].find(item=>item.getBoundingClientRect().bottom>top+1)
-  saveReaderBookmark(info.key,{anchorId:anchor?.dataset.readerId||'',time:Number(anchor?.dataset.readerTime)||0,offset:anchor?anchor.getBoundingClientRect().top-top:0,scrollTop:element.scrollTop,visibleCount:info.visibleCount,query:info.query,speakerFilter:info.speakerFilter})
+  const sourceRows=[...anchor?.querySelectorAll<HTMLElement>('[data-source-id]')||[]]
+  const source=anchor?.dataset.readerSelectedSource||sourceRows.find(item=>item.getBoundingClientRect().bottom>top+1)?.dataset.sourceId||anchor?.dataset.sourceId
+  const sourceId=source!==undefined?Number(source):undefined
+  const selected=sourceId===undefined?undefined:sourceRows.find(item=>Number(item.dataset.sourceId)===sourceId)
+  saveReaderBookmark(info.key,{sourceId,anchorId:anchor?.dataset.readerId||'',time:Number(selected?.dataset.sourceTime??anchor?.dataset.readerTime)||0,offset:anchor?anchor.getBoundingClientRect().top-top:0,scrollTop:element.scrollTop,visibleCount:info.visibleCount,query:info.query,speakerFilter:info.speakerFilter})
  },[root])
  useLayoutEffect(()=>{
   const element=root.current
@@ -25,7 +31,7 @@ export function useReaderBookmark(key:string,root:RefObject<HTMLDivElement|null>
   if(saved&&(saved.query||'')===(options.query||'')&&(saved.speakerFilter||'all')===(options.speakerFilter||'all')){
    if(!saved.anchorId){element.scrollTop=saved.scrollTop;restore.current=false;return}
    const items=[...element.querySelectorAll<HTMLElement>('[data-reader-id]')]
-   const anchor=items.find(item=>item.dataset.readerId===saved.anchorId)||items.find(item=>Number(item.dataset.readerTime)>=saved.time)||items.at(-1)
+   const anchor=items.find(item=>item.dataset.readerId===saved.anchorId)||items.find(item=>saved.sourceId!==undefined&&(item.dataset.sourceId===String(saved.sourceId)||item.dataset.readerSourceIds?.split(',').includes(String(saved.sourceId))))||items.find(item=>Number(item.dataset.readerTime)<=saved.time&&Number(item.dataset.readerEnd)>saved.time)||items.find(item=>Number(item.dataset.readerTime)>=saved.time)||items.at(-1)
    if(anchor){
     // Lay out deferred rows before measuring the anchor. Their intrinsic estimates
     // can differ from the rendered height after a view has been remounted.
@@ -41,7 +47,7 @@ export function useReaderBookmark(key:string,root:RefObject<HTMLDivElement|null>
    else element.scrollTop=saved.scrollTop
   }else element.scrollTop=0
   restore.current=false
- },[key,root,options.active,options.ready,options.visibleCount,options.query,options.speakerFilter])
+ },[key,root,options.active,options.ready,options.visibleCount,options.query,options.speakerFilter,options.revision])
  useEffect(()=>{
   const element=root.current
   if(!element||!options.active)return

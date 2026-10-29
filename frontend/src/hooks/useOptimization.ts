@@ -1,7 +1,7 @@
 import {useCallback,useEffect,useRef,useState} from 'react'
 import {createIdempotencyKey,request} from '../lib/api'
 import {optimizationPath,type OptimizationStatus,type OptimizationResult,type RewriteMode} from '../lib/optimization'
-import {readOptimizationView,saveOptimizationView,type ReadingMode} from '../lib/workspaceSession'
+import {checkpointWorkspace,readOptimizationView,saveOptimizationView,type ReadingMode} from '../lib/workspaceSession'
 
 export function useOptimization(jobId:string|undefined,active:boolean,sourceVersion?:string){
  const [status,setStatus]=useState<OptimizationStatus>()
@@ -43,18 +43,19 @@ export function useOptimization(jobId:string|undefined,active:boolean,sourceVers
  const runId=selected?.id
  const completed=selected?.completed_units
  const published=selected?.published
+ const revision=selected?.revision
  useEffect(()=>{
   if(!jobId||!active||(!view&&!compare)||!runId)return
   let disposed=false
   const controller=new AbortController()
   setResultError('')
-  void request<OptimizationResult>(`${optimizationPath(jobId)}/result?run_id=${runId}`,{signal:controller.signal}).then(next=>{if(!disposed)setResult(next)}).catch(cause=>{if(!disposed)setResultError((cause as Error).message)})
+  void request<OptimizationResult>(`${optimizationPath(jobId)}/result?run_id=${runId}`,{signal:controller.signal}).then(next=>{if(!disposed){const display=(p:typeof next.paragraphs[number])=>({...p,candidate_text:p.candidate_text===p.original_text?null:p.candidate_text,text:p.candidate_text??p.text});checkpointWorkspace();setResult({...next,revision,paragraphs:next.paragraphs.map(display),scenes:next.scenes.map(scene=>({...scene,paragraphs:scene.paragraphs.map(display)}))})}}).catch(cause=>{if(!disposed)setResultError((cause as Error).message)})
   return()=>{disposed=true;controller.abort()}
- },[jobId,active,view,compare,runId,completed,published,sourceVersion,resultReload])
- const setMode=useCallback((value:ReadingMode)=>{setModeState(value);setParagraphFilter('all');if(jobId)saveOptimizationView(jobId,value)},[jobId])
+ },[jobId,active,view,compare,runId,completed,published,revision,sourceVersion,resultReload])
+ const setMode=useCallback((value:ReadingMode)=>{setModeState(value);if(jobId)saveOptimizationView(jobId,value)},[jobId])
  const setOptimized=useCallback((value:boolean)=>setMode(value?'optimized':'original'),[setMode])
  const setCompare=useCallback((value:boolean)=>setMode(value?'comparison':'optimized'),[setMode])
- const action=async(kind:'create'|'regenerate'|'pause'|'resume'|'delete',rewriteMode:RewriteMode='rewrite')=>{
+ const action=async(kind:'create'|'regenerate'|'pause'|'resume'|'delete',rewriteMode:RewriteMode='rewrite',phase:'generation'|'review'='generation')=>{
   if(!jobId||busy)return
   const version=generation.current
   statusEpoch.current++
@@ -69,7 +70,7 @@ export function useOptimization(jobId:string|undefined,active:boolean,sourceVers
     const create=kind==='create'||kind==='regenerate'
     const identity=JSON.stringify({kind,rewriteMode})
     if(create&&(!pendingKey.current||pendingRequest.current!==identity)){pendingKey.current=createIdempotencyKey();pendingRequest.current=identity}
-    const next=await request<OptimizationStatus>(create?root:`${root}/${kind}`,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json',...(create?{'Idempotency-Key':pendingKey.current!}:{})},body:JSON.stringify(create?{regenerate:kind==='regenerate',rewrite_mode:rewriteMode}:{run_id:status?.candidate?.id})})
+    const next=await request<OptimizationStatus>(create?root:`${root}/${kind}`,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json',...(create?{'Idempotency-Key':pendingKey.current!}:{})},body:JSON.stringify(create?{regenerate:kind==='regenerate',rewrite_mode:rewriteMode}:{run_id:phase==='review'?status?.published?.id:status?.candidate?.id,phase})})
     if(version===generation.current){setStatus(next);pendingKey.current=undefined}
    }
   }catch(cause){if(!controller.signal.aborted&&version===generation.current)setError((cause as Error).message)}

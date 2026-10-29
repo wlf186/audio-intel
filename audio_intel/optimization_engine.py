@@ -73,7 +73,21 @@ async def verify(config: dict) -> dict:
             raise ValueError('请选择可关闭思考的模型 / Choose a model supporting non-thinking output')
         profile = {**config, 'context_length': context, 'model_context_length': maximum, 'model_digest': selected['digest'], 'prompt_version': PROMPT_VERSION}
         sample = [{'id': 'p1', 'ordinal': 0, 'speaker': 'speaker1', 'original_text': '那个那个预算是15万元，不是50万元。这个暂时还没有确认。'}]
-        await generate(profile, sample, [], '', '', None)
+        for attempt in range(3):
+            try:
+                generated = await generate(profile, sample, [], '', '', None)
+                if getattr(generated, 'method', 'model') != 'model':
+                    raise InvalidOutput('模型未返回可用正文 / Model did not return usable prose')
+                break
+            except (InvalidOutput, json.JSONDecodeError) as exc:
+                if getattr(exc, 'exhausted', False):
+                    raise
+                if attempt == 2:
+                    raise InvalidOutput(
+                        '模型输出未符合要求，已自动重试两次；请重试，持续失败时检查 Ollama 版本及模型 / '
+                        'Invalid model output after two retries; check Ollama and model. ' + str(exc)
+                    ) from exc
+                await asyncio.sleep(2 ** attempt)
         running = await remote_json(connection, 'api/ps')
         observed = next((int(m.get('context_length') or 0) for m in running.get('models', []) if m['name'] == config['model']), 0)
         if observed < 16384:
@@ -89,34 +103,8 @@ def source_hash(result: dict) -> str:
 
 
 def prepare_units(result: dict) -> list[dict]:
-    groups = scene_transcripts(result, include_sources=True) if result.get('video', {}).get('scenes') else [{'paragraphs': paragraphs(result.get('segments', []), include_sources=True)}]
-    units = []
-    for group in groups:
-        for paragraph in group['paragraphs']:
-            text = paragraph['text']
-            offset = 0
-            while offset < len(text):
-                end = min(len(text), offset + 800)
-                if end < len(text):
-                    breaks = [m.end() for m in re.finditer(r'[。！？.!?；;\n]\s*', text[offset:end]) if m.end() >= 400]
-                    if breaks:
-                        end = offset + breaks[-1]
-                part = text[offset:end]
-                if part.strip():
-                    sources = []
-                    cursor = 0
-                    for source in paragraph['sources']:
-                        start = text.find(source['text'], cursor)
-                        if start < 0:
-                            raise ValueError('Source mapping could not be verified')
-                        stop = start + len(source['text']); cursor = stop
-                        left, right = max(offset, start), min(end, stop)
-                        if left < right:
-                            sources.append({**source, 'text': text[left:right], 'start_offset': source['start_offset'] + left - start, 'end_offset': source['start_offset'] + right - start})
-                    units.append({'id': f'p{len(units) + 1}', 'speaker': paragraph['speaker'], 'speaker_label': paragraph.get('speaker_label'),
-                                  'start': min(s['start'] for s in sources), 'end': max(s['end'] for s in sources),
-                                  'original_text': part, 'sources': sources, 'segment_ids': list(dict.fromkeys(s['segment_id'] for s in sources))})
-                offset = end
+    from .optimization_sources import source_groups
+    units = source_groups(result)
     if not units:
         raise ValueError('任务没有可优化的文字 / No transcript text to optimize')
     return units
@@ -124,56 +112,140 @@ def prepare_units(result: dict) -> list[dict]:
 
 def payload_for(config: dict, batch: list[dict], hotwords: list[str], before, after) -> dict:
     if len(batch) != 1:
-        raise ValueError('Edit one source paragraph at a time')
+        raise ValueError('Edit one source group at a time')
     unit = batch[0]
     mode = config.get('rewrite_mode', DEFAULT_MODE)
     if mode not in MODE_INSTRUCTIONS:
         raise ValueError('Unknown rewrite mode')
-    content = {'rewrite_mode': mode, 'editing_goal': MODE_INSTRUCTIONS[mode], 'hotwords': hotwords, 'context_before': before, 'context_after': after,
-               'target': {'speaker': unit['speaker'], 'text': unit['original_text']}}
-    schema = deepcopy(SCHEMA)
-    if not omission_candidate(unit['original_text']):
-        schema['properties']['action']['enum'] = ['keep']
-    return {'model': config['model'], 'messages': [{'role': 'system', 'content': SYSTEM}, {'role': 'user', 'content': json.dumps(content, ensure_ascii=False)}],
-            'format': schema, 'stream': True, 'think': False,
+    # Short turns are often acknowledgements or fragments. Adjacent speech
+    # must not become their content, especially with a small local model.
+    allowance = 0 if len(unit['original_text']) <= 30 else min(200, len(unit['original_text']) // 2)
+    def bounded_context(value, *, previous=False):
+        if not allowance:
+            return ''
+        if not isinstance(value, list):
+            value = [{'speaker': unit.get('speaker'), 'text': str(value or ''), 'truncated': False}]
+        selected, remaining = [], allowance
+        for part in reversed(value) if previous else value:
+            if remaining <= 0:
+                break
+            text = str(part.get('text', ''))
+            if not text:
+                continue
+            excerpt = text[-remaining:] if previous else text[:remaining]
+            selected.append({'speaker': part.get('speaker'), 'text': excerpt,
+                             'truncated': bool(part.get('truncated')) or len(excerpt) < len(text)})
+            remaining -= len(excerpt)
+        return list(reversed(selected)) if previous else selected
+    content = {'editing_goal': MODE_INSTRUCTIONS[mode], 'hotwords': hotwords,
+               'context_before': bounded_context(before, previous=True), 'context_after': bounded_context(after),
+               'source_segments': [span['text'] for span in unit.get('sources', [])] or [unit['original_text']],
+               'target': {'speaker': unit.get('speaker'), 'text': unit['original_text']}}
+    return {'model': config['model'], 'messages': [{'role': 'system', 'content': SYSTEM},
+            {'role': 'user', 'content': json.dumps(content, ensure_ascii=False)}],
+            'stream': True, 'think': False,
             'options': {'num_ctx': config['context_length'], 'num_predict': 4096, 'temperature': 0.2, 'presence_penalty': 0}}
 
 
 def review_messages(source: dict, candidate: dict) -> list[dict]:
-    messages = [{'role': 'system', 'content': REVIEW_SYSTEM}]
-    for example, decision in REVIEW_EXAMPLES:
-        messages.extend([{'role': 'user', 'content': json.dumps(example, ensure_ascii=False)},
-                         {'role': 'assistant', 'content': json.dumps({key: decision[key] for key in REVIEW_SCHEMA['properties']}, ensure_ascii=False)}])
-    messages.append({'role': 'user', 'content': json.dumps({**source, 'candidate': candidate}, ensure_ascii=False)})
-    return messages
+    # Editing instructions must never enter the independent fact checker.
+    content = {key: source[key] for key in ('target', 'hotwords', 'context_before', 'context_after') if key in source}
+    content['candidate'] = candidate.get('text', '')
+    return [{'role': 'system', 'content': REVIEW_SYSTEM},
+            {'role': 'user', 'content': json.dumps(content, ensure_ascii=False)}]
+
+
+def request_fits(config: dict, payload: dict) -> bool:
+    # UTF-8 bytes conservatively bound tokens, including structured grammar.
+    return len(json.dumps(payload['messages'], ensure_ascii=False).encode()) + len(json.dumps(payload.get('format', {}))) + 5120 <= config['context_length']
 
 
 def fits(config: dict, batch: list[dict], hotwords: list[str], before='', after='') -> bool:
     payload = payload_for(config, batch, hotwords, before, after)
     source = json.loads(payload['messages'][1]['content'])
-    original = batch[0]['original_text']
-    candidate = {'action': 'keep', 'text': '文' * max(256, len(original) * 2 + 128)}
-    repair = deepcopy(payload['messages'])
-    repair[1]['content'] = json.dumps({**source, 'previous_draft': candidate, 'issues': [
-        {'kind': 'fact', 'source_quote': original, 'candidate_quote': candidate['text'], 'reason': '文' * 400}]}, ensure_ascii=False)
-    # Budget the actual review examples and largest bounded repair, not a fixed allowance.
-    return all(len(json.dumps(messages, ensure_ascii=False).encode()) + len(json.dumps(schema)) + 4096 + 1024 <= config['context_length']
-               for messages, schema in ((payload['messages'], SCHEMA), (repair, SCHEMA), (review_messages(source, candidate), REVIEW_SCHEMA)))
+    review_payload = {**payload, 'messages': review_messages(source, {'text': '文' * (len(batch[0]['original_text']) * 2 + 128)}), 'format': REVIEW_SCHEMA}
+    return request_fits(config, payload) and request_fits(config, review_payload)
+
+
+def seam_review_fits(config: dict, length: int, hotwords: list[str]) -> bool:
+    # A forced boundary can move at most 160 draft characters into the prior
+    # part and add 64 punctuation/joining characters. Review owns one part plus
+    # its two seam neighbors; reserve their full maximum valid drafts up front.
+    draft_limit = max(256, length * 2 + 128) + 224
+    payload = {'messages': review_messages({'target': {'text': '文' * (length * 3)}, 'hotwords': hotwords},
+                                           {'text': '文' * (draft_limit * 3)}), 'format': REVIEW_SCHEMA}
+    return request_fits(config, payload)
+
+
+def prepare_parts(config: dict, unit: dict, hotwords: list[str]) -> list[dict]:
+    """Persist a deterministic partition; only owned spans contribute progress."""
+    text = unit['original_text']
+    parts, offset = [], 0
+    # Smaller prose requests improve fact ownership and avoid turning a long
+    # multi-source turn into a summary. This is independent of reading groups.
+    ceiling = 160
+    while ceiling >= 40 and (not fits(config, [{'original_text': '文' * ceiling, 'speaker': unit.get('speaker')}], hotwords)
+                              or not seam_review_fits(config, ceiling, hotwords)):
+        ceiling -= 20
+    if ceiling < 40:
+        raise ValueError('热词超出窗口预算，请增大窗口并重新验证 / Increase the context window')
+    # Test ASCII periods against the full source, not a truncated slice, so a
+    # decimal/model version at the request edge cannot masquerade as a sentence.
+    sentence_ends = [match.end() for match in re.finditer(r'(?:[。！？；!?;]|\.(?=\s|$))\s*', text)]
+    comma_ends = [match.end() for match in re.finditer(r'[，,]\s*', text)]
+    whitespace_ends = [match.end() for match in re.finditer(r'\s+', text)]
+
+    def boundary(offset, size):
+        limit = min(len(text), offset + size)
+        if len(text) - offset <= min(100, size):
+            return len(text), False
+        breaks = [end for end in sentence_ends if offset + min(40, size // 2) <= end <= limit]
+        if not breaks:
+            breaks = [end for end in comma_ends if offset + min(60, size // 2) <= end <= limit]
+        if breaks:
+            return min(breaks, key=lambda end: (abs(end - offset - min(90, size)), -end)), False
+        spaces = [end for end in whitespace_ends if offset + size // 2 <= end <= limit]
+        end = spaces[-1] if spaces else limit
+        return end, end < len(text)
+
+    while offset < len(text):
+        end, forced = boundary(offset, ceiling)
+        sources, cursor = [], 0
+        for span in unit.get('sources', []):
+            start = text.find(span['text'], cursor)
+            if start < 0:
+                raise ValueError('Source mapping could not be verified')
+            stop = start + len(span['text']); cursor = stop
+            left, right = max(offset, start), min(end, stop)
+            if left < right:
+                sources.append({**span, 'text': text[left:right], 'start_offset': span['start_offset'] + left - start,
+                                'end_offset': span['start_offset'] + right - start})
+        parts.append({'original_text': text[offset:end], 'speaker': unit.get('speaker'), 'sources': sources,
+                      'start_offset': offset, 'end_offset': end, 'forced_after': forced})
+        offset = end
+    return parts
 
 
 def validate_budget(config: dict, units: list[dict], hotwords: list[str]) -> None:
-    if any(not fits(config, [unit], hotwords, '文' * 600, '文' * 600) for unit in units):
-        raise ValueError('热词和正文超出窗口预算，请增大 Ollama 上下文并重新验证 / Increase the context window and verify again')
+    for unit in units:
+        unit['_parts'] = prepare_parts(config, unit, hotwords)
 
 
 class InvalidOutput(ValueError):
     pass
 
 
-async def structured(config: dict, payload: dict, activity) -> dict:
-    if len(json.dumps(payload['messages'], ensure_ascii=False).encode()) + len(json.dumps(payload['format'])) + 4096 + 1024 > config['context_length']:
-        raise ValueError('请求超出上下文预算 / Request exceeds context budget')
-    async with asyncio.timeout(300), client(config) as connection:
+class ReviewFailed(ValueError):
+    """Legacy compatibility for stored v5 failures and external callers."""
+    def __init__(self, message, candidate_text=None, review_details=None):
+        super().__init__(message)
+        self.candidate_text, self.review_details = candidate_text, review_details
+
+
+async def streamed_text(config: dict, payload: dict, activity=None) -> str:
+    if not request_fits(config, payload):
+        raise InvalidOutput('请求超出上下文预算 / Request exceeds context budget')
+    async with asyncio.timeout(120), client(config) as connection:
         content, final, last = '', None, time.monotonic()
         async with connection.stream('POST', 'api/chat', json=payload) as response:
             response.raise_for_status()
@@ -182,7 +254,10 @@ async def structured(config: dict, payload: dict, activity) -> dict:
                     continue
                 if len(line) > 1024**2:
                     raise InvalidOutput('Ollama response too large')
-                item = json.loads(line)
+                try:
+                    item = json.loads(line)
+                except ValueError as exc:
+                    raise InvalidOutput('Invalid stream event') from exc
                 if item.get('error'):
                     raise ValueError('Ollama: ' + str(item['error'])[:300])
                 content += item.get('message', {}).get('content', '')
@@ -194,102 +269,222 @@ async def structured(config: dict, payload: dict, activity) -> dict:
                     final = item
         if not final or final.get('done_reason') != 'stop':
             raise InvalidOutput('输出截断或未正常结束 / Output was truncated')
+        return content
+
+
+async def structured(config: dict, payload: dict, activity=None) -> dict:
+    try:
+        value = json.loads(await streamed_text(config, payload, activity))
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise InvalidOutput('模型 JSON 无效 / Invalid model JSON') from exc
+    if not isinstance(value, dict):
+        raise InvalidOutput('Invalid model object')
+    return value
+
+
+def basic_cleanup(text: str) -> str:
+    """Literal disfluencies only: no invented facts or inferred word corrections."""
+    pattern = r'(?P<word>不是特别|还没有|第一个|我们|你们|他们|这个|那个|然后|因为|所以|但是|就是|不是|还没|不止|我|你|他)(?:[\s，,、]*(?P=word))+'
+    value = re.sub(pattern, lambda match: match['word'], text)
+    value = re.sub(r'^[\s，,]*(?:那个|呃|额)[，,\s]*', '', value)
+    value = re.sub(r'([，,。；;！？!?])\1+', r'\1', value).strip()
+    return value or text.strip()
+
+
+class Generation(list):
+    def __init__(self, values, method='model'):
+        super().__init__(values)
+        self.method = method
+
+
+def clean_output(value: str, original: str) -> str:
+    text = value.strip()
+    if text.startswith('```') and text.endswith('```'):
+        text = re.sub(r'^```(?:text|markdown)?\s*\n?', '', text)[:-3].strip()
+    if text.startswith('{'):
         try:
-            parsed = json.loads(content)
-        except (ValueError, TypeError) as exc:
-            raise InvalidOutput('模型 JSON 无效 / Invalid model JSON') from exc
-        if not isinstance(parsed, dict):
-            raise InvalidOutput('模型对象无效 / Invalid model object')
-        return parsed
-
-
-class ReviewFailed(ValueError):
-    pass
-
-
-def validate_draft(value: dict, original: str) -> None:
-    if set(value) != {'action', 'text'} or value.get('action') not in ('keep', 'omit') or not isinstance(value.get('text'), str):
-        raise InvalidOutput('Invalid edit contract')
-    if value['action'] == 'omit':
-        if value['text'] != '' or not omission_candidate(original):
-            raise InvalidOutput('非占位语不得省略 / Cannot omit meaningful text')
-    elif not value['text'].strip() or len(value['text']) > max(256, len(original) * 2 + 128):
+            parsed = json.loads(text)
+            if isinstance(parsed, dict) and isinstance(parsed.get('text'), str):
+                text = parsed['text'].strip()
+            else:
+                raise InvalidOutput('Not transcript prose')
+        except json.JSONDecodeError as exc:
+            raise InvalidOutput('Not transcript prose') from exc
+    limit = max(12, len(original) * 2 + 6) if len(original) <= 30 else len(original) * 2 + 64
+    if not text or len(text) > limit:
         raise InvalidOutput('Invalid edited text length')
+    return text
 
 
-def validate_review(value: dict, original: str, candidate: str) -> list[dict]:
-    if set(value) != {'verdict', 'source_quote', 'candidate_quote', 'reason'} or any(not isinstance(v, str) for v in value.values()) or value['verdict'] not in ('pass', 'fact', 'style'):
-        raise InvalidOutput('Invalid review contract')
-    issue = {key: value[key] for key in ('source_quote', 'candidate_quote', 'reason')}
-    if value['verdict'] == 'pass':
-        if any(issue.values()):
-            raise InvalidOutput('Passing review must not report an issue')
-        return []
-    if not issue['source_quote'] or issue['source_quote'] not in original or issue['candidate_quote'] not in candidate or not issue['reason'].strip() or len(issue['reason']) > 400:
-        raise InvalidOutput('Review evidence is not grounded in this paragraph')
-    return [{'kind': value['verdict'], **issue}]
+def missing_qualifiers(original: str, candidate: str) -> list[str]:
+    """Narrow lexical safety check, not a general semantic fact classifier.
+
+    Common equivalent scope markers are accepted. Ordinary negation (不/不是),
+    retracted locations/numbers and editing style never trigger this check.
+    """
+    equivalents = {
+        '不止': ('不止', '不只', '不仅', '不限于', '超过', '多于'),
+        '不只': ('不止', '不只', '不仅', '不限于', '超过', '多于'),
+        '不仅': ('不止', '不只', '不仅', '不限于'),
+        '并非': ('并非', '不是', '并不', '不等于'),
+        '未必': ('未必', '不一定', '不见得', '不能确定', '无法确定'),
+        '只能': ('只能', '仅能', '只可', '仅可', '仅限', '只允许', '只支持'),
+    }
+    return [word for word, alternatives in equivalents.items()
+            if word in original and not any(alternative in candidate for alternative in alternatives)]
 
 
 async def generate(config: dict, batch: list[dict], hotwords: list[str], before, after, activity) -> list[tuple[int, str]]:
-    payload = payload_for(config, batch, hotwords, before, after)
     original = batch[0]['original_text']
-    source = json.loads(payload['messages'][1]['content'])
+    payload = payload_for(config, batch, hotwords, '', '')
     best = None
+    lost_qualifiers = []
     for attempt in range(2):
         try:
-            candidate = await structured(config, payload, activity)
-            validate_draft(candidate, original)
+            text = clean_output(await streamed_text(config, payload, activity), original)
+            lost_qualifiers = missing_qualifiers(original, text)
+            if lost_qualifiers:
+                raise InvalidOutput('Edited prose lost a source qualifier')
+            needs_edit = bool(remaining_repetition(original, text) or (text == original and basic_cleanup(original) != original))
+            if best is None or not needs_edit or len(re.findall(r'那个|然后|嗯|呃|啊|哎|哇', text)) < len(re.findall(r'那个|然后|嗯|呃|啊|哎|哇', best)):
+                best = text
+            if not needs_edit:
+                return Generation([(batch[0]['ordinal'], text)])
         except (InvalidOutput, json.JSONDecodeError):
+            pass
+        except (httpx.HTTPError, TimeoutError):
             if best is not None:
-                return [(batch[0]['ordinal'], best)]
+                return Generation([(batch[0]['ordinal'], best)])
             raise
-        repetition = remaining_repetition(original, candidate['text'])
-        review = deepcopy(payload)
-        review['messages'] = review_messages(source, candidate)
-        review['format'] = REVIEW_SCHEMA
-        try:
-            issues = validate_review(await structured(config, review, activity), original, candidate['text'])
-        except (InvalidOutput, json.JSONDecodeError):
-            if best is not None:
-                return [(batch[0]['ordinal'], best)]
-            raise
-        # Exact equality proves fidelity but still requires a language-quality check.
-        if candidate['text'] == original and issues and issues[0]['kind'] == 'fact':
-            issues = [{'kind': 'style', 'source_quote': original, 'candidate_quote': original, 'reason': '候选与原文相同，没有新事实错误。请按档位主动整理可改善的语言，保留局部疑点。'}]
-        if original.rstrip().endswith(('？', '?')) and not candidate['text'].rstrip().endswith(('？', '?')):
-            issues = [{'kind': 'fact', 'source_quote': original[-100:], 'candidate_quote': candidate['text'][-100:], 'reason': '末尾的询问或确认必须保留为问题，不能改成既定事实。'}]
-        fact_error = bool(issues and issues[0]['kind'] == 'fact')
-        if repetition and not fact_error:
-            issues = [{'kind': 'style', 'source_quote': repetition, 'candidate_quote': repetition, 'reason': '仍有明显的重复结巴，请去重并保留完整意思。'}]
-        if not fact_error:
-            # Prefer a reviewed rewrite over a later repair that simply restores the source.
-            if best is None or candidate['text'] != original:
-                best = candidate['text']
-        if not issues:
-            return [(batch[0]['ordinal'], best)]
         if attempt == 0:
-            payload['messages'][1]['content'] = json.dumps({**source, 'previous_draft': candidate, 'issues': issues}, ensure_ascii=False)
-    if best is not None:
-        return [(batch[0]['ordinal'], best)]
-    raise ReviewFailed(f"第 {batch[0]['ordinal'] + 1} 段未获得可靠改写 / No reliable rewrite for this paragraph")
+            guidance = '请进一步整理target，主动删除嗯、啊、那个、然后等口头铺垫，合并重复意思，重组为简洁连贯的完整句子。只保留无法确定的局部原词，其余部分必须整理。保留所有独立信息和疑问，不补事实。只输出正文。'
+            if lost_qualifiers:
+                guidance += '上次正文丢失了原文限定词：' + '、'.join(lost_qualifiers) + '。本次必须保留这些限定原词及其范围，分句关系含糊时用分号分开，不猜测关系。'
+            payload['messages'].append({'role': 'user', 'content': guidance})
+    return Generation([(batch[0]['ordinal'], best if best is not None else basic_cleanup(original))], 'model' if best is not None else 'basic_cleanup')
+
+
+def validate_draft(value: dict, original: str) -> None:
+    # Compatibility validator for historical import/checkpoint callers.
+    if not isinstance(value, dict) or set(value) != {'action', 'text'} or value['action'] not in ('keep', 'omit') or not isinstance(value['text'], str):
+        raise InvalidOutput('Invalid edit contract')
+    if value['action'] == 'omit':
+        if value['text'] or not omission_candidate(original):
+            raise InvalidOutput('Cannot omit meaningful text')
+    else:
+        clean_output(value['text'], original)
+
+
+def grounded_quote(quote: str, text: str, *, allow_empty=False) -> str:
+    import unicodedata
+    if not quote:
+        if allow_empty:
+            return ''
+        raise InvalidOutput('Missing source evidence')
+    normalized, positions = '', []
+    for index, char in enumerate(text):
+        for value in unicodedata.normalize('NFKC', char):
+            if not value.isspace():
+                normalized += value; positions.append(index)
+    needle = ''.join(c for c in unicodedata.normalize('NFKC', quote) if not c.isspace())
+    start = normalized.find(needle)
+    if not needle or start < 0 or normalized.find(needle, start + 1) >= 0:
+        raise InvalidOutput('Review evidence is not uniquely grounded')
+    return text[positions[start]:positions[start + len(needle) - 1] + 1]
+
+
+def validate_review(value: dict, original: str, candidate: str) -> dict:
+    if value.get('verdict') not in ('pass', 'fact', 'uncertain'):
+        raise InvalidOutput('Invalid review verdict')
+    verdict = value['verdict']
+    if verdict == 'pass':
+        return {'outcome': 'pass', 'details': {'stage': 'review', 'issues': []}}
+    if verdict == 'uncertain':
+        return {'outcome': 'uncertain', 'details': {'stage': 'review', 'issues': []}}
+    if any(not isinstance(value.get(key), str) for key in ('source_quote', 'candidate_quote', 'reason')) or not value['reason'].strip() or len(value['reason']) > 600:
+        raise InvalidOutput('Invalid fact evidence')
+    issue = {'source_quote': grounded_quote(value['source_quote'], original),
+             'candidate_quote': grounded_quote(value['candidate_quote'], candidate, allow_empty=True), 'reason': value['reason']}
+    return {'outcome': 'fact', 'details': {'stage': 'review', 'issues': [issue]}}
+
+
+async def review(config: dict, original: str, candidate: str, hotwords: list[str], before='', after='') -> dict:
+    if original == candidate:
+        return {'outcome': 'pass', 'details': {'stage': 'review', 'issues': []}}
+    payload = {'model': config['model'], 'messages': review_messages({'target': {'text': original}, 'hotwords': hotwords,
+               'context_before': before, 'context_after': after}, {'text': candidate}), 'format': REVIEW_SCHEMA,
+               'stream': True, 'think': False, 'options': {'num_ctx': config['context_length'], 'num_predict': 4096, 'temperature': 0}}
+    first = None
+    for attempt in range(2):
+        try:
+            result = validate_review(await structured(config, payload), original, candidate)
+            if result['outcome'] == 'pass':
+                return result if first is None else {'outcome': 'uncertain', 'details': {'stage': 'review', 'issues': []}}
+            if result['outcome'] == 'uncertain':
+                return result
+            if first is not None:
+                return result
+            first = result
+            payload['messages'][0]['content'] += '\n这是独立复查：只报告确定的事实差异。合理去重和风格改变必须判 pass。'
+        except (InvalidOutput, json.JSONDecodeError):
+            continue
+    return {'outcome': 'uncertain' if first else 'unavailable', 'details': {'stage': 'review', 'issues': []}}
+
+
+async def repair_seam(config: dict, left: dict, right: dict, hotwords: list[str]) -> tuple[str, str]:
+    """Replace only a bounded junction; persisted originals remain authoritative."""
+    # Reserve a disjoint suffix for the next seam when this is a short middle
+    # part. Once an incoming prefix has moved left, the next seam only sees the
+    # unconsumed suffix, including after pause/restart.
+    head_size = min(160, len(right['text']) // 2 if right['source']['forced_after'] else len(right['text']))
+    tail, head = left['text'][-160:], right['text'][:head_size]
+    if not tail or not head:
+        return left['text'], right['text']
+    source = left['source']['original_text'] + right['source']['original_text']
+    unit = {'ordinal': 0, 'speaker': left['source'].get('speaker'), 'original_text': source}
+    payload = payload_for(config, [unit], hotwords, '', '')
+    content = json.loads(payload['messages'][1]['content'])
+    content['junction_draft'] = tail + '\n' + head
+    content['editing_goal'] = '只整理 junction_draft 中因分批产生的重复、半句话和标点。target仅供核对事实；不要输出 junction_draft 之外的信息。只输出接缝正文。'
+    payload['messages'][1]['content'] = json.dumps(content, ensure_ascii=False)
+    try:
+        joined = clean_output(await streamed_text(config, payload), tail + head)
+        if len(joined) > len(tail) + len(head) + 64:
+            raise InvalidOutput('Seam exceeds its bounded edit window')
+        return left['text'][:-len(tail)] + joined, right['text'][len(head):]
+    except InvalidOutput:
+        return left['text'], right['text']
 
 
 def reading_result(result: dict, run_id: str, *, complete: bool = False) -> dict:
-    run = store.get(run_id)
+    run, units = store.snapshot(run_id)
     if complete and not run['published']:
         raise ValueError('请等待优化完成后导出 / Export requires a completed draft')
     if source_hash(result) != run['source_hash']:
         raise ValueError('原文已变化，请重新优化 / Source text changed; regenerate the draft')
     current = {s['id']: s for s in result.get('segments', [])}
-    values = []
-    for unit in store.units(run_id):
-        first = current.get(unit['segment_ids'][0], {})
-        values.append({**unit, 'omitted': unit['text'] == '', 'speaker': first.get('speaker', unit['speaker']), 'speaker_label': first.get('speaker_label', unit['speaker_label'])})
     scenes = deepcopy(result.get('video', {}).get('scenes', []))
     for scene in scenes:
         scene['paragraphs'] = []
-    if scenes:
-        for unit in values:
-            owner = max(range(len(scenes)), key=lambda i: max(0, min(unit['end'], scenes[i]['end']) - max(unit['start'], scenes[i]['start'])))
-            scenes[owner]['paragraphs'].append(unit)
-    return {'run_id': run_id, 'complete': bool(run['published']), 'model': run['model'], 'rewrite_mode': run['config'].get('rewrite_mode'), 'needs_review_units': run['needs_review_units'], 'paragraphs': values, 'scenes': scenes}
+    from .optimization_sources import scene_index, matching_scenes
+    indexed_scenes = scene_index(scenes)
+    scene_positions = {scene['id']: i for i, scene in enumerate(scenes)}
+    values = []
+    for unit in units:
+        first = current.get(unit['segment_ids'][0], {})
+        related = sorted({scene['id'] for span in unit['sources'] for scene in matching_scenes(indexed_scenes, span['start'], span['end'])}, key=scene_positions.__getitem__)
+        value = {**unit, 'omitted': unit['text'] == '', 'speaker': first.get('speaker', unit.get('speaker')),
+                 'speaker_label': first.get('speaker_label', unit.get('speaker_label')),
+                 'merged_source_count': len(set(unit['segment_ids'])), 'scene_ids': related}
+        values.append(value)
+        if scenes:
+            if run['config'].get('prompt_version', 1) >= 6:
+                owner = scenes[scene_positions[related[0]]] if related else scenes[0]
+            else:
+                owner = max(scenes, key=lambda scene: max(0, min(unit['end'], scene['end']) - max(unit['start'], scene['start'])))
+            owner['paragraphs'].append(value)
+    fields = ('review_state', 'reviewed_units', 'uncertain_units', 'unavailable_units', 'basic_cleanup_units')
+    return {'run_id': run_id, 'complete': bool(run['published']), 'model': run['model'],
+            'prompt_version': run['config'].get('prompt_version', 1), 'rewrite_mode': run['config'].get('rewrite_mode'),
+            'needs_review_units': run['needs_review_units'], 'paragraphs': values, 'scenes': scenes,
+            'review_total_units': run['total_units'], **{field: run[field] for field in fields}}

@@ -2,8 +2,8 @@ export const workspaceSessionKey='audio-intel:workspace-session:v1'
 export type ReadingMode='original'|'optimized'|'comparison'
 export type AsrWorkspaceSession={view:'create'|'video'|'results';jobId?:string;videoReading:boolean}
 export type PeopleSession={groupId:string;query:string;selectedId:string;scrollTop:number;alphabetScrollTop:number}
-export type ReaderBookmark={anchorId:string;time:number;offset:number;scrollTop:number;visibleCount:number;query?:string;speakerFilter?:string}
-type WorkspaceSession={readingFilters?:Record<string,{query:string;speaker:string}>;optimizationViews?:Record<string,boolean|ReadingMode>;asr?:AsrWorkspaceSession;people?:PeopleSession;readers?:Record<string,ReaderBookmark>}
+export type ReaderBookmark={sourceId?:number;anchorId:string;time:number;offset:number;scrollTop:number;visibleCount:number;query?:string;speakerFilter?:string}
+type WorkspaceSession={optimizationChanges?:Record<string,boolean>;readingFilters?:Record<string,{query:string;speaker:string}>;optimizationViews?:Record<string,boolean|ReadingMode>;asr?:AsrWorkspaceSession;people?:PeopleSession;readers?:Record<string,ReaderBookmark>}
 let memory:WorkspaceSession={}
 let loaded=false
 let active=true
@@ -47,6 +47,7 @@ export function saveReaderBookmark(key:string,value:ReaderBookmark){
 export function removeJobSession(ids:string[]){
  const removed=new Set(ids)
  read().readingFilters=Object.fromEntries(Object.entries(read().readingFilters||{}).filter(([id])=>!removed.has(id)))
+ read().optimizationChanges=Object.fromEntries(Object.entries(read().optimizationChanges||{}).filter(([id])=>!removed.has(id)))
  read().optimizationViews=Object.fromEntries(Object.entries(read().optimizationViews||{}).filter(([id])=>!removed.has(id)))
  read().readers=Object.fromEntries(Object.entries(read().readers||{}).filter(([key])=>!removed.has(key.split(':')[0])))
  if(memory.asr?.jobId&&removed.has(memory.asr.jobId))delete memory.asr.jobId
@@ -66,3 +67,6 @@ export function saveReadingFilter(jobId:string,query:string,speaker:string){
  const values={...read().readingFilters};delete values[jobId];values[jobId]={query,speaker}
  read().readingFilters=Object.fromEntries(Object.entries(values).slice(-200));persist()
 }
+
+export function readOptimizationChanges(jobId:string){return read().optimizationChanges?.[jobId]===true}
+export function saveOptimizationChanges(jobId:string,value:boolean){if(!active)return;const values={...read().optimizationChanges};delete values[jobId];values[jobId]=value;read().optimizationChanges=Object.fromEntries(Object.entries(values).slice(-200));persist()}

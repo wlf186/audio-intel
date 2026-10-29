@@ -184,8 +184,8 @@ h1{text-shadow:none}
 
 /* Primary actions, navigation and utility actions have distinct visual weight. */
 .primary{background:var(--yellow);color:var(--ink)}
-.button{border-color:var(--line-hot);color:var(--text);font-weight:600;letter-spacing:0}
-.button:hover{border-color:var(--cyan);background:var(--panel-3);color:var(--text);box-shadow:none}
+.button:not(.primary){border-color:var(--line-hot);color:var(--text);font-weight:600;letter-spacing:0}
+.button:not(.primary):hover{border-color:var(--cyan);background:var(--panel-3);color:var(--text);box-shadow:none}
 .button.danger-action{border-color:var(--red);color:#ffb4af;background:transparent}
 .button.danger-action:hover{background:#260c0e}
 .button:disabled{opacity:.5;cursor:not-allowed}

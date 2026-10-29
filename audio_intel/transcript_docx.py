@@ -10,7 +10,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from .transcript import reading_sections
+from .transcript import comparison_source_text, reading_sections
 from .transcript_diff import text_changes
 from .utils import timecode
 
@@ -57,6 +57,8 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     hidden = set((result.get('video') or {}).get('export_hidden_scene_ids') or [])
     sections = reading_sections(result)
     image_bytes = 0
+    if result.get('review_notice'):
+        document.add_paragraph(result['review_notice'])
     frame_root = (output_dir / 'frames').resolve()
     for index, item in enumerate(sections):
         if result.get('video'):
@@ -85,8 +87,14 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
             label = document.add_paragraph()
             label.paragraph_format.keep_with_next = True
             label.add_run(f"{paragraph.get('speaker_label') or paragraph['speaker']}　{timecode(paragraph['start'])} – {timecode(paragraph['end'])}").bold = True
+            if paragraph.get('merged_source_count', 0) > 1:
+                label.add_run(f"　合并 {paragraph['merged_source_count']} 条来源 / Merged sources")
+            if paragraph.get('generation_method') in ('basic_cleanup', 'mixed'):
+                label.add_run('　包含基础整理 / Includes basic cleanup').italic = True
             if paragraph.get('review_status') == 'needs_review':
-                label.add_run('　保留原文·待核对 / Original retained · Needs review').italic = True
+                label.add_run('　待核对 / Needs review').italic = True
+            if paragraph.get('review_note'):
+                document.add_paragraph(paragraph['review_note'])
             if 'original_text' in paragraph:
                 table = document.add_table(rows=2, cols=2)
                 table.autofit = False
@@ -102,7 +110,7 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                     cell.paragraphs[0].add_run(title).bold = True
                     shade = OxmlElement('w:shd'); shade.set(qn('w:fill'), 'F0F2F4')
                     cell._tc.get_or_add_tcPr().append(shade)
-                changes = text_changes(paragraph['original_text'], paragraph['text'])
+                changes = ([(comparison_source_text(paragraph), False)], [(paragraph['text'], False)]) if result.get('optimization_policy', 0) >= 6 else text_changes(paragraph['original_text'], paragraph['text'])
                 for index, (cell, parts) in enumerate(zip(table.rows[1].cells, changes)):
                     content = cell.paragraphs[0]
                     content.paragraph_format.keep_together = False
@@ -115,7 +123,9 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                 document.add_paragraph().paragraph_format.space_after = Pt(4)
             else:
                 document.add_paragraph(paragraph['text'])
-        if not item['paragraphs']:
+        for link in item.get('linked_paragraphs', []):
+            document.add_paragraph(f"本画面文字已并入画面 {link['scene_number']} 的成稿（{timecode(link['start'])}） / Text included in the earlier group")
+        if not item['paragraphs'] and not item.get('linked_paragraphs'):
             document.add_paragraph(('此段无优化正文 / No optimized text in this section' if result.get('_optimized') else '此段无识别语音 / No recognized speech'))
     stream = io.BytesIO()
     document.save(stream)

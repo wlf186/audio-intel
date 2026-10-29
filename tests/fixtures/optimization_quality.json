@@ -1,0 +1,1459 @@
+{
+  "version": 1,
+  "language": "zh-CN",
+  "description": "Synthetic, fixed source/fact annotations. Reference wording is illustrative, not an exact-match generation oracle. Holdout cases must not be used to tune prompts.",
+  "cases": [
+    {
+      "id": "merge_mike_atlas",
+      "category": "merge",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "那个那个只能就只能布一个模型，不止"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "不止不止阿特拉斯"
+        }
+      ],
+      "hotwords": [
+        "Atlas"
+      ],
+      "reference": "那就只能发布一个模型，不止 Atlas。",
+      "review_candidate": "那就只能发布一个模型，不止 Atlas。",
+      "expected_review": "pass",
+      "required_facts": [
+        "只能发布一个模型",
+        "不止 Atlas"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_budget_condition",
+      "category": "merge",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "那个我我确认一下，预算是15万元，不是50万元。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "如果没审批就不做，设备还没到，还没到。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "我确认一下：预算是15万元，不是50万元；未获审批就不做，设备尚未到货。",
+      "review_candidate": "我确认一下：预算是15万元，不是50万元；未获审批就不做，设备尚未到货。",
+      "expected_review": "pass",
+      "required_facts": [
+        "预算15万元，不是50万元",
+        "未审批不做",
+        "设备没到；不得新增因果"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_restart",
+      "category": "merge",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "这个方案先先放一下，我说的是"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "我是说先做验证，不是直接上线。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "这个方案先做验证，不直接上线。",
+      "review_candidate": "这个方案先做验证，不直接上线。",
+      "expected_review": "pass",
+      "required_facts": [
+        "先验证",
+        "不直接上线"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_deadline",
+      "category": "merge",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "咱们这个那个初稿下周三给。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "最终版不是周三，是周五。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "初稿下周三提交，最终版周五提交。",
+      "review_candidate": "初稿下周三提交，最终版周五提交。",
+      "expected_review": "pass",
+      "required_facts": [
+        "初稿下周三",
+        "最终版周五"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_pronoun",
+      "category": "merge",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "小林会把数据给我。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "我再交给小周，不是小林直接给小周。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "小林先把数据给我，再由我交给小周。",
+      "review_candidate": "小林先把数据给我，再由我交给小周。",
+      "expected_review": "pass",
+      "required_facts": [
+        "小林给我",
+        "我给小周"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_negation",
+      "category": "merge",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "还没还没决定用哪一个。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "两个都在测试，不能说选定了。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "两个方案仍在测试，尚未决定采用哪个。",
+      "review_candidate": "两个方案仍在测试，尚未决定采用哪个。",
+      "expected_review": "pass",
+      "required_facts": [
+        "两个方案测试中",
+        "尚未选定"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_self_correction",
+      "category": "merge",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "会议在东楼，不不，是西楼。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "周二下午三点。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "会议在西楼，时间为周二下午三点。",
+      "review_candidate": "会议在西楼，时间为周二下午三点。",
+      "expected_review": "pass",
+      "required_facts": [
+        "西楼",
+        "周二下午三点"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_question",
+      "category": "merge",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "你那个你确认一下。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "这个版本已经发布了吗？"
+        }
+      ],
+      "hotwords": [],
+      "reference": "请确认这个版本是否已经发布。",
+      "review_candidate": "请确认这个版本是否已经发布。",
+      "expected_review": "pass",
+      "required_facts": [
+        "询问是否已发布；不能改成能否发布"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_two_conditions",
+      "category": "merge",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "只有测试通过才开放。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "而且还得负责人签字，两项都得满足。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "开放须同时满足测试通过和负责人签字两个条件。",
+      "review_candidate": "开放须同时满足测试通过和负责人签字两个条件。",
+      "expected_review": "pass",
+      "required_facts": [
+        "测试通过",
+        "负责人签字",
+        "两项同时满足"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_tradeoff",
+      "category": "merge",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "便宜的那个启动慢。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "贵的那个快一些，价格贵了两百。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "便宜的方案启动较慢，贵的方案启动更快，但价格高出两百。",
+      "review_candidate": "便宜的方案启动较慢，贵的方案启动更快，但价格高出两百。",
+      "expected_review": "pass",
+      "required_facts": [
+        "便宜慢",
+        "贵快",
+        "差价两百"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_hotword",
+      "category": "merge",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "我们后面用库伯内特斯。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "那个就是容器编排那个，简称K8s。"
+        }
+      ],
+      "hotwords": [
+        "Kubernetes"
+      ],
+      "reference": "后续使用 Kubernetes（K8s）进行容器编排。",
+      "review_candidate": "后续使用 Kubernetes（K8s）进行容器编排。",
+      "expected_review": "pass",
+      "required_facts": [
+        "Kubernetes",
+        "容器编排"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_repetition",
+      "category": "merge",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "其实其实我觉得问题在网络。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "不是模型慢，是网络抖动，抖动。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "我认为问题是网络抖动，而非模型速度慢。",
+      "review_candidate": "我认为问题是网络抖动，而非模型速度慢。",
+      "expected_review": "pass",
+      "required_facts": [
+        "网络抖动",
+        "不是模型慢"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_parallel",
+      "category": "merge",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "产品组负责界面。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "研发组负责接口，两边同时做。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "产品组负责界面，研发组负责接口，双方同时开展工作。",
+      "review_candidate": "产品组负责界面，研发组负责接口，双方同时开展工作。",
+      "expected_review": "pass",
+      "required_facts": [
+        "产品组界面",
+        "研发组接口",
+        "同时"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_uncertain",
+      "category": "merge",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "大概大概能省三成吧。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "现在只是估计，还没有实测。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "目前估计可节省约三成，尚未经过实测。",
+      "review_candidate": "目前估计可节省约三成，尚未经过实测。",
+      "expected_review": "pass",
+      "required_facts": [
+        "约三成",
+        "估计未实测"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_limited_scope",
+      "category": "merge",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "先只对内部人员开放。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "外部用户暂时不能用，暂时。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "先仅对内部人员开放，外部用户暂不可用。",
+      "review_candidate": "先仅对内部人员开放，外部用户暂不可用。",
+      "expected_review": "pass",
+      "required_facts": [
+        "仅内部",
+        "外部暂不可用"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_independent_facts",
+      "category": "merge",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "设备没到。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "审批也没通过。这是两件事。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "设备尚未到货，审批也未通过，这是两件独立的事。",
+      "review_candidate": "设备尚未到货，审批也未通过，这是两件独立的事。",
+      "expected_review": "pass",
+      "required_facts": [
+        "设备未到",
+        "审批未通过",
+        "不得新增因果"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_reported_speech",
+      "category": "merge",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "他原话说可以考虑。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "可不是已经同意了。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "他表示可以考虑，并未同意。",
+      "review_candidate": "他表示可以考虑，并未同意。",
+      "expected_review": "pass",
+      "required_facts": [
+        "可以考虑",
+        "未同意"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_range",
+      "category": "merge",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "可以做三到五个。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "最多五个啊，不是十五个。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "可以做三到五个，最多五个，而非十五个。",
+      "review_candidate": "可以做三到五个，最多五个，而非十五个。",
+      "expected_review": "pass",
+      "required_facts": [
+        "三到五个",
+        "上限五个不是十五个"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_technical_name",
+      "category": "merge",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "这里是语音转文字。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "用的是ASR，不是TTS。"
+        }
+      ],
+      "hotwords": [
+        "ASR",
+        "TTS"
+      ],
+      "reference": "这里使用 ASR 将语音转为文字，不是 TTS。",
+      "review_candidate": "这里使用 ASR 将语音转为文字，不是 TTS。",
+      "expected_review": "pass",
+      "required_facts": [
+        "ASR语音转文字",
+        "不是TTS"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "merge_alternative",
+      "category": "merge",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 3,
+          "text": "没网的话就用本地的。"
+        },
+        {
+          "id": 1,
+          "speaker": "Mike",
+          "start": 3,
+          "end": 6,
+          "text": "有网也可以选本地，不是强制远程。"
+        }
+      ],
+      "hotwords": [],
+      "reference": "没有网络时使用本地服务；有网络时也可选择本地服务，并不强制使用远程服务。",
+      "review_candidate": "没有网络时使用本地服务；有网络时也可选择本地服务，并不强制使用远程服务。",
+      "expected_review": "pass",
+      "required_facts": [
+        "没网用本地",
+        "有网也可本地",
+        "不强制远程"
+      ],
+      "requires_rewrite": true
+    },
+    {
+      "id": "acceptable_polite",
+      "category": "acceptable",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "等我，等我处理个事情啊！嗯，"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "请等我处理一下事情。",
+      "expected_review": "pass",
+      "required_facts": [
+        "去重和礼貌表达，不改变事实"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_question",
+      "category": "acceptable",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "下午的会议改到两点了吗？"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "下午的会议是否已改到两点？",
+      "expected_review": "pass",
+      "required_facts": [
+        "仍是确认是否已改"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_negation",
+      "category": "acceptable",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "那个我我昨天去看了一下，设备还没还没到。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "我昨天去看了一下，设备还没到。",
+      "expected_review": "pass",
+      "required_facts": [
+        "否定保留"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_classification",
+      "category": "acceptable",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "设备分甲类、乙类、丙类。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "设备分为甲、乙、丙三类。",
+      "expected_review": "pass",
+      "required_facts": [
+        "分类保留且无优先级"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_conditional",
+      "category": "acceptable",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "如果没审批就不做。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "未获审批则不实施。",
+      "expected_review": "pass",
+      "required_facts": [
+        "条件与否定保留"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_identity",
+      "category": "acceptable",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "他希望我留在项目，但领导要求我去集团。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "他希望我留在项目，领导则要求我去集团。",
+      "expected_review": "pass",
+      "required_facts": [
+        "主宾语保留"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_range",
+      "category": "acceptable",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "费用大概三到五万元。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "费用预计为三至五万元。",
+      "expected_review": "pass",
+      "required_facts": [
+        "范围及不确定性保留"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_causal",
+      "category": "acceptable",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "因为服务器坏了，所以这次停机了。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "本次停机是服务器故障造成的。",
+      "expected_review": "pass",
+      "required_facts": [
+        "原文已明确因果"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_no_cause",
+      "category": "acceptable",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "设备还没到，预算也没批。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "设备尚未到货，预算也尚未获批。",
+      "expected_review": "pass",
+      "required_facts": [
+        "未新增因果"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_correction",
+      "category": "acceptable",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "我们在东楼，不对，是西楼。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "我们在西楼。",
+      "expected_review": "pass",
+      "required_facts": [
+        "采用明确自我纠正"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_already_clear",
+      "category": "acceptable",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "下周三上午十点开会。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "下周三上午十点开会。",
+      "expected_review": "pass",
+      "required_facts": [
+        "清楚短句可以不变"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_response",
+      "category": "acceptable",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "对，我同意。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "对，我同意。",
+      "expected_review": "pass",
+      "required_facts": [
+        "有意义回应不能删除"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_unknown_term",
+      "category": "acceptable",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "这个项目叫蓝沙，也可能是我听错了。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "这个项目可能叫“蓝沙”，我不确定是否听错。",
+      "expected_review": "pass",
+      "required_facts": [
+        "保留原词及不确定性"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_quoted",
+      "category": "acceptable",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "他说的是“可以考虑”，不是“已经同意”。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "他的原话是“可以考虑”，并非“已经同意”。",
+      "expected_review": "pass",
+      "required_facts": [
+        "引语及否定保留"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_english",
+      "category": "acceptable",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "The API is not ready yet."
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "The API is not ready yet.",
+      "expected_review": "pass",
+      "required_facts": [
+        "语言与否定不变"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_sequence",
+      "category": "acceptable",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "先测试，通过以后再上线。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "先完成测试，通过后再上线。",
+      "expected_review": "pass",
+      "required_facts": [
+        "顺序保留"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_limit",
+      "category": "acceptable",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "只给内部用户开放，外部不能用。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "仅向内部用户开放，外部用户不可使用。",
+      "expected_review": "pass",
+      "required_facts": [
+        "范围保留"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_comparison",
+      "category": "acceptable",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "A比B贵两百，但是启动更快。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "A的价格比B高两百，但启动更快。",
+      "expected_review": "pass",
+      "required_facts": [
+        "比较方向保留"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_possible",
+      "category": "acceptable",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "可能周五会到，现在还不能确认。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "预计可能周五到达，目前尚无法确认。",
+      "expected_review": "pass",
+      "required_facts": [
+        "可能性保留"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "acceptable_roles",
+      "category": "acceptable",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "产品组做界面，研发组做接口。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "界面由产品组负责，接口由研发组负责。",
+      "expected_review": "pass",
+      "required_facts": [
+        "职责归属保留"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_amount",
+      "category": "changed_fact",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "预算15万元，不是50万元。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "预算50万元。",
+      "expected_review": "fact",
+      "required_facts": [
+        "把原文否定的50万元改为预算"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_negation",
+      "category": "changed_fact",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "设备还没到。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "设备已经到货。",
+      "expected_review": "fact",
+      "required_facts": [
+        "否定被逆转"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_condition",
+      "category": "changed_fact",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "如果没审批就不做。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "已经开始实施。",
+      "expected_review": "fact",
+      "required_facts": [
+        "条件性未实施被改成既成事实"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_subject",
+      "category": "changed_fact",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "他希望我留在项目。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "他希望留在项目。",
+      "expected_review": "fact",
+      "required_facts": [
+        "被希望留下的人从我变成他"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_question",
+      "category": "changed_fact",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "会议改到两点了吗？"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "会议能改到两点吗？",
+      "expected_review": "fact",
+      "required_facts": [
+        "确认是否已改变成询问能否改"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_assertion",
+      "category": "changed_fact",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "他今天过来是吧？"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "他今天过来。",
+      "expected_review": "fact",
+      "required_facts": [
+        "待确认问题被改成确定事实"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_location",
+      "category": "changed_fact",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "我在东部，不对，是西部。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "我从东部去了西部。",
+      "expected_review": "fact",
+      "required_facts": [
+        "自我纠正被补造成行程"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_priority",
+      "category": "changed_fact",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "设备分甲类、乙类、丙类。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "设备主要是甲类，其次是乙类。",
+      "expected_review": "fact",
+      "required_facts": [
+        "分类变成优先级且遗漏丙类"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_causal",
+      "category": "changed_fact",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "设备没到，审批也没通过。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "因为设备没到，所以审批没通过。",
+      "expected_review": "fact",
+      "required_facts": [
+        "独立事实被新增因果"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_uncertain",
+      "category": "changed_fact",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "可能周五到，目前还不确定。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "周五一定到。",
+      "expected_review": "fact",
+      "required_facts": [
+        "可能改成确定"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_truncation",
+      "category": "changed_fact",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "他们去了。总"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "他们去了总部。",
+      "expected_review": "fact",
+      "required_facts": [
+        "把未完成词补成确定地点"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_deadline",
+      "category": "changed_fact",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "初稿周三，最终版周五。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "初稿周五，最终版周三。",
+      "expected_review": "fact",
+      "required_facts": [
+        "两个时间颠倒"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_scope",
+      "category": "changed_fact",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "仅内部人员可用，外部暂时不能用。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "所有用户都可以使用。",
+      "expected_review": "fact",
+      "required_facts": [
+        "扩大开放范围"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_direction",
+      "category": "changed_fact",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "A比B贵两百。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "B比A贵两百。",
+      "expected_review": "fact",
+      "required_facts": [
+        "比较方向反转"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_order",
+      "category": "changed_fact",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "先测试，通过后再上线。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "先上线，再测试。",
+      "expected_review": "fact",
+      "required_facts": [
+        "顺序颠倒"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_omission",
+      "category": "changed_fact",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "开放需要测试通过并且负责人签字。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "测试通过后即可开放。",
+      "expected_review": "fact",
+      "required_facts": [
+        "遗漏签字条件"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_range",
+      "category": "changed_fact",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "费用大概三到五万元。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "费用固定五万元。",
+      "expected_review": "fact",
+      "required_facts": [
+        "范围及不确定性丢失"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_quote",
+      "category": "changed_fact",
+      "split": "development",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "他说可以考虑，还没有同意。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "他已经同意。",
+      "expected_review": "fact",
+      "required_facts": [
+        "考虑改成同意"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_roles",
+      "category": "changed_fact",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "产品组做界面，研发组做接口。"
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "产品组做接口，研发组做界面。",
+      "expected_review": "fact",
+      "required_facts": [
+        "职责交换"
+      ],
+      "requires_rewrite": false
+    },
+    {
+      "id": "changed_fact_language",
+      "category": "changed_fact",
+      "split": "holdout",
+      "source_segments": [
+        {
+          "id": 0,
+          "speaker": "Mike",
+          "start": 0,
+          "end": 5,
+          "text": "The API is not ready yet."
+        }
+      ],
+      "hotwords": [],
+      "review_candidate": "The API is ready.",
+      "expected_review": "fact",
+      "required_facts": [
+        "英文否定丢失"
+      ],
+      "requires_rewrite": false
+    }
+  ]
+}

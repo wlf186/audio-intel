@@ -589,6 +589,7 @@ test('hotword library supports create and mobile layout without overflow',async(
  await expect(page.getByLabel('场景名称')).toHaveValue('未保存草稿')
  await expect(page.locator('.hotword-editor textarea')).toHaveValue('alpha\nbeta')
  await page.getByRole('button',{name:'取消并清空'}).click()
+ await page.getByRole('dialog',{name:'放弃未保存的词表编辑？'}).getByRole('button',{name:'放弃并继续'}).click()
  await page.getByLabel('场景名称').fill('项目代号')
  await page.locator('.hotword-editor textarea').fill('超'.repeat(65))
  await expect(page.getByText(/单个热词不能超过 64 个字符/)).toBeVisible()

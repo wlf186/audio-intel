@@ -73,7 +73,7 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
   await root.evaluate(e=>e.scrollTop=e.scrollHeight);await expect(page.locator('.video-section')).toHaveCount(40)
   await root.evaluate(e=>e.scrollTop=e.scrollHeight);await expect(page.locator('.video-section')).toHaveCount(55)
   await expect(root.getByRole('button',{name:zh?'加载更多':'Load more',exact:true})).toHaveCount(0)
-  await page.getByRole('button',{name:zh?'逐句明细':'Segment details',exact:true}).click()
+  await page.getByRole('button',{name:zh?'文本阅读':'Text reading',exact:true}).click()
   await expect(page.locator('.segments article')).toHaveCount(40)
   await page.locator('.segments').evaluate(e=>e.scrollTop=e.scrollHeight)
   // Prefetch may render another batch before the assertion observes the DOM.

@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from . import db
 from .optimization_policy import PROMPT_VERSION, DEFAULT_MODE
 
-SUMMARY = "COALESCE(json_extract(config_json, '$.prompt_version'), 1) AS prompt_version,json_extract(config_json, '$.rewrite_mode') AS rewrite_mode," + 'id,job_id,state,published,model,total_chars,completed_chars,completed_units,total_units,needs_review_units,activity_chars,error,revision,created_at,updated_at'
+SUMMARY = "COALESCE(json_extract(config_json, '$.prompt_version'), 1) AS prompt_version,json_extract(config_json, '$.rewrite_mode') AS rewrite_mode," + 'id,job_id,state,published,model,total_chars,completed_chars,completed_units,total_units,needs_review_units,review_state,reviewed_units,uncertain_units,unavailable_units,basic_cleanup_units,review_error,activity_chars,error,revision,created_at,updated_at'
 ACTIVE = ('queued', 'running', 'pausing')
 
 
@@ -54,14 +54,21 @@ def migrate(connection: sqlite3.Connection) -> None:
     with connection:
         connection.execute('BEGIN IMMEDIATE')
         for table, columns in {
-            'optimization_units': {'review_status': 'TEXT', 'review_reason': 'TEXT'},
-            'transcript_optimizations': {'needs_review_units': 'INTEGER NOT NULL DEFAULT 0'},
+            'optimization_units': {'review_status': 'TEXT', 'review_reason': 'TEXT', 'candidate_text': 'TEXT', 'review_details_json': 'TEXT', 'generation_method': 'TEXT', 'review_outcome': 'TEXT'},
+            'transcript_optimizations': {'needs_review_units': 'INTEGER NOT NULL DEFAULT 0', 'review_state': 'TEXT', 'reviewed_units': 'INTEGER NOT NULL DEFAULT 0', 'uncertain_units': 'INTEGER NOT NULL DEFAULT 0', 'unavailable_units': 'INTEGER NOT NULL DEFAULT 0', 'basic_cleanup_units': 'INTEGER NOT NULL DEFAULT 0', 'review_error': 'TEXT'},
         }.items():
             existing = {row[1] for row in connection.execute(f'PRAGMA table_info({table})')}
             for name, declaration in columns.items():
                 if name not in existing:
                     connection.execute(f'ALTER TABLE {table} ADD COLUMN {name} {declaration}')
-        connection.execute('UPDATE schema_meta SET version=16 WHERE version<16')
+        connection.execute('''CREATE TABLE IF NOT EXISTS optimization_parts (
+            run_id TEXT NOT NULL, unit_ordinal INTEGER NOT NULL, part_ordinal INTEGER NOT NULL,
+            source_json TEXT NOT NULL, text TEXT, generation_method TEXT, seam_done INTEGER NOT NULL DEFAULT 0,
+            review_outcome TEXT, review_details_json TEXT,
+            PRIMARY KEY(run_id,unit_ordinal,part_ordinal),
+            FOREIGN KEY(run_id,unit_ordinal) REFERENCES optimization_units(run_id,ordinal) ON DELETE CASCADE
+        )''')
+        connection.execute('UPDATE schema_meta SET version=18 WHERE version<18')
 
 
 def settings() -> dict:
@@ -80,6 +87,7 @@ def summary(row: Any) -> dict:
     item['published'] = bool(item['published'])
     version = item.pop('prompt_version')
     item['requires_regeneration'] = not item['published'] and version != PROMPT_VERSION
+    item['review_total_units'] = item['total_units']
     item['progress'] = item['completed_chars'] / max(1, item['total_chars'])
     return item
 
@@ -111,11 +119,31 @@ def get(run_id: str) -> dict:
     return item
 
 
+def _units(connection, run_id: str) -> list[dict]:
+    rows = connection.execute('SELECT * FROM optimization_units WHERE run_id=? ORDER BY ordinal', (run_id,)).fetchall()
+    return [{**json.loads(row['source_json']), 'ordinal': row['ordinal'], 'text': row['optimized_text'],
+             'review_status': row['review_status'], 'review_reason': row['review_reason'],
+             'candidate_text': row['candidate_text'], 'generation_method': row['generation_method'],
+             'review_outcome': row['review_outcome'],
+             'review_details': json.loads(row['review_details_json']) if row['review_details_json'] else None} for row in rows]
+
+
 def units(run_id: str) -> list[dict]:
     with db.connect() as connection:
-        rows = connection.execute('SELECT ordinal,source_json,optimized_text,review_status,review_reason FROM optimization_units WHERE run_id=? ORDER BY ordinal', (run_id,)).fetchall()
-    return [{**json.loads(row['source_json']), 'ordinal': row['ordinal'], 'text': row['optimized_text'],
-             'review_status': row['review_status'], 'review_reason': row['review_reason']} for row in rows]
+        return _units(connection, run_id)
+
+
+def snapshot(run_id: str) -> tuple[dict, list[dict]]:
+    """One SQLite read transaction for a consistent text/review export snapshot."""
+    with db.connect() as connection:
+        connection.execute('BEGIN')
+        row = connection.execute('SELECT * FROM transcript_optimizations WHERE id=?', (run_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, 'Optimization not found')
+        run = dict(row)
+        for name in ('config', 'hotwords'):
+            run[name] = json.loads(run.pop(name + '_json'))
+        return run, _units(connection, run_id)
 
 
 def replay(job_id: str, key: str, regenerate: bool, rewrite_mode: str | None = None) -> bool:
@@ -161,7 +189,13 @@ def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: s
             VALUES(?,?,?,?,'queued',?,?,?,?,?,?,?,?)''',
             (identifier, job_id, key_hash, fingerprint, config['model'], encode(config), encode(hotwords), source_hash,
              sum(len(p['original_text']) for p in paragraphs), len(paragraphs), now, now))
-        connection.executemany('INSERT INTO optimization_units(run_id,ordinal,source_json) VALUES(?,?,?)', [(identifier, i, encode(p)) for i, p in enumerate(paragraphs)])
+        connection.executemany('INSERT INTO optimization_units(run_id,ordinal,source_json) VALUES(?,?,?)', [(identifier, i, encode({k: v for k, v in p.items() if k != '_parts'})) for i, p in enumerate(paragraphs)])
+        if config.get('prompt_version', 1) >= 6:
+            from .optimization_engine import prepare_parts
+            for ordinal, unit in enumerate(paragraphs):
+                parts = unit.get('_parts') or prepare_parts(config, unit, hotwords)
+                connection.executemany('INSERT INTO optimization_parts(run_id,unit_ordinal,part_ordinal,source_json) VALUES(?,?,?,?)',
+                    [(identifier, ordinal, i, encode(part)) for i, part in enumerate(parts)])
         connection.commit()
     return identifier, False
 
@@ -188,7 +222,7 @@ def resume(run_id: str) -> None:
         connection.commit()
 
 
-def checkpoint(run_id: str, values: list[tuple[int, str]], *, review_reason: str | None = None) -> bool:
+def checkpoint(run_id: str, values: list[tuple[int, str]], *, review_reason: str | None = None, candidate_text: str | None = None, review_details: dict | None = None) -> bool:
     if review_reason not in (None, 'review_failed', 'invalid_output'):
         raise ValueError('Unknown review reason')
     with db.connect() as connection:
@@ -201,8 +235,11 @@ def checkpoint(run_id: str, values: list[tuple[int, str]], *, review_reason: str
                 source = connection.execute('SELECT source_json FROM optimization_units WHERE run_id=? AND ordinal=?', (run_id, ordinal)).fetchone()
                 if source is None or text != json.loads(source[0])['original_text']:
                     raise ValueError('Review fallback must preserve the exact original')
-            connection.execute('UPDATE optimization_units SET optimized_text=?,review_status=?,review_reason=? WHERE run_id=? AND ordinal=? AND optimized_text IS NULL',
-                               (text, 'needs_review' if review_reason else 'accepted', review_reason, run_id, ordinal))
+                if candidate_text is not None:
+                    from .optimization_engine import validate_draft
+                    validate_draft({'action': 'keep', 'text': candidate_text}, text)
+            connection.execute('UPDATE optimization_units SET optimized_text=?,review_status=?,review_reason=?,candidate_text=?,review_details_json=? WHERE run_id=? AND ordinal=? AND optimized_text IS NULL',
+                               (text, 'needs_review' if review_reason else 'accepted', review_reason, candidate_text if review_reason else None, encode(review_details) if review_reason and review_details else None, run_id, ordinal))
         completed = connection.execute('SELECT source_json FROM optimization_units WHERE run_id=? AND optimized_text IS NOT NULL', (run_id,)).fetchall()
         count = sum(len(json.loads(p[0])['original_text']) for p in completed)
         needs_review = connection.execute("SELECT count(*) FROM optimization_units WHERE run_id=? AND review_status='needs_review'", (run_id,)).fetchone()[0]
@@ -218,7 +255,7 @@ def publish(run_id: str) -> bool:
         if not row:
             return False
         connection.execute('DELETE FROM transcript_optimizations WHERE job_id=? AND published=1', (row['job_id'],))
-        connection.execute("UPDATE transcript_optimizations SET published=1,state='succeeded',revision=revision+1,updated_at=? WHERE id=?", (db.utcnow(), run_id))
+        connection.execute("UPDATE transcript_optimizations SET published=1,state='succeeded',review_state=CASE WHEN COALESCE(json_extract(config_json,'$.prompt_version'),1)>=6 THEN 'queued' ELSE NULL END,revision=revision+1,updated_at=? WHERE id=?", (db.utcnow(), run_id))
         connection.commit()
     return True
 
@@ -240,3 +277,129 @@ def clear_export_caches() -> None:
         with module._lock:
             module._cache_generation += 1
             module._cache.clear()
+
+
+def parts(run_id: str, ordinal: int) -> list[dict]:
+    with db.connect() as connection:
+        rows = connection.execute('SELECT * FROM optimization_parts WHERE run_id=? AND unit_ordinal=? ORDER BY part_ordinal', (run_id, ordinal)).fetchall()
+    return [{**dict(row), 'source': json.loads(row['source_json']),
+             'review_details': json.loads(row['review_details_json']) if row['review_details_json'] else None} for row in rows]
+
+
+def _generation_running(connection, run_id):
+    return connection.execute("SELECT 1 FROM transcript_optimizations WHERE id=? AND state='running' AND published=0", (run_id,)).fetchone()
+
+
+def _progress(connection, run_id):
+    completed = connection.execute('SELECT source_json FROM optimization_parts WHERE run_id=? AND text IS NOT NULL', (run_id,)).fetchall()
+    count = sum(len(json.loads(row[0])['original_text']) for row in completed)
+    connection.execute('''UPDATE transcript_optimizations SET completed_chars=?,
+        completed_units=(SELECT COUNT(*) FROM optimization_units WHERE run_id=? AND optimized_text IS NOT NULL),
+        basic_cleanup_units=(SELECT COUNT(*) FROM optimization_units WHERE run_id=? AND generation_method IN ('basic_cleanup','mixed')),
+        activity_chars=0,revision=revision+1,updated_at=? WHERE id=?''', (count, run_id, run_id, db.utcnow(), run_id))
+
+
+def checkpoint_part(run_id: str, ordinal: int, part_ordinal: int, text: str, method: str) -> bool:
+    if method not in ('model', 'basic_cleanup'):
+        raise ValueError('Unknown generation method')
+    with db.connect() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        if not _generation_running(connection, run_id):
+            return False
+        connection.execute('UPDATE optimization_parts SET text=?,generation_method=? WHERE run_id=? AND unit_ordinal=? AND part_ordinal=? AND text IS NULL',
+                           (text, method, run_id, ordinal, part_ordinal))
+        _progress(connection, run_id)
+        connection.commit()
+    return True
+
+
+def checkpoint_seam(run_id: str, ordinal: int, left: int, texts: tuple[str, str]) -> bool:
+    with db.connect() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        if not _generation_running(connection, run_id):
+            return False
+        row = connection.execute('SELECT seam_done FROM optimization_parts WHERE run_id=? AND unit_ordinal=? AND part_ordinal=?', (run_id, ordinal, left)).fetchone()
+        if row is None or row[0]:
+            return bool(row)
+        connection.execute('UPDATE optimization_parts SET text=?,seam_done=1 WHERE run_id=? AND unit_ordinal=? AND part_ordinal=?', (texts[0], run_id, ordinal, left))
+        connection.execute('UPDATE optimization_parts SET text=? WHERE run_id=? AND unit_ordinal=? AND part_ordinal=?', (texts[1], run_id, ordinal, left + 1))
+        _progress(connection, run_id)
+        connection.commit()
+    return True
+
+
+def finish_unit(run_id: str, ordinal: int) -> bool:
+    with db.connect() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        if not _generation_running(connection, run_id):
+            return False
+        rows = connection.execute('SELECT * FROM optimization_parts WHERE run_id=? AND unit_ordinal=? ORDER BY part_ordinal', (run_id, ordinal)).fetchall()
+        if not rows or any(row['text'] is None or (json.loads(row['source_json'])['forced_after'] and not row['seam_done']) for row in rows):
+            return False
+        methods = {row['generation_method'] for row in rows}
+        method = next(iter(methods)) if len(methods) == 1 else 'mixed'
+        text = '\n\n'.join(row['text'] for row in rows if row['text'])
+        connection.execute("UPDATE optimization_units SET optimized_text=?,generation_method=?,review_outcome='pending' WHERE run_id=? AND ordinal=? AND optimized_text IS NULL", (text, method, run_id, ordinal))
+        _progress(connection, run_id)
+        connection.commit()
+    return True
+
+
+def review_transition(run_id: str, state: str, allowed: tuple[str, ...], error: str | None = None) -> bool:
+    with db.connect() as connection:
+        row = connection.execute(f"UPDATE transcript_optimizations SET review_state=?,review_error=?,revision=revision+1,updated_at=? WHERE id=? AND published=1 AND state='succeeded' AND review_state IN ({','.join('?' for _ in allowed)})", (state, error, db.utcnow(), run_id, *allowed))
+    return row.rowcount == 1
+
+
+def resume_review(run_id: str) -> None:
+    """Retry unavailable chunks without discarding completed review or prose."""
+    with db.connect() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        row = connection.execute('SELECT published,state,review_state,unavailable_units FROM transcript_optimizations WHERE id=?', (run_id,)).fetchone()
+        if not row or not row['published'] or row['state'] != 'succeeded':
+            raise HTTPException(409, 'No resumable review')
+        if row['review_state'] in ('queued', 'running'):
+            return
+        if row['review_state'] not in ('paused', 'unavailable') and not (row['review_state'] == 'completed' and row['unavailable_units'] > 0):
+            raise HTTPException(409, 'No resumable review')
+        # A unit can include accepted/uncertain chunks alongside an unavailable
+        # one. Only the missing verdict is retried; all completed evidence stays.
+        connection.execute("""UPDATE optimization_units SET review_outcome='pending',review_status=NULL,review_reason=NULL,review_details_json=NULL
+            WHERE run_id=? AND ordinal IN (SELECT unit_ordinal FROM optimization_parts WHERE run_id=? AND review_outcome='unavailable')""", (run_id, run_id))
+        connection.execute("UPDATE optimization_parts SET review_outcome=NULL,review_details_json=NULL WHERE run_id=? AND review_outcome='unavailable'", (run_id,))
+        connection.execute("""UPDATE transcript_optimizations SET review_state='queued',review_error=NULL,
+            reviewed_units=(SELECT COUNT(*) FROM optimization_units WHERE run_id=? AND review_outcome IN ('pass','fact','uncertain','unavailable')),
+            unavailable_units=0,revision=revision+1,updated_at=? WHERE id=?""", (run_id, db.utcnow(), run_id))
+        connection.commit()
+    clear_export_caches()
+
+
+def checkpoint_review(run_id: str, ordinal: int, part_ordinal: int, result: dict) -> bool:
+    outcome = result['outcome']
+    if outcome not in ('pass', 'fact', 'uncertain', 'unavailable'):
+        raise ValueError('Invalid review outcome')
+    with db.connect() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        if not connection.execute("SELECT 1 FROM transcript_optimizations WHERE id=? AND published=1 AND state='succeeded' AND review_state='running'", (run_id,)).fetchone():
+            return False
+        connection.execute('UPDATE optimization_parts SET review_outcome=?,review_details_json=? WHERE run_id=? AND unit_ordinal=? AND part_ordinal=? AND review_outcome IS NULL',
+                           (outcome, encode(result['details']), run_id, ordinal, part_ordinal))
+        reviews = connection.execute('SELECT review_outcome,review_details_json FROM optimization_parts WHERE run_id=? AND unit_ordinal=? ORDER BY part_ordinal', (run_id, ordinal)).fetchall()
+        if all(row[0] for row in reviews):
+            values = {row[0] for row in reviews}
+            final = next(value for value in ('fact', 'unavailable', 'uncertain', 'pass') if value in values)
+            issues = [issue for row in reviews for issue in json.loads(row[1]).get('issues', [])]
+            unique = list({encode(issue): issue for issue in issues}.values())
+            connection.execute('UPDATE optimization_units SET review_outcome=?,review_status=?,review_reason=?,review_details_json=? WHERE run_id=? AND ordinal=?',
+                (final, 'accepted' if final == 'pass' else 'needs_review' if final == 'fact' else None,
+                 'review_failed' if final == 'fact' else None, encode({'stage': 'review', 'issues': unique}), run_id, ordinal))
+        connection.execute('''UPDATE transcript_optimizations SET
+            reviewed_units=(SELECT COUNT(*) FROM optimization_units WHERE run_id=? AND review_outcome IN ('pass','fact','uncertain','unavailable')),
+            needs_review_units=(SELECT COUNT(*) FROM optimization_units WHERE run_id=? AND review_outcome='fact'),
+            uncertain_units=(SELECT COUNT(*) FROM optimization_units WHERE run_id=? AND review_outcome='uncertain'),
+            unavailable_units=(SELECT COUNT(DISTINCT unit_ordinal) FROM optimization_parts WHERE run_id=? AND review_outcome='unavailable'),
+            revision=revision+1,updated_at=? WHERE id=?''', (run_id, run_id, run_id, run_id, db.utcnow(), run_id))
+        connection.execute("UPDATE transcript_optimizations SET review_state='completed' WHERE id=? AND reviewed_units=total_units", (run_id,))
+        connection.commit()
+    clear_export_caches()
+    return True

@@ -1,7 +1,7 @@
 import {test,expect} from './fixtures'
 import {uxFixture} from './ux-fixtures'
 
-for(const [width,height] of [[1280,720],[1440,800],[1470,830],[1280,560],[390,844]])for(const locale of ['zh-CN','en-US'])test(`compact module navigation ${width}x${height} ${locale}`,async({page},info)=>{
+for(const [width,height] of [[1280,720],[1440,800],[1920,1080],[1470,830],[1280,560],[390,844]])for(const locale of ['zh-CN','en-US'])test(`compact module navigation ${width}x${height} ${locale}`,async({page},info)=>{
  await page.setViewportSize({width,height})
  await page.addInitScript(locale=>localStorage.setItem('audio-intel:ui-locale:v1',locale),locale)
  const {errors}=await uxFixture(page)
@@ -45,7 +45,8 @@ for(const [width,height] of [[1280,720],[1440,800],[1470,830],[1280,560],[390,84
   if(index===3)await expect(main.locator('.jobs-summary')).not.toBeEmpty()
   if(index===4)await expect(main.locator('.resource-grid')).toBeVisible()
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
-  await page.screenshot({path:info.outputPath(`${keys[index]}.png`),fullPage:true})
+  await page.screenshot({path:info.outputPath(`${keys[index]}.png`)})
+  await page.screenshot({path:info.outputPath(`${keys[index]}-full.png`),fullPage:true})
  }
  expect(errors).toEqual([])
 })

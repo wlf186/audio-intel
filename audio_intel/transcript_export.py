@@ -143,7 +143,7 @@ def export_result(result: dict[str, Any], policy: TranscriptExportRequest) -> di
         return deepcopy(result)
     replacer = LiteralReplacer(policy.replacements)
     # Unknown historical metadata can contain source text, identities or file paths.
-    safe_fields = ("_optimized", "text_version", "language", "duration", "timestamp_precision", "diarization_mode", "model", "model_name", "model_revision", "compute_device", "compute_device_name", "precision", "quantized")
+    safe_fields = ("_optimized", "text_version", "optimization_policy", "review_notice", "language", "duration", "timestamp_precision", "diarization_mode", "model", "model_name", "model_revision", "compute_device", "compute_device_name", "precision", "quantized")
     exported = {key: deepcopy(result[key]) for key in safe_fields if key in result}
     identities = list(result.get("speakers", []))
     known = {speaker["id"] for speaker in identities}
@@ -173,6 +173,16 @@ def export_result(result: dict[str, Any], policy: TranscriptExportRequest) -> di
             item["original_text"] = replacer.text(segment["original_text"])
             if segment.get('review_status') == 'needs_review':
                 item['review_status'] = 'needs_review'
+        if segment.get('review_status') == 'needs_review':
+            item['review_status'] = 'needs_review'
+        if segment.get('review_note'):
+            item['review_note'] = replacer.text(segment['review_note'])
+        for key in ('scene_ids', 'merged_source_count', 'generation_method', 'review_outcome'):
+            if key in segment:
+                item[key] = deepcopy(segment[key])
+        if 'sources' in segment:
+            item['sources'] = [{**{key: source[key] for key in ('segment_id', 'start', 'end')},
+                                'text': replacer.text(source['text'])} for source in segment['sources']]
         if "words" in segment:
             item["words"] = replacer.words(segment["words"], original)
         segments.append(item)
@@ -191,7 +201,11 @@ def format_transcript(result: dict[str, Any], format: str) -> str:
     if format == "json":
         return json.dumps({key: value for key, value in result.items() if key != "artifacts"}, ensure_ascii=False, indent=2)
     if format == "txt":
-        return "\n".join(f"[{timecode(x['start'])} - {timecode(x['end'])}] {x['speaker_label']}: {x['text']}" for x in segments)
+        lines = [result['review_notice']] if result.get('review_notice') else []
+        lines.extend(('【待核对 / Needs review】' if x.get('review_status') == 'needs_review' else '') +
+                     ('【基础整理 / Basic cleanup】' if x.get('generation_method') in ('basic_cleanup', 'mixed') else '') +
+                     f"[{timecode(x['start'])} - {timecode(x['end'])}] {x['speaker_label']}: {x['text']}" for x in segments)
+        return "\n".join(lines)
     if format == "srt":
         return "\n\n".join(f"{i}\n{timecode(x['start'], ',')} --> {timecode(x['end'], ',')}\n{x['speaker_label']}: {x['text']}" for i, x in enumerate(segments, 1))
     if format == "vtt":
@@ -212,18 +226,47 @@ def optimized_export_result(job: dict, policy: TranscriptExportRequest) -> dict:
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     result = deepcopy(job['result'])
-    result.update(_optimized=True, text_version=policy.text_version)
+    version = draft.get('prompt_version', run['config'].get('prompt_version', 1))
+    result.update(_optimized=True, text_version=policy.text_version, optimization_policy=version)
+    if version >= 6:
+        review_state = draft.get('review_state')
+        notices = []
+        if review_state != 'completed':
+            notices.append('自动复核尚未完成 / Automatic review is not complete')
+        if draft.get('uncertain_units'):
+            notices.append(f"{draft['uncertain_units']} 组复核未确定 / groups remain uncertain")
+        if draft.get('unavailable_units'):
+            notices.append(f"{draft['unavailable_units']} 组未能复核 / groups could not be reviewed")
+        if draft.get('basic_cleanup_units'):
+            notices.append(f"{draft['basic_cleanup_units']} 组包含基础整理 / groups include basic cleanup")
+        result['review_notice'] = '；'.join(notices)
     result['segments'] = []
     for paragraph in draft['paragraphs']:
         if paragraph['omitted'] and policy.text_version == 'optimized':
             continue
         item = {key: paragraph[key] for key in ('speaker', 'speaker_label', 'start', 'end', 'text')}
         item['id'] = paragraph['ordinal']
+        if paragraph.get('candidate_text') is not None:
+            item['text'] = paragraph['candidate_text']
+        if version >= 6:
+            for key in ('scene_ids', 'merged_source_count', 'generation_method', 'review_outcome'):
+                if key in paragraph:
+                    item[key] = deepcopy(paragraph[key])
+        if paragraph['review_status'] == 'needs_review':
+            item['review_status'] = 'needs_review'
+            if policy.text_version == 'comparison' and paragraph.get('review_details'):
+                notes = '；'.join(issue['reason'] for issue in paragraph['review_details'].get('issues', []))
+                if notes:
+                    item['review_note'] = notes
         if paragraph['omitted']:
             item['text'] = '已省略纯占位语 / Filler omitted'
         if policy.text_version == 'comparison':
             item['original_text'] = paragraph['original_text']
             item['review_status'] = paragraph['review_status']
+            if version >= 6:
+                item['sources'] = deepcopy(paragraph.get('sources', []))
+                if paragraph.get('review_outcome') in ('uncertain', 'unavailable'):
+                    item['review_note'] = '自动复核未确定 / Automatic review is inconclusive'
         result['segments'].append(item)
     result['text'] = '\n'.join(p['text'] for p in result['segments'])
     result.pop('artifacts', None)

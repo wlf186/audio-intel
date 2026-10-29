@@ -551,3 +551,18 @@ English: v0.1.40 includes three rewrite strengths, side-by-side comparison and e
 从 v0.1.38 升级需要数据库备份，不需要复制媒体或重算历史转写。已完成 v15 迁移的开发实例无需重复迁移；仅修正文档、前端或无数据改写的代码时无需新增升级备份。更新后重建前端，并按原配置刷新 API、ASR/TTS supervisors 和 executors。失败时保留升级备份，按匹配的源码与数据库恢复，不能自动降级 v15。
 
 English: v0.1.39 adds optional Ollama transcript cleanup and schema v15. Upgrading from v0.1.38 requires a consistent SQLite-only backup before first startup; no media copy or historical retranscription is needed. Already migrated v15 development instances need no repeated migration or additional backup for changes without data migration. The feature remains disabled until explicitly configured and enabled. Rebuild the frontend and refresh every recorded service process. Retain backups on failed acceptance and restore matching source/database versions rather than automatically downgrading v15.
+
+## 表达优化策略 v5 / Optimization policy v5
+
+SQLite v16→v17 仅新增优化候选正文与复核详情列；升级前创建数据库快照，完成本地验收后清理。历史稿保留，旧未完成候选须重新生成；详见 [表达优化](EXPRESSION_OPTIMIZATION.md#策略-v5待核对候选与独立阅读方式)。
+
+
+## 表达优化策略 v6 / Optimization policy v6
+
+SQLite v17 → v18 仅增加独立后台复核元数据及生成子批次检查点，不重写历史转写、已完成优化稿或媒体。升级前停止空闲服务并创建 SQLite 一致性备份；完成本机部署验收后精确清理此次临时备份。
+
+新稿按连续同说话人来源组整理，可跨画面；正文就绪即发布，复核独立运行，不再撤销正文。旧策略未完成候选须明确重新生成，旧完成稿保留至新稿发布。历史缺失复核信息仍为未知，不补造通过状态。
+
+需重建前端并从最终源码重新启动 API、ASR/TTS 监督进程及执行器；保持实际端口、数据目录、profile、鉴权及 mock 配置。按照本文维护流程核验进程身份、版本、历史任务和优化稿，不能只检查健康端点。
+
+English: Schema v18 adds independent review metadata and durable generation batches. Take a SQLite-only snapshot while stopped; no historical media copy is required. Published content remains available during background review. Regenerate obsolete unfinished candidates explicitly; historical completed drafts stay readable. Rebuild the UI, restore all previously running components, verify final-source process identities and historical data, then remove the recorded upgrade snapshot.

@@ -65,6 +65,12 @@ class OptimizationSummary(BaseModel):
     completed_units: int
     total_units: int
     needs_review_units: int = 0
+    review_state: Literal['queued', 'running', 'paused', 'completed', 'unavailable'] | None = None
+    reviewed_units: int = 0
+    review_total_units: int = 0
+    uncertain_units: int = 0
+    unavailable_units: int = 0
+    basic_cleanup_units: int = 0
     activity_chars: int
     progress: float
     revision: int
@@ -88,6 +94,7 @@ class CreateRequest(BaseModel):
 class RunRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     run_id: str = Field(pattern=r'^[a-f0-9]{32}$')
+    phase: Literal['generation', 'review'] = 'generation'
 
 
 class SourceSpan(BaseModel):
@@ -97,6 +104,17 @@ class SourceSpan(BaseModel):
     end_offset: int
     start: float
     end: float
+
+
+class ReviewIssue(BaseModel):
+    source_quote: str
+    candidate_quote: str
+    reason: str
+
+
+class ReviewDetails(BaseModel):
+    stage: Literal['generation', 'review']
+    issues: list[ReviewIssue] = Field(default_factory=list)
 
 
 class OptimizedParagraph(BaseModel):
@@ -111,17 +129,30 @@ class OptimizedParagraph(BaseModel):
     omitted: bool = False
     review_status: Literal['accepted', 'needs_review'] | None = None
     review_reason: Literal['review_failed', 'invalid_output'] | None = None
+    generation_method: Literal['model', 'basic_cleanup', 'mixed'] | None = None
+    review_outcome: Literal['pending', 'pass', 'fact', 'uncertain', 'unavailable'] | None = None
+    scene_ids: list[str] = Field(default_factory=list)
+    merged_source_count: int = 1
+    candidate_text: str | None = None
+    review_details: ReviewDetails | None = None
     sources: list[SourceSpan]
     segment_ids: list[int]
 
 
 class OptimizedResult(BaseModel):
+    prompt_version: int = 1
     run_id: str
     complete: bool
     model: str
     rewrite_mode: Literal['polish', 'rewrite', 'editorial'] | None = None
     paragraphs: list[OptimizedParagraph]
     needs_review_units: int = 0
+    review_state: Literal['queued', 'running', 'paused', 'completed', 'unavailable'] | None = None
+    reviewed_units: int = 0
+    review_total_units: int = 0
+    uncertain_units: int = 0
+    unavailable_units: int = 0
+    basic_cleanup_units: int = 0
     scenes: list[dict[str, Any]]
 
 
@@ -162,20 +193,30 @@ class Manager:
         self.config = config
         self.current: asyncio.Task | None = None
         self.current_id: str | None = None
+        self.current_phase: str | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.gate = asyncio.Lock()
 
-    async def stop(self, job_id: str, deleting: bool = False):
+    async def interrupt_review(self):
+        if self.current_phase == 'review' and self.current:
+            self.current.cancel()
+            await asyncio.gather(self.current, return_exceptions=True)
+
+    async def stop(self, job_id: str, deleting: bool = False, phase: str = 'generation'):
         values = store.status(job_id)
-        for item in (values['candidate'], values['published'] if deleting else None):
-            if item is None:
+        for name in ('candidate', 'published'):
+            item = values[name]
+            if item is None or (not deleting and (name == 'published') != (phase == 'review')):
                 continue
-            store.transition(item['id'], 'deleting' if deleting else 'pausing', ('queued', 'running', 'pausing', 'paused', 'failed', 'succeeded') if deleting else ('queued', 'running', 'pausing'))
+            if deleting:
+                store.transition(item['id'], 'deleting', ('queued', 'running', 'pausing', 'paused', 'failed', 'succeeded'))
+            elif phase == 'review':
+                store.review_transition(item['id'], 'paused', ('queued', 'running', 'unavailable'))
+            else:
+                store.transition(item['id'], 'paused', ('queued', 'running', 'pausing'))
             if self.current_id == item['id'] and self.current:
                 self.current.cancel()
                 await asyncio.gather(self.current, return_exceptions=True)
-            if not deleting:
-                store.transition(item['id'], 'paused', ('pausing',))
 
     async def check_model(self, profile: dict):
         if profile.get('prompt_version') != engine.PROMPT_VERSION:
@@ -184,53 +225,51 @@ class Manager:
         if not any(m['name'] == profile['model'] and m['digest'] == profile['model_digest'] for m in models['models']):
             raise ValueError('模型已变化或被删除，请重新验证并生成 / Model changed or was removed; verify and regenerate')
 
+    async def retry_io(self, operation):
+        for attempt in range(3):
+            try:
+                return await operation()
+            except (httpx.TransportError, httpx.HTTPStatusError, TimeoutError) as exc:
+                if attempt == 2 or (isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500 and exc.response.status_code != 429):
+                    raise
+                await asyncio.sleep(2 ** attempt)
+
     async def execute(self, run_id: str):
         try:
             run = store.get(run_id)
-            profile = run['config']
-            for attempt in range(3):
-                try:
-                    await self.check_model(profile)
-                    break
-                except (httpx.TransportError, httpx.HTTPStatusError, TimeoutError) as exc:
-                    if attempt == 2 or (isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500 and exc.response.status_code != 429):
-                        raise
-                    await asyncio.sleep(2 ** attempt)
+            profile, hotwords = run['config'], run['hotwords']
+            await self.retry_io(lambda: self.check_model(profile))
             job = parent(run['job_id'])
             if engine.source_hash(job['result']) != run['source_hash']:
                 raise ValueError('原文已变化，请重新生成 / Source changed; regenerate')
             units = store.units(run_id)
-            hotwords = run['hotwords']
-
-            async def process(batch, before, after):
-                reason = None
-                for attempt in range(3):
-                    try:
-                        output = await engine.generate(profile, batch, hotwords, before, after, lambda count: store.activity(run_id, count))
-                        if not store.checkpoint(run_id, output):
-                            raise asyncio.CancelledError()
-                        return
-                    except engine.ReviewFailed:
-                        reason = 'review_failed'
-                        break
-                    except (engine.InvalidOutput, json.JSONDecodeError):
-                        if attempt == 2:
-                            reason = 'invalid_output'
-                            break
-                    except (httpx.TransportError, httpx.HTTPStatusError, TimeoutError) as exc:
-                        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500 and exc.response.status_code != 429:
-                            raise
-                        if attempt == 2:
-                            raise
-                    await asyncio.sleep(2 ** attempt)
-                if not store.checkpoint(run_id, [(batch[0]['ordinal'], batch[0]['original_text'])], review_reason=reason):
-                    raise asyncio.CancelledError()
-
-            from .optimization_policy import context
             for index, unit in enumerate(units):
                 if unit['text'] is not None:
                     continue
-                await process([unit], context(units[:index], before=True), context(units[index + 1:]))
+                chunks = store.parts(run_id, unit['ordinal'])
+                for part in chunks:
+                    if part['text'] is not None:
+                        continue
+                    source = part['source']
+                    batch = [{**source, 'ordinal': unit['ordinal']}]
+                    try:
+                        output = await self.retry_io(lambda: engine.generate(profile, batch, hotwords, '', '', lambda count: store.activity(run_id, count)))
+                        text = output[0][1]
+                        method = getattr(output, 'method', 'model')
+                    except (engine.InvalidOutput, engine.ReviewFailed, json.JSONDecodeError):
+                        text, method = engine.basic_cleanup(source['original_text']), 'basic_cleanup'
+                    if not store.checkpoint_part(run_id, unit['ordinal'], part['part_ordinal'], text, method):
+                        raise asyncio.CancelledError()
+                # Only forced, non-sentence boundaries need a bounded seam pass.
+                chunks = store.parts(run_id, unit['ordinal'])
+                for i in range(len(chunks) - 1):
+                    if chunks[i]['source']['forced_after'] and not chunks[i]['seam_done']:
+                        texts = await self.retry_io(lambda: engine.repair_seam(profile, chunks[i], chunks[i + 1], hotwords))
+                        if not store.checkpoint_seam(run_id, unit['ordinal'], i, texts):
+                            raise asyncio.CancelledError()
+                        chunks = store.parts(run_id, unit['ordinal'])
+                if not store.finish_unit(run_id, unit['ordinal']):
+                    raise asyncio.CancelledError()
             if engine.source_hash(parent(run['job_id'])['result']) != run['source_hash']:
                 raise ValueError('Source changed; regenerate / 原文已变化，请重新生成')
             if store.publish(run_id):
@@ -244,24 +283,59 @@ class Manager:
         except Exception as exc:
             store.transition(run_id, 'failed', ('running',), error_message(exc))
 
+    async def review_step(self, run_id: str):
+        try:
+            run = store.get(run_id)
+            await self.check_model(run['config'])
+            if engine.source_hash(parent(run['job_id'])['result']) != run['source_hash']:
+                raise ValueError('原文已变化，复核已停止 / Source changed')
+            units = store.units(run_id)
+            unit = next((unit for unit in units if unit['review_outcome'] == 'pending'), None)
+            if unit is None:
+                store.review_transition(run_id, 'completed', ('running',))
+                return
+            chunks = store.parts(run_id, unit['ordinal'])
+            index = next(i for i, part in enumerate(chunks) if part['review_outcome'] is None)
+            # Seam neighbors are reviewed together so moved boundary words are not
+            # incorrectly diagnosed as omissions in an isolated request chunk.
+            left = index - 1 if index and chunks[index - 1]['source']['forced_after'] else index
+            right = index + 2 if chunks[index]['source']['forced_after'] else index + 1
+            window = chunks[left:right]
+            original = ''.join(part['source']['original_text'] for part in window)
+            candidate = '\n\n'.join(part['text'] for part in window if part['text'])
+            result = await engine.review(run['config'], original, candidate, run['hotwords'])
+            if not store.checkpoint_review(run_id, unit['ordinal'], index, result):
+                return
+            store.review_transition(run_id, 'queued', ('running',))
+        except asyncio.CancelledError:
+            store.review_transition(run_id, 'queued', ('running',))
+            raise
+        except Exception as exc:
+            store.review_transition(run_id, 'unavailable', ('running',), error_message(exc))
+
     async def run(self):
         self.loop = asyncio.get_running_loop()
         with db.connect() as connection:
             connection.execute("UPDATE transcript_optimizations SET state='paused',error='服务中断 / Service interrupted',revision=revision+1,updated_at=? WHERE state IN ('running','pausing')", (db.utcnow(),))
-            interrupted_deletions = [r[0] for r in connection.execute("SELECT DISTINCT job_id FROM transcript_optimizations WHERE state='deleting'")]
+            connection.execute("UPDATE transcript_optimizations SET review_state='queued',revision=revision+1,updated_at=? WHERE review_state='running' AND published=1", (db.utcnow(),))
+            interrupted_deletions = [row[0] for row in connection.execute("SELECT DISTINCT job_id FROM transcript_optimizations WHERE state='deleting'")]
         for job_id in interrupted_deletions:
             store.delete(job_id)
         try:
             while True:
-                if store.settings().get('enabled'):
+                if store.settings().get('enabled') and not self.gate.locked():
                     with db.connect() as connection:
-                        row = connection.execute("SELECT id FROM transcript_optimizations WHERE state='queued' ORDER BY created_at,id LIMIT 1").fetchone()
-                    if row and store.transition(row['id'], 'running', ('queued',)):
-                        self.current_id = row['id']
-                        self.current = asyncio.create_task(self.execute(row['id']))
+                        generation = connection.execute("SELECT id FROM transcript_optimizations WHERE state='queued' ORDER BY created_at,id LIMIT 1").fetchone()
+                        review = None if generation else connection.execute("SELECT id FROM transcript_optimizations WHERE state='succeeded' AND published=1 AND review_state='queued' ORDER BY updated_at,id LIMIT 1").fetchone()
+                    identifier = generation[0] if generation else review[0] if review else None
+                    phase = 'generation' if generation else 'review'
+                    claimed = identifier and (store.transition(identifier, 'running', ('queued',)) if generation else store.review_transition(identifier, 'running', ('queued',)))
+                    if claimed:
+                        self.current_id, self.current_phase = identifier, phase
+                        self.current = asyncio.create_task(self.execute(identifier) if generation else self.review_step(identifier))
                         await asyncio.gather(self.current, return_exceptions=True)
-                        self.current_id, self.current = None, None
-                await asyncio.sleep(.25)
+                        self.current_id, self.current_phase, self.current = None, None, None
+                await asyncio.sleep(.05)
         finally:
             if self.current:
                 self.current.cancel()
@@ -314,7 +388,7 @@ def register(app, api):
         except Exception as exc:
             raise HTTPException(422, error_message(exc)) from exc
 
-    @app.post(root + '/verify', summary='验证优化模型 / Verify optimization model', description=api.bilingual('验证优化模型', 'Run synthetic structured generation and verify the allocated context window.'), operation_id='verifyOptimizationModel', tags=[TAG], responses=errors)
+    @app.post(root + '/verify', summary='验证优化模型 / Verify optimization model', description=api.bilingual('验证优化模型', 'Run synthetic prose generation within 330 seconds and verify the allocated context window. Background review does not gate connection verification.'), operation_id='verifyOptimizationModel', tags=[TAG], responses=errors)
     async def verify(body: ModelConnection, _: None = auth):
         try:
             async with probe_gate:
@@ -343,6 +417,7 @@ def register(app, api):
             if not body.enabled:
                 for job_id in store.summaries():
                     await manager.stop(job_id)
+                    await manager.stop(job_id, phase='review')
             return value
 
     @app.get(jobs, summary='读取优化状态 / Get optimization status', description=api.bilingual('读取优化状态', 'Return published/candidate summaries including needs_review_units. Supports ETag polling.'), operation_id='getOptimizationStatus', tags=[TAG], response_model=OptimizationStatus, responses=errors)
@@ -366,6 +441,7 @@ def register(app, api):
             config = {**store.settings(), 'prompt_version': engine.PROMPT_VERSION, 'rewrite_mode': body.rewrite_mode}
             if not config.get('enabled'):
                 raise HTTPException(409, '请在系统状态启用表达优化 / Enable expression optimization in System')
+            await manager.interrupt_review()
             candidate = store.status(job_id)['candidate']
             if body.regenerate and candidate and candidate['requires_regeneration']:
                 await manager.stop(job_id)
@@ -384,16 +460,18 @@ def register(app, api):
                 response.status_code = 200
             return public_status(job_id)
 
-    @app.post(jobs + '/pause', summary='暂停优化 / Pause optimization', description=api.bilingual('暂停优化', 'Cancel the current generation and preserve committed checkpoints.'), operation_id='pauseTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, responses=errors)
+    @app.post(jobs + '/pause', summary='暂停优化 / Pause optimization', description=api.bilingual('暂停优化', 'Pause generation (default phase) or background review (phase=review); preserve committed text and checkpoints.'), operation_id='pauseTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, responses=errors)
     async def pause(job_id: str, body: RunRequest, _: None = auth):
         async with manager.gate:
             item = owned(job_id, body.run_id)
-            if item['published']:
+            if body.phase == 'generation' and item['published']:
                 raise HTTPException(409, 'Completed draft cannot be paused')
-            await manager.stop(job_id)
+            if body.phase == 'review' and not item['published']:
+                raise HTTPException(409, 'Review requires a completed draft')
+            await manager.stop(job_id, phase=body.phase)
             return public_status(job_id)
 
-    @app.post(jobs + '/resume', summary='继续优化 / Resume optimization', description=api.bilingual('继续优化', 'Resume from saved checkpoints including retained originals after model and source verification. Obsolete policy candidates require explicit regeneration (409).'), operation_id='resumeTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, responses=errors)
+    @app.post(jobs + '/resume', summary='继续优化 / Resume optimization', description=api.bilingual('继续优化', 'Resume generation subrequests/seams or background review using phase after model/source verification. Completed reviews with unavailable_units also accept phase=review and retry only unavailable subrequests. Published text is immutable; obsolete policy candidates require regeneration (409).'), operation_id='resumeTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, responses=errors)
     async def resume(job_id: str, body: RunRequest, _: None = auth):
         async with manager.gate:
             if not store.settings().get('enabled'):
@@ -405,10 +483,16 @@ def register(app, api):
                 raise HTTPException(409, error_message(exc)) from exc
             if engine.source_hash(parent(job_id)['result']) != item['source_hash']:
                 raise HTTPException(409, 'Source changed; regenerate')
-            store.resume(body.run_id)
+            if body.phase == 'review':
+                store.resume_review(body.run_id)
+            else:
+                if item['published']:
+                    raise HTTPException(409, 'Completed draft cannot be resumed')
+                await manager.interrupt_review()
+                store.resume(body.run_id)
             return public_status(job_id)
 
-    @app.get(jobs + '/result', summary='读取优化稿 / Read optimized transcript', description=api.bilingual('读取优化稿', 'Read source-mapped paragraphs and current picture grouping. text=null is pending; omitted=true with text="" is a reviewed filler omission. review_status=needs_review retains the exact original after bounded review/output failures; accepted means current-policy checks passed, not a quality guarantee. Null review_status is pending or unknown historical metadata. needs_review_units counts retained paragraphs, which do not prevent completion. Historical drafts remain readable. Partial results are explicitly marked.'), operation_id='getOptimizedTranscript', tags=[TAG], response_model=OptimizedResult, responses=errors)
+    @app.get(jobs + '/result', summary='读取优化稿 / Read optimized transcript', description=api.bilingual('读取优化稿', 'Read grouped source spans and final prose. complete means the draft is published and exportable while review_state may still be queued/running. v6 text remains immutable after publication; review_outcome distinguishes pending/pass/fact/uncertain/unavailable. generation_method identifies model/basic_cleanup/mixed. Legacy candidate_text remains readable. All text and review metadata are read in one SQLite snapshot.'), operation_id='getOptimizedTranscript', tags=[TAG], response_model=OptimizedResult, responses=errors)
     def result(job_id: str, run_id: str = Query(..., pattern=r'^[a-f0-9]{32}$'), _: None = auth):
         with reader_lease(job_id), speaker_update_lock(job_id):
             owned(job_id, run_id)

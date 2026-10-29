@@ -106,6 +106,21 @@ def reading_sections(result: dict[str, Any]) -> list[dict[str, Any]]:
     if not scenes:
         return [{'paragraphs': result.get('segments', [])}]
     for paragraph in result.get('segments', []):
-        owner = max(range(len(scenes)), key=lambda i: max(0, min(paragraph['end'], scenes[i]['end']) - max(paragraph['start'], scenes[i]['start'])))
+        references = paragraph.get('scene_ids', []) if result.get('optimization_policy', 0) >= 6 else []
+        owner = next((i for i, scene in enumerate(scenes) if scene['id'] in references), None)
+        if owner is None:
+            owner = max(range(len(scenes)), key=lambda i: max(0, min(paragraph['end'], scenes[i]['end']) - max(paragraph['start'], scenes[i]['start'])))
         scenes[owner]['paragraphs'].append(paragraph)
+        for i, scene in enumerate(scenes):
+            if i != owner and scene['id'] in references:
+                scene.setdefault('linked_paragraphs', []).append({'start': paragraph['start'], 'scene_number': owner + 1})
     return scenes
+
+
+def comparison_source_text(paragraph: dict[str, Any]) -> str:
+    """Render preserved source rows without inventing word alignment to the draft."""
+    from .utils import timecode
+    sources = paragraph.get('sources') or []
+    if not sources:
+        return paragraph['original_text']
+    return '\n'.join(f"[{timecode(source['start'])} – {timecode(source['end'])}] {source['text']}" for source in sources)

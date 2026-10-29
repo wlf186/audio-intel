@@ -1,57 +1,95 @@
 # 表达优化 / Expression optimization
 
-在「系统状态 → 表达优化」填写 Ollama URL，按需勾选使用服务端系统代理，获取模型并选择。模型验证会实际运行一段合成文本；验证成功后勾选启用并保存。默认关闭，不会自动发送历史转写。支持本机或受信任网络中的 Ollama，无云端回退。
+在「系统状态 → 表达优化」配置 Ollama URL，获取模型、验证、启用并保存。默认关闭，不会自动处理或发送历史转写。核心语音推理仍在本机运行；表达优化将本批来源正文、候选及任务提交时的热词发送到用户指定的 Ollama，不发送音视频，不提供隐式云端回退。非回环地址显示发送提醒；localhost 指服务端所在机器。
 
-在已完成的普通音频或视频转写中点击「优化表达」。原文、优化稿、对照使用三个阅读页签，共用搜索和说话人筛选。视频原文内可切换逐句明细。对照在桌面左右并列、窄屏上下排列，标记文字增删和省略；段落筛选默认「全部」，也可选择「有变动」或「待核对」。调整段数不是质量评分。优化稿仅供阅读、API 和简洁导出，不用于声纹或精确字幕。会使用任务提交时保存的热词，而非热词库当前内容。模型可能改错文字，重要内容请对照原文核实。
+验证检查连接、文本生成能力及实际上下文窗口。最低 16K，默认请求最多 32K（受模型上限和实际窗口约束）；模型上限从服务返回的 model_info 获取。每次生成关闭 thinking，输出预算明确限定为 4096 tokens。辅助复核异常不将已经能生成正文的模型判为不可用。远端服务类型、模型和硬件会影响速度及质量。
 
-策略 v4 提供三个改写档位，首次默认「流畅重写」，每次创建或重新优化时选择：
+## 连续语句成稿
+
+对已完成的普通音频或视频任务选择「优化表达」。按同一人连续发言构建来源组，可跨画面边界；另一人的插话及超过 15 秒的停顿形成新组。不会根据同名猜测说话人，也不会改变原始转写、字幕或音频时间轴。
 
 | 档位 | API 值 | 效果 |
-|---|---|---|
-| 自然润色 | `polish` | 主动清理口头冗余、重复、绕句和病句，保留交流语气。 |
-| 流畅重写 | `rewrite` | 充分重组句式和表达顺序，形成顺畅、清晰的对谈稿。 |
-| 深度成稿 | `editorial` | 更充分地组织段落，用紧凑书面表达保留全部独立事实和有效细节，不生成摘要或纪要。 |
+| --- | --- | --- |
+| 自然润色 | `polish` | 清理重复、口头冗余和病句，保留交流语气。 |
+| 流畅重写 | `rewrite` | 默认档位，重组句式和表达顺序，形成连贯的对谈稿。 |
+| 深度成稿 | `editorial` | 更充分地整理为书面稿，保留事实与有效细节，不生成摘要。 |
 
-仍按连续同说话人和视频画面划分来源段，每段最多 800 字，前后各最多 6 段、600 字原文用于理解。允许换词、改句式、合并重复和修顺语法，保持说话人视角、数字、否定、条件、因果和询问；不补背景或推测原因。含糊片段可局部保留，其余内容继续润色。有意义的回应保留；纯占位语需结合上下文确认后才省略。
+三个档位都支持多条来源合并。模型接收本批所属的来源片段，借助任务热词修正明确的听写错误；不向生成请求提供相邻批次或其他人的正文，避免将邻文误当作当前内容。不把当前热词库的后续修改写回历史任务。有语义但不确定的局部词语保留，没有完整语义的截断尾片可省略，原始来源始终可对照；不能凭猜测补全事实、原因、时间或人物关系。原本清晰的短句可以不改；文字变化比例不是质量评分。
 
-独立请求复核「信息保真」和「整理充分性」，原样返回也须检查整理效果。复核先核对并引用证据，再给出结论，尤其检查分类、优先级、主宾语和询问含义是否被改写。发现明确事实问题或整理不足时，最多进行一次定向修正或加强；语言不足不等于事实错误。优先保留已通过信息检查的改写，避免后续修正失败时丢失可靠候选。没有可靠候选才逐字保留原文、标记「待核对」，继续整稿；运行故障仍暂停保存进度。复核不保证内容绝对正确，不以改写比例代替质量判断。
+长来源组按实际预算分成持久化子批次，目标约 90 字、最多 160 字，优先完整句子，其次逗号边界；预算紧张时进一步缩小。一个批次仍可包含多条原始来源，最终按原顺序组成同一组成稿，不再次整体摘要。真正无自然边界的强制拆分进行有界接缝整理，版本号和小数中的点不作为句界。暂停恢复复用已保存的批次与结果，不重写完成部分或重复拼接。
 
-至少需要 16K 实际上下文，正文、热词和复核材料均纳入预算；预算不足时需增大窗口并重新验证。关闭 thinking，每次显式设置 `num_predict=4096`。进度统计已保存的来源字符，包括通过检查的改写、确认省略及标记待核对的原文保留。待核对数量不是原文错误数，也不代表其他段落绝对正确。正在处理的段落仅显示生成活动，不制造剩余时间。连接失败、超时、HTTP 429/5xx 最多尝试三次，耗尽后暂停，可在恢复服务后继续；配置、模型或来源变化、存储故障显示错误，不将剩余段落算作完成。暂停取消当前请求，保留已落盘正文及核对标记；API 重启后运行中任务变为暂停。远端取消是否立即释放算力取决于 Ollama。
+生成正文失败时进行有界恢复；已有可用改写不会因后续尝试失败而撤销。仍无法得到正文时执行基础整理，并明确记录 `generation_method`，不冒充模型完成了改写。持续连接故障保存进度，恢复服务后可继续；无法安全保存时如实报告运行故障。
 
-每个转写保留一份已完成优化稿和至多一份生成候选；重新优化成功才替换旧稿。删除优化会取消请求、删除检查点和草稿并清理导出缓存；删除父任务也级联清理。关闭功能暂停任务，重新启用后可手动继续。模型或原文变化时需要重新生成。
+生成同时检查少量明确限定词的范围是否丢失（如“不止”“未必”“只能”，接受明确同义表达），必要时复用一次加强机会；不会把普通“不／不是”或合理自我纠正一概认作错误。这是有限保护，不能证明所有事实均正确。
 
-点击统一的「导出转写」入口选择内容、格式、脱敏及替换规则，优先恢复浏览器最近选择的内容，并分别记忆原文、优化稿和对照稿的格式；首次默认当前阅读页签及 PDF。没有完成稿或格式不可用时临时回退，不覆盖已保存偏好。按钮统一为「下载」，文件准备成功并触发浏览器下载后自动关闭弹窗；失败保留选项并可重试。未完成候选不能冒充已完成稿导出；可以切回已完成稿导出上一版。优化稿跳过已省略段，对照版保留该段原文和省略说明。普通优化稿 PDF/DOCX/TXT 不添加待核对提示，保持干净正文；对照版 PDF/DOCX 对保留原文的待核对段落单独显示标记。全部段落保留原文时，网页显示「处理完成，全部保留原文」，仍可导出。优化稿支持 PDF、DOCX、TXT；对照版支持 PDF、DOCX，A4 横向、左原文右改写、等宽同字号并标记文字增删，长段可跨页且重复列标题；画面仅出现一次。脱敏和替换同时应用两侧。只允许导出已完成稿。
+## 稿件就绪与后台复核
 
-## API
+正文生成和复核是两个独立阶段。正文全部完成后即发布，允许阅读和下载；复核在后台运行。一个远端请求槽优先处理生成，避免旧稿复核阻塞新稿。复核只更新提示，不修改已经发布的正文。
 
-沿用服务 Bearer/API 浏览器认证。OpenAPI 和本地 `/docs` 提供请求结构。
+事实复核明确区分 `pass`、`fact`、`uncertain`。通过结论可包含肯定性说明，不因说明非空而判为格式错误。事实疑点需定位原文和成稿证据，引用允许空白与全角字符规范化，不做模糊语义替换。首次疑点最多独立确认一次；矛盾或证据不足记录为不确定，无法完成记录为不可用。
 
-| 方法 | 路径（前缀 `/api/v1`） | 用途 |
-|---|---|---|
-| GET / PUT | `/settings/transcript-optimization` | 读取、保存配置 |
-| POST | `/settings/transcript-optimization/discover` | `{base_url,use_proxy}` 获取模型 |
-| POST | `/settings/transcript-optimization/verify` | 加 `model` 验证；返回短期 verification_token |
-| GET / POST | `/jobs/{id}/transcript-optimization` | 状态（ETag）/创建 |
-| POST | `/jobs/{id}/transcript-optimization/pause`、`/resume` | `{run_id}` 暂停/继续 |
-| GET | `/jobs/{id}/transcript-optimization/result?run_id=...` | 段落与原文、来源、画面 |
-| DELETE | `/jobs/{id}/transcript-optimization?purge=true` | 清理所有优化数据 |
+复核结果只是辅助，不能保证绝对正确。疑点、不确定、不可用和基础整理数量分别展示，不能将未完成复核当作通过。后台复核不可用不影响成稿的成功状态。
 
-创建须 `Idempotency-Key`，正文 `{regenerate:false,rewrite_mode:"rewrite"}`；可选 `rewrite_mode` 为 `polish/rewrite/editorial`，省略默认 `rewrite`。档位存入配置快照并返回状态摘要与结果；恢复使用原档位，更换档位须重新生成。幂等指纹包含档位，同键更换档位返回 409；旧键未携带档位的请求仍可重放。首次 202、重放 200、冲突 409、队列上限 429（Retry-After）。独立队列单并发，最多 5 个排队任务。`POST /jobs/{id}/transcript-export` 增加 `text_version` 和非原文必填 `optimization_id`；默认原文兼容旧客户端。列表/SSE 只含优化状态摘要，不包含正文。能力发现见 `asr.transcript_optimization`。
+qwen3.5:4b 与 9b 的本轮实测仍有事实改变、复核漏报和整理不足；完整范围及未达标项见[验证记录](EXPRESSION_OPTIMIZATION_VALIDATION.md)。来源破碎或听写错误较多时，不能将模型结论当作事实认证。
 
-调用示例：`python3 scripts/optimize_transcript.py --url http://localhost:20815 --job JOB_ID`；用 `--rewrite-mode polish|rewrite|editorial` 选择档位，显式重新生成加 `--regenerate`，断点继续加 `--resume`；恢复与档位参数不能同时使用。认证通过 `AUDIO_INTEL_API_KEY` 环境变量。需先在系统页面配置启用。
+可分别暂停／继续生成和复核。复核阶段结束但仍有未能复核部分时，可仅重试这些子批次，保留其他结论和正文。“未能复核”按包含不可用子批次的来源组计数，可能与事实疑点组重叠，不应将这些计数相加作为总组数。API 重启后未完成生成暂停，意外中断的后台复核重新排队，主动暂停保持暂停。关闭功能暂停两类工作。删除优化或父任务会取消相关请求，并清理正文、子批次、复核记录和导出缓存。重新优化时旧完成稿保留到新稿就绪；旧响应不能覆盖新稿。
 
-## 持久化与兼容性
+## 阅读、对照和导出
 
-SQLite v14 → v15 仅新增独立设置、优化任务及段落表；不改写历史转写或媒体。升级仅需一致的 SQLite 备份，验收完成后按 UPGRADE.md 清理临时备份。配置保存在服务端 SQLite。阅读切换是当前浏览器工作会话偏好，最多保留 200 个任务，退出登录或删除任务清理；不会保存正文或 API 密钥。模型和依赖锁无需变化。
+原文保持逐条来源；优化稿按来源组显示连贯成稿；对照默认阅读优先，桌面左侧多条原文、右侧一组成稿，共用滚动区。长来源默认显示前三条，可展开全部；逐字差异通过「显示改动」开启。手机按组上下排列。
 
-策略 v3 将 SQLite v15 升至 v16，为优化段落增加核对状态、原因码，为优化任务增加待核对计数；升级前需要一致的 SQLite 备份，不需要复制媒体。历史原文、完成稿及配置快照不改写，历史缺失状态保持未知，不补写为复核通过。新候选将策略版本写入配置快照，不要求重新填写已验证且身份未变的模型配置。旧策略候选的状态摘要返回 `requires_regeneration=true`，继续接口返回 409；明确重新生成后替换旧候选，原已完成稿保留到新稿成功。
+原文时间戳定位对应片段，成稿回听定位整组。搜索命中折叠来源会展开；版本切换按来源 ID 和时间范围定位，不把位于合并组内部的时间跳到下一组。后台复核刷新保留阅读位置。图文／文本方式独立于原文／优化稿／对照。
 
-策略 v4 沿用 SQLite v16，无额外迁移或历史正文改写。旧稿的 `rewrite_mode=null` 显示为旧版策略，不假定为新档位；旧策略候选须明确重新生成。浏览器 `audio-intel:optimization-preferences:v1` 长期保存最后选择的档位；导出 `audio-intel:transcript-export:v1` 兼容扩展内容与按内容分类的格式，继续保存脱敏和规则。两类偏好在刷新、重开、退出登录及资料库替换后保留，不保存正文或凭据。
+跨画面的成稿只展示一次，位于首个关联画面，并关联其他画面。画面编辑后重新计算引用，不改正文。对照导出同样保留逐条来源和时间，不伪造逐词音频对齐。
 
-结果段落新增 `omitted`：`text=null, omitted=false` 表示尚未完成；`text="", omitted=true` 表示已复核的纯占位语省略；非空 `text` 表示保留正文。旧已完成稿按原文读取，`omitted=false`。来源 ID、时间、说话人和原文始终保留。阅读版本升级为三态，会话内兼容旧布尔偏好；搜索、说话人筛选与阅读位置按任务记录，最多 200 个，退出登录或删除任务清理。
+统一「导出转写」入口记忆内容、各内容格式、脱敏及替换规则；不可用选择临时回退，不覆盖偏好。下载成功触发浏览器下载后关闭弹窗，失败保留选项。优化稿支持 PDF/DOCX/TXT，对照支持横向双栏 PDF/DOCX。复核未完成也可下载并如实说明；具体疑点保留标记，对照附脱敏后的原因。来源、正文和原因使用相同替换策略，导出不修改持久化原始文件。
 
-结果段落新增 `review_status`（`accepted` / `needs_review` / `null`）及 `review_reason`（`review_failed` / `invalid_output` / `null`）；状态摘要和结果新增 `needs_review_units`。`accepted` 表示通过当前策略的内容检查（含原样一致性检查），不承诺模型绝对正确。`needs_review` 必须保存与来源完全一致的正文；`null` 表示尚未处理或历史没有记录，结合 `text` 区分。标记和正文同事务保存；完成的保留原文段不阻止 `state=succeeded`、`complete=true` 和发布。全局列表与 SSE 只读摘要。
+## API 与脚本
 
-CLI 完成时输出完整结果 JSON，即使存在 `needs_review_units` 也正常退出；运行故障暂停或失败时返回非零状态，修复后使用 `--resume`。
+所有接口沿用服务的 Bearer／浏览器会话认证。下列路径前缀为 `/api/v1`；字段详见本地 `/docs` 与 `/openapi.json`。
 
-English: Optional Ollama-only faithful transcript cleanup, with independent durable checkpoints, pause/resume, atomic draft replacement, original/draft comparison, and redacted PDF/DOCX/TXT exports. Minimum allocated context is 16K; each generation explicitly caps output at 4096 tokens and disables thinking. The original transcript and audio linkage remain intact. Schema v16 adds durable review metadata and a summary count. Paragraph-local review failures retain the exact source and continue; operational failures preserve checkpoints for recovery. Only comparison exports include review markers. Historical missing metadata does not imply a passed review. Policy v4 adds polish/rewrite/editorial modes (default rewrite), durable per-run mode snapshots, independent fidelity and editing checks, and side-by-side landscape comparison exports. Browser export choices and the last editing mode persist locally. Configure and enable in System before using the authenticated API example.
+| 方法与路径 | 用途 |
+| --- | --- |
+| GET/PUT `/settings/transcript-optimization` | 读取、保存配置 |
+| POST `/settings/transcript-optimization/discover` | 获取模型 |
+| POST `/settings/transcript-optimization/verify` | 内置合成样本验证，返回短期 verification_token |
+| GET/POST `/jobs/{id}/transcript-optimization` | 状态／创建；GET 支持 ETag |
+| POST `/jobs/{id}/transcript-optimization/pause`、`/resume` | `{run_id,phase:"generation"或"review"}`；phase 默认 generation |
+| GET `/jobs/{id}/transcript-optimization/result?run_id=...` | 正文、来源及复核详情 |
+| DELETE `/jobs/{id}/transcript-optimization?purge=true` | 删除全部优化数据 |
+| POST `/jobs/{id}/transcript-export` | 使用 text_version、optimization_id 导出 |
+
+创建需 `Idempotency-Key`，正文为 `{regenerate:false,rewrite_mode:"rewrite"}`。首次 202、同请求重放 200、冲突 409、容量不足 429（Retry-After）；更换档位须重新生成，恢复沿用配置快照。原有限制和父任务校验继续适用。
+
+结果 `complete` 代表正文已经发布，不代表复核结束。`review_state` 独立表示 queued/running/paused/completed/unavailable；历史没有记录时为 null。摘要包含 reviewed_units、review_total_units、uncertain_units、unavailable_units、basic_cleanup_units，进度按真实保存结果更新。全局任务列表和 SSE 只含摘要，不读取正文统计。
+
+段落 `text` 是 v6 实际成稿；`sources`、`segment_ids` 保留不可变来源，`scene_ids` 为关联画面，`merged_source_count` 为来源数。`generation_method` 区分 model/basic_cleanup/mixed；`review_outcome` 区分 pending/pass/fact/uncertain/unavailable。兼容字段 `review_status` 仅 pass 对应 accepted、fact 对应 needs_review，其余为 null；历史 null 不表示通过。旧策略的 candidate_text 保持兼容读取。
+
+```bash
+python3 scripts/optimize_transcript.py --url http://localhost:20815 --job JOB_ID --rewrite-mode editorial
+python3 scripts/optimize_transcript.py --url http://localhost:20815 --job JOB_ID --resume
+python3 scripts/optimize_transcript.py --url http://localhost:20815 --job JOB_ID --resume --phase review --wait-review
+```
+
+URL 应使用实际部署地址。客户端密钥通过 `AUDIO_INTEL_API_KEY` 提供，不写入 URL。默认在正文就绪后输出 JSON；`--wait-review` 额外等待后台复核终态或暂停，复核不可用不撤销正文成功。
+
+## 持久化与升级
+
+策略 v6／SQLite v18 增加独立复核元数据及内部批次检查点。升级前做 SQLite 一致性备份，无需复制历史媒体；遵循 [升级指南](UPGRADE.md) 完成服务恢复和历史数据验收后清理临时备份。已完成历史稿不自动重算，旧策略未完成候选须明确重新生成。
+
+原有模型身份、配置和任务热词快照保留。v3/v4 的核对记录、v5 的候选正文按旧含义读取；缺失信息不补造为已复核。浏览器档位与导出偏好继续长期保存，刷新、重开、退出登录和资料库替换后保留。阅读方式、筛选、位置及差异显示属于当前任务会话，刷新保留、退出登录清理，最多保留 200 个任务，不存正文或密钥。
+
+English: Policy v6 combines consecutive same-speaker source spans across pictures into readable drafts. Generation batches and seam checkpoints are durable. Published content is available before independent background review finishes; review never changes published text. Structured verdicts distinguish pass, factual concerns and uncertainty, and review failures do not invalidate a usable draft. Comparison presents multiple timed sources against one reading group. PDF/DOCX/TXT exports preserve pending-review notices, factual markers and redacted reasons. Schema v18 adds metadata and checkpoints without rewriting historical text. Use a SQLite-only backup and complete deployment acceptance before cleanup. Native API documentation and the CLI expose independent generation/review resume and optional waiting for review.
+
+## 开发质量验证
+
+固定合成／去标识化语料在 `tests/fixtures/optimization_quality.json`。`scripts/evaluate_optimization.py` 直接调用所选服务，不创建应用任务；必须显式指定服务和模型。先验证语料，再串行执行两个模型，避免竞争资源：
+
+```bash
+.runtime/api/bin/python scripts/evaluate_optimization.py --validate-corpus
+.runtime/api/bin/python scripts/evaluate_optimization.py --base-url http://localhost:11434 --model qwen3.5:4b --output tmp/quality-4b.json --repeats 3
+.runtime/api/bin/python scripts/evaluate_optimization.py --base-url http://localhost:11434 --model qwen3.5:9b --output tmp/quality-9b.json --repeats 3
+.runtime/api/bin/python scripts/evaluate_optimization.py --base-url http://localhost:11434 --model qwen3.5:4b --corpus tests/fixtures/optimization_quality_long.json --output tmp/quality-long-4b.json --repeats 1
+```
+
+Windows 使用 API 环境的对应 Python 路径。工具保存服务版本、模型 digest、策略及语料校验和、逐项输出和耗时；`--resume` 只恢复身份一致的结果。复核用预置候选独立测量，未知／不可用不从分母删除。语言改善和事实保留须对记录逐项独立审读，不能由改字比例自动认证。真实任务评测应复制到隔离测试目录，按来源范围比较并统计来源字数加权结果，不能修改用户任务来做测试。

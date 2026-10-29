@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  After model setup, inference runs offline and task data stays on your machine.
+  After model setup, core speech inference runs offline and task data stays on your machine. Optional transcript optimization sends relevant text to your configured Ollama service.
 </p>
 
 <p align="center">
