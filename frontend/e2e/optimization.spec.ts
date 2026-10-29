@@ -48,11 +48,11 @@ for(const width of [1440,390])test(`optimization settings ${width}`,async({page}
  await expect(panel).toContainText('配置已保存')
  expect(config.enabled).toBeTruthy()
  await panel.scrollIntoViewIfNeeded()
- if(width===1440)for(const row of await panel.locator('.optimization-connection').all()){
+ if(width===1440)for(const row of await panel.locator('.optimization-connection:has(button)').all()){
   const field=await row.locator('input,select').boundingBox(),button=await row.locator('button').boundingBox()
   expect(Math.abs(field!.y+field!.height-button!.y-button!.height)).toBeLessThanOrEqual(1)
  }
- if(width===390)for(const control of await panel.locator('button:visible,input[type="url"]:visible,select:visible,.optimization-check:visible').all()){
+ if(width===390)for(const control of await panel.locator('button:visible,input[type="url"]:visible,input[type="number"]:visible,select:visible,.optimization-check:visible').all()){
   expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(44)
  }
  await page.screenshot({path:testInfo.outputPath('optimization-settings.png'),fullPage:true})

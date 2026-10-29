@@ -1541,6 +1541,33 @@ def enrich_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 API_DESCRIPTION += r"""
+## 上下文配置示例 / Context configuration example
+
+请求窗口包含输入与输出，最低16K；覆盖 Ollama 默认值，需验证后保存。修改窗口使验证失效。实测窗口是验证时的观测值，旧记录可能为空。 / The requested window includes input and output, overrides the Ollama default, and must be verified before enabling. Observed allocation is historical and may be null for legacy settings.
+
+```python
+import os
+import httpx
+
+base = os.environ['AUDIO_INTEL_BASE_URL'].rstrip('/')
+api_key = os.environ['AUDIO_INTEL_API_KEY']
+headers = {'Authorization': 'Bearer ' + api_key}
+settings = '/api/v1/settings/transcript-optimization'
+connection = {'base_url': os.environ['OLLAMA_BASE_URL'],
+              'model': os.environ['OLLAMA_MODEL'], 'use_proxy': False,
+              'context_length': 16384}
+with httpx.Client(base_url=base, headers=headers, timeout=360) as client:
+    response = client.post(settings + '/verify', json=connection)
+    response.raise_for_status()
+    verified = response.json()
+    response = client.put(settings, json={**connection, 'enabled': True,
+                          'verification_token': verified['verification_token']})
+    response.raise_for_status()
+    print(response.json())
+```
+
+窗口不足或无法确认时任务暂停，保留检查点；旧任务恢复沿用原窗口。 / Insufficient or unknown allocations pause the run and preserve checkpoints; resumed runs retain their original window.
+
 ## 优化与入库示例 / Optimization and enrollment examples
 
 先在系统状态配置、验证并启用 Ollama。以下脚本创建优化、等待整体发布并导出 TXT；环境变量 `JOB_ID` 指向已完成的普通音视频任务。保存 `OPTIMIZATION_KEY` 并在同一次提交重试时复用，429 按 Retry-After 稍后重试；故障或暂停不会无限轮询。Bearer 密钥仅从环境变量读取。

@@ -80,7 +80,7 @@ def migrate(connection: sqlite3.Connection) -> None:
 def settings() -> dict:
     with db.connect() as connection:
         row = connection.execute('SELECT value_json FROM optimization_settings WHERE singleton=1').fetchone()
-    return json.loads(row[0]) if row else {'base_url': '', 'model': '', 'use_proxy': False, 'enabled': False}
+    return json.loads(row[0]) if row else {'base_url': '', 'model': '', 'use_proxy': False, 'enabled': False, 'context_length': 16384}
 
 
 def save_settings(value: dict) -> None:

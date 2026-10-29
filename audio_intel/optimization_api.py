@@ -33,6 +33,7 @@ class Connection(BaseModel):
 
 class ModelConnection(Connection):
     model: str = Field(min_length=1, max_length=256)
+    context_length: int | None = Field(None, strict=True, ge=engine.MINIMUM_CONTEXT, description='请求上下文窗口（tokens），覆盖 Ollama 默认值；新连接默认16K / Requested context in tokens; overrides the Ollama default. New connections default to 16K.')
 
 
 class SaveConfiguration(ModelConnection):
@@ -47,6 +48,7 @@ class ConfigurationResponse(BaseModel):
     enabled: bool
     context_length: int | None = None
     model_context_length: int | None = None
+    observed_context_length: int | None = Field(None, description='最近验证时观测的窗口，非实时值 / Context observed at verified_at, not a live reading')
     verified_at: str | None = None
     model_digest: str | None = None
     prompt_version: int | None = None
@@ -237,6 +239,7 @@ class Manager:
             job = parent(run['job_id'])
             if engine.source_hash(job['result']) != run['source_hash']:
                 raise ValueError('原文已变化，请重新生成 / Source changed; regenerate')
+            await engine.ensure_context(profile, load=True)
             units = store.units(run_id)
             for index, unit in enumerate(units):
                 if unit['text'] is not None:
@@ -273,6 +276,8 @@ class Manager:
         except asyncio.CancelledError:
             store.transition(run_id, 'paused', ('running', 'pausing'), '已暂停 / Paused')
             raise
+        except engine.ContextWindowError as exc:
+            store.transition(run_id, 'paused', ('running',), error_message(exc))
         except (httpx.TransportError, httpx.HTTPStatusError, TimeoutError) as exc:
             recoverable = not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code == 429 or exc.response.status_code >= 500
             store.transition(run_id, 'paused' if recoverable else 'failed', ('running',), error_message(exc))
@@ -384,8 +389,12 @@ def register(app, api):
     @app.post(root + '/verify', summary='验证优化模型 / Verify optimization model', description=api.bilingual('使用合成文本在 330 秒内验证正文生成和实际上下文窗口；辅助检查不可用不阻止连接验证。', 'Run synthetic prose generation within 330 seconds and verify the allocated context window. Auxiliary checking availability does not gate connection verification.'), operation_id='verifyOptimizationModel', tags=[TAG], responses=errors)
     async def verify(body: ModelConnection, _: None = auth):
         try:
+            value = body.model_dump(exclude_none=True)
+            current = store.settings()
+            same_connection = all(current.get(k) == value[k] for k in ('base_url', 'model', 'use_proxy'))
+            value.setdefault('context_length', current.get('context_length', engine.DEFAULT_CONTEXT) if same_connection else engine.DEFAULT_CONTEXT)
             async with probe_gate:
-                profile = await asyncio.wait_for(engine.verify(body.model_dump()), 330)
+                profile = await asyncio.wait_for(engine.verify(value), 330)
             token = uuid.uuid4().hex
             for key in list(probes):
                 if probes[key][0] < time.monotonic() or len(probes) >= 16:
@@ -402,7 +411,9 @@ def register(app, api):
             identity = {key: getattr(body, key) for key in ('base_url', 'model', 'use_proxy')}
             probe = probes.get(body.verification_token or '')
             profile = probe[1] if probe and probe[0] > time.monotonic() else current
-            verified = all(profile.get(k) == v for k, v in identity.items()) and profile.get('verified_at') and profile.get('context_length', 0) >= 16384
+            same_connection = all(profile.get(k) == v for k, v in identity.items())
+            identity['context_length'] = body.context_length if body.context_length is not None else (profile.get('context_length', engine.DEFAULT_CONTEXT) if same_connection else engine.DEFAULT_CONTEXT)
+            verified = all(profile.get(k) == v for k, v in identity.items()) and profile.get('verified_at') and profile.get('context_length', 0) >= engine.MINIMUM_CONTEXT
             if body.enabled and not verified:
                 raise HTTPException(409, '请先验证所选模型 / Verify the selected model first')
             value = {**(profile if verified else identity), 'enabled': body.enabled}

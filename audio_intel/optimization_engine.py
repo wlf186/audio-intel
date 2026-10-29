@@ -17,6 +17,53 @@ from .transcript import paragraphs, scene_transcripts
 
 from .optimization_policy import PROMPT_VERSION, SYSTEM, SCHEMA, REVIEW_SYSTEM, REVIEW_SCHEMA, REVIEW_EXAMPLES, DEFAULT_MODE, MODE_INSTRUCTIONS, omission_candidate, remaining_repetition
 
+MINIMUM_CONTEXT = 16384
+DEFAULT_CONTEXT = MINIMUM_CONTEXT
+OUTPUT_TOKENS = 4096
+
+
+class ContextWindowError(Exception):
+    """Capacity failures must bypass prose and auxiliary-review fallbacks."""
+
+
+def check_capacity_error(message: str) -> None:
+    if re.search(r'out of memory|not enough (?:system )?memory|insufficient memory|requires more.{0,30}memory|context.{0,40}(?:exceed|too (?:small|long)|limit)|(?:exceed|too long).{0,40}context|input length.{0,40}exceed|(?:input|prompt).{0,30}too long', message, re.I):
+        raise ContextWindowError('上下文或内存容量不足，请检查请求窗口并重新验证 / Context or memory capacity insufficient: ' + message[:300])
+
+
+async def provider_status(response: httpx.Response) -> None:
+    if response.is_error:
+        content = bytearray()
+        async for part in response.aiter_bytes():
+            content.extend(part[:8192 - len(content)])
+            if len(content) >= 8192:
+                break
+        check_capacity_error(content.decode('utf-8', errors='replace'))
+    response.raise_for_status()
+
+
+async def ensure_context(config: dict, *, load: bool = False) -> int:
+    """Observe our requested allocation, never infer a limit from another request."""
+    requested = config['context_length']
+    if requested < MINIMUM_CONTEXT:
+        raise ContextWindowError('请求窗口不足16K / Requested context must be at least 16K')
+    try:
+        async with asyncio.timeout(120), client(config) as connection:
+            if load:
+                await remote_json(connection, 'api/chat', {
+                    'model': config['model'], 'messages': [], 'stream': False, 'think': False,
+                    'options': {'num_ctx': requested, 'num_predict': OUTPUT_TOKENS},
+                })
+            running = await remote_json(connection, 'api/ps')
+        observed = next((int(m.get('context_length') or 0) for m in running.get('models', [])
+                         if m.get('name') == config['model'] and
+                         (not config.get('model_digest') or m.get('digest') == config['model_digest'])), 0)
+    except (httpx.HTTPError, ValueError, TypeError, TimeoutError) as exc:
+        raise ContextWindowError(f'无法确认请求窗口 {requested}，请检查 Ollama 后重试 / Cannot confirm requested context: {requested}') from exc
+    if observed < requested:
+        raise ContextWindowError(f'请求窗口 {requested}，观测窗口 {observed or "未加载/未返回"}；请检查 Ollama 配置并重新验证 / Allocated context is below requested context')
+    return observed
+
 
 def normalize_url(value: str) -> str:
     parsed = urlsplit(value.strip())
@@ -39,7 +86,7 @@ def client(config: dict) -> httpx.AsyncClient:
 
 async def remote_json(connection: httpx.AsyncClient, path: str, payload: dict | None = None) -> dict:
     async with connection.stream('GET' if payload is None else 'POST', path, json=payload) as response:
-        response.raise_for_status()
+        await provider_status(response)
         content = bytearray()
         async for part in response.aiter_bytes():
             content.extend(part)
@@ -59,19 +106,21 @@ async def discover(config: dict) -> dict:
 
 async def verify(config: dict) -> dict:
     async with client(config) as connection:
-        tags, details, running = await asyncio.gather(remote_json(connection, 'api/tags'), remote_json(connection, 'api/show', {'model': config['model']}), remote_json(connection, 'api/ps'))
+        tags, details = await asyncio.gather(remote_json(connection, 'api/tags'), remote_json(connection, 'api/show', {'model': config['model']}))
         selected = next((m for m in tags.get('models', []) if m['name'] == config['model']), None)
         if not selected or 'completion' not in details.get('capabilities', []):
             raise ValueError('请选择支持文本生成的已安装模型 / Choose an installed text generation model')
         maximum = max((int(v) for k, v in details.get('model_info', {}).items() if k.endswith('.context_length')), default=0)
-        actual = next((int(m.get('context_length') or 0) for m in running.get('models', []) if m['name'] == config['model']), 0)
-        context = min(maximum, actual if actual >= 16384 else 32768)
-        if context < 16384:
+        context = config.get('context_length', DEFAULT_CONTEXT)
+        if context < MINIMUM_CONTEXT:
             raise ValueError('本功能要求至少 16K 上下文 / At least 16K context is required')
+        if context > maximum:
+            raise ValueError(f'请求窗口 {context} 超过模型原生上限 {maximum} / Requested context exceeds model maximum')
         thinking = details.get('thinking', {}).get('values')
         if thinking and False not in thinking:
             raise ValueError('请选择可关闭思考的模型 / Choose a model supporting non-thinking output')
         profile = {**config, 'context_length': context, 'model_context_length': maximum, 'model_digest': selected['digest'], 'prompt_version': PROMPT_VERSION}
+        await ensure_context(profile, load=True)
         sample = [{'id': 'p1', 'ordinal': 0, 'speaker': 'speaker1', 'original_text': '那个那个预算是15万元，不是50万元。这个暂时还没有确认。'}]
         for attempt in range(3):
             try:
@@ -88,11 +137,7 @@ async def verify(config: dict) -> dict:
                         'Invalid model output after two retries; check Ollama and model. ' + str(exc)
                     ) from exc
                 await asyncio.sleep(2 ** attempt)
-        running = await remote_json(connection, 'api/ps')
-        observed = next((int(m.get('context_length') or 0) for m in running.get('models', []) if m['name'] == config['model']), 0)
-        if observed < 16384:
-            raise ValueError('无法验证实际运行窗口至少为 16K / Unable to verify the allocated context window')
-        profile['context_length'] = min(context, observed)
+        profile['observed_context_length'] = await ensure_context(profile)
         profile['verified_at'] = store.db.utcnow()
         return profile
 
@@ -150,8 +195,8 @@ def payload_for(config: dict, batch: list[dict], hotwords: list[str], before, af
                'target': {'speaker': unit.get('speaker'), 'text': unit['original_text']}}
     return {'model': config['model'], 'messages': [{'role': 'system', 'content': SYSTEM},
             {'role': 'user', 'content': json.dumps(content, ensure_ascii=False)}],
-            'stream': True, 'think': False,
-            'options': {'num_ctx': config['context_length'], 'num_predict': 4096, 'temperature': 0.2, 'presence_penalty': 0}}
+            'stream': True, 'think': False, 'truncate': False,
+            'options': {'num_ctx': config['context_length'], 'num_predict': OUTPUT_TOKENS, 'temperature': 0.2, 'presence_penalty': 0}}
 
 
 def review_messages(source: dict, candidate: dict) -> list[dict]:
@@ -251,11 +296,11 @@ class ReviewFailed(ValueError):
 
 async def streamed_text(config: dict, payload: dict, activity=None) -> str:
     if not request_fits(config, payload):
-        raise InvalidOutput('请求超出上下文预算 / Request exceeds context budget')
+        raise ContextWindowError('请求超出上下文预算，请调整窗口并重新验证 / Request exceeds context budget')
     async with asyncio.timeout(120), client(config) as connection:
         content, final, last = '', None, time.monotonic()
         async with connection.stream('POST', 'api/chat', json=payload) as response:
-            response.raise_for_status()
+            await provider_status(response)
             async for line in response.aiter_lines():
                 if not line:
                     continue
@@ -266,6 +311,7 @@ async def streamed_text(config: dict, payload: dict, activity=None) -> str:
                 except ValueError as exc:
                     raise InvalidOutput('Invalid stream event') from exc
                 if item.get('error'):
+                    check_capacity_error(str(item['error']))
                     raise ValueError('Ollama: ' + str(item['error'])[:300])
                 content += item.get('message', {}).get('content', '')
                 if len(content) > 100_000:
@@ -274,9 +320,10 @@ async def streamed_text(config: dict, payload: dict, activity=None) -> str:
                     await asyncio.to_thread(activity, len(content)); last = time.monotonic()
                 if item.get('done'):
                     final = item
-        if not final or final.get('done_reason') != 'stop':
-            raise InvalidOutput('输出截断或未正常结束 / Output was truncated')
-        return content
+    await ensure_context(config)
+    if not final or final.get('done_reason') != 'stop':
+        raise InvalidOutput('输出截断或未正常结束 / Output was truncated')
+    return content
 
 
 async def structured(config: dict, payload: dict, activity=None) -> dict:
@@ -420,7 +467,7 @@ async def review(config: dict, original: str, candidate: str, hotwords: list[str
         return {'outcome': 'pass', 'details': {'stage': 'review', 'issues': []}}
     payload = {'model': config['model'], 'messages': review_messages({'target': {'text': original}, 'hotwords': hotwords,
                'context_before': before, 'context_after': after}, {'text': candidate}), 'format': REVIEW_SCHEMA,
-               'stream': True, 'think': False, 'options': {'num_ctx': config['context_length'], 'num_predict': 4096, 'temperature': 0}}
+               'stream': True, 'think': False, 'truncate': False, 'options': {'num_ctx': config['context_length'], 'num_predict': OUTPUT_TOKENS, 'temperature': 0}}
     first = None
     for attempt in range(2):
         try:

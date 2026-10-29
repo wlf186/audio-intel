@@ -134,6 +134,9 @@ def configured(local, monkeypatch):
         return [(p['ordinal'], p['original_text'].replace('那个', '').replace('阿特拉斯', 'Atlas')) for p in batch]
     monkeypatch.setattr(routes.Manager, 'check_model', check)
     monkeypatch.setattr(engine, 'generate', generate)
+    async def ensure_context(profile, *, load=False):
+        return profile['context_length']
+    monkeypatch.setattr(engine, 'ensure_context', ensure_context)
     async def review(*args, **kwargs):
         return {'outcome': 'pass', 'details': {'stage': 'review', 'issues': []}}
     monkeypatch.setattr(engine, 'review', review)
@@ -492,7 +495,7 @@ def test_verification_format_retries_are_bounded(monkeypatch, failures):
             return {'models': [{'name': 'test-model', 'digest': 'test-digest'}]}
         if path == 'api/show':
             return {'capabilities': ['completion'], 'model_info': {'test.context_length': 32768}}
-        return {'models': [{'name': 'test-model', 'context_length': 32768}]}
+        return {'models': [{'name': 'test-model', 'digest': 'test-digest', 'context_length': 32768}]}
     async def generate(*args):
         calls.append(1)
         if len(calls) <= failures:
