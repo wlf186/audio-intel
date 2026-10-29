@@ -221,6 +221,7 @@ class VoiceprintPersonUpdateRequest(BaseModel):
 
 
 class AddAsrSamplesRequest(BaseModel):
+    audio_track: Literal["original", "enhanced"] = Field("original", description="入库音轨，默认原音 / Enrollment track; defaults to original")
     job_id: str = Field(description="已成功完成的 ASR 任务 ID / Successfully completed ASR job ID")
     segment_ids: list[int] = Field(description="同一说话人的一个或多个段落 ID / One or more segment IDs from one speaker")
 
@@ -2196,8 +2197,8 @@ def create_app() -> FastAPI:
         response_model=VoiceprintSamplesResponse, response_model_exclude_unset=True,
         tags=[VOICEPRINT_TAG], summary="从 ASR 段落创建声纹样本 / Create samples from ASR segments",
         description=bilingual(
-            "来源音频或视频任务必须成功，所选原始语句必须属于同一说话人且未曾入库。每句独立保存为 WAV，以任务名＋段落号命名，重名追加序号。视频从与转写时间轴一致的 playback.wav 截取，缺失时返回 404。",
-            "The source audio or video job must have succeeded; selected original segments must belong to one speaker and not already be imported. Each segment becomes a separate local WAV sample named from the task and segment number, with a suffix on name collisions. Video samples use the saved playback.wav on the transcription timeline; missing playback returns 404.",
+            "来源音频或视频任务必须成功，所选原始语句必须属于同一说话人且未曾入库。每句独立保存为 WAV，以任务名＋段落号命名，重名追加序号。audio_track 默认 original，可选 enhanced 使用已保存增强音；缺失返回 404，不自动回退。视频原音从与转写时间轴一致的 playback.wav 截取。",
+            "The source audio or video job must have succeeded; selected original segments must belong to one speaker and not already be imported. Each segment becomes a separate local WAV sample named from the task and segment number, with a suffix on name collisions. audio_track defaults to original; enhanced selects the saved enhanced WAV. Missing audio returns 404 without fallback. Original video samples use playback.wav on the transcription timeline.",
         ),
         operation_id="createVoiceprintSamplesFromAsr",
         responses={**AUTH_RESPONSES, **NOT_FOUND_RESPONSE, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
@@ -2231,8 +2232,15 @@ def create_app() -> FastAPI:
         is_video = (job.get("request") or {}).get("purpose") == "video_transcription" or bool((job.get("result") or {}).get("video"))
         input_root = (settings.jobs_dir / job["id"] / ("output" if is_video else "input")).resolve()
         source = (input_root / "playback.wav").resolve() if is_video else Path((job.get("request") or {}).get("input_path", "")).resolve()
-        if input_root not in source.parents or not source.is_file():
+        if payload.audio_track == "original" and (input_root not in source.parents or not source.is_file()):
             raise HTTPException(status_code=404, detail="Video playback audio is unavailable" if is_video else "Source recording is unavailable")
+        if payload.audio_track == "enhanced":
+            output = (settings.jobs_dir / job["id"] / "output").resolve()
+            enhancement = (job.get("result") or {}).get("audio_enhancement") or {}
+            source = (output / "enhanced.wav").resolve()
+            declared = any(item.get("name") == "enhanced.wav" for item in (job.get("result") or {}).get("artifacts", []))
+            if not enhancement.get("playback_url") or not declared or source.parent != output or not source.is_file():
+                raise HTTPException(404, "增强音不可用，请选择原音或重试 / Enhanced audio unavailable; select original or retry")
         from .media import extract_audio_clip
 
         created: list[dict[str, Any]] = []

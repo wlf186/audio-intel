@@ -1,3 +1,4 @@
+import {EnrollmentTrack,type EnrollmentAudioTrack} from '../components/EnrollmentTrack'
 import {highlightText,TranscriptSearchNavigation} from '../components/TranscriptSearch'
 import {useOptimization} from '../hooks/useOptimization'
 import {OptimizationControls} from '../components/OptimizationControls'
@@ -235,6 +236,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const renamePersonValue = useMemo(() => voiceprintsState === 'ready' ? voiceprints.find(person =>
     person.id === renamePersonId && person.name === renameValue && (person.note || '') === renameNote,
   )?.id || '' : '', [voiceprints, voiceprintsState, renamePersonId, renameValue, renameNote])
+  const [enrollmentTrack,setEnrollmentTrack]=useState<EnrollmentAudioTrack>('original')
   const [libraryOpen, setLibraryOpen] = useState(false)
   const libraryNameRef=useRef<HTMLInputElement>(null)
   const [libraryError,setLibraryError]=useState('')
@@ -627,6 +629,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
     }
   }
   const openLibrary = () => {
+    setEnrollmentTrack('original')
     const speaker = selectionSpeaker ? speakerById.get(selectionSpeaker) : undefined
     const {identity,match,ambiguous}=enrollmentPerson(speaker,selectionLabel,voiceprints)
     setLibraryError('')
@@ -655,7 +658,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
         created = true
         creatingPerson = false
       }
-      await api.addAsrSamples(personId, selected.id, [...selectedSegments])
+      await api.addAsrSamples(personId, selected.id, [...selectedSegments],enrollmentTrack)
       setSelectedSegments(new Set())
       setLibraryOpen(false)
       setResultNotice(t('asr.notices.addedToVoiceprints'))
@@ -1106,6 +1109,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           <p>
             {t('asr.library.help',{count:selectedSegments.size,speaker:selectionLabel})}
           </p>
+          <EnrollmentTrack value={enrollmentTrack} onChange={setEnrollmentTrack} available={Boolean(enhancedAudio)} busy={libraryBusy}/>
           {libraryError?<p className="error" role="alert">{libraryError}</p>:null}
           {libraryAmbiguous?<p>{t('voiceprintNames.ambiguousPerson')}</p>:null}
           {voiceprints.length ? (

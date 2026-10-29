@@ -1,3 +1,4 @@
+import {EnrollmentTrack,type EnrollmentAudioTrack} from './EnrollmentTrack'
 import {useEffect,useMemo,useRef,useState} from 'react'
 import {useTranslation} from 'react-i18next'
 import {api,formatTime,HttpError} from '../lib/api'
@@ -12,6 +13,7 @@ import {ResourceStatePanel} from './ResourceStatePanel'
 type Props={job:Job;speakerId:string;initialSegmentIds?:number[];people:VoiceprintPerson[];peopleState:ResourceState;groups:VoiceprintGroup[];groupsState:ResourceState;refreshGroups:()=>Promise<void>;refreshPeople:()=>Promise<void>;refreshPeopleAndHotwords:()=>Promise<void>;onClose:()=>void;onSuccess:(count:number)=>void}
 export function VideoSpeakerEnrollment({job,speakerId,initialSegmentIds=[],people,peopleState,groups,groupsState,refreshGroups,refreshPeople,refreshPeopleAndHotwords,onClose,onSuccess}:Props){
  const {t}=useTranslation()
+ const [audioTrack,setAudioTrack]=useState<EnrollmentAudioTrack>('original')
  const [step,setStep]=useState<'select'|'person'>('select')
  const [selected,setSelected]=useState<Set<number>>(()=>new Set(initialSegmentIds))
  const [visible,setVisible]=useState(()=>{const values=(job.result?.segments||[]).filter(segment=>segment.speaker===speakerId);const last=Math.max(...initialSegmentIds.map(id=>values.findIndex(segment=>segment.id===id)),0);return Math.max(40,Math.ceil((last+1)/40)*40)})
@@ -55,7 +57,7 @@ export function VideoSpeakerEnrollment({job,speakerId,initialSegmentIds=[],peopl
   try{
    let target=personId
    if(!target){const person=await api.addVoiceprintPerson(name.trim(),note.trim()||null,hotword,groupId);target=person.id;created=true;creating=false;if(active.current)setPersonId(target)}
-   await api.addAsrSamples(target,job.id,selectedIds)
+   await api.addAsrSamples(target,job.id,selectedIds,audioTrack)
    // A completed import is not a failed import if refreshing the library fails.
    await (created?refreshPeopleAndHotwords():refreshPeople()).catch(()=>undefined)
    if(active.current)onSuccess(selectedIds.length)
@@ -67,10 +69,11 @@ export function VideoSpeakerEnrollment({job,speakerId,initialSegmentIds=[],peopl
   }finally{ submitting.current=false;if(active.current)setBusy(false) }
  }
  return <Modal className="video-enrollment" title={t('asr.library.title')} closeLabel={t('asr.library.close')} onClose={close}>
-  <audio ref={player} src={job.result?.playback_url||`/api/v1/jobs/${job.id}/playback`} preload="none" onTimeUpdate={()=>{if(end.current!==undefined&&player.current&&player.current.currentTime>=end.current)stop()}} onEnded={stop} onError={()=>{stop();setError(t('asr.results.playbackError'))}}/>
+  <audio ref={player} src={audioTrack==='enhanced'?job.result?.audio_enhancement?.playback_url:job.result?.playback_url||`/api/v1/jobs/${job.id}/playback`} preload="none" onTimeUpdate={()=>{if(end.current!==undefined&&player.current&&player.current.currentTime>=end.current)stop()}} onEnded={stop} onError={()=>{stop();setError(t('asr.results.playbackError'))}}/>
   <p className="enrollment-step" role="status">{t('workspaceUx.enrollmentStep',{step:step==='select'?1:2})}</p>
   <p>{t('video.enrollHelp',{speaker:speaker?.label||speakerId})}</p>
   <ResourceStatePanel state={peopleState} loadingLabel={t('voiceprints.loadingPeople')} errorLabel={t('voiceprints.loadFailed')} retry={()=>void refreshPeople().catch(()=>undefined)}/>
+  <EnrollmentTrack value={audioTrack} available={Boolean(job.result?.audio_enhancement?.playback_url)} busy={busy} onChange={track=>{stop();setAudioTrack(track)}}/>
   {error?<p className="error" role="alert">{error}</p>:null}
   {step==='select'?<>
    <div className="video-enrollment-list modal-scroll-body">

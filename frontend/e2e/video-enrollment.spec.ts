@@ -5,7 +5,7 @@ async function fixture(page:Page,locale='zh-CN'){
  await page.addInitScript(locale=>localStorage.setItem('audio-intel:ui-locale:v1',locale),locale)
  const segments=Array.from({length:110},(_,id)=>({id,start:id,end:id+.8,speaker:`s${id%2}`,speaker_label:id%2?'Other':'Presenter',text:`Sentence ${id}`,words:[]}))
  const scenes=Array.from({length:55},(_,i)=>({id:`scene_${i}`,start:i*2,end:i*2+2,frame_time:i*2,image:'frame.jpg',paragraphs:[{speaker:'s0',speaker_label:'Presenter',start:i*2,end:i*2+.8,text:`Paragraph ${i}`,segment_ids:[i*2,i*2]}]}))
- const result={text:'Video',duration:120,language:'Chinese',timestamp_precision:'segment',playback_url:'/api/v1/jobs/enrollment-video/playback',speakers:[{id:'s0',label:'Presenter'},{id:'s1',label:'Other'}],segments,artifacts:[],video:{contract_version:1,revision:1,duration:120,scenes,original_scenes:scenes}}
+ const result={audio_enhancement:{playback_url:'/api/v1/jobs/enrollment-video/artifacts/enhanced.wav'},text:'Video',duration:120,language:'Chinese',timestamp_precision:'segment',playback_url:'/api/v1/jobs/enrollment-video/playback',speakers:[{id:'s0',label:'Presenter'},{id:'s1',label:'Other'}],segments,artifacts:[],video:{contract_version:1,revision:1,duration:120,scenes,original_scenes:scenes}}
  const job={id:'enrollment-video',kind:'asr',purpose:'video_transcription',state:'succeeded',stage:'completed',progress:1,display_name:'Enrollment.mp4',created_at:'2026-10-10T00:00:00Z',request:{purpose:'video_transcription'},result}
  const state={failPeople:false,failImport:0,listReads:0,sceneReads:0,imports:[] as Array<{job_id:string;segment_ids:number[]}>,created:0,people:[{id:'existing',name:'Presenter',note:'',sample_count:1,samples:[{id:'sample0',source_job_id:job.id,source_segment_id:0,state:'ready'}]}]}
  await page.route('**/api/v1/auth/session',route=>route.fulfill({json:{required:true,authenticated:true}}))
@@ -62,7 +62,7 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
   await expect(dialog.getByRole('checkbox').nth(1)).toBeChecked()
   await dialog.getByRole('button',{name:zh?'下一步：选择人员':'Next: choose person'}).click()
   if(width===390){await dialog.locator('select').selectOption('');await dialog.getByRole('textbox').first().fill('New presenter')}
-  expect(await dialog.locator('button:visible,select:visible,input:not([type=checkbox]):visible').evaluateAll(items=>items.every(item=>item.getBoundingClientRect().height>=44))).toBe(true)
+  expect(await dialog.locator('button:visible,select:visible,input:not([type=checkbox]):not([type=radio]):visible,label:has(input[type=radio]):visible').evaluateAll(items=>items.every(item=>item.getBoundingClientRect().height>=44))).toBe(true)
   expect(await dialog.evaluate(e=>e.scrollWidth<=e.clientWidth)).toBe(true)
   await page.screenshot({path:info.outputPath('enrollment.png'),fullPage:true})
   await dialog.getByRole('button',{name:zh?'确认加入':'Confirm import',exact:true}).click()
@@ -168,4 +168,37 @@ test('task change discards enrollment UI while an accepted request finishes',asy
  await expect(page.getByRole('dialog').getByRole('checkbox',{checked:true})).toHaveCount(1)
  await expect(page.getByRole('dialog').getByRole('checkbox').first()).toBeChecked()
  await expect(page.getByRole('dialog').getByRole('checkbox').nth(1)).not.toBeChecked()
+})
+
+for(const width of [1440,390])test(`enrollment track selection ${width}`,async({page})=>{
+ await page.setViewportSize({width,height:960})
+ const f=await fixture(page);await f.open()
+ const open=page.locator('.video-section').first().getByRole('button',{name:'加入声纹库',exact:true})
+ await open.click()
+ const dialog=page.getByRole('dialog')
+ await expect(dialog.getByRole('radio',{name:'原音',exact:true})).toBeChecked()
+ await dialog.getByRole('radio',{name:'增强音',exact:true}).check()
+ await expect(dialog.locator('audio')).toHaveAttribute('src','/api/v1/jobs/enrollment-video/artifacts/enhanced.wav')
+ await dialog.getByRole('checkbox').nth(1).check()
+ await dialog.getByRole('button',{name:'下一步：选择人员'}).click()
+ await expect(dialog.getByRole('radio',{name:'增强音',exact:true})).toBeChecked()
+ await dialog.getByRole('button',{name:'确认加入',exact:true}).click()
+ await expect(dialog).toHaveCount(0)
+ expect(f.state.imports.at(-1)).toMatchObject({audio_track:'enhanced'})
+ await open.click()
+ await expect(dialog.getByRole('radio',{name:'原音',exact:true})).toBeChecked()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()
+})
+
+test('text reading enrollment uses its own track selection',async({page})=>{
+ const f=await fixture(page);await f.open()
+ await page.getByRole('button',{name:'文本阅读',exact:true}).click()
+ await page.locator('.segments article input[type=checkbox]').nth(2).check()
+ await page.getByRole('button',{name:'加入声纹库',exact:true}).click()
+ const dialog=page.getByRole('dialog')
+ await expect(dialog.getByRole('radio',{name:'原音',exact:true})).toBeChecked()
+ await dialog.getByRole('radio',{name:'增强音',exact:true}).check()
+ await dialog.getByRole('button',{name:'确认加入',exact:true}).click()
+ await expect(dialog).toHaveCount(0)
+ expect(f.state.imports.at(-1)).toMatchObject({audio_track:'enhanced',segment_ids:[2]})
 })
