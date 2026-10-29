@@ -75,7 +75,7 @@ test('sequence results play and download every item in order on desktop and mobi
  expect(errors).toEqual([])
 })
 
-test('pending voiceprint polling stops after session expiry and resumes after login',async({page})=>{
+test('pending voiceprint polling stops after session expiry and resumes after login',{tag:'@timing'},async({page,responseGate})=>{
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
@@ -85,18 +85,31 @@ test('pending voiceprint polling stops after session expiry and resumes after lo
  await page.clock.pauseAt(new Date('2026-01-01T00:01:00Z'))
  let calls=0
  let renewed=false
+ const initialPeople=responseGate()
  const now=new Date().toISOString()
  await page.route('**/api/v1/auth/session',route=>{
   if(route.request().method()==='POST'){renewed=true;return route.fulfill({status:204})}
   return route.fulfill({json:{required:true,authenticated:true}})
  })
- await page.route('**/api/v1/voiceprints/people',route=>{
+ await page.route('**/api/v1/voiceprints/people',async route=>{
   calls++
+  if(calls===1)await initialPeople.hold()
   if(calls>1&&!renewed)return route.fulfill({status:401,json:{detail:'Session expired'}})
   const state=calls>=4?'ready':'pending'
   return route.fulfill({json:{items:[{id:'person',name:'测试声纹',sample_count:1,include_in_hotword_library:false,created_at:now,updated_at:now,samples:[{id:'sample',person_id:'person',state,language:'Chinese',transcript:'测试',words:[],tts_eligible:state==='ready',embedding_status:'ready',created_at:now,updated_at:now}]}]}})
  })
  await page.goto('/#tts')
+ await expect(page.getByRole('main',{name:'语音合成',exact:true})).toBeVisible()
+ await initialPeople.arrived
+ // A request arriving does not mean React has received pending samples or
+ // installed their polling interval. Exercise that delay deliberately.
+ await page.clock.fastForward(2100)
+ expect(calls).toBe(1)
+ initialPeople.release()
+ await page.locator('nav').getByRole('button',{name:/资料库/}).click()
+ await page.locator('.person-row').first().click()
+ await expect(page.locator('.sample-state.pending')).toBeVisible()
+ await page.locator('nav').getByRole('button',{name:'语音合成',exact:true}).click()
  await expect(page.getByRole('main',{name:'语音合成',exact:true})).toBeVisible()
  await expect.poll(()=>calls).toBe(1)
  await page.clock.fastForward(2100)
