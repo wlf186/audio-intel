@@ -1,3 +1,4 @@
+import {highlightText,TranscriptSearchNavigation} from './TranscriptSearch'
 import {useEffect,useRef,useState} from 'react'
 import {createPortal} from 'react-dom'
 import {Fingerprint} from 'lucide-react'
@@ -55,16 +56,16 @@ export function VideoTranscript({job,toolbar,onUpdated,onSeek,onRename,onEnroll,
  const activeScene=data?.scenes[readingIndex(data.scenes,currentTime)]
  const activeParagraph=activeScene?.paragraphs?.[readingIndex(activeScene.paragraphs,currentTime)]
  const tools=<div className="video-reading-tools">{detectionCapability?.preview?<button className="button" disabled={!data||refreshing||Boolean(error)} onClick={()=>setDetectionOpen(true)}>{t('sceneDetection.title')}</button>:null}</div>
- return <>{detectionOpen&&detectionCapability&&job.result?<SceneDetection jobId={job.id} result={job.result} capability={detectionCapability} onClose={()=>setDetectionOpen(false)} onUpdated={onUpdated}/>:null}{toolbar?createPortal(tools,toolbar):tools}<div className="video-transcript" ref={scrollRoot} aria-busy={refreshing}>
+ return <>{detectionOpen&&detectionCapability&&job.result?<SceneDetection jobId={job.id} result={job.result} capability={detectionCapability} onClose={()=>setDetectionOpen(false)} onUpdated={onUpdated}/>:null}{toolbar?createPortal(tools,toolbar):tools}<TranscriptSearchNavigation query={query} entries={(data?.scenes||[]).map(scene=>({id:scene.id,texts:(scene.paragraphs||[]).filter(p=>speakerFilter==='all'||p.speaker===speakerFilter).map(p=>p.text)}))} root={scrollRoot} onReveal={id=>setVisible(n=>Math.max(n,(data?.scenes.findIndex(scene=>scene.id===id)??-1)+1))}/><div className="video-transcript" ref={scrollRoot} aria-busy={refreshing}>
   {error?<p className="error" role="alert">{error} <button className="button" onClick={()=>reload()}>{t('common.actions.reload')}</button></p>:refreshing?<p className="reader-refresh-status" role="status">{t('video.loading')}</p>:null}
   {data?<>
    {data.scenes.slice(0,visible).map((scene,index)=>{
     const paragraphs=scene.paragraphs?.filter(p=>(speakerFilter==='all'||p.speaker===speakerFilter)&&(!query.trim()||p.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())))
     if((query.trim()||speakerFilter!=='all')&&!paragraphs?.length)return null
-    return <section className={`video-section${activeScene?.id===scene.id?' navigation-active':''}`} key={scene.id} data-reader-id={scene.id} data-reader-time={scene.start} data-reader-end={scene.end}>
+    return <section className={`video-section${activeScene?.id===scene.id?' navigation-active':''}`} key={scene.id} data-search-owner={scene.id} data-reader-id={scene.id} data-reader-time={scene.start} data-reader-end={scene.end}>
     <header><h3>{t('video.scene',{number:index+1})}</h3><button className="video-scene-time" onClick={()=>onSeek(scene.start)}>{formatTime(scene.start,false)} – {formatTime(scene.end,false)}</button>{hiddenScenes.has(scene.id)?<span className="scene-hidden-badge">{t('sceneDetection.hidden')}</span>:null}</header>
     <div className="video-scene-content"><Frame jobId={job.id} scene={scene}/><div className="video-scene-text">
-    {paragraphs?.length?paragraphs.map((paragraph,i)=><div className={`video-paragraph${paragraph===activeParagraph?' navigation-active':''}`} key={i}><div><button className="video-speaker" onClick={()=>onRename(paragraph.speaker)}>{paragraph.speaker_label}</button><button className="video-paragraph-time" onClick={()=>onSeek(paragraph.start)}>{formatTime(paragraph.start,false)} – {formatTime(paragraph.end,false)}</button><button className="icon-button video-enroll" title={t('asr.results.addToVoiceprints')} aria-label={t('asr.results.addToVoiceprints')} onClick={()=>onEnroll(paragraph.speaker,paragraph.segment_ids)}><Fingerprint size={17}/></button></div><p>{paragraph.text}</p></div>):<p className="video-silent">{t('video.noSpeech')}</p>}
+    {paragraphs?.length?paragraphs.map((paragraph,i)=><div className={`video-paragraph${paragraph===activeParagraph?' navigation-active':''}`} key={i}><div><button className="video-speaker" onClick={()=>onRename(paragraph.speaker)}>{paragraph.speaker_label}</button><button className="video-paragraph-time" onClick={()=>onSeek(paragraph.start)}>{formatTime(paragraph.start,false)} – {formatTime(paragraph.end,false)}</button><button className="icon-button video-enroll" title={t('asr.results.addToVoiceprints')} aria-label={t('asr.results.addToVoiceprints')} onClick={()=>onEnroll(paragraph.speaker,paragraph.segment_ids)}><Fingerprint size={17}/></button></div><p>{highlightText(paragraph.text,query)}</p></div>):<p className="video-silent">{t('video.noSpeech')}</p>}
     </div></div>
 
    </section>})}

@@ -177,7 +177,7 @@ def test_limits_auth_schema_and_cancel(client,local):
     assert client.get(url,headers={'Authorization':'Bearer wrong'}).status_code==401
     assert client.delete(url).status_code==204
     assert not (local.jobs_dir/item['id']).exists()
-    with db.connect() as c:assert c.execute('SELECT MIN(version) FROM schema_meta').fetchone()[0]==18
+    with db.connect() as c:assert c.execute('SELECT MIN(version) FROM schema_meta').fetchone()[0]==19
 
 
 def test_slide_builds_roi_and_repeated_page(tmp_path):

@@ -408,3 +408,25 @@
  .asr-workspace .timeline-waveform{height:28px}
  .asr-workspace .timeline-scenes,.asr-workspace .timeline-scene{height:32px;min-height:0}
 }
+
+@media(min-width:1024px) and (min-height:601px) and (max-height:800px){
+ .asr-workspace.view-results .video-result,.asr-workspace.view-results .result-panel{overflow:auto}
+ .asr-workspace.view-results .video-result .video-transcript,
+ .asr-workspace.view-results .video-result .segments,
+ .asr-workspace.view-results .segments,
+ .asr-workspace.view-results .optimization-reader{min-height:260px;flex-shrink:0}
+ .optimization-filter-row,.optimization-status-summary,.optimization-workflow{flex-shrink:0}
+}
+
+@media(min-width:1024px) and (max-height:900px){
+ .asr-workspace .optimization-toolbar{padding-block:0}
+ .asr-workspace .optimization-filter-row{padding-block:0}
+ .asr-workspace .optimization-filter-row .transcript-tools{border:0;padding-block:0}
+ .asr-workspace .optimization-status-summary{padding-block:4px}
+}
+@media(min-width:1024px) and (min-height:601px) and (max-height:760px){
+ .asr-workspace.view-results .video-result .video-transcript,
+ .asr-workspace.view-results .video-result .segments,
+ .asr-workspace.view-results .segments,
+ .asr-workspace.view-results .optimization-reader{min-height:220px}
+}

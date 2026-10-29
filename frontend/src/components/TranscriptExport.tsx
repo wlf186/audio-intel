@@ -8,7 +8,7 @@ import {Modal} from './Modal'
 import type {ReadingMode} from '../lib/workspaceSession'
 import {transcriptDownloadName,transcriptFilename} from '../lib/transcriptFilename'
 
-export function TranscriptExport({job,formats=['pdf','json','txt','srt','vtt'],optimizationId,readingMode='original'}:{job:Job;formats?:TranscriptExportFormat[];optimizationId?:string;readingMode?:ReadingMode}){
+export function TranscriptExport({job,formats=['pdf','json','txt','srt','vtt'],optimizationId,readingMode='original',updating=false}:{updating?:boolean;job:Job;formats?:TranscriptExportFormat[];optimizationId?:string;readingMode?:ReadingMode}){
  const {t}=useTranslation()
  const [textVersion,setTextVersion]=useState<'original'|'optimized'|'comparison'>('original')
  const availableFormats=exportFormats(textVersion,formats)
@@ -61,6 +61,9 @@ export function TranscriptExport({job,formats=['pdf','json','txt','srt','vtt'],o
   {error&&!open?<p className="error" role="alert">{error}</p>:null}
   {open?<Modal className="transcript-export-modal" title={t('transcriptExport.open')} closeLabel={t('common.actions.close')} onClose={()=>setOpen(false)}>
    <div className="modal-scroll-body">{!optimizationId&&readingMode!=='original'?<p className="notice">{t('optimization.exportPending')}</p>:null}{versionPicker}<label>{t('transcriptExport.format')}<select className="export-format" value={format} disabled={busy} onChange={event=>{const next=event.target.value as TranscriptExportFormat;setFormat(next);updatePreferences({...preferences,formatByVersion:{...preferences.formatByVersion,[textVersion]:next}})}}>{(['pdf','docx','txt','srt','vtt','json'] as const).filter(value=>availableFormats.includes(value)).map(value=><option key={value} value={value}>{value==='docx'?'Word (DOCX)':value.toUpperCase()}</option>)}</select></label>{redaction}<details className="export-replacement-options"><summary>{t('transcriptExport.replacements')}</summary>{editor}</details>{error?<p className="error" role="alert">{error}</p>:null}</div>
+   <p className="export-download-summary" role="status">{t('optimization.downloadSummary',{version:t(textVersion==='comparison'?'optimization.comparisonExport':textVersion==='optimized'?'optimization.draft':'optimization.original'),format:format.toUpperCase()})}</p>
+   {updating&&textVersion!=='original'?<p className="notice">{t('optimization.exportPrevious')}</p>:null}
+   {optimizationId&&textVersion!==readingMode?<button className="button" disabled={busy} onClick={()=>{setTextVersion(readingMode);setFormat(preferredExportFormat(preferences,readingMode,formats));updatePreferences({...preferences,textVersion:readingMode})}}>{t('optimization.useReadingVersion')}</button>:null}
    <div className="modal-actions"><button className="button" onClick={()=>setOpen(false)}>{t('common.actions.close')}</button><button className="primary" disabled={blocked} onClick={()=>void download(format)}><Download size={16}/>{label}</button></div>
   </Modal>:null}
  </div>

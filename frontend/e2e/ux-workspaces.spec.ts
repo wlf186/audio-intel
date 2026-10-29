@@ -75,7 +75,7 @@ for(const width of [1440,390])test(`segment filters and deep position survive re
  await page.setViewportSize({width,height:844})
  const {errors}=await uxFixture(page)
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click();await page.getByRole('button',{name:'文本阅读',exact:true}).click()
- const root=page.locator('.segments'),search=page.getByPlaceholder('搜索转写内容')
+ const root=page.locator('.segments'),search=page.getByPlaceholder('搜索原文')
  await search.fill('阅读');await expect(root.locator('article')).toHaveCount(40)
  await root.evaluate(element=>element.scrollTop=element.scrollHeight);await expect(root.locator('article')).toHaveCount(60)
  await root.locator('article').nth(50).scrollIntoViewIfNeeded()

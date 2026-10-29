@@ -303,10 +303,14 @@ class PreviewManager:
                              scene_detection=item['settings'], detector=VERSION, contract_version=2, revision=revision + 1,
                              applied_preview_id=item['id'])
                 with db.connect() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
                     changed = connection.execute("UPDATE jobs SET result_json=?,updated_at=? WHERE id=? AND state='succeeded' AND updated_at=?",
                         (json.dumps(result, ensure_ascii=False), db.utcnow(), job_id, job['updated_at']))
                     if changed.rowcount != 1:
                         raise HTTPException(409, 'Task changed; create a new preview')
+                    from .optimization_store import invalidate_scene_change
+                    invalidate_scene_change(connection, job_id, job['result'], result)
+                    connection.commit()
                 created.clear()
                 retained = {s['image'] for s in video['scenes'] + video['original_scenes'] + video['automatic_scenes']}
                 for path in folder.glob('*.jpg'):

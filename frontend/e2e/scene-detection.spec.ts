@@ -8,6 +8,10 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US'])test(`pictur
  const zh=locale==='zh-CN'
  let controls={min_change_percent:3,min_stable_seconds:1}
  let reads=0,applies=0
+ const run={id:'before-scenes',state:'succeeded',phase:'complete',published:true,model:'test',progress:1,revision:1}
+ await page.route('**/transcript-optimization',route=>route.fulfill({json:{enabled:true,published:applies?null:run,candidate:null}}))
+ await page.route('**/transcript-optimization/result?*',route=>route.fulfill({json:{run_id:run.id,complete:true,model:'test',paragraphs:[{id:'p1',ordinal:0,speaker:'s0',start:0,end:2,original_text:'原始内容',text:'之前的优化稿',segment_ids:[0],scene_ids:['scene-0']}],scenes:[]}}))
+
  const proposed=[{...state.job.result!.video!.scenes[0],end:60},{...state.job.result!.video!.scenes[30],end:120}]
  await page.route('**/api/v1/jobs/ux-video/video-scene-previews',route=>{
   controls=route.request().postDataJSON().settings
@@ -30,6 +34,8 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US'])test(`pictur
  })
  await page.goto('/#asr')
  await page.getByRole('tab',{name:zh?'任务与结果':'Tasks & results',exact:true}).click()
+ await page.getByRole('button',{name:zh?'优化稿':'Optimized',exact:true}).click()
+ await expect(page.locator('.optimization-reader')).toContainText('之前的优化稿')
  await page.getByRole('button',{name:zh?'画面检测':'Picture detection',exact:true}).click()
  const modal=page.getByRole('dialog')
  const change=modal.getByRole('spinbutton',{name:zh?'最小画面变化比例（%）':'Minimum picture change (%)'})
@@ -38,6 +44,7 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US'])test(`pictur
  await modal.getByRole('button',{name:zh?'预览检测':'Preview detection',exact:true}).click()
  await expect(modal.locator('.scene-detection-count')).toContainText(zh?'预览 2 段':'Preview: 2')
  expect(applies).toBe(0)
+ await expect(page.locator('.optimization-reader')).toContainText('之前的优化稿')
  expect(state.job.result!.video!.revision).toBe(1)
  // Slow transitions and sample their intermediate colors so contrast cannot depend on runner speed.
  await page.addStyleTag({content:'.scene-detection-footer button{transition-duration:10s}'})
@@ -80,6 +87,10 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US'])test(`pictur
  await expect(modal.getByRole('checkbox',{name:zh?'选择画面 1':'Select picture 1',exact:true})).toBeVisible()
  await page.keyboard.press('Escape')
  expect(applies).toBe(1)
+ await expect(page.getByRole('button',{name:zh?'原文':'Original',exact:true})).toHaveAttribute('aria-pressed','true')
+ await expect(page.getByRole('button',{name:zh?'优化稿':'Optimized',exact:true})).toBeDisabled()
+ await expect(page.locator('.optimization-reader')).toHaveCount(0)
+
  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('audio-intel:video-scene-detection:v1')||'null'))).toEqual({min_change_percent:4,min_stable_seconds:1.5})
  await page.getByRole('button',{name:zh?'画面检测':'Picture detection',exact:true}).click()
  await expect(change).toHaveValue('4')

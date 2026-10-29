@@ -15,9 +15,10 @@ for(const [width,height,minimum] of [[1280,720,180],[1440,800,260],[1470,830,280
  expect(initial.height).toBeGreaterThanOrEqual(minimum)
  if(width>=1024){
   const panel=(await page.locator('.video-result').boundingBox())!
-  expect(initial.y+initial.height).toBeLessThanOrEqual(panel.y+panel.height+1)
+  if(height>800)expect(initial.y+initial.height).toBeLessThanOrEqual(panel.y+panel.height+1)
   expect(panel.y+panel.height).toBeLessThan(height)
-  expect(await page.locator('.video-result').evaluate(node=>node.scrollHeight-node.clientHeight)).toBeLessThanOrEqual(1)
+  if(height>800)expect(await page.locator('.video-result').evaluate(node=>node.scrollHeight-node.clientHeight)).toBeLessThanOrEqual(1)
+  else{await reader.scrollIntoViewIfNeeded();await expect(reader).toBeInViewport()}
  }
  await page.locator('.enhancement-summary button').click()
  await expect(page.locator('.enhancement-details-panel')).toContainText('160%')
@@ -59,10 +60,10 @@ test('waveform commits reveal lazy readers, clear detail filters and preserve pa
  await page.getByRole('button',{name:'图文阅读',exact:true}).click()
  await expect.poll(()=>reader.evaluate(node=>node.scrollTop)).toBe(0)
  await page.getByRole('button',{name:'文本阅读',exact:true}).click()
- await page.getByPlaceholder('搜索转写内容').fill('第 1 段')
+ await page.getByPlaceholder('搜索原文').fill('第 1 段')
  await expect(page.locator('.segments article')).toHaveCount(1)
  await waveform.focus();await page.keyboard.press('End')
- await expect(page.getByPlaceholder('搜索转写内容')).toHaveValue('')
+ await expect(page.getByPlaceholder('搜索原文')).toHaveValue('')
  await expect(page.locator('.segments [data-reader-id="59"]')).toBeInViewport()
  await expect(page.locator('.segments [data-reader-id="59"]')).toHaveClass(/active/)
  await expect(waveform).toHaveAttribute('aria-valuenow','120')

@@ -69,3 +69,73 @@ def source_groups(result: dict[str, Any], *, pause_seconds: float = 15) -> list[
     for group in groups:
         group['merged_source_count'] = len(group['segment_ids'])
     return groups
+
+
+def scene_reading_groups(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Bounded reading sources for the scene-scoped workflow.
+
+    Use the same lossless assignment as original illustrated reading. Never
+    estimate word timing when a segment has no trustworthy word alignment.
+    Legacy source_groups remains available for old contract tests.
+    """
+    import re
+    from .transcript import scene_transcripts
+
+    if result.get('video', {}).get('scenes'):
+        sections = scene_transcripts(result, include_sources=True)
+        turns = []
+        for scene in sections:
+            for paragraph in scene['paragraphs']:
+                turns.append((scene['id'], paragraph))
+    else:
+        turns = [(None, group) for group in source_groups(result)]
+    output = []
+    for scene_id, turn in turns:
+        spans = turn['sources']
+        pending = []
+        size = 0
+
+        def flush():
+            nonlocal pending, size
+            if not pending:
+                return
+            text = ''
+            for span in pending:
+                text = join_text(text, span['text'])
+            ids = list(dict.fromkeys(span['segment_id'] for span in pending))
+            output.append({'id': f'g{len(output) + 1}', 'speaker': turn['speaker'],
+                           'speaker_label': turn.get('speaker_label'),
+                           'start': min(s['start'] for s in pending),
+                           'end': max(s['end'] for s in pending),
+                           'original_text': text, 'sources': pending,
+                           'segment_ids': ids, 'merged_source_count': len(ids),
+                           'scene_ids': [scene_id] if scene_id is not None else []})
+            pending, size = [], 0
+
+        for span in spans:
+            if not math.isfinite(span['start']) or not math.isfinite(span['end']) or span['end'] < span['start']:
+                raise ValueError('Source interval ends before it starts')
+            if pending and span['start'] - pending[-1]['end'] > 15:
+                flush()
+            text, offset = span['text'], 0
+            while offset < len(text):
+                if size >= 240:
+                    flush()
+                room = 400 - size - (1 if pending else 0)
+                end = min(len(text), offset + room)
+                if end < len(text):
+                    breaks = [offset + m.end() for m in re.finditer(r'[。！？；!?;]|\.(?=\s|$)', text[offset:end])]
+                    if not breaks:
+                        breaks = [offset + m.end() for m in re.finditer(r'[，,\s]', text[offset:end])]
+                    if breaks:
+                        end = min(breaks, key=lambda n: abs(size + n - offset - 240))
+                piece = {**span, 'text': text[offset:end],
+                         'start_offset': span['start_offset'] + offset,
+                         'end_offset': span['start_offset'] + end}
+                pending.append(piece)
+                size = len(join_text('x' * size, piece['text']))
+                offset = end
+                if offset < len(text):
+                    flush()
+        flush()
+    return output

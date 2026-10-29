@@ -2,7 +2,7 @@
 import re
 from typing import Literal
 
-PROMPT_VERSION = 6
+PROMPT_VERSION = 7
 RewriteMode = Literal['polish', 'rewrite', 'editorial']
 DEFAULT_MODE: RewriteMode = 'rewrite'
 MODES = ('polish', 'rewrite', 'editorial')

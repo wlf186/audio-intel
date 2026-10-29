@@ -178,6 +178,7 @@ export function SceneDetection({jobId,result,capability,onClose,onUpdated}:{jobI
     <button className="button" disabled={busy||stale||blocked||![...selected].some(id=>hidden.has(id))} onClick={()=>void saveVisibility('restore')}>{t('sceneDetection.restore')}</button>
     <button className="button" disabled={busy||stale||blocked||!hidden.size} onClick={()=>void saveVisibility('all')}>{t('sceneDetection.restoreAll')}</button>
    </div></>:null}
+   {!current&&ready?<p className="notice">{t('optimization.sceneInvalidation')}</p>:null}
    <div className="scene-detection-actions"><button className="primary" disabled={!ready||busy||manual&&!confirmed||blocked} onClick={()=>void apply()}>{t(applying?'sceneDetection.applying':'sceneDetection.apply')}</button><button className="button" disabled={applying||saving} onClick={onClose}>{t('common.actions.close')}</button></div>
   </div>
  </Modal>

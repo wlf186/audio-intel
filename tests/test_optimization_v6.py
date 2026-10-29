@@ -1,4 +1,4 @@
-"""v6 content-first lifecycle and immutable many-to-one source regression tests."""
+"""Unified workflow lifecycle and immutable many-to-one source regression tests."""
 import asyncio
 from copy import deepcopy
 import json
@@ -12,24 +12,21 @@ from test_voiceprint_groups_exports import local
 from test_optimization import PROFILE, configured, job, source, start, url, wait
 
 
-def test_content_is_exportable_before_background_review_finishes(configured, monkeypatch):
+def test_new_content_cannot_export_until_unified_check_finishes(configured, monkeypatch):
     async def slow_review(*args):
         await asyncio.sleep(60)
     monkeypatch.setattr(engine, 'review', slow_review)
     identifier = job(source(2))
     with TestClient(api.create_app()) as client:
         start(client, identifier)
-        run = wait(client, identifier, lambda s: bool(s['published']))['published']
-        assert run['state'] == 'succeeded' and run['review_state'] in ('queued', 'running')
-        result = client.get(url(identifier)+'/result', params={'run_id':run['id']}).json()
-        assert result['complete'] and result['prompt_version'] == 6
-        assert all(p['text'] != p['original_text'] and p['review_outcome']=='pending' for p in result['paragraphs'])
+        status = wait(client, identifier, lambda s: s['candidate'] and s['candidate']['phase'] == 'review')
+        run = status['candidate']
+        assert status['published'] is None and run['state'] == 'running'
+        assert client.get(url(identifier)+'/result', params={'run_id':run['id']}).status_code == 409
         response = client.post(f'/api/v1/jobs/{identifier}/transcript-export', json={'format':'txt','text_version':'optimized','optimization_id':run['id']})
-        assert response.status_code == 200 and 'Atlas' in response.text
+        assert response.status_code == 409
         assert client.post(url(identifier)+'/pause', json={'run_id':run['id'],'phase':'review'}).status_code == 200
-        assert store.get(run['id'])['state']=='succeeded'
-        assert store.get(run['id'])['review_state']=='paused'
-        assert client.post(url(identifier)+'/pause', json={'run_id':run['id']}).status_code==409
+        assert store.get(run['id'])['state'] == 'paused'
 
 
 def test_fact_uncertain_and_unavailable_never_rewrite_published_prose(configured, monkeypatch):
@@ -50,38 +47,35 @@ def test_fact_uncertain_and_unavailable_never_rewrite_published_prose(configured
         assert not store.checkpoint_review(run['id'],0,0,{'outcome':'pass','details':{'stage':'review','issues':[]}})
 
 
-def test_review_outage_resume_and_disable_preserve_complete_draft(configured, monkeypatch):
+def test_review_outage_publishes_without_separate_retry_action(configured, monkeypatch):
     async def offline(*args):
         raise httpx.ConnectError('offline')
     monkeypatch.setattr(engine, 'review', offline)
     identifier = job(source(2))
     with TestClient(api.create_app()) as client:
         start(client, identifier)
-        run = wait(client, identifier, lambda s:bool(s['published'] and s['published']['review_state']=='unavailable'))['published']
-        original = [p['text'] for p in store.units(run['id'])]
-        assert run['state']=='succeeded'
-        async def available(*args):
-            return {'outcome':'pass','details':{'stage':'review','issues':[]}}
-        monkeypatch.setattr(engine,'review',available)
-        assert client.post(url(identifier)+'/resume',json={'run_id':run['id'],'phase':'review'}).status_code==200
-        wait(client,identifier,lambda s:s['published']['review_state']=='completed')
-        assert [p['text'] for p in store.units(run['id'])]==original
+        run = wait(client, identifier, lambda s: bool(s['published']))['published']
+        assert run['review_state'] == 'completed' and run['unavailable_units'] == 2
+        before = store.units(run['id'])
+        assert client.post(url(identifier)+'/resume', json={'run_id':run['id'],'phase':'review'}).status_code == 409
+        assert store.units(run['id']) == before
 
 
-def test_new_generation_preempts_background_review_and_late_results_cannot_resurrect(configured, monkeypatch):
-    async def slow(*args):
-        await asyncio.sleep(60)
-    monkeypatch.setattr(engine, 'review', slow)
-    first, second = job(source(1)), job(source(1))
+def test_regeneration_keeps_old_draft_during_check_and_delete_rejects_late_results(configured, monkeypatch):
+    identifier = job(source(1))
     with TestClient(api.create_app()) as client:
-        start(client,first)
-        old=wait(client,first,lambda s:bool(s['published'] and s['published']['review_state']=='running'))['published']['id']
-        assert start(client,second).status_code==202
-        wait(client,second,lambda s:bool(s['published']))
-        assert start(client,first,True,'v6-regenerate-draft-key').status_code==202
-        new=wait(client,first,lambda s:bool(s['published'] and s['published']['id']!=old))['published']['id']
-        assert not store.checkpoint_review(old,0,0,{'outcome':'pass','details':{'stage':'review','issues':[]}})
-        assert client.delete(f'/api/v1/jobs/{first}?purge=true').status_code==204
+        start(client, identifier)
+        old = wait(client, identifier, lambda s: bool(s['published']))['published']['id']
+        async def slow(*args):
+            await asyncio.sleep(60)
+        monkeypatch.setattr(engine, 'review', slow)
+        assert start(client, identifier, True, 'unified-regenerate-key').status_code == 202
+        state = wait(client, identifier, lambda s: s['candidate'] and s['candidate']['phase'] == 'review')
+        new = state['candidate']['id']
+        assert state['published']['id'] == old
+        assert client.get(url(identifier)+'/result', params={'run_id':old}).status_code == 200
+        assert client.get(url(identifier)+'/result', params={'run_id':new}).status_code == 409
+        assert client.delete(f'/api/v1/jobs/{identifier}?purge=true').status_code == 204
         assert not store.checkpoint_review(new,0,0,{'outcome':'pass','details':{'stage':'review','issues':[]}})
         with db.connect() as c:
             assert not c.execute('SELECT 1 FROM optimization_parts WHERE run_id IN (?,?)',(old,new)).fetchall()
@@ -185,7 +179,7 @@ def test_budget_adapts_parts_and_preserves_every_source_offset():
             assert data['segments'][0]['text'][span['start_offset']:span['end_offset']]==span['text']
 
 
-def test_v17_migration_keeps_text_and_legacy_unknown_review(configured):
+def test_v17_migration_clears_legacy_runs_and_keeps_parent(configured):
     identifier=job(source(1))
     config={**PROFILE,'prompt_version':5}
     run,_=store.create(identifier,'legacy-v17-migration',False,config,engine.source_hash(source(1)),[],engine.prepare_units(source(1)))
@@ -199,11 +193,11 @@ def test_v17_migration_keeps_text_and_legacy_unknown_review(configured):
             c.execute('ALTER TABLE transcript_optimizations DROP COLUMN '+field)
         c.execute('UPDATE schema_meta SET version=17')
     db.init_db();db.init_db()
-    snapshot, units=store.snapshot(run)
-    assert units[0]['text']=='旧版成稿' and units[0]['review_outcome'] is None and snapshot['review_state'] is None
+    assert store.status(identifier) == {'published': None, 'candidate': None}
+    assert store.units(run) == []
+    assert db.get_job(identifier)['result'] == source(1)
     with db.connect() as c:
-        assert tuple(c.execute('SELECT source_json,optimized_text FROM optimization_units WHERE run_id=?',(run,)).fetchone())==old
-        assert c.execute('SELECT version FROM schema_meta').fetchone()[0]==18
+        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 19
         assert not c.execute('PRAGMA foreign_key_check').fetchall()
 
 
@@ -242,7 +236,8 @@ def test_group_overlap_uses_maximum_turn_end_and_scene_links():
                         dict(data['segments'][0], id=3, start=30, end=32)]
     data['video'] = {'scenes': [{'id': str(i), 'start': i, 'end': i + 1} for i in range(1000)]}
     units = engine.prepare_units(data)
-    assert len(units) == 1 and units[0]['scene_ids'] == [str(i) for i in range(100)]
+    assert [u['scene_ids'] for u in units] == [['0'], ['10'], ['30']]
+    assert [u['sources'][0]['segment_id'] for u in units] == [1, 2, 3]
     data['segments'][0]['end'] = float('nan')
     with pytest.raises(ValueError):
         engine.prepare_units(data)
@@ -264,12 +259,8 @@ def test_retry_unavailable_review_preserves_other_verdicts_and_text(configured, 
             return {'outcome': 'pass', 'details': {'stage': 'review', 'issues': []}}
         monkeypatch.setattr(engine, 'review', retry)
         response = client.post(url(identifier) + '/resume', json={'run_id': run, 'phase': 'review'})
-        assert response.status_code == 200
-        final = wait(client, identifier, lambda s: s['published']['review_state'] == 'completed')['published']
-        assert len(calls) == 1 and calls[0] == before[1]['original_text']
-        assert [unit['text'] for unit in store.units(run)] == [unit['text'] for unit in before]
-        assert [unit['review_outcome'] for unit in store.units(run)] == ['pass', 'pass', 'uncertain', 'fact']
-        assert final['unavailable_units'] == 0 and final['needs_review_units'] == 1 and final['uncertain_units'] == 1
+        assert response.status_code == 409
+        assert calls == [] and store.units(run) == before
 
 
 def test_restart_restores_review_and_disable_pauses_it(configured, monkeypatch):
@@ -280,20 +271,22 @@ def test_restart_restores_review_and_disable_pauses_it(configured, monkeypatch):
     identifier = job(source(1))
     with TestClient(api.create_app()) as client:
         start(client, identifier)
-        run = wait(client, identifier, lambda s: bool(s['published'] and s['published']['review_state'] == 'running'))['published']['id']
+        run = wait(client, identifier, lambda s: bool(s['candidate'] and s['candidate']['phase'] == 'review'))['candidate']['id']
         before = store.units(run)[0]['text']
         settings = {key: PROFILE[key] for key in ('base_url', 'model', 'use_proxy')}
         assert client.put('/api/v1/settings/transcript-optimization', json={**settings, 'enabled': False}).status_code == 200
-        assert store.get(run)['review_state'] == 'paused'
+        assert store.get(run)['state'] == 'paused'
         assert store.units(run)[0]['text'] == before
     # Simulate interrupted running review, not a user pause.
     store.save_settings(PROFILE)
-    store.review_transition(run, 'running', ('paused',))
+    store.transition(run, 'running', ('paused',))
     async def completed(*args):
         return {'outcome': 'pass', 'details': {'stage': 'review', 'issues': []}}
     monkeypatch.setattr(engine, 'review', completed)
     with TestClient(api.create_app()) as client:
-        wait(client, identifier, lambda s: s['published']['review_state'] == 'completed')
+        assert store.get(run)['state'] == 'paused'
+        assert client.post(url(identifier)+'/resume', json={'run_id':run}).status_code == 200
+        wait(client, identifier, lambda s: bool(s['published'] and s['published']['review_state'] == 'completed'))
         assert store.units(run)[0]['text'] == before
 
 
@@ -304,13 +297,16 @@ def test_legacy_scene_ownership_retains_maximum_overlap(configured):
     identifier = job(data)
     run, _ = store.create(identifier, 'legacy-scene-ownership', False, {**PROFILE, 'prompt_version': 5}, engine.source_hash(data), [], engine.prepare_units(data))
     store.transition(run, 'running', ('queued',))
-    store.checkpoint(run, [(0, '历史正文')]); store.publish(run)
+    store.checkpoint(run, [(0, '历史正文')])
+    with db.connect() as c:
+        c.execute("UPDATE transcript_optimizations SET review_state='completed' WHERE id=?", (run,))
+    assert store.publish(run)
     result = engine.reading_result(data, run)
     assert result['scenes'][0]['paragraphs'] == []
     assert result['scenes'][1]['paragraphs'][0]['text'] == '历史正文'
 
 
-def test_mixed_fact_and_unavailable_part_remains_retryable(configured):
+def test_mixed_fact_and_unavailable_are_immutable_after_publication(configured):
     data = source(1)
     data['segments'][0]['text'] = '甲' * 360
     identifier = job(data)
@@ -323,25 +319,23 @@ def test_mixed_fact_and_unavailable_part_remains_retryable(configured):
     for i in range(len(chunks) - 1):
         if chunks[i]['source']['forced_after']:
             store.checkpoint_seam(run, 0, i, (f'正文{i}', f'正文{i+1}'))
-    store.finish_unit(run, 0); store.publish(run)
-    store.review_transition(run, 'running', ('queued',))
+    store.finish_unit(run, 0)
+    assert not store.publish(run)
+    assert store.begin_review(run)
     fact = {'outcome': 'fact', 'details': {'stage': 'review', 'issues': [{'source_quote': '甲', 'candidate_quote': '正文', 'reason': '证据'}]}}
     store.checkpoint_review(run, 0, 0, fact)
     store.checkpoint_review(run, 0, 1, {'outcome': 'unavailable', 'details': {'stage': 'review', 'issues': []}})
     for i in range(2, len(chunks)):
         store.checkpoint_review(run, 0, i, {'outcome': 'pass', 'details': {'stage': 'review', 'issues': []}})
+    assert store.publish(run)
     summary = store.status(identifier)['published']
     before = store.units(run)[0]['text']
     assert summary['needs_review_units'] == summary['unavailable_units'] == 1
     assert store.units(run)[0]['review_outcome'] == 'fact'
-    store.resume_review(run)
-    assert [part['review_outcome'] for part in store.parts(run, 0)] == ['fact', None, 'pass']
-    store.review_transition(run, 'running', ('queued',))
-    store.checkpoint_review(run, 0, 1, {'outcome': 'pass', 'details': {'stage': 'review', 'issues': []}})
+    assert not store.checkpoint_review(run, 0, 1, {'outcome': 'pass', 'details': {'stage': 'review', 'issues': []}})
     assert store.units(run)[0]['text'] == before
     assert store.units(run)[0]['review_details'] == fact['details']
-    assert store.units(run)[0]['review_outcome'] == 'fact'
-    assert store.status(identifier)['published']['unavailable_units'] == 0
+    assert store.status(identifier)['published']['unavailable_units'] == 1
 
 
 def test_qualifier_guard_accepts_synonyms_and_self_correction():

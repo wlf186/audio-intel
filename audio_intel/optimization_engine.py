@@ -98,13 +98,20 @@ async def verify(config: dict) -> dict:
 
 
 def source_hash(result: dict) -> str:
-    # Renaming people or editing picture boundaries does not change source text.
-    return store.digest([(s['id'], s['text'], s['start'], s['end']) for s in result.get('segments', [])])
+    # Text ownership changes invalidate prose; display names and pictures do not.
+    from .optimization_sources import scene_reading_groups
+    groups = scene_reading_groups(result)
+    video = result.get('video') or {}
+    return store.digest({
+        'groups': [{key: group[key] for key in ('speaker', 'sources', 'scene_ids')} for group in groups],
+        'scenes': [(scene['id'], scene['start'], scene['end']) for scene in video.get('scenes', [])],
+        'detection': video.get('scene_detection'),
+    })
 
 
 def prepare_units(result: dict) -> list[dict]:
-    from .optimization_sources import source_groups
-    units = source_groups(result)
+    from .optimization_sources import scene_reading_groups
+    units = scene_reading_groups(result)
     if not units:
         raise ValueError('任务没有可优化的文字 / No transcript text to optimize')
     return units
@@ -458,7 +465,7 @@ async def repair_seam(config: dict, left: dict, right: dict, hotwords: list[str]
 
 def reading_result(result: dict, run_id: str, *, complete: bool = False) -> dict:
     run, units = store.snapshot(run_id)
-    if complete and not run['published']:
+    if not run['published']:
         raise ValueError('请等待优化完成后导出 / Export requires a completed draft')
     if source_hash(result) != run['source_hash']:
         raise ValueError('原文已变化，请重新优化 / Source text changed; regenerate the draft')
@@ -472,7 +479,8 @@ def reading_result(result: dict, run_id: str, *, complete: bool = False) -> dict
     values = []
     for unit in units:
         first = current.get(unit['segment_ids'][0], {})
-        related = sorted({scene['id'] for span in unit['sources'] for scene in matching_scenes(indexed_scenes, span['start'], span['end'])}, key=scene_positions.__getitem__)
+        related = (unit.get('scene_ids', []) if run['config'].get('prompt_version', 1) >= 7 else
+                   sorted({scene['id'] for span in unit['sources'] for scene in matching_scenes(indexed_scenes, span['start'], span['end'])}, key=scene_positions.__getitem__))
         value = {**unit, 'omitted': unit['text'] == '', 'speaker': first.get('speaker', unit.get('speaker')),
                  'speaker_label': first.get('speaker_label', unit.get('speaker_label')),
                  'merged_source_count': len(set(unit['segment_ids'])), 'scene_ids': related}

@@ -566,3 +566,15 @@ SQLite v17 → v18 仅增加独立后台复核元数据及生成子批次检查�
 需重建前端并从最终源码重新启动 API、ASR/TTS 监督进程及执行器；保持实际端口、数据目录、profile、鉴权及 mock 配置。按照本文维护流程核验进程身份、版本、历史任务和优化稿，不能只检查健康端点。
 
 English: Schema v18 adds independent review metadata and durable generation batches. Take a SQLite-only snapshot while stopped; no historical media copy is required. Published content remains available during background review. Regenerate obsolete unfinished candidates explicitly; historical completed drafts stay readable. Rebuild the UI, restore all previously running components, verify final-source process identities and historical data, then remove the recorded upgrade snapshot.
+
+## 表达优化统一流程 v7 / Unified optimization v7
+
+SQLite v18 → v19 **包含一次性数据清理**：删除全部旧音频及视频的优化正文、候选、中间批次和复核记录，需手动重新优化。原始转写、媒体、人物、热词、任务和模型配置保持不变；重新启动不会清理迁移后新生成的稿件。
+
+停服后用 SQLite Backup API 创建数据库一致性快照即可，无媒体文件重写，不需复制整个数据目录。重建前端并恢复原先运行的 API、ASR/TTS 监督进程及执行器；核验最终进程、原配置、历史任务／媒体可读及仅旧优化被清理后，再删除本次记录的临时快照。失败时保留备份用于回滚。
+
+新稿在生成与自动检查全部结束后统一发布；检查失败仅保留提示，不撤销正文。同一画面划分下重新生成保留旧稿至新稿完成。正式应用检测结果或编辑边界会清理该任务优化稿；预览、替换截图或隐藏导出画面不会清理。
+
+浏览器长期档位及导出偏好不变。来源明细开关新增为每任务会话偏好，刷新保留、退出登录清理；默认显示差异，尊重已有关闭选择。升级后刷新浏览器。
+
+English: Schema v19 deletes all pre-upgrade optimization drafts and checkpoints once, but preserves original jobs/media and settings. Use a stopped-service SQLite-only backup, rebuild, restore the recorded components and verify final process identities and historical data before cleanup. New drafts publish only after generation and bounded checks finish; previous drafts remain readable during regeneration under unchanged scene boundaries.

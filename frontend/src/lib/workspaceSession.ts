@@ -3,7 +3,7 @@ export type ReadingMode='original'|'optimized'|'comparison'
 export type AsrWorkspaceSession={view:'create'|'video'|'results';jobId?:string;videoReading:boolean}
 export type PeopleSession={groupId:string;query:string;selectedId:string;scrollTop:number;alphabetScrollTop:number}
 export type ReaderBookmark={sourceId?:number;anchorId:string;time:number;offset:number;scrollTop:number;visibleCount:number;query?:string;speakerFilter?:string}
-type WorkspaceSession={optimizationChanges?:Record<string,boolean>;readingFilters?:Record<string,{query:string;speaker:string}>;optimizationViews?:Record<string,boolean|ReadingMode>;asr?:AsrWorkspaceSession;people?:PeopleSession;readers?:Record<string,ReaderBookmark>}
+type WorkspaceSession={sourceDetails?:Record<string,boolean>;optimizationChanges?:Record<string,boolean>;readingFilters?:Record<string,{query:string;speaker:string}>;optimizationViews?:Record<string,boolean|ReadingMode>;asr?:AsrWorkspaceSession;people?:PeopleSession;readers?:Record<string,ReaderBookmark>}
 let memory:WorkspaceSession={}
 let loaded=false
 let active=true
@@ -46,6 +46,7 @@ export function saveReaderBookmark(key:string,value:ReaderBookmark){
 }
 export function removeJobSession(ids:string[]){
  const removed=new Set(ids)
+ read().sourceDetails=Object.fromEntries(Object.entries(read().sourceDetails||{}).filter(([id])=>!removed.has(id)))
  read().readingFilters=Object.fromEntries(Object.entries(read().readingFilters||{}).filter(([id])=>!removed.has(id)))
  read().optimizationChanges=Object.fromEntries(Object.entries(read().optimizationChanges||{}).filter(([id])=>!removed.has(id)))
  read().optimizationViews=Object.fromEntries(Object.entries(read().optimizationViews||{}).filter(([id])=>!removed.has(id)))
@@ -68,5 +69,14 @@ export function saveReadingFilter(jobId:string,query:string,speaker:string){
  read().readingFilters=Object.fromEntries(Object.entries(values).slice(-200));persist()
 }
 
-export function readOptimizationChanges(jobId:string){return read().optimizationChanges?.[jobId]===true}
+export function readOptimizationChanges(jobId:string){return read().optimizationChanges?.[jobId]!==false}
 export function saveOptimizationChanges(jobId:string,value:boolean){if(!active)return;const values={...read().optimizationChanges};delete values[jobId];values[jobId]=value;read().optimizationChanges=Object.fromEntries(Object.entries(values).slice(-200));persist()}
+
+export function readSourceDetails(jobId:string){return read().sourceDetails?.[jobId]===true}
+export function saveSourceDetails(jobId:string,value:boolean){if(!active)return;const values={...read().sourceDetails};delete values[jobId];values[jobId]=value;read().sourceDetails=Object.fromEntries(Object.entries(values).slice(-200));persist()}
+
+export function clearOptimizationBookmarks(jobId:string){
+ if(!active)return
+ read().readers=Object.fromEntries(Object.entries(read().readers||{}).filter(([key])=>!key.startsWith(jobId+':optimized')&&!key.startsWith(jobId+':comparison')))
+ persist()
+}

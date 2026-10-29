@@ -68,7 +68,7 @@ def test_provider_errors_do_not_become_paragraph_fallback(configured, monkeypatc
     assert len(calls) == attempts
 
 
-def test_v15_review_migration_preserves_legacy_text_and_unknown_status(configured):
+def test_v15_migration_clears_legacy_optimization_preserving_source(configured):
     identifier = job(source(2))
     with TestClient(api.create_app()) as client:
         start(client, identifier)
@@ -82,11 +82,11 @@ def test_v15_review_migration_preserves_legacy_text_and_unknown_status(configure
     db.init_db()
     db.init_db()
     with db.connect() as connection:
-        assert [tuple(row) for row in connection.execute('SELECT run_id,ordinal,source_json,optimized_text FROM optimization_units')] == before
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 18
+        assert before and not connection.execute('SELECT 1 FROM optimization_units').fetchall()
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 19
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
-    assert all(unit['review_status'] is None and unit['review_reason'] is None for unit in store.units(run))
-    assert store.status(identifier)['published']['needs_review_units'] == 0
+    assert store.status(identifier) == {'published': None, 'candidate': None}
+    assert db.get_job(identifier)['result'] == source(2)
 
 
 def docx_text(content):
@@ -182,14 +182,14 @@ def test_units_source_coverage_scene_splits_and_long_speech():
     result['video'] = {'scenes':[{'id':'a','start':0,'end':3},{'id':'b','start':3,'end':6}]}
     before = deepcopy(result)
     units = engine.prepare_units(result)
-    assert [p['original_text'] for p in units] == ['第一段。第二段。']
-    assert [(p['sources'][0]['start_offset'],p['sources'][0]['end_offset']) for p in units] == [(0,8)]
+    assert [p['original_text'] for p in units] == ['第一段。', '第二段。']
+    assert [(p['sources'][0]['start_offset'],p['sources'][0]['end_offset']) for p in units] == [(0,4), (4,8)]
     assert result == before
     result.pop('video')
     result['segments'][0].update(text='长句内容。'*900, words=[])
     units = engine.prepare_units(result)
     assert ''.join(p['original_text'] for p in units) == result['segments'][0]['text']
-    assert len(units) == 1
+    assert len(units) > 1 and all(len(unit['original_text']) <= 400 for unit in units)
     chunks = engine.prepare_parts(PROFILE, units[0], [])
     assert all(len(part['original_text']) <= 1200 for part in chunks)
     assert ''.join(part['original_text'] for part in chunks) == units[0]['original_text']
@@ -214,7 +214,7 @@ def test_v14_migration_preserves_history_queue_and_idempotency(local):
     assert {identifier: db.get_job(identifier) for identifier in before} == before
     assert not store.settings()['enabled']
     with db.connect() as connection:
-        assert connection.execute('SELECT min(version) FROM schema_meta').fetchone()[0] == 18
+        assert connection.execute('SELECT min(version) FROM schema_meta').fetchone()[0] == 19
         assert tuple(connection.execute('SELECT * FROM job_idempotency').fetchone()) == receipt
         assert tuple(connection.execute('SELECT * FROM queue_sequence').fetchone()) == sequence
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
@@ -377,9 +377,7 @@ def test_video_comparison_images_redaction_and_scene_reassignment(configured):
         assert sum(len(table.columns)==2 for table in document.tables)==4
         result['video']['scenes'][0]['end']=9;result['video']['scenes'][1]['start']=9
         db.update_job(identifier,result_json=result)
-        draft=client.get(url(identifier)+'/result',params={'run_id':run}).json()
-        assert [len(s['paragraphs']) for s in draft['scenes']]==[3,1]
-        assert len({p['id'] for s in draft['scenes'] for p in s['paragraphs']})==4
+        assert client.get(url(identifier)+'/result',params={'run_id':run}).status_code == 409
 
 
 def test_queue_limit_and_settings_are_independent(local):
@@ -512,7 +510,7 @@ def test_verification_format_retries_are_bounded(monkeypatch, failures):
     assert len(calls) == min(failures + 1, 3)
 
 
-def test_v16_migration_preserves_existing_text_and_adds_nullable_candidate(configured):
+def test_v16_migration_clears_legacy_candidate_preserving_source(configured):
     identifier=job(source(1))
     run,_=store.create(identifier,'migration-candidate-key',False,PROFILE,'hash',[],engine.prepare_units(source(1)))
     before=store.units(run)
@@ -521,6 +519,7 @@ def test_v16_migration_preserves_existing_text_and_adds_nullable_candidate(confi
         connection.execute('ALTER TABLE optimization_units DROP COLUMN review_details_json')
         connection.execute('UPDATE schema_meta SET version=16')
     db.init_db()
-    assert store.units(run)==before
+    assert before and store.units(run) == []
+    assert db.get_job(identifier)['result'] == source(1)
     with db.connect() as connection:
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0]==18
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0]==19

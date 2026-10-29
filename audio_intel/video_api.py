@@ -484,7 +484,25 @@ def register(app: Any, api: Any) -> None:
     @app.patch('/api/v1/jobs/{job_id}/video-scenes', tags=tags, response_model=JobResultResponse, responses=errors,
                description='携带 revision 修订号进行合并、拆分、边界/截图调整、恢复、应用检测预览或设置导出隐藏画面。冲突返回 409，请重新读取。\n\n**English:** Submit revision with merge_next, split, boundary, frame, restore, apply_detection (with preview_id) or set_export_visibility (with export_hidden_scene_ids). Stale revision returns 409; reload before retrying.',
               summary='修正视频分段 / Edit presentation sections')
-    def edit(job_id: str, body: SceneEdit, _: None = auth) -> dict:
+    async def edit(job_id: str, body: SceneEdit, _: None = auth) -> dict:
+        from . import optimization_store
+        manager = app.state.optimization_manager
+        if body.action in {'frame', 'set_export_visibility'}:
+            return await run_in_threadpool(edit_result, job_id, body)
+        async with manager.gate:
+            candidate = optimization_store.status(job_id)['candidate']
+            resume = candidate and candidate['state'] in ('queued', 'running')
+            await manager.stop(job_id)
+            try:
+                return await run_in_threadpool(edit_result, job_id, body)
+            finally:
+                # A failed/no-op edit keeps the old draft and prior running intent.
+                current = optimization_store.status(job_id)['candidate']
+                if resume and current and current['id'] == candidate['id'] and current['state'] == 'paused':
+                    optimization_store.transition(current['id'], 'queued', ('paused',))
+                optimization_store.clear_export_caches()
+
+    def edit_result(job_id: str, body: SceneEdit) -> dict:
         if body.action == 'apply_detection':
             return previews.apply(job_id, body.preview_id, body.revision)
         if body.action == 'set_export_visibility':
@@ -502,10 +520,14 @@ def register(app: Any, api: Any) -> None:
                     return result
                 video.update(export_hidden_scene_ids=ordered, revision=video['revision'] + 1)
                 with db.connect() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
                     changed = connection.execute("UPDATE jobs SET result_json=?,updated_at=? WHERE id=? AND state='succeeded' AND updated_at=?",
                         (json.dumps(result, ensure_ascii=False), db.utcnow(), job_id, job['updated_at']))
                     if changed.rowcount != 1:
                         raise HTTPException(409, 'Task changed; reload before editing')
+                    from .optimization_store import invalidate_scene_change
+                    invalidate_scene_change(connection, job_id, job['result'], result)
+                    connection.commit()
                 return result
         from .video_frames import picture_at, save_picture
         with picture_slot(), speaker_update_lock(job_id), task_reader(job_id):
@@ -569,10 +591,14 @@ def register(app: Any, api: Any) -> None:
                 video['export_hidden_scene_ids'] = retained_hidden(job['result']['video'], values)
                 video['revision'] += 1
                 with db.connect() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
                     changed = connection.execute("UPDATE jobs SET result_json=?,updated_at=? WHERE id=? AND state='succeeded' AND updated_at=?",
                         (json.dumps(result, ensure_ascii=False), db.utcnow(), job_id, job['updated_at']))
                     if changed.rowcount != 1:
                         raise HTTPException(409, 'Task changed; reload before editing')
+                    from .optimization_store import invalidate_scene_change
+                    invalidate_scene_change(connection, job_id, job['result'], result)
+                    connection.commit()
             except BaseException:
                 for path in folder.glob('*.jpg'):
                     if path.name not in before:
