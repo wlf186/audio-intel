@@ -16,6 +16,8 @@ PUBLIC_DOCS = (
     ROOT / "AGENTS.md",
     ROOT / "CONTRIBUTING.md",
     ROOT / "docs" / "API.md",
+    ROOT / "docs" / "EXPRESSION_OPTIMIZATION.md",
+    ROOT / "docs" / "EXPRESSION_OPTIMIZATION_VALIDATION.md",
     ROOT / "docs" / "ASR_ENHANCEMENT.md",
     ROOT / "docs" / "LIBRARY.md",
     ROOT / "docs" / "WORKSPACES.md",

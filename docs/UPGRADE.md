@@ -1,5 +1,15 @@
 # 升级指南
 
+## v0.1.41：统一表达优化与入库音轨
+
+**从 v0.1.40 升级涉及 SQLite v16→v19，包含一次性清理：全部旧优化正文、候选、批次及检查记录将删除，需要手动重新优化。原始转写、媒体、声纹、热词及模型配置保留。** v17/v18 开发实例同样执行一次清理；已经迁移到 v19 的实例不重复清理。
+
+迁移类别为「仅数据库」。首次新版启动前停止服务并创建 SQLite 一致性备份，无需复制媒体；更早版本还须核对中间升级要求。重建前端并刷新 API、ASR/TTS supervisor 和 executor，核验历史数据和最终版本后清理本次临时备份。当前已为 v19 且没有其他迁移的实例不需要额外升级备份。
+
+新稿生成和有限自动检查结束后统一发布；检查不可用或疑点仅作标注。多段同人发言按画面组织，完整左右对照；应用新画面边界会使旧稿失效。入库新增原音／增强音选择，默认原音。模型、推理依赖及 ASR/TTS 管线不变。下文 v5/v6 记录描述历史开发阶段，其独立复核行为由 v7 取代。
+
+English: Upgrading from v0.1.40 migrates SQLite v16 to v19 and deletes all old optimization drafts/checkpoints once. Original transcripts, media, libraries and settings remain. Stop services and take a consistent SQLite-only backup before first startup. Already-v19 instances do not repeat cleanup. Rebuild and refresh all original service processes, validate, then remove temporary upgrade backups. New drafts publish after generation and bounded checks finish; check warnings never retract prose.
+
 ## 升级前
 
 先阅读当前版本到目标版本之间的全部升级说明，按[升级备份范围](#upgrade-backup-scope)确定是否需要备份。确认没有未完成任务或导入，记录实际启动配置，再停止全部服务。`data/` 包含 SQLite 队列、历史输入输出、声音档案和声纹库；升级应保留这些数据。先阅读下方的本机部署收尾要求。
@@ -554,7 +564,7 @@ English: v0.1.39 adds optional Ollama transcript cleanup and schema v15. Upgradi
 
 ## 表达优化策略 v5 / Optimization policy v5
 
-SQLite v16→v17 仅新增优化候选正文与复核详情列；升级前创建数据库快照，完成本地验收后清理。历史稿保留，旧未完成候选须重新生成；详见 [表达优化](EXPRESSION_OPTIMIZATION.md#策略-v5待核对候选与独立阅读方式)。
+SQLite v16→v17 仅新增优化候选正文与复核详情列；升级前创建数据库快照，完成本地验收后清理。历史稿保留，旧未完成候选须重新生成；详见 [表达优化](EXPRESSION_OPTIMIZATION.md#持久化与升级)。
 
 
 ## 表达优化策略 v6 / Optimization policy v6

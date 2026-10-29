@@ -340,3 +340,9 @@ AUDIO_INTEL_LOAD_ENV=0 .runtime/asr/bin/python scripts/benchmark_asr_enhancement
   --modes off,split_both,strength_default,strength_weak,strength_strong \
   --output-dir logs/enhancement-strength-validation
 ```
+
+## 入库音轨 / Enrollment audio track
+
+从转写结果「加入声纹库」时可选择原音或增强音，每次打开默认原音，与主播放器选择独立，不保存浏览器偏好。没有增强音时选项禁用；视频弹窗试听随选择切换，切换时停止播放。选择适用于整批原始语句，每句仍独立成为样本，同一来源不能通过切换音轨重复入库。增强文件缺失返回 404，保留选择供重试，不自动回退或补生成。原音保持现有规则：音频使用来源录音，视频使用对齐时间轴的 playback.wav。
+
+English: Enrollment offers Original (default on every open) and Enhanced independently of the main player. The selection applies to all selected original segments and is not persisted. Video preview follows the selected track and stops when switching. Missing enhanced audio returns 404 without fallback or regeneration; duplicate-source protection remains unchanged. Each original segment becomes one sample. See [API](API.md).

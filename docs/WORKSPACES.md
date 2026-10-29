@@ -135,8 +135,16 @@ The video result's Picture detection dialog previews area/duration controls befo
 
 English: Picture detection immediately shows current pictures, loads more on scroll, and keeps footer actions reachable. Export visibility is server-owned task metadata, not browser storage, and resets when changed detection settings are applied. Browser detection-default preferences retain their existing lifetime.
 
-音视频任务的桌面“简洁导出”菜单提供 PDF（固定排版）和 Word（DOCX，可编辑），明细与字幕入口保留。手机在原导出弹窗选择 DOCX，默认 PDF；不新增格式偏好存储。
+音视频任务统一使用「导出转写」，选择原文、优化稿或对照及其支持的格式，按钮统一为「下载」。内容、各内容的格式及脱敏规则长期保存；成功触发下载后关闭弹窗，失败保留选择。
 
-English: The desktop Concise export menu offers PDF (fixed layout) and Word (DOCX, editable), alongside the existing details/subtitles menu. Mobile uses the existing format selector, defaulting to PDF, without new format-preference storage.
+English: Export transcript selects original, optimized or comparison content and its supported format. Download preferences persist per content version; successful downloads close the dialog, while failures retain selections for retry.
 
 表达优化通过同一选择对话框提供自然润色、流畅重写（默认）、深度成稿。`audio-intel:optimization-preferences:v1` 长期记忆最后所选档位，刷新、重开、退出登录和资料库替换后保留；任务中使用的档位是服务端快照，改浏览器偏好不会改写已有稿件。导出偏好首次沿用当前阅读内容，之后优先使用已保存选择；不可用选择临时回退而不覆盖偏好。准备成功触发下载后弹窗自动关闭，失败则保留选项。
+
+## 表达优化阅读 / Optimized reading
+
+原文／优化稿／对照与图文／文本阅读独立切换。表达优化、画面检测和增强详情保持固定入口。桌面对照并排显示完整原文和成稿，手机上下排列；来源 ID 和时间通过「来源明细」统一查看。搜索针对当前版本，对照搜索两侧，支持命中跳转。计数分别表示原文片段、阅读段落和搜索命中，不代表模型改写质量。
+
+生成、自动检查、发布是一次流程；新稿完成前不可下载，同一画面划分下的旧完成稿继续可用。正式应用新画面边界会清理旧优化，预览、更换截图和隐藏导出画面不会。详见[表达优化](EXPRESSION_OPTIMIZATION.md)。
+
+English: Text version and reading mode are independent. Desktop comparisons show complete source and draft side by side; mobile stacks them. Source details are optional. Search covers the selected version, or both comparison columns. Generation and bounded checks publish together; previous published prose remains usable during regeneration under unchanged scene boundaries.

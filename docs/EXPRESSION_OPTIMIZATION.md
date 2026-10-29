@@ -92,3 +92,15 @@ English: Policy v7 scopes bounded reading paragraphs to one scene and one consec
 ```
 
 Windows 使用 API 环境的对应 Python 路径。工具保存服务版本、模型 digest、策略及语料校验和、逐项输出和耗时；`--resume` 只恢复身份一致的结果。复核用预置候选独立测量，未知／不可用不从分母删除。语言改善和事实保留须对记录逐项独立审读，不能由改字比例自动认证。真实任务评测应复制到隔离测试目录，按来源范围比较并统计来源字数加权结果，不能修改用户任务来做测试。
+
+## 界面示例与复现 / Interface examples
+
+以下为合成测试内容，用于展示界面，不是模型质量证据。
+
+![桌面完整对照 / Desktop comparison](assets/optimization/comparison-1440.png)
+
+[手机对照 / Mobile comparison](assets/optimization/comparison-390.png)
+
+在隔离 mock 服务运行 `optimization-workflow.spec.ts` 和 `video-enrollment.spec.ts` 后，执行 `python3 scripts/collect_optimization_doc_assets.py` 收集截图。README 使用 `scripts/capture_readme_assets.mjs`，需设置 `AUDIO_INTEL_CAPTURE_BASE_URL` 为隔离服务地址，不能对正常部署创建演示任务。两个脚本仅使用合成任务；测试检查交互、控制台错误及桌面／390 px 横向溢出。
+
+English: These synthetic fixtures demonstrate layout, not model quality. Run both named Playwright files together against an isolated mock service, then collect screenshots. README capture also requires an isolated mock service and must never seed the normal deployment.

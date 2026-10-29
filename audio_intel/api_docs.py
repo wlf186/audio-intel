@@ -1538,3 +1538,74 @@ def enrich_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
                         else:
                             media["example"] = _example_for_schema(response_schema, schemas)
     return schema
+
+
+API_DESCRIPTION += r"""
+## 优化与入库示例 / Optimization and enrollment examples
+
+先在系统状态配置、验证并启用 Ollama。以下脚本创建优化、等待整体发布并导出 TXT；环境变量 `JOB_ID` 指向已完成的普通音视频任务。保存 `OPTIMIZATION_KEY` 并在同一次提交重试时复用，429 按 Retry-After 稍后重试；故障或暂停不会无限轮询。Bearer 密钥仅从环境变量读取。
+
+Configure and enable a verified Ollama model first. Supply a completed audio/video job ID and retain the same optimization key for submission retries. The example waits for publication before exporting; paused/failed work requires explicit action.
+
+```python
+import os
+import time
+from pathlib import Path
+import httpx
+
+base_url = os.getenv("AUDIO_INTEL_BASE_URL", "http://127.0.0.1:20810")
+job_id = os.environ["JOB_ID"]
+key = os.environ["OPTIMIZATION_KEY"]  # Reuse this key for the same request.
+api_key = os.getenv("AUDIO_INTEL_API_KEY")
+headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+root = f"/api/v1/jobs/{job_id}/transcript-optimization"
+with httpx.Client(base_url=base_url, headers=headers, timeout=120) as client:
+    response = client.post(root, headers={"Idempotency-Key": key},
+                           json={"regenerate": False, "rewrite_mode": "rewrite"})
+    response.raise_for_status()
+    status = response.json()
+    run = status["candidate"] or status["published"]
+    run_id = run["id"]
+    deadline = time.monotonic() + 7200
+    while not (status["published"] and status["published"]["id"] == run_id):
+        candidate = status["candidate"]
+        if not candidate or candidate["id"] != run_id or candidate["state"] in {"paused", "failed", "deleting"}:
+            raise RuntimeError("Optimization requires attention; inspect status before resuming")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Client wait ended; server work continues")
+        time.sleep(2)
+        response = client.get(root)
+        response.raise_for_status()
+        status = response.json()
+    response = client.get(root + "/result", params={"run_id": run_id})
+    response.raise_for_status()
+    assert response.json()["complete"]
+    response = client.post(f"/api/v1/jobs/{job_id}/transcript-export",
+                           json={"format": "txt", "text_version": "optimized",
+                                 "optimization_id": run_id, "redact": True})
+    response.raise_for_status()
+    Path("optimized.txt").write_bytes(response.content)
+```
+
+暂停／继续使用 `POST .../pause` 或 `.../resume`，正文 `{"run_id":"已接受的运行 ID","phase":"workflow"}`；恢复保留原档位。优化稿支持 PDF/DOCX/TXT，对照支持 PDF/DOCX；新候选未完成返回 409。增强音入库示例：
+
+```python
+import os
+import httpx
+
+base_url = os.getenv("AUDIO_INTEL_BASE_URL", "http://127.0.0.1:20810")
+api_key = os.getenv("AUDIO_INTEL_API_KEY")
+headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+with httpx.Client(base_url=base_url, headers=headers, timeout=120) as client:
+    response = client.post(
+        f"/api/v1/voiceprints/people/{os.environ['PERSON_ID']}/samples/from-asr",
+        json={"job_id": os.environ["JOB_ID"], "segment_ids": [0, 2], "audio_track": "enhanced"},
+    )
+    response.raise_for_status()
+    print(response.json())
+```
+
+段落 ID 必须替换为任务中同一说话人且未入库的原始段落 ID；增强音缺失 404，不自动回退，重复来源 409，非法音轨 422。省略 audio_track 使用原音。此同步入库接口不要求 Idempotency-Key。
+
+Use actual original segment IDs belonging to one speaker. Missing enhanced audio returns 404 without fallback, duplicates 409, and invalid tracks 422. Omitting audio_track selects original. This synchronous enrollment endpoint does not require an Idempotency-Key.
+"""

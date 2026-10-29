@@ -72,7 +72,7 @@ historical jobs without a saved original WAV show an unavailable explanation and
 
 音视频提供主操作「简洁导出」，可选择 PDF 或 Word（DOCX），次级「明细与字幕」保留 JSON、TXT、SRT、VTT。简洁 PDF/DOCX 将相同 speaker ID 的相邻发言合并为一段，保留第一句开始与最后一句结束时间，不删改口头语、不做总结；同名但不同 ID 的说话人不会误合并。视频也支持 JSON、TXT、SRT、VTT，并提供图文简洁 PDF/DOCX，按画面分段，画面下展示相应讨论。PDF 内嵌本地简体中文字体，无云服务或系统字体依赖。
 
-Audio and video offer a concise export menu with PDF and editable Word (DOCX) and a secondary details/subtitles menu. Adjacent speech with the same speaker ID merges with its combined time range; words and disfluencies are preserved. Equal names with different IDs do not merge. Video offers illustrated concise PDF/DOCX, with images followed by their discussion. A bundled Chinese font keeps PDF rendering offline.
+Audio and video offer a concise export menu with PDF and editable Word (DOCX) and a secondary details/subtitles menu. For original-text exports, adjacent speech with the same speaker ID merges with its combined time range; words and disfluencies are preserved. Optimized exports instead use the published reading paragraphs described in [expression optimization](EXPRESSION_OPTIMIZATION.md). Equal names with different IDs do not merge. Video offers illustrated concise PDF/DOCX, with images followed by their discussion. A bundled Chinese font keeps PDF rendering offline.
 
 上传直接顺序追加到一份文件，校验并 fsync 后才确认偏移；不创建分片文件再拼接、不预分配 25 GiB，不在重试时重写已确认数据。提交时同盘重命名。画面分析保存最终代表 JPEG；v2 另保存有上限、可重建的低分辨率压缩特征缓存，不保存高分辨率抽样序列。原音复用一份归一化 WAV；实际应用人声增强时另存一份增强 WAV，约每小时 115 MB，旁路时不增加；临时目录和数据目录在同一文件系统时完成阶段直接移动，否则跨盘移动需一次复制。失败/取消后的工作目录由现有 worker 清理。PDF 按需在内存生成，单渲染并发、64 MiB LRU 缓存（5 分钟）；单份 PDF 输入上限为 400 万文本字符、128 MiB JPEG，超过返回 413 并提示拆分。预览最多两个解码器且不写磁盘。修改截图后清理不再被当前/原始分段引用的图片，删除任务清理其输入与结果。
 
@@ -131,7 +131,7 @@ With CLI `--pdf`, the journal retains the accepted `job_id` until the download i
 
 图文阅读每批展示 20 个画面，接近底部时自动追加；「加载更多」按钮仍可手动使用。逐句明细继续按每批 40 条加载。
 
-English: In **Illustrated reading**, choose **Add to voiceprint library** beside a speaker. Preview and select original sentences across the task, then choose an existing person or create one. The clicked paragraph’s original sentences are preselected, excluding previously imported ones; each sentence becomes one sample, and repeated scene references appear only once. Previously imported sentences are disabled. Library loading and submission errors support retry. The existing selection flow in **Segment details** remains available. Video samples use the saved playback audio on the transcription timeline, including media offsets and delayed audio; missing playback is reported without rebuilding historical files. Closing the dialog stops preview and clears its temporary selection. Scenes load automatically in batches of 20 near the bottom, with a manual **Load more** fallback; segment details retain batches of 40.
+English: In **Illustrated reading**, choose **Add to voiceprint library** beside a speaker. Preview and select original sentences across the task, then choose an existing person or create one. The clicked paragraph’s original sentences are preselected, excluding previously imported ones; each sentence becomes one sample, and repeated scene references appear only once. Previously imported sentences are disabled. Library loading and submission errors support retry. The existing selection flow in **Segment details** remains available. By default, video samples use the saved playback audio on the transcription timeline, including media offsets and delayed audio; missing playback is reported without rebuilding historical files. Closing the dialog stops preview and clears its temporary selection. Scenes load automatically in batches of 20 near the bottom, with a manual **Load more** fallback; segment details retain batches of 40.
 
 | 桌面语句选择 / Desktop selection | 390 px 语句选择 / Mobile selection |
 | --- | --- |
@@ -226,3 +226,9 @@ English: Picture detection immediately shows current pictures and export-hidden 
 DOCX 完全本地生成，复用已安装的 python-docx 1.2.0，无新增依赖或数据库迁移。中文使用文档字体样式而非嵌入字体，Word/WPS 的字体替代和分页可能不同于 PDF。
 
 English: Choose Word (DOCX) in Concise export, or in the mobile format selector (PDF remains the default). Editable documents preserve the same paragraphs, times and picture grouping as PDF. Hidden pictures use placeholders without embedding their original bytes; text remains, independently of text redaction. Existing completed jobs work without retranscription. Generation is offline using the already pinned python-docx library, with no new dependencies, migration or browser-storage policy. Fonts are not embedded, so Word/WPS pagination may differ from PDF.
+
+## 入库音轨 / Enrollment audio track
+
+从转写结果「加入声纹库」时可选择原音或增强音，每次打开默认原音，与主播放器选择独立，不保存浏览器偏好。没有增强音时选项禁用；视频弹窗试听随选择切换，切换时停止播放。选择适用于整批原始语句，每句仍独立成为样本，同一来源不能通过切换音轨重复入库。增强文件缺失返回 404，保留选择供重试，不自动回退或补生成。原音保持现有规则：音频使用来源录音，视频使用对齐时间轴的 playback.wav。
+
+English: Enrollment offers Original (default on every open) and Enhanced independently of the main player. The selection applies to all selected original segments and is not persisted. Video preview follows the selected track and stops when switching. Missing enhanced audio returns 404 without fallback or regeneration; duplicate-source protection remains unchanged. Each original segment becomes one sample. See [API](API.md).

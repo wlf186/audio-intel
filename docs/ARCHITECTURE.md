@@ -311,3 +311,11 @@ Video export visibility is optional task-result metadata (`video.export_hidden_s
 中文：视频导出隐藏状态仅记录任务结果中的画面 ID，不迁移数据库、不回填历史任务。修订锁和读取租约保护写入。参数变化后应用清空标记，否则通过时间范围、截图时间与图片匹配继承，不能仅凭重用的编号继承。PDF/DOCX 不读取隐藏图片，缓存包含标记；JSON 携带标记，图文阅读显示原图及导出隐藏标记，时间轴继续显示原图。
 
 DOCX concise exports reuse `python-docx` and the shared transcript paragraph/scene grouping and export-policy transform. A separate bounded renderer/cache emits editable text, inline pictures and non-image placeholders for export-hidden scenes; it never reads hidden frame files or rewrites job artifacts. DOCX is available through the existing POST export contract and capabilities, with no new runtime boundary or schema migration.
+
+## Optional transcript optimization
+
+The API process owns one independent remote-I/O optimization worker and a durable SQLite queue (at most five queued runs). It does not execute in the ASR/TTS supervisors or participate in their GPU lock. The explicitly configured Ollama endpoint receives source text, task hotword snapshots and review candidates, never media. Core speech inference remains local; there is no cloud fallback.
+
+Policy v7 groups consecutive same-speaker sources into bounded, scene-scoped reading paragraphs while preserving immutable source offsets. Generation parts and review checkpoints persist separately. Generation and bounded annotation-only checks complete before atomic publication; regeneration retains the previous published draft until replacement. Check failures annotate rather than retract prose. Restart pauses unfinished work for explicit resume. Applying scene boundaries invalidates optimization transactionally; deleting optimization or its parent cancels work and removes checkpoints and export caches.
+
+Schema v19 clears pre-upgrade optimization data once, preserving original jobs, media and configuration. Follow the [upgrade guide](UPGRADE.md) before startup. See [expression optimization](EXPRESSION_OPTIMIZATION.md) for contracts and quality limitations.

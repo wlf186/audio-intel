@@ -247,3 +247,12 @@ ASR 工作台使用固定的“新建音频转写 / 新建视频转写 / 任务�
 - PDF 429 是生成资源繁忙，等待提示时间后重新点击导出；413 是输入超过导出上限，拆分源音视频重新转写，音频也可下载明细/字幕；401 重新登录；网络失败只重试导出即可。
 - 命令行使用同一源文件、同一 `--state` 和 `--pdf` 重跑，会恢复原任务与下载。不要为了网络重试删除状态文件或生成新幂等键。任务失败/取消时会显示原任务 ID，确需重新转写才使用新状态文件。
 - 浏览器不能预览某些容器内的编码，并不等于服务端不能解码；无法框选时可使用全画面。开发者 CI 排障见 [贡献指南](../CONTRIBUTING.md#transcription-ci-lessons)，完整格式、到期和存储说明见 [音视频指南](VIDEO_TRANSCRIPTION.md)。
+
+## 表达优化连接、检查与结果
+
+- 获取模型成功仅证明模型列表可访问；仍需验证文本生成和实际上下文窗口。localhost 指运行本项目服务的机器。实际窗口由验证时 Ollama 返回的运行信息确认，模型上限来自 model_info；同系列 4B/9B 显示相同上限并不异常。
+- 生成与自动检查是一次流程。新稿在整体完成前不能阅读或下载；检查不可用或疑点会在最终稿标注，不会撤销已生成正文。持续连接故障保存进度，恢复服务后继续；重启后未完成工作暂停。
+- 升级到 schema v19 会一次性清理旧优化，原文与媒体仍在。应用新的画面边界也会使对应优化失效，需要重新优化；只预览参数或更换截图不会。
+- 小模型可能保留原本清晰的短句，也可能误改事实；改字比例不是质量指标。详见[表达优化](EXPRESSION_OPTIMIZATION.md)及[验证边界](EXPRESSION_OPTIMIZATION_VALIDATION.md)。
+
+English: Model discovery does not replace generation/context verification. Localhost refers to the server machine. A new draft is readable only after generation and bounded checks finish; unavailable checks become warnings, not discarded prose. Restart pauses unfinished work. Schema v19 migration and applied scene-boundary changes invalidate older drafts as documented; originals remain available.

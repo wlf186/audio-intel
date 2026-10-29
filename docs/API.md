@@ -121,7 +121,7 @@ Configure an explicitly selected Ollama service in System → Expression optimiz
 - Completed ordinary audio/video ASR: `GET/POST /api/v1/jobs/{job_id}/transcript-optimization`, `POST .../pause`, `POST .../resume`, `GET .../result?run_id=...`, and `DELETE ...?purge=true`. Creation requires `Idempotency-Key`, with 202/200/409/429 semantics and `Retry-After` on capacity failures. Create bodies accept `rewrite_mode` (`polish`, `rewrite`, `editorial`; default `rewrite`) and `regenerate`. Mode is included in the idempotency fingerprint, summary/result, and immutable run configuration. A different mode with the same key returns 409; old requests omitting mode can replay legacy keys. Pause/resume bodies contain `run_id` and optional `phase` (default `workflow`; legacy `generation` and `review` values remain accepted), preserving the saved mode and resuming the whole candidate. Status supports ETag/304 and includes phase plus reviewed_parts/total_parts. `complete=true` means generation and bounded checks have both ended. Unpublished result requests return 409. API restart pauses interrupted work and retains checkpoints for explicit resume.
 - Policy v7 result paragraphs combine consecutive same-speaker sources within one scene, targeting 240 and at most 400 source characters, including their IDs, offsets and times. `generation_method` identifies model/basic_cleanup/mixed. `review_outcome` distinguishes pending/pass/fact/uncertain/unavailable; review never changes published text. Unavailable checks are annotations; they do not require a separate retry or retract the prose. Each part has at most two check requests of 120 seconds; after three consecutive connection failures remaining checks are marked unavailable and the draft publishes. This count includes groups containing an unavailable part and can overlap factual-concern groups; do not sum those counters as disjoint categories. Historical unknown review remains null.
 - Capability discovery adds `asr.transcript_optimization`, including `rewrite_modes` and `default_rewrite_mode`. Browsers request optimizer resources only after authentication and an explicit `supported=true`; missing/unsupported capability snapshots retain original reading without optimizer requests. Job lists and SSE carry optimization summaries only, without draft/source text. Original ASR results, timed subtitles and voiceprint references are unchanged.
-- `POST /api/v1/jobs/{job_id}/transcript-export` accepts `text_version="original"` (default), `"optimized"`, or `"comparison"`. Non-original requests require the published `optimization_id`; optimized exports allow PDF/DOCX/TXT and comparisons PDF/DOCX. Comparisons use landscape A4, timed original sources on the left and readable prose on the right, with equal-sized text and repeating column headers across page breaks. Legacy drafts retain change highlighting. Pending or unavailable review does not prevent download and is disclosed in the export. Unsupported combinations return 422, unfinished or stale drafts 409. Redaction and replacements apply to both sides and review explanations. Filenames append `-优化稿` or `-对照版` to the task basename.
+- `POST /api/v1/jobs/{job_id}/transcript-export` accepts `text_version="original"` (default), `"optimized"`, or `"comparison"`. Non-original requests require the published `optimization_id`; optimized exports allow PDF/DOCX/TXT and comparisons PDF/DOCX. Comparisons use landscape A4, timed original sources on the left and readable prose on the right, with equal-sized text and repeating column headers across page breaks. Legacy drafts retain change highlighting. Pending workflow checks prevent publication and download of the new candidate (409). Once checks finish, unavailable checks are disclosed without preventing download of the published draft. Unsupported combinations return 422, unfinished or stale drafts 409. Redaction and replacements apply to both sides and review explanations. Filenames append `-优化稿` or `-对照版` to the task basename.
 
 中文：在系统状态选择并验证 Ollama 后保存启用；独立单并发队列，最多 5 个排队任务。生成、自动检查、发布是一次流程，检查仅标注；原文始终保留，重新生成期间旧稿保留至新稿整体完成。正式应用新检测划分会事务性清理旧优化。策略 v7 使用 SQLite v19，升级一次性清理全部旧音视频优化数据，原始任务、媒体及模型配置保留；只需一致的 SQLite 备份。浏览器阅读／来源明细偏好属于当前会话，最多 200 个任务，退出登录和删除任务时清理。
 
@@ -943,3 +943,71 @@ response = requests.patch(f"{base_url}/api/v1/jobs/{job_id}/video-scenes", heade
           "export_hidden_scene_ids": [video["scenes"][0]["id"]]})
 response.raise_for_status()
 ```
+
+## 优化与入库示例 / Optimization and enrollment examples
+
+先在系统状态配置、验证并启用 Ollama。以下脚本创建优化、等待整体发布并导出 TXT；环境变量 `JOB_ID` 指向已完成的普通音视频任务。保存 `OPTIMIZATION_KEY` 并在同一次提交重试时复用，429 按 Retry-After 稍后重试；故障或暂停不会无限轮询。Bearer 密钥仅从环境变量读取。
+
+Configure and enable a verified Ollama model first. Supply a completed audio/video job ID and retain the same optimization key for submission retries. The example waits for publication before exporting; paused/failed work requires explicit action.
+
+```python
+import os
+import time
+from pathlib import Path
+import httpx
+
+base_url = os.getenv("AUDIO_INTEL_BASE_URL", "http://127.0.0.1:20810")
+job_id = os.environ["JOB_ID"]
+key = os.environ["OPTIMIZATION_KEY"]  # Reuse this key for the same request.
+api_key = os.getenv("AUDIO_INTEL_API_KEY")
+headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+root = f"/api/v1/jobs/{job_id}/transcript-optimization"
+with httpx.Client(base_url=base_url, headers=headers, timeout=120) as client:
+    response = client.post(root, headers={"Idempotency-Key": key},
+                           json={"regenerate": False, "rewrite_mode": "rewrite"})
+    response.raise_for_status()
+    status = response.json()
+    run = status["candidate"] or status["published"]
+    run_id = run["id"]
+    deadline = time.monotonic() + 7200
+    while not (status["published"] and status["published"]["id"] == run_id):
+        candidate = status["candidate"]
+        if not candidate or candidate["id"] != run_id or candidate["state"] in {"paused", "failed", "deleting"}:
+            raise RuntimeError("Optimization requires attention; inspect status before resuming")
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Client wait ended; server work continues")
+        time.sleep(2)
+        response = client.get(root)
+        response.raise_for_status()
+        status = response.json()
+    response = client.get(root + "/result", params={"run_id": run_id})
+    response.raise_for_status()
+    assert response.json()["complete"]
+    response = client.post(f"/api/v1/jobs/{job_id}/transcript-export",
+                           json={"format": "txt", "text_version": "optimized",
+                                 "optimization_id": run_id, "redact": True})
+    response.raise_for_status()
+    Path("optimized.txt").write_bytes(response.content)
+```
+
+暂停／继续使用 `POST .../pause` 或 `.../resume`，正文 `{"run_id":"已接受的运行 ID","phase":"workflow"}`；恢复保留原档位。优化稿支持 PDF/DOCX/TXT，对照支持 PDF/DOCX；新候选未完成返回 409。增强音入库示例：
+
+```python
+import os
+import httpx
+
+base_url = os.getenv("AUDIO_INTEL_BASE_URL", "http://127.0.0.1:20810")
+api_key = os.getenv("AUDIO_INTEL_API_KEY")
+headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+with httpx.Client(base_url=base_url, headers=headers, timeout=120) as client:
+    response = client.post(
+        f"/api/v1/voiceprints/people/{os.environ['PERSON_ID']}/samples/from-asr",
+        json={"job_id": os.environ["JOB_ID"], "segment_ids": [0, 2], "audio_track": "enhanced"},
+    )
+    response.raise_for_status()
+    print(response.json())
+```
+
+段落 ID 必须替换为任务中同一说话人且未入库的原始段落 ID；增强音缺失 404，不自动回退，重复来源 409，非法音轨 422。省略 audio_track 使用原音。此同步入库接口不要求 Idempotency-Key。
+
+Use actual original segment IDs belonging to one speaker. Missing enhanced audio returns 404 without fallback, duplicates 409, and invalid tracks 422. Omitting audio_track selects original. This synchronous enrollment endpoint does not require an Idempotency-Key.

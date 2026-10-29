@@ -632,3 +632,44 @@ def test_speech_enhancement_openapi_contract_and_examples(tmp_path, monkeypatch)
     historical["audio_enhancement"].update(processing_version=3, pause_attenuated_seconds=0.,
         max_pause_attenuation_db=0., pause_suppression_reason="disabled_for_naturalness")
     assert JobResultResponse.model_validate(historical).model_dump(exclude_unset=True) == historical
+
+
+def test_optimization_documented_examples_wait_for_publication(tmp_path, monkeypatch):
+    """Execute the published examples against a transport, without remote LLM I/O."""
+    import httpx
+    import json
+    from audio_intel.api_docs import API_DESCRIPTION
+
+    section = API_DESCRIPTION.split('## 优化与入库示例 / Optimization and enrollment examples', 1)[1]
+    blocks = re.findall(r'```python\n(.*?)```', section, re.S)
+    calls = []
+    run = {'id': 'a' * 32, 'state': 'running'}
+
+    def handle(request):
+        calls.append(request)
+        if request.url.path.endswith('/samples/from-asr'):
+            assert json.loads(request.content)['audio_track'] == 'enhanced'
+            return httpx.Response(201, json={'items': []})
+        if request.url.path.endswith('/transcript-export'):
+            assert len(calls) == 4  # create -> poll -> result -> export
+            assert json.loads(request.content)['optimization_id'] == run['id']
+            return httpx.Response(200, content=b'published draft')
+        if request.url.path.endswith('/result'):
+            assert request.url.params['run_id'] == run['id']
+            return httpx.Response(200, json={'complete': True})
+        if request.method == 'POST':
+            assert request.headers['Idempotency-Key'] == 'example-key'
+            return httpx.Response(202, json={'candidate': run, 'published': None})
+        return httpx.Response(200, json={'candidate': None, 'published': {**run, 'state': 'succeeded'}})
+
+    original = httpx.Client
+    monkeypatch.setattr(httpx, 'Client', lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs))
+    monkeypatch.setattr('time.sleep', lambda _: None)
+    monkeypatch.chdir(tmp_path)
+    for key, value in {'JOB_ID': 'example-job', 'PERSON_ID': 'example-person', 'OPTIMIZATION_KEY': 'example-key', 'AUDIO_INTEL_BASE_URL': 'http://example.invalid', 'AUDIO_INTEL_API_KEY': 'synthetic-key'}.items():
+        monkeypatch.setenv(key, value)
+    assert len(blocks) == 2
+    for block in blocks:
+        exec(compile(block, '<documented-example>', 'exec'), {})
+    assert (tmp_path / 'optimized.txt').read_bytes() == b'published draft'
+    assert len(calls) == 5

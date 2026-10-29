@@ -97,7 +97,7 @@ class CreateRequest(BaseModel):
 class RunRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     run_id: str = Field(pattern=r'^[a-f0-9]{32}$')
-    phase: Literal['workflow', 'generation', 'review'] = 'workflow'
+    phase: Literal['workflow', 'generation', 'review'] = Field('workflow', description='控制整个流程；旧值为兼容别名 / Controls the whole workflow; legacy values are aliases')
 
 
 class SourceSpan(BaseModel):
@@ -369,11 +369,11 @@ def register(app, api):
                 _managers.pop(key, None)
     app.router.lifespan_context = lifespan
 
-    @app.get(root, summary='读取优化配置 / Get optimization configuration', description=api.bilingual('读取优化配置', 'Read the saved Ollama connection and enabled state.'), operation_id='getOptimizationConfiguration', tags=[TAG], response_model=ConfigurationResponse, responses=errors)
+    @app.get(root, summary='读取优化配置 / Get optimization configuration', description=api.bilingual('读取已保存的 Ollama 连接、模型与启用状态；不返回模型服务密钥。', 'Read the saved Ollama connection and enabled state.'), operation_id='getOptimizationConfiguration', tags=[TAG], response_model=ConfigurationResponse, responses=errors)
     def configuration(_: None = auth):
         return store.settings()
 
-    @app.post(root + '/discover', summary='获取模型 / Discover models', description=api.bilingual('获取模型', 'Discover installed Ollama models using the selected proxy policy.'), operation_id='discoverOptimizationModels', tags=[TAG], responses=errors)
+    @app.post(root + '/discover', summary='获取模型 / Discover models', description=api.bilingual('按指定代理策略读取用户配置的 Ollama 模型列表，不发送历史转写。', 'Discover installed Ollama models using the selected proxy policy.'), operation_id='discoverOptimizationModels', tags=[TAG], responses=errors)
     async def discover(body: Connection, _: None = auth):
         try:
             async with probe_gate:
@@ -381,7 +381,7 @@ def register(app, api):
         except Exception as exc:
             raise HTTPException(422, error_message(exc)) from exc
 
-    @app.post(root + '/verify', summary='验证优化模型 / Verify optimization model', description=api.bilingual('验证优化模型', 'Run synthetic prose generation within 330 seconds and verify the allocated context window. Auxiliary checking availability does not gate connection verification.'), operation_id='verifyOptimizationModel', tags=[TAG], responses=errors)
+    @app.post(root + '/verify', summary='验证优化模型 / Verify optimization model', description=api.bilingual('使用合成文本在 330 秒内验证正文生成和实际上下文窗口；辅助检查不可用不阻止连接验证。', 'Run synthetic prose generation within 330 seconds and verify the allocated context window. Auxiliary checking availability does not gate connection verification.'), operation_id='verifyOptimizationModel', tags=[TAG], responses=errors)
     async def verify(body: ModelConnection, _: None = auth):
         try:
             async with probe_gate:
@@ -395,7 +395,7 @@ def register(app, api):
         except Exception as exc:
             raise HTTPException(422, error_message(exc)) from exc
 
-    @app.put(root, summary='保存优化配置 / Save optimization configuration', description=api.bilingual('保存优化配置', 'Enabling requires a matching verified profile. Disabling pauses pending work.'), operation_id='saveOptimizationConfiguration', tags=[TAG], response_model=ConfigurationResponse, responses=errors)
+    @app.put(root, summary='保存优化配置 / Save optimization configuration', description=api.bilingual('启用需要匹配且有效的验证凭证或未更改的已验证配置；关闭会暂停未完成工作。', 'Enabling requires a matching verified profile. Disabling pauses pending work.'), operation_id='saveOptimizationConfiguration', tags=[TAG], response_model=ConfigurationResponse, responses=errors)
     async def save(body: SaveConfiguration, _: None = auth):
         async with manager.gate:
             current = store.settings()
@@ -412,7 +412,7 @@ def register(app, api):
                     await manager.stop(job_id)
             return value
 
-    @app.get(jobs, summary='读取优化状态 / Get optimization status', description=api.bilingual('读取优化状态', 'Return published/candidate summaries, workflow phase and persisted reviewed_parts/total_parts. Published means generation and bounded checks are complete. Supports ETag polling.'), operation_id='getOptimizationStatus', tags=[TAG], response_model=OptimizationStatus, responses=errors)
+    @app.get(jobs, summary='读取优化状态 / Get optimization status', description=api.bilingual('返回已发布稿与候选摘要、当前阶段及已保存检查进度；生成和有限检查结束才发布。支持 ETag 轮询。', 'Return published/candidate summaries, workflow phase and persisted reviewed_parts/total_parts. Published means generation and bounded checks are complete. Supports ETag polling.'), operation_id='getOptimizationStatus', tags=[TAG], response_model=OptimizationStatus, responses=errors)
     def status(job_id: str, request: Request, response: Response, _: None = auth):
         parent(job_id)
         value = public_status(job_id)
@@ -423,7 +423,7 @@ def register(app, api):
         response.headers['Cache-Control'] = 'no-store'
         return value
 
-    @app.post(jobs, summary='创建优化任务 / Create optimization', description=api.bilingual('创建优化任务', 'Requires Idempotency-Key. rewrite_mode selects polish/rewrite/editorial (default rewrite), saved in the run snapshot and idempotency fingerprint. Returns 202 on creation, 200 on replay, 409 on conflict and 429 at queue capacity.'), operation_id='createTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, status_code=202, responses=errors)
+    @app.post(jobs, summary='创建优化任务 / Create optimization', description=api.bilingual('要求 Idempotency-Key；档位默认 rewrite 并保存快照。首次 202、重放 200、冲突 409、队列满 429。', 'Requires Idempotency-Key. rewrite_mode selects polish/rewrite/editorial (default rewrite), saved in the run snapshot and idempotency fingerprint. Returns 202 on creation, 200 on replay, 409 on conflict and 429 at queue capacity.'), operation_id='createTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, status_code=202, responses=errors)
     async def create(job_id: str, body: CreateRequest, response: Response, idempotency_key: str = Header(..., alias='Idempotency-Key'), _: None = auth):
         key = api.validate_idempotency_key(idempotency_key)
         async with manager.gate:
@@ -451,7 +451,7 @@ def register(app, api):
                 response.status_code = 200
             return public_status(job_id)
 
-    @app.post(jobs + '/pause', summary='暂停优化 / Pause optimization', description=api.bilingual('暂停优化', 'Pause the complete optimization workflow, including final checks; preserve committed text and checkpoints. Legacy phase values remain accepted.'), operation_id='pauseTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, responses=errors)
+    @app.post(jobs + '/pause', summary='暂停优化 / Pause optimization', description=api.bilingual('暂停整个生成与检查流程，保留已保存正文和检查点；兼容旧 phase 值。', 'Pause the complete optimization workflow, including final checks; preserve committed text and checkpoints. Legacy phase values remain accepted.'), operation_id='pauseTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, responses=errors)
     async def pause(job_id: str, body: RunRequest, _: None = auth):
         async with manager.gate:
             item = owned(job_id, body.run_id)
@@ -460,7 +460,7 @@ def register(app, api):
             await manager.stop(job_id)
             return public_status(job_id)
 
-    @app.post(jobs + '/resume', summary='继续优化 / Resume optimization', description=api.bilingual('继续优化', 'Resume the complete optimization workflow after model/source verification, preserving generation and check progress. Published results cannot be resumed. Obsolete policy candidates require regeneration (409).'), operation_id='resumeTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, responses=errors)
+    @app.post(jobs + '/resume', summary='继续优化 / Resume optimization', description=api.bilingual('校验模型和来源后继续整个流程，复用检查点；已发布稿不能恢复，旧策略候选需要重新生成（409）。', 'Resume the complete optimization workflow after model/source verification, preserving generation and check progress. Published results cannot be resumed. Obsolete policy candidates require regeneration (409).'), operation_id='resumeTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, responses=errors)
     async def resume(job_id: str, body: RunRequest, _: None = auth):
         async with manager.gate:
             if not store.settings().get('enabled'):
@@ -477,7 +477,7 @@ def register(app, api):
             store.resume(body.run_id)
             return public_status(job_id)
 
-    @app.get(jobs + '/result', summary='读取优化稿 / Read optimized transcript', description=api.bilingual('读取优化稿', 'Read completed scene-scoped prose and source spans in one SQLite snapshot. Generation and bounded checks must finish before publication; candidates return 409. complete means readable and exportable. Check warnings never retract prose. Video paragraphs belong to one scene; generation_method identifies model/basic_cleanup/mixed.'), operation_id='getOptimizedTranscript', tags=[TAG], response_model=OptimizedResult, responses=errors)
+    @app.get(jobs + '/result', summary='读取优化稿 / Read optimized transcript', description=api.bilingual('读取已完成、按画面组织的正文和不可变来源。生成与检查结束才可读和导出，未发布候选返回 409；检查提示不撤销正文。', 'Read completed scene-scoped prose and source spans in one SQLite snapshot. Generation and bounded checks must finish before publication; candidates return 409. complete means readable and exportable. Check warnings never retract prose. Video paragraphs belong to one scene; generation_method identifies model/basic_cleanup/mixed.'), operation_id='getOptimizedTranscript', tags=[TAG], response_model=OptimizedResult, responses=errors)
     def result(job_id: str, run_id: str = Query(..., pattern=r'^[a-f0-9]{32}$'), _: None = auth):
         with reader_lease(job_id), speaker_update_lock(job_id):
             owned(job_id, run_id)
@@ -486,7 +486,7 @@ def register(app, api):
             except ValueError as exc:
                 raise HTTPException(409, str(exc)) from exc
 
-    @app.delete(jobs, summary='删除优化 / Delete optimization', description=api.bilingual('删除优化', 'Requires purge=true. Cancel generation and delete drafts, checkpoints and export caches.'), operation_id='deleteTranscriptOptimization', tags=[TAG], status_code=204, responses=errors)
+    @app.delete(jobs, summary='删除优化 / Delete optimization', description=api.bilingual('要求 purge=true；取消相关请求并清理正文、批次、检查记录和导出缓存。', 'Requires purge=true. Cancel generation and delete drafts, checkpoints and export caches.'), operation_id='deleteTranscriptOptimization', tags=[TAG], status_code=204, responses=errors)
     async def delete(job_id: str, purge: bool = Query(False), _: None = auth):
         if not purge:
             raise HTTPException(409, 'Set purge=true / 请确认删除优化数据')

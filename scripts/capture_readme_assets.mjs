@@ -190,7 +190,7 @@ async function capturePage(browser,context,config,hash,readySelector,name){
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
  page.on('pageerror',error=>errors.push(error.message))
  await page.goto(`${baseUrl}/#${hash}`,{waitUntil:'networkidle'})
- await page.getByRole('heading',{name:config.headings[hash],exact:true}).waitFor({state:'visible'})
+ await page.locator('#main-content').waitFor({state:'visible'})
  if(hash==='asr'||hash==='tts')await page.getByRole('tab',{name:config.resultsTab,exact:true}).click()
  await page.locator(readySelector).first().waitFor({state:'visible'})
  if(hash==='asr'){
@@ -267,7 +267,7 @@ async function captureSocialPreview(browser,hero){
   .screen{position:absolute;left:650px;top:74px;width:760px;height:500px;border:1px solid #00e7ee;overflow:hidden;box-shadow:0 28px 80px rgba(0,0,0,.6);transform:perspective(1100px) rotateY(-7deg)}
   .screen img{height:100%;width:auto;transform:translateX(-115px);filter:saturate(1.08) contrast(1.03)}
   .screen:after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 55px rgba(0,0,0,.35)}
- </style></head><body><div class="accent"></div><section class="copy"><div class="brand"><img src="data:image/svg+xml;base64,${logo.toString('base64')}"><span class="eyebrow">Local speech intelligence</span></div><h1>Private speech.<br><span class="yellow">Your machine.</span></h1><p>Offline-first ASR, diarization, timestamps, voiceprints, TTS, and voice cloning for Linux and Windows.</p><div class="tags"><span>QWEN3 ASR + TTS</span><span>WEB UI + API</span><span>CPU + NVIDIA GPU</span></div></section><div class="screen"><img src="data:image/webp;base64,${hero.toString('base64')}"></div></body></html>`)
+ </style></head><body><div class="accent"></div><section class="copy"><div class="brand"><img src="data:image/svg+xml;base64,${logo.toString('base64')}"><span class="eyebrow">Local speech intelligence</span></div><h1>Private speech.<br><span class="yellow">Your machine.</span></h1><p>Audio/video transcription, local speech synthesis, voiceprints, and optional Ollama rewriting.</p><div class="tags"><span>QWEN3 ASR + TTS</span><span>WEB UI + API</span><span>CPU + NVIDIA GPU</span></div></section><div class="screen"><img src="data:image/webp;base64,${hero.toString('base64')}"></div></body></html>`)
  await page.screenshot({path:resolve(outputDir,'social-preview.png'),type:'png'})
  await page.close()
 }

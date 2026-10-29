@@ -43,6 +43,8 @@ Video results include a zoomable picture-and-waveform timeline with horizontal s
 
 Voiceprint libraries support groups, scoped ASR recognition and batch move/delete. Transcript downloads support default-on name/note redaction and up to 100 keyword replacements, with persistent browser preferences. ZIP v2 includes groups and imports remain compatible with v1. Upgrade backups cover only necessary data and must be removed after complete acceptance; see [the upgrade guide](docs/UPGRADE.md).
 
+Optional Ollama optimization offers three rewrite strengths, merged consecutive speech, complete side-by-side comparison and illustrated exports. Generation and bounded checks publish together; warnings do not retract prose. Small models can still miss or change facts, so retain source comparison. Voiceprint enrollment offers original or enhanced audio, defaulting to original. See [expression optimization](docs/EXPRESSION_OPTIMIZATION.md).
+
 ## Interface preview
 
 ![Sandevistan Audio local ASR workspace showing a speaker-separated transcript and export controls](docs/assets/readme/en-US/asr-workspace.webp)

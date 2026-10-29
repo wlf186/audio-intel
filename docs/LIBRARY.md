@@ -69,3 +69,13 @@ English: Each person belongs to one group. Ungrouped is built-in and is the defa
 导入弹窗根据服务器回执显示“上传校验 → 预览选择 → 应用结果”，底部操作始终可见。替换确认列出将移除的分组、人员、样本和热词表数量；旧回执缺少数量时显示“未提供”，不假设为零。最近记录、后台轮询、预览修订校验和替换前备份继续有效。人员导航和未提交样本的保存周期见[工作台指南](WORKSPACES.md#阅读与人员导航--reading-and-person-navigation)。
 
 English: Search names/notes case-insensitively. Select-all covers the filtered list; changing filters clears selection, and partial selection uses the mixed state. Failed batch deletions remain selected with reasons. Import steps follow the persisted server receipt and keep footer actions visible. Replacement confirmation lists removed group/person/sample/hotword counts; missing historical counts say Not provided. Receipt polling, revision checks and downloadable backups remain available.
+
+## 入库音轨 / Enrollment audio track
+
+从转写结果「加入声纹库」时可选择原音或增强音，每次打开默认原音，与主播放器选择独立，不保存浏览器偏好。没有增强音时选项禁用；视频弹窗试听随选择切换，切换时停止播放。选择适用于整批原始语句，每句仍独立成为样本，同一来源不能通过切换音轨重复入库。增强文件缺失返回 404，保留选择供重试，不自动回退或补生成。原音保持现有规则：音频使用来源录音，视频使用对齐时间轴的 playback.wav。
+
+English: Enrollment offers Original (default on every open) and Enhanced independently of the main player. The selection applies to all selected original segments and is not persisted. Video preview follows the selected track and stops when switching. Missing enhanced audio returns 404 without fallback or regeneration; duplicate-source protection remains unchanged. Each original segment becomes one sample. See [API](API.md).
+
+![原音与增强音选择（合成演示） / Enrollment track selector](assets/optimization/enrollment-1440.png)
+
+[手机示例 / Mobile example](assets/optimization/enrollment-390.png) · [截图复现 / Reproduction](EXPRESSION_OPTIMIZATION.md#界面示例与复现--interface-examples)
