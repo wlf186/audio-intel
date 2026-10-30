@@ -188,7 +188,15 @@ def test_deployment_docs_keep_full_and_cpu_profile_contracts() -> None:
     assert "complete executor process tree to exit" in architecture
     assert "2.11.0+cu130（full）" in dependencies
     assert "2.11.0+cpu（CPU-only）" in dependencies
-    assert "SQLite schema v19 data" in agents
+    assert "SQLite schema v21 data" in agents
+
+
+def test_optimization_overviews_describe_labelled_recovery() -> None:
+    english = (ROOT / "README.md").read_text(encoding="utf-8")
+    chinese = (ROOT / "README_CN.md").read_text(encoding="utf-8")
+    assert "labelled keywords or source excerpts" in english
+    assert "分组小结和画面标题" in chinese
+    assert "关键词" in chinese and "原文要点" in chinese
 
 
 def test_api_markdown_examples_use_public_contract_values() -> None:

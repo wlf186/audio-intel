@@ -109,7 +109,8 @@ def test_context_configuration_binding_defaults_and_schema(local, monkeypatch):
 def test_documented_context_configuration_example(monkeypatch):
     import re
     from audio_intel.api_docs import API_DESCRIPTION
-    section = API_DESCRIPTION.split('## 上下文配置示例 / Context configuration example', 1)[1].split('## 优化与入库示例', 1)[0]
+    following = API_DESCRIPTION.split('## 上下文配置示例 / Context configuration example', 1)[1]
+    section = re.split(r'^##[ \t]+', following, maxsplit=1, flags=re.M)[0]
     blocks = re.findall(r'```python\n(.*?)```', section, re.S)
     assert len(blocks) == 1
     calls = []
