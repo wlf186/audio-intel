@@ -27,6 +27,7 @@ const Pair=memo(function Pair({paragraph,compare,showChanges,showSources,query,o
   <header><strong>{paragraph.speaker_label||paragraph.speaker||t('optimization.unknownSpeaker')}</strong><button className="optimization-time" onClick={()=>onSeek(paragraph.start)}>{formatTime(paragraph.start,false)}–{formatTime(paragraph.end,false)}</button><small>{t('optimization.sourceCount',{count:paragraph.merged_source_count||paragraph.segment_ids.length})}</small>{paragraph.review_outcome==='fact'?<small className="optimization-review-badge">{t('optimization.factConcern')}</small>:null}</header>
   {wholeRewrite?<div className="optimization-rewrite-note"><span>{t('optimization.wholeRewrite')}</span><button className="button" aria-pressed={detailed} onClick={()=>setDetailed(v=>!v)}>{t('optimization.detailedChanges')}</button></div>:null}
   {compare?<div className="optimization-pair-columns"><div><small>{t('optimization.original')}</small><p>{showDiff?changedText(diff!.original,'original',query):highlightText(paragraph.original_text,query)}</p></div><div><small>{t('optimization.draft')}</small><p>{paragraph.omitted?t('optimization.omitted'):showDiff?changedText(diff!.edited,'edited',query):highlightText(paragraph.text||'',query)}</p></div></div>:<><p>{highlightText(paragraph.text||'',query)}</p><button className="button optimization-compare-paragraph" onClick={event=>{event.currentTarget.closest('article')?.scrollIntoView({block:'start'});checkpointWorkspace();onCompare()}}>{t('optimization.compareParagraph')}</button></>}
+  {paragraph.group_summary?.state==='ready'?<aside className="optimization-group-summary" aria-label={t('optimization.groupSummary')}><small>{t('optimization.groupSummary')}{paragraph.group_summary.generation_method==='model_keywords'||paragraph.group_summary.generation_method==='source_excerpt'?` · ${t(paragraph.group_summary.generation_method==='model_keywords'?'optimization.keywordInsight':'optimization.sourceInsight')}`:''}</small><div>{paragraph.group_summary.sentences.map((text,index)=><p key={index}>{highlightText(text,query)}</p>)}</div></aside>:paragraph.group_summary?.state==='unavailable'?<p className="optimization-summary-missing">{t('optimization.summaryMissing')}</p>:null}
   {showSources?<div className="optimization-sources" aria-label={t('optimization.sourceDetails')}>{paragraph.sources?.map(source=><div className="optimization-source" key={`${source.segment_id}:${source.start_offset}`} data-source-id={source.segment_id} data-source-time={source.start}><button className="optimization-time" onClick={()=>{setSelectedSource(source.segment_id);onSeek(source.start)}} aria-label={t('optimization.listenSource',{time:formatTime(source.start,false)})}>{formatTime(source.start,false)}</button><p>{source.text}</p></div>)}</div>:null}
   {hasReview?<details className="optimization-review-details"><summary>{t('optimization.checkDetails')}</summary><p>{paragraph.review_outcome==='fact'?paragraph.review_details?.issues?.map(issue=>issue.reason).join('；')||t('optimization.factConcern'):t(paragraph.review_outcome==='uncertain'?'optimization.uncertainReviewHelp':'optimization.unavailableReviewHelp')}</p></details>:null}
  </article>
@@ -44,7 +45,25 @@ export function OptimizationReader({job,controller,query,speaker,onSeek,onModeCh
  const root=useRef<HTMLDivElement>(null)
  const {result,resultError}=controller
  useReaderBookmark(key,root,{active:true,ready:Boolean(result),revision:result?.revision,visibleCount:visible,query:deferred,speakerFilter:speaker})
- const filtered=useMemo(()=>result?.paragraphs.filter(p=>(compare||!p.omitted)&&(speaker==='all'||p.speaker===speaker)&&(!compare||filter==='all'||(filter==='review'?p.review_outcome==='fact':p.text!==null&&p.text!==p.original_text))&&(!deferred.trim()||(compare?`${p.original_text} ${p.text||''}`:p.text||'').toLocaleLowerCase().includes(deferred.trim().toLocaleLowerCase())))||[],[result,speaker,deferred,compare,filter])
+ const sceneTitles=useMemo(()=>new Map(result?.scenes.map(scene=>[scene.id,scene.title_summary?.title||''])),[result?.scenes])
+ const filtered=useMemo(()=>result?.paragraphs.filter(p=>{
+  if((!compare&&p.omitted)||(speaker!=='all'&&p.speaker!==speaker)||(compare&&filter!=='all'&&!(filter==='review'?p.review_outcome==='fact':p.text!==null&&p.text!==p.original_text)))return false
+  const needle=deferred.trim().toLocaleLowerCase()
+  return !needle||[...(compare?[p.original_text,p.text||'']:[p.text||'']),...(p.group_summary?.state==='ready'?p.group_summary.sentences:[]),sceneTitles.get(p.scene_ids?.[0]||'')||''].some(text=>text.toLocaleLowerCase().includes(needle))
+ })||[],[result,speaker,deferred,compare,filter,sceneTitles])
+ const filteredByScene=useMemo(()=>{
+  const map=new Map<string,OptimizationParagraph[]>()
+  for(const p of filtered){const id=p.scene_ids?.[0]||'';const bucket=map.get(id)||[];bucket.push(p);map.set(id,bucket)}
+  return map
+ },[filtered])
+ const searchEntries=useMemo(()=>{
+  const entry=(p:OptimizationParagraph)=>({id:p.id,texts:[...(compare?[p.original_text,p.text||'']:[p.text||'']),...(p.group_summary?.state==='ready'?p.group_summary.sentences:[])]})
+  if(!result?.scenes.length)return filtered.map(entry)
+  return result.scenes.flatMap(scene=>[
+   ...((speaker==='all'&&filter==='all'||filteredByScene.has(scene.id))?[{id:`scene-title:${scene.id}`,texts:[sceneTitles.get(scene.id)||'']}]:[]),
+   ...(filteredByScene.get(scene.id)||[]).map(entry)
+  ]).concat((filteredByScene.get('')||[]).map(entry))
+ },[result?.scenes,filtered,compare,speaker,filter,filteredByScene,sceneTitles])
  const revealedToken=useRef(reveal?.token)
  useLayoutEffect(()=>{
   if(!reveal||!result||revealedToken.current===reveal.token)return
@@ -74,18 +93,18 @@ export function OptimizationReader({job,controller,query,speaker,onSeek,onModeCh
    {compare?<><label className="optimization-diff-toggle"><input type="checkbox" checked={showChanges} onChange={event=>{checkpointWorkspace();setShowChanges(event.target.checked);saveOptimizationChanges(job.id,event.target.checked)}}/>{t('optimization.showChanges')}</label><label>{t('optimization.paragraphFilter')}<select aria-label={t('optimization.paragraphFilter')} value={filter} onChange={event=>{setFilter(event.target.value);setVisible(80)}}><option value="all">{t('optimization.filterAll')}</option><option value="changed">{t('optimization.filterChanged')}</option><option value="review">{t('optimization.filterReview')}</option></select></label></>:null}
    <label className="optimization-diff-toggle"><input type="checkbox" checked={showSources} onChange={event=>{checkpointWorkspace();setShowSources(event.target.checked);saveSourceDetails(job.id,event.target.checked)}}/>{t('optimization.sourceDetails')}</label>
   </div></div>:null}
-  <TranscriptSearchNavigation query={deferred} entries={filtered.map(p=>({id:p.id,texts:compare?[p.original_text,p.text||'']:[p.text||'']}))} root={root} onReveal={id=>setVisible(n=>Math.max(n,filtered.findIndex(p=>p.id===id)+1))}/>
+  <TranscriptSearchNavigation query={deferred} entries={searchEntries} root={root} onReveal={id=>{const index=filtered.findIndex(p=>id.startsWith('scene-title:')?p.scene_ids?.[0]===id.slice(12):p.id===id);setVisible(n=>Math.max(n,index+1))}}/>
   <div className="optimization-reader" ref={root} aria-busy={!result&&!resultError}>
    {resultError?<p className="error" role="alert">{resultError} <button className="button" onClick={controller.retry}>{t('common.actions.retry')}</button></p>:null}
    {!result?!resultError?<p role="status">{t('optimization.loading')}</p>:null:<>
-    {illustrated&&result.scenes.length?result.scenes.map((scene,index)=>{
+    {result.scenes.length?result.scenes.map((scene,index)=>{
      const owned=byScene.get(scene.id)||[]
-     if(!owned.length&&(deferred.trim()||speaker!=='all'||filter!=='all'))return null
-     if(!owned.length&&result.paragraphs.some(p=>p.scene_ids?.[0]===scene.id&&!shown.includes(p)))return null
-     return <section key={scene.id} className="optimization-scene" data-scene-id={scene.id}><h3>{t('video.scene',{number:index+1})} <small>{formatTime(scene.start,false)}–{formatTime(scene.end,false)}</small></h3><div className="optimization-scene-columns"><div className="optimization-scene-picture"><Frame jobId={job.id} scene={scene}/></div><div className="optimization-scene-prose">{owned.length?owned.map(pair):<p className="muted">{t('optimization.noSceneText')}</p>}</div></div></section>
+     if(!owned.length&&(speaker!=='all'||filter!=='all'||deferred.trim()&&!(sceneTitles.get(scene.id)||'').toLocaleLowerCase().includes(deferred.trim().toLocaleLowerCase())))return null
+     if(!owned.length&&filteredByScene.has(scene.id))return null
+     return <section key={scene.id} className="optimization-scene" data-scene-id={scene.id}><h3 className="optimization-scene-meta">{t('video.scene',{number:index+1})} <small>{formatTime(scene.start,false)}–{formatTime(scene.end,false)}</small></h3>{scene.title_summary?.title?<h4 className="optimization-scene-title" data-search-owner={`scene-title:${scene.id}`}>{highlightText(scene.title_summary.title,deferred)}{scene.title_summary.generation_method==='model_keywords'||scene.title_summary.generation_method==='source_excerpt'?<small className="optimization-insight-method">{t(scene.title_summary.generation_method==='model_keywords'?'optimization.keywordInsight':'optimization.sourceInsight')}</small>:null}</h4>:null}<div className={illustrated?'optimization-scene-columns':'optimization-scene-text'}>{illustrated?<div className="optimization-scene-picture"><Frame jobId={job.id} scene={scene}/></div>:null}<div className="optimization-scene-prose">{owned.length?owned.map(pair):<p className="muted">{t('optimization.noSceneText')}</p>}</div></div></section>
     }):shown.map(pair)}
-    {illustrated&&result.scenes.length?(byScene.get('')||[]).map(pair):null}
-    {!filtered.length?<p>{t('asr.results.noMatches')}{filter!=='all'?<button className="button" onClick={()=>setFilter('all')}>{t('optimization.filterAll')}</button>:null}</p>:null}
+    {result.scenes.length?(byScene.get('')||[]).map(pair):null}
+    {!filtered.length&&!searchEntries.some(entry=>entry.texts.some(text=>deferred.trim()&&text.toLocaleLowerCase().includes(deferred.trim().toLocaleLowerCase())))?<p>{t('asr.results.noMatches')}{filter!=='all'?<button className="button" onClick={()=>setFilter('all')}>{t('optimization.filterAll')}</button>:null}</p>:null}
     {visible<filtered.length?<button className="button" onClick={()=>setVisible(n=>n+80)}>{t('asr.results.loadMore')}</button>:null}
    </>}
   </div>

@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from . import db
 from .optimization_policy import PROMPT_VERSION, DEFAULT_MODE
 
-SUMMARY = "COALESCE(json_extract(config_json, '$.prompt_version'), 1) AS prompt_version,json_extract(config_json, '$.rewrite_mode') AS rewrite_mode," + 'id,job_id,state,phase,review_failures,reviewed_parts,total_parts,published,model,total_chars,completed_chars,completed_units,total_units,needs_review_units,review_state,reviewed_units,uncertain_units,unavailable_units,basic_cleanup_units,review_error,activity_chars,error,revision,created_at,updated_at'
+SUMMARY = "COALESCE(json_extract(config_json, '$.prompt_version'), 1) AS prompt_version,json_extract(config_json, '$.rewrite_mode') AS rewrite_mode," + 'id,job_id,state,phase,review_failures,reviewed_parts,total_parts,published,model,total_chars,completed_chars,completed_units,total_units,needs_review_units,review_state,reviewed_units,uncertain_units,unavailable_units,basic_cleanup_units,review_error,activity_chars,error,revision,created_at,updated_at,summary_version,summary_state,summary_counts_json,summary_revision'
 ACTIVE = ('queued', 'running', 'pausing')
 
 
@@ -76,6 +76,9 @@ def migrate(connection: sqlite3.Connection) -> None:
             connection.execute('DELETE FROM transcript_optimizations')
             connection.execute('UPDATE schema_meta SET version=19')
 
+    from .optimization_summaries import migrate as migrate_summaries
+    migrate_summaries(connection)
+
 
 def settings() -> dict:
     with db.connect() as connection:
@@ -90,6 +93,10 @@ def save_settings(value: dict) -> None:
 
 def summary(row: Any) -> dict:
     item = dict(row)
+    from .optimization_summaries import status as insight_status
+    item['summary_status'] = insight_status(item)
+    for key in ('summary_version','summary_state','summary_counts_json','summary_revision'):
+        item.pop(key, None)
     item['published'] = bool(item['published'])
     version = item.pop('prompt_version')
     item['requires_regeneration'] = not item['published'] and version != PROMPT_VERSION
@@ -149,6 +156,8 @@ def snapshot(run_id: str) -> tuple[dict, list[dict]]:
         run = dict(row)
         for name in ('config', 'hotwords'):
             run[name] = json.loads(run.pop(name + '_json'))
+        from .optimization_summaries import read
+        run['insights'] = read(run_id, connection)
         return run, _units(connection, run_id)
 
 
@@ -184,7 +193,7 @@ def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: s
             raise HTTPException(409, 'Resume or delete the existing optimization / 请继续或删除现有优化任务')
         if old and not regenerate:
             raise HTTPException(409, 'Set regenerate=true / 请明确选择重新优化')
-        if connection.execute("SELECT count(*) FROM transcript_optimizations WHERE state='queued'").fetchone()[0] >= 5:
+        if connection.execute("SELECT count(*) FROM transcript_optimizations WHERE state='queued' OR summary_state='queued'").fetchone()[0] >= 5:
             raise HTTPException(429, 'Optimization queue is full / 优化队列已满', headers={'Retry-After': '5'})
         if shutil.disk_usage(db.settings.data_dir).free < minimum_free:
             raise HTTPException(429, 'Insufficient disk space / 磁盘空间不足', headers={'Retry-After': '30'})
@@ -202,6 +211,8 @@ def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: s
                 parts = unit.get('_parts') or prepare_parts(config, unit, hotwords)
                 connection.executemany('INSERT INTO optimization_parts(run_id,unit_ordinal,part_ordinal,source_json) VALUES(?,?,?,?)',
                     [(identifier, ordinal, i, encode(part)) for i, part in enumerate(parts)])
+        from .optimization_summaries import initialize
+        initialize(connection, identifier, config, paragraphs)
         connection.commit()
     return identifier, False
 
@@ -222,7 +233,7 @@ def resume(run_id: str) -> None:
             return
         if row['state'] not in ('paused', 'failed'):
             raise HTTPException(409, 'Task cannot be resumed')
-        if connection.execute("SELECT count(*) FROM transcript_optimizations WHERE state='queued'").fetchone()[0] >= 5:
+        if connection.execute("SELECT count(*) FROM transcript_optimizations WHERE state='queued' OR summary_state='queued'").fetchone()[0] >= 5:
             raise HTTPException(429, 'Optimization queue is full', headers={'Retry-After': '5'})
         connection.execute("UPDATE transcript_optimizations SET state='queued',error=NULL,revision=revision+1,updated_at=? WHERE id=?", (db.utcnow(), run_id))
         connection.commit()
@@ -257,7 +268,7 @@ def checkpoint(run_id: str, values: list[tuple[int, str]], *, review_reason: str
 def publish(run_id: str) -> bool:
     with db.connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
-        row = connection.execute("SELECT job_id FROM transcript_optimizations WHERE id=? AND state='running' AND completed_units=total_units AND review_state='completed'", (run_id,)).fetchone()
+        row = connection.execute("SELECT job_id FROM transcript_optimizations WHERE id=? AND state='running' AND completed_units=total_units AND review_state='completed' AND (summary_version IS NULL OR summary_state IN ('completed','partial'))", (run_id,)).fetchone()
         if not row:
             return False
         connection.execute('DELETE FROM transcript_optimizations WHERE job_id=? AND published=1', (row['job_id'],))
@@ -367,9 +378,13 @@ def checkpoint_review(run_id: str, ordinal: int, part_ordinal: int, result: dict
             final = next(value for value in ('fact', 'unavailable', 'uncertain', 'pass') if value in values)
             issues = [issue for row in reviews for issue in json.loads(row[1]).get('issues', [])]
             unique = list({encode(issue): issue for issue in issues}.values())
+            details = {'stage': 'review', 'issues': unique}
+            diagnostics = [json.loads(row[1]).get('diagnostic') for row in reviews]
+            if any(diagnostics):
+                details['diagnostic'] = '; '.join(dict.fromkeys(d for d in diagnostics if d))[:400]
             connection.execute('UPDATE optimization_units SET review_outcome=?,review_status=?,review_reason=?,review_details_json=? WHERE run_id=? AND ordinal=?',
                 (final, 'accepted' if final == 'pass' else 'needs_review' if final == 'fact' else None,
-                 'review_failed' if final == 'fact' else None, encode({'stage': 'review', 'issues': unique}), run_id, ordinal))
+                 'review_failed' if final == 'fact' else None, encode(details), run_id, ordinal))
         connection.execute('''UPDATE transcript_optimizations SET
             reviewed_units=(SELECT COUNT(*) FROM optimization_units WHERE run_id=? AND review_outcome IN ('pass','fact','uncertain','unavailable')),
             needs_review_units=(SELECT COUNT(*) FROM optimization_units WHERE run_id=? AND review_outcome='fact'),

@@ -12,7 +12,7 @@ import httpx
 from fastapi import Depends, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import db, optimization_engine as engine, optimization_store as store
+from . import db, optimization_engine as engine, optimization_store as store, optimization_summaries as insights
 from .asr_speakers import speaker_update_lock
 from .document_download import reader_lease, deletion_guard
 
@@ -54,12 +54,59 @@ class ConfigurationResponse(BaseModel):
     prompt_version: int | None = None
 
 
+class SummaryCounts(BaseModel):
+    total: int = Field(0, description='本稿中该类型的小结总项数，非分页数 / Total insight items of this kind in this run, not a paginated count')
+    processed: int = Field(0, description='已结束项数，等于 ready + skipped + failed / Finished items: ready + skipped + failed')
+    ready: int = Field(0, description='有可用输出，包含关键词和原文要点；不表示事实认证 / Usable output including keywords and source excerpts; not factual certification')
+    skipped: int = Field(0, description='无实质内容而跳过的项；v2 的目录、介绍、引用和过程仍计入有效内容 / Items skipped for no substantive content; v2 keeps outlines, introductions, references and procedures eligible')
+    failed: int = Field(0, description='未能交付输出的项，对应 unavailable / Items without deliverable output, in unavailable state')
+    model_ready: int = Field(0, description='首次模型生成即被接受的项；历史未知方式不计入 / Items accepted on initial model generation; excludes historically unknown methods')
+    repaired_ready: int = Field(0, description='异常定向修复后被接受的项，与 model_ready 分开统计 / Items accepted after targeted repair, counted separately from model_ready')
+    keyword_ready: int = Field(0, description='采用模型摘取的原文关键词的项 / Items delivered using model-extracted literal source keywords')
+    extractive_ready: int = Field(0, description='采用程序摘取的短句或短语的项 / Items delivered using rule-selected excerpts or phrases')
+    fallback_ready: int = Field(0, description='兜底交付项，等于 keyword_ready + extractive_ready；已包含在 ready 内 / Fallback items: keyword_ready + extractive_ready; already included in ready')
+
+
+class SummaryStatus(BaseModel):
+    version: int | None = Field(None, description='小结策略版本，独立于正文 prompt_version 和 SQLite 版本；旧稿可为 null / Insight policy version, independent of prose prompt_version and SQLite schema; null for legacy drafts')
+    state: Literal['not_requested', 'pending', 'queued', 'running', 'paused', 'partial', 'completed'] = Field(description='小结阶段状态；completed 表示本轮结束，实际交付情况见 counts；not_requested 用于无小结的旧稿 / Insight-stage state; completed ends this round, counts describe delivery; not_requested identifies legacy drafts without insights')
+    revision: int = 0
+    counts: dict[Literal['group', 'scene'], SummaryCounts] = Field(default_factory=dict, description='分别统计分组小结与画面标题；有效交付率为 ready/(total-skipped)，分母为0时不适用 / Separate group and scene counts; delivery rate is ready/(total-skipped), not applicable for a zero denominator')
+
+
+class InsightMetadata(BaseModel):
+    generation_method: Literal['model', 'model_repair', 'model_keywords', 'source_excerpt'] | None = Field(None, description='本小结的交付方式：首次模型、定向修复、模型关键词、程序摘取；历史未知可为 null。不同于正文同名字段 / Insight delivery method: initial model, targeted repair, model keywords or rule-selected excerpt; null when historically unknown. Distinct from the prose field with the same name')
+    attempt_count: int = Field(0, description='已结束的模型请求尝试数，包含连接失败；不计程序摘取。长画面累计各归纳节点，可能超过3；旧稿默认0不代表曾记录调用 / Finished model request attempts including connection failures, excluding local extraction. Long scenes sum reduction nodes and may exceed 3; legacy default 0 is not evidence of recorded calls')
+    quality_notice: Literal['keywords', 'source_excerpt'] | None = Field(None, description='展示用降级标记：keywords=关键词，source_excerpt=原文要点；非质量评分 / Display notice for keywords or source excerpts; not a quality score')
+    skip_reason: Literal['no_substantive_content'] | None = Field(None, description='仅无实质内容时为 no_substantive_content；其余为 null / no_substantive_content only for genuinely empty/non-substantive input; otherwise null')
+
+
+class GroupSummary(InsightMetadata):
+    state: Literal['pending', 'running', 'ready', 'not_applicable', 'unavailable'] = Field(description='ready 包含有用的关键词／原文要点；not_applicable 无实质内容；unavailable 未交付 / ready includes usable keywords/excerpts; not_applicable means no substantive content; unavailable means no delivery')
+    sentences: list[str] = Field(default_factory=list, description='最多两句小结，每句中文50字或英文30词；关键词或原文要点也在此返回，混合语种按比例预算 / At most two summary sentences, each within 50 Chinese characters or 30 words; also carries keywords/excerpts, with proportional mixed-script budgets')
+    error: str | None = None
+
+
+class SceneSummary(InsightMetadata):
+    state: Literal['pending', 'running', 'ready', 'not_applicable', 'unavailable'] = Field(description='ready 包含有用的关键词／归纳要点；长画面可从分片归纳结果摘取 / ready includes usable keywords/excerpts; long-scene excerpts may come from reduced notes')
+    title: str | None = Field(None, description='画面标题，中文20字或英文10词；降级短语同样受限 / Scene title within 20 Chinese characters or 10 words; fallback phrases share the limit')
+    error: str | None = None
+
+
+class SummariesResponse(BaseModel):
+    run_id: str
+    summary_status: SummaryStatus
+    groups: dict[str, GroupSummary] = Field(description='以分组 ordinal 的十进制字符串为键 / Indexed by the decimal string of each group ordinal')
+    scenes: dict[str, SceneSummary] = Field(description='以不可变来源快照的画面 ID 为键 / Indexed by scene IDs from the immutable source snapshot')
+
+
 class OptimizationSummary(BaseModel):
+    summary_status: SummaryStatus | None = None
     id: str
     job_id: str
     state: Literal['queued', 'running', 'pausing', 'paused', 'failed', 'succeeded', 'deleting']
     published: bool
-    phase: Literal['generation', 'review', 'complete'] = 'generation'
+    phase: Literal['generation', 'review', 'summaries', 'complete'] = 'generation'
     reviewed_parts: int = 0
     total_parts: int = 0
     requires_regeneration: bool = False
@@ -118,11 +165,13 @@ class ReviewIssue(BaseModel):
 
 
 class ReviewDetails(BaseModel):
+    diagnostic: str | None = Field(None, description='复核证据或格式问题的诊断；无法定位引用时保持 uncertain，不补造证据 / Diagnostic for review evidence or format defects; ungrounded citations remain uncertain without fabricated evidence')
     stage: Literal['generation', 'review']
     issues: list[ReviewIssue] = Field(default_factory=list)
 
 
 class OptimizedParagraph(BaseModel):
+    group_summary: GroupSummary | None = None
     id: str
     ordinal: int
     speaker: str | None
@@ -145,6 +194,7 @@ class OptimizedParagraph(BaseModel):
 
 
 class OptimizedResult(BaseModel):
+    summary_status: SummaryStatus | None = None
     prompt_version: int = 1
     run_id: str
     complete: bool
@@ -205,7 +255,13 @@ class Manager:
         values = store.status(job_id)
         for name in ('candidate', 'published'):
             item = values[name]
-            if item is None or (not deleting and name == 'published'):
+            if item is None:
+                continue
+            insights.pause(item['id'])
+            if not deleting and name == 'published':
+                if self.current_id == item['id'] and self.current:
+                    self.current.cancel()
+                    await asyncio.gather(self.current, return_exceptions=True)
                 continue
             if deleting:
                 store.transition(item['id'], 'deleting', ('queued', 'running', 'pausing', 'paused', 'failed', 'succeeded'))
@@ -222,14 +278,15 @@ class Manager:
         if not any(m['name'] == profile['model'] and m['digest'] == profile['model_digest'] for m in models['models']):
             raise ValueError('模型已变化或被删除，请重新验证并生成 / Model changed or was removed; verify and regenerate')
 
-    async def retry_io(self, operation):
-        for attempt in range(3):
-            try:
-                return await operation()
-            except (httpx.TransportError, httpx.HTTPStatusError, TimeoutError) as exc:
-                if attempt == 2 or (isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500 and exc.response.status_code != 429):
-                    raise
-                await asyncio.sleep(2 ** attempt)
+    async def retry_io(self, operation, request_limit=None):
+        with engine.request_budget(request_limit):
+            for attempt in range(3):
+                try:
+                    return await operation()
+                except (httpx.TransportError, httpx.HTTPStatusError, TimeoutError) as exc:
+                    if attempt == 2 or engine.requests_remaining() == 0 or (isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500 and exc.response.status_code != 429):
+                        raise
+                    await asyncio.sleep(2 ** attempt)
 
     async def execute(self, run_id: str):
         try:
@@ -251,7 +308,7 @@ class Manager:
                     source = part['source']
                     batch = [{**source, 'ordinal': unit['ordinal']}]
                     try:
-                        output = await self.retry_io(lambda: engine.generate(profile, batch, hotwords, '', '', lambda count: store.activity(run_id, count)))
+                        output = await self.retry_io(lambda: engine.generate(profile, batch, hotwords, '', '', lambda count: store.activity(run_id, count)), request_limit=3 if profile.get('request_policy_version') == 2 else None)
                         text = output[0][1]
                         method = getattr(output, 'method', 'model')
                     except (engine.InvalidOutput, engine.ReviewFailed, json.JSONDecodeError):
@@ -271,6 +328,7 @@ class Manager:
             if engine.source_hash(parent(run['job_id'])['result']) != run['source_hash']:
                 raise ValueError('Source changed; regenerate / 原文已变化，请重新生成')
             await self.finish_review(run_id)
+            await insights.process(run_id)
             if store.publish(run_id):
                 store.clear_export_caches()
         except asyncio.CancelledError:
@@ -303,7 +361,10 @@ class Manager:
                 verdict = unavailable
                 if failures < 3:
                     try:
-                        verdict = await engine.review(run['config'], original, candidate, run['hotwords'])
+                        if run['config'].get('request_policy_version') == 2:
+                            verdict = await self.retry_io(lambda: engine.review(run['config'], original, candidate, run['hotwords']), request_limit=2)
+                        else:
+                            verdict = await engine.review(run['config'], original, candidate, run['hotwords'])
                         failures = store.record_review_connection(run_id, False)
                     except (httpx.HTTPError, TimeoutError):
                         failures = store.record_review_connection(run_id, True)
@@ -317,6 +378,7 @@ class Manager:
     async def run(self):
         self.loop = asyncio.get_running_loop()
         with db.connect() as connection:
+            connection.execute("UPDATE transcript_optimizations SET summary_state='paused',summary_revision=summary_revision+1,revision=revision+1,updated_at=? WHERE summary_state IN ('queued','running')", (db.utcnow(),))
             connection.execute("UPDATE transcript_optimizations SET state='paused',error='服务中断 / Service interrupted',revision=revision+1,updated_at=? WHERE state IN ('running','pausing')", (db.utcnow(),))
             interrupted_deletions = [row[0] for row in connection.execute("SELECT DISTINCT job_id FROM transcript_optimizations WHERE state='deleting'")]
         for job_id in interrupted_deletions:
@@ -325,12 +387,13 @@ class Manager:
             while True:
                 if store.settings().get('enabled') and not self.gate.locked():
                     with db.connect() as connection:
-                        generation = connection.execute("SELECT id FROM transcript_optimizations WHERE state='queued' ORDER BY created_at,id LIMIT 1").fetchone()
+                        generation = connection.execute("SELECT id,state FROM transcript_optimizations WHERE state='queued' OR (published=1 AND summary_state='queued') ORDER BY COALESCE(summary_requested_at,created_at),id LIMIT 1").fetchone()
                     identifier = generation[0] if generation else None
-                    claimed = identifier and store.transition(identifier, 'running', ('queued',))
+                    auxiliary = generation and generation['state'] == 'succeeded'
+                    claimed = identifier and (auxiliary or store.transition(identifier, 'running', ('queued',)))
                     if claimed:
                         self.current_id = identifier
-                        self.current = asyncio.create_task(self.execute(identifier))
+                        self.current = asyncio.create_task(self.execute_summaries(identifier) if auxiliary else self.execute(identifier))
                         await asyncio.gather(self.current, return_exceptions=True)
                         self.current_id, self.current = None, None
                 await asyncio.sleep(.05)
@@ -338,6 +401,19 @@ class Manager:
             if self.current:
                 self.current.cancel()
                 await asyncio.gather(self.current, return_exceptions=True)
+
+    async def execute_summaries(self, run_id):
+        try:
+            run = store.get(run_id)
+            await self.check_model(run['config'])
+            if engine.source_hash(parent(run['job_id'])['result']) != run['source_hash']:
+                raise ValueError('Source changed; regenerate')
+            await insights.process(run_id)
+        except asyncio.CancelledError:
+            insights.pause(run_id)
+            raise
+        except Exception:
+            insights.pause(run_id)
 
 
 def stop_for_purge(job_id: str):
@@ -423,7 +499,7 @@ def register(app, api):
                     await manager.stop(job_id)
             return value
 
-    @app.get(jobs, summary='读取优化状态 / Get optimization status', description=api.bilingual('返回已发布稿与候选摘要、当前阶段及已保存检查进度；生成和有限检查结束才发布。支持 ETag 轮询。', 'Return published/candidate summaries, workflow phase and persisted reviewed_parts/total_parts. Published means generation and bounded checks are complete. Supports ETag polling.'), operation_id='getOptimizationStatus', tags=[TAG], response_model=OptimizationStatus, responses=errors)
+    @app.get(jobs, summary='读取优化状态 / Get optimization status', description=api.bilingual('返回已发布稿与候选摘要、当前阶段及已保存检查进度；生成、有限检查及首轮小结尝试结束才发布。支持 ETag 轮询。', 'Return published/candidate summaries, workflow phase and persisted reviewed_parts/total_parts. Published means generation, bounded checks and initial summary attempts are complete. Supports ETag polling.'), operation_id='getOptimizationStatus', tags=[TAG], response_model=OptimizationStatus, responses=errors)
     def status(job_id: str, request: Request, response: Response, _: None = auth):
         parent(job_id)
         value = public_status(job_id)
@@ -441,7 +517,8 @@ def register(app, api):
             if store.replay(job_id, key, body.regenerate, body.rewrite_mode if 'rewrite_mode' in body.model_fields_set else None):
                 response.status_code = 200
                 return public_status(job_id)
-            config = {**store.settings(), 'prompt_version': engine.PROMPT_VERSION, 'rewrite_mode': body.rewrite_mode}
+            config = {**store.settings(), 'prompt_version': engine.PROMPT_VERSION, 'rewrite_mode': body.rewrite_mode, 'summary_version': insights.VERSION,
+                      'request_policy_version': 2 if insights.VERSION == 2 else 1}
             if not config.get('enabled'):
                 raise HTTPException(409, '请在系统状态启用表达优化 / Enable expression optimization in System')
             candidate = store.status(job_id)['candidate']
@@ -450,6 +527,7 @@ def register(app, api):
             def prepare():
                 with reader_lease(job_id), speaker_update_lock(job_id):
                     job = parent(job_id)
+                    config['summary_scene_ids'] = [s['id'] for s in (job['result'].get('video') or {}).get('scenes', [])]
                     units = engine.prepare_units(job['result'])
                     hotwords = list(dict.fromkeys(term for item in job['request'].get('hotword_lists', []) for term in item.get('terms', [])))
                     engine.validate_budget(config, units, hotwords)
@@ -488,7 +566,53 @@ def register(app, api):
             store.resume(body.run_id)
             return public_status(job_id)
 
-    @app.get(jobs + '/result', summary='读取优化稿 / Read optimized transcript', description=api.bilingual('读取已完成、按画面组织的正文和不可变来源。生成与检查结束才可读和导出，未发布候选返回 409；检查提示不撤销正文。', 'Read completed scene-scoped prose and source spans in one SQLite snapshot. Generation and bounded checks must finish before publication; candidates return 409. complete means readable and exportable. Check warnings never retract prose. Video paragraphs belong to one scene; generation_method identifies model/basic_cleanup/mixed.'), operation_id='getOptimizedTranscript', tags=[TAG], response_model=OptimizedResult, responses=errors)
+    @app.get(jobs + '/summaries', summary='读取分组与画面小结 / Read group summaries and scene titles', description=api.bilingual('按任务读取小结附加数据，不载入完整正文。v2 包含生成方式、尝试次数、关键词／原文要点标记及分类计数，ready 包括有效兜底。兼容旧稿 not_requested；支持 ETag。', 'Read per-job insights without transcript prose. V2 includes generation method, attempt count, keyword/source-excerpt notices and separate counters; ready includes meaningful fallback. Legacy drafts return not_requested. Supports ETag.'), operation_id='getOptimizationSummaries', tags=[TAG], response_model=SummariesResponse, responses=errors)
+    def summaries(job_id: str, request: Request, response: Response, run_id: str = Query(..., pattern=r'^[a-f0-9]{32}$'), _: None = auth):
+        owned(job_id, run_id)
+        value = insights.read(run_id)
+        etag = '"' + store.digest(value) + '"'
+        if request.headers.get('if-none-match') == etag:
+            return Response(status_code=304, headers={'ETag': etag})
+        response.headers.update({'ETag': etag, 'Cache-Control': 'no-store'})
+        return value
+
+    @app.post(jobs + '/summaries/retry', summary='补试未生成小结 / Retry missing summaries', description=api.bilingual('仅补试已发布稿中未生成的小结，保留正文与成功项。要求 Idempotency-Key；首次入队 202、重放或无工作 200、冲突或旧稿 409、队列或磁盘限制 429。使用原模型、来源和窗口快照。', 'Retry missing insights of a published draft, preserving prose and successful items. Requires Idempotency-Key: 202 queued, 200 replay/no work, 409 conflict/legacy, 429 queue/disk limit. Uses original model, source and context snapshots.'), operation_id='retryOptimizationSummaries', tags=[TAG], response_model=OptimizationStatus, status_code=202, responses=errors)
+    async def retry_summaries(job_id: str, body: RunRequest, response: Response, idempotency_key: str = Header(..., alias='Idempotency-Key'), _: None = auth):
+        key = api.validate_idempotency_key(idempotency_key)
+        async with manager.gate:
+            item = owned(job_id, body.run_id)
+            if insights.replay(job_id, body.run_id, key):
+                response.status_code = 200
+                return public_status(job_id)
+            if not store.settings().get('enabled'):
+                raise HTTPException(409, '表达优化已关闭 / Optimization is disabled')
+            if not item['published'] or not item['summary_version']:
+                raise HTTPException(409, '请重新优化旧稿 / Regenerate to add summaries to a legacy draft')
+            try:
+                await manager.check_model(item['config'])
+            except Exception as exc:
+                raise HTTPException(409, error_message(exc)) from exc
+            with reader_lease(job_id), speaker_update_lock(job_id):
+                if engine.source_hash(parent(job_id)['result']) != item['source_hash']:
+                    raise HTTPException(409, 'Source changed; regenerate')
+                queued = insights.retry(body.run_id, key, api.settings.min_free_disk_bytes)
+            if not queued:
+                response.status_code = 200
+            return public_status(job_id)
+
+    @app.post(jobs + '/summaries/pause', summary='暂停小结补试 / Pause summary retry', description=api.bilingual('停止已发布稿的小结补试，保留正文、成功项和中间检查点。未发布稿请使用暂停整个优化流程。', 'Pause auxiliary work for a published draft; preserve prose, successful insights and intermediate checkpoints. Use workflow pause for an unpublished draft.'), operation_id='pauseOptimizationSummaries', tags=[TAG], response_model=OptimizationStatus, responses=errors)
+    async def pause_summaries(job_id: str, body: RunRequest, _: None = auth):
+        async with manager.gate:
+            item = owned(job_id, body.run_id)
+            if not item['published']:
+                raise HTTPException(409, 'Pause the optimization workflow instead')
+            insights.pause(body.run_id)
+            if manager.current_id == body.run_id and manager.current:
+                manager.current.cancel()
+                await asyncio.gather(manager.current, return_exceptions=True)
+            return public_status(job_id)
+
+    @app.get(jobs + '/result', summary='读取优化稿 / Read optimized transcript', description=api.bilingual('读取已完成、按画面组织的正文和不可变来源。生成、检查及首轮小结尝试结束才可读和导出，未发布候选返回 409；检查提示不撤销正文。', 'Read completed scene-scoped prose and source spans in one SQLite snapshot. Generation, bounded checks and initial summary attempts must finish before publication; candidates return 409. complete means readable and exportable. Check warnings never retract prose. Video paragraphs belong to one scene. Paragraph generation_method identifies model/basic_cleanup/mixed; nested group_summary and title_summary use their separate insight methods and fallback notices.'), operation_id='getOptimizedTranscript', tags=[TAG], response_model=OptimizedResult, responses=errors)
     def result(job_id: str, run_id: str = Query(..., pattern=r'^[a-f0-9]{32}$'), _: None = auth):
         with reader_lease(job_id), speaker_update_lock(job_id):
             owned(job_id, run_id)

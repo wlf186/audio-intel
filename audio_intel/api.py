@@ -1276,7 +1276,7 @@ def create_app() -> FastAPI:
                 "default_model": default_model["public_id"],
                 "models": model_capabilities,
                 "diarization": "CAM++ single-active-speaker",
-                "transcript_optimization": {"supported": True, "provider": "ollama", "minimum_context": 16384, "output_tokens": 4096, "text_versions": ["original", "optimized", "comparison"], "rewrite_modes": ["polish", "rewrite", "editorial"], "default_rewrite_mode": "rewrite"},
+                "transcript_optimization": {"supported": True, "provider": "ollama", "minimum_context": 16384, "output_tokens": 4096, "text_versions": ["original", "optimized", "comparison"], "rewrite_modes": ["polish", "rewrite", "editorial"], "default_rewrite_mode": "rewrite", "summaries": {"version": 2, "automatic_fallback": True, "max_model_calls_per_node": 3, "node_timeout_seconds": 60, "group_sentences": 2, "continuous_script_chars": 50, "word_script_words": 30, "scene_title_chars": 20, "scene_title_words": 10, "retry_missing": True}},
                 "speaker_count": {"min": 1, "max": 15, "default": "auto"},
                 "voiceprint_library": True,
                 "languages": ASR_LANGUAGES,

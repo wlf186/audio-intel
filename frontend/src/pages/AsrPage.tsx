@@ -930,7 +930,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
               <EnhancementSummary value={result.audio_enhancement}/>
               {!originalDownloadUrl?<p id="asr-original-unavailable" className="asr-original-unavailable" role="note">{t('asr.enhancement.originalUnavailable')}</p>:null}
             </div>
-            {result.video?<VideoTimeline key={`video-timeline:${selected.id}`} jobId={selected.id} duration={duration} currentTime={currentTime} enhanced={Boolean(enhancedPlayback&&enhancedAudio)} available={Boolean(enhancedPlayback&&enhancedAudio||result.playback_url)} scenes={videoScenes} onSeek={seconds=>{stopAt.current=undefined;seekWord(seconds)}} onSceneSeek={seekScene} onSeekCommit={revealTimelineTime}/>:<div className="wave-area">
+            {result.video?<VideoTimeline key={`video-timeline:${selected.id}`} jobId={selected.id} duration={duration} currentTime={currentTime} enhanced={Boolean(enhancedPlayback&&enhancedAudio)} available={Boolean(enhancedPlayback&&enhancedAudio||result.playback_url)} scenes={videoScenes} titles={optimization.insights?.scenes} onSeek={seconds=>{stopAt.current=undefined;seekWord(seconds)}} onSceneSeek={seekScene} onSeekCommit={revealTimelineTime}/>:<div className="wave-area">
               {enhancedPlayback&&enhancedAudio?<EnhancedWaveform key={enhancedAudio} src={enhancedAudio} peaks={result.audio_enhancement?.waveform} currentTime={currentTime} duration={duration} onSeek={seek}/>:<Waveform peaks={result.waveform} currentTime={currentTime} duration={duration} onSeek={seek}/>}
               <div className="time-ruler"><span>00:00</span><span>{formatTime(duration/2,false)}</span><span>{formatTime(duration,false)}</span></div>
             </div>}

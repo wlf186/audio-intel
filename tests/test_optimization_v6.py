@@ -197,7 +197,7 @@ def test_v17_migration_clears_legacy_runs_and_keeps_parent(configured):
     assert store.units(run) == []
     assert db.get_job(identifier)['result'] == source(1)
     with db.connect() as c:
-        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 19
+        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 21
         assert not c.execute('PRAGMA foreign_key_check').fetchall()
 
 

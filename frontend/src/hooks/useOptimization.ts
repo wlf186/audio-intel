@@ -1,6 +1,6 @@
-import {useCallback,useEffect,useRef,useState} from 'react'
+import {useCallback,useEffect,useMemo,useRef,useState} from 'react'
 import {createIdempotencyKey,request} from '../lib/api'
-import {optimizationPath,type OptimizationStatus,type OptimizationResult,type RewriteMode} from '../lib/optimization'
+import {optimizationPath,type OptimizationStatus,type OptimizationResult,type OptimizationInsights,type RewriteMode} from '../lib/optimization'
 import {clearOptimizationBookmarks,checkpointWorkspace,readOptimizationView,saveOptimizationView,type ReadingMode} from '../lib/workspaceSession'
 
 export function useOptimization(jobId:string|undefined,active:boolean,sourceVersion?:string){
@@ -13,6 +13,8 @@ export function useOptimization(jobId:string|undefined,active:boolean,sourceVers
  const [paragraphFilter,setParagraphFilter]=useState('all')
  const [result,setResult]=useState<OptimizationResult>()
  const [resultError,setResultError]=useState('')
+ const [insights,setInsights]=useState<OptimizationInsights>()
+ const [insightsError,setInsightsError]=useState('')
  const [reload,setReload]=useState(0)
  const [resultReload,setResultReload]=useState(0)
  const generation=useRef(0)
@@ -21,7 +23,7 @@ export function useOptimization(jobId:string|undefined,active:boolean,sourceVers
  const pendingRequest=useRef('')
  const actionController=useRef<AbortController|undefined>(undefined)
  useEffect(()=>{
-  generation.current++;pendingKey.current=undefined;setStatus(undefined);setResult(undefined);setError('');setResultError('');setBusy(false);setParagraphFilter('all');setModeState(jobId?readOptimizationView(jobId):'original')
+  generation.current++;pendingKey.current=undefined;setStatus(undefined);setResult(undefined);setInsights(undefined);setInsightsError('');setError('');setResultError('');setBusy(false);setParagraphFilter('all');setModeState(jobId?readOptimizationView(jobId):'original')
   return()=>{generation.current++;actionController.current?.abort()}
  },[jobId])
  useEffect(()=>{
@@ -43,7 +45,16 @@ export function useOptimization(jobId:string|undefined,active:boolean,sourceVers
  const runId=selected?.id
  const completed=selected?.completed_units
  const published=selected?.published
- const revision=selected?.revision
+ const revision=selected?.summary_status?.version?undefined:selected?.revision
+ const insightVersion=selected?.summary_status?.version
+ const insightRevision=selected?.summary_status?.revision
+ useEffect(()=>{
+  if(!jobId||!active||!runId||!insightVersion)return
+  let disposed=false
+  const controller=new AbortController()
+  void request<OptimizationInsights>(`${optimizationPath(jobId)}/summaries?run_id=${runId}`,{signal:controller.signal}).then(next=>{if(!disposed){setInsights(next);setInsightsError('')}}).catch(cause=>{if(!disposed)setInsightsError((cause as Error).message)})
+  return()=>{disposed=true;controller.abort()}
+ },[jobId,active,runId,insightVersion,insightRevision,resultReload])
  useEffect(()=>{
   if(!jobId||!active||(!view&&!compare)||!runId)return
   let disposed=false
@@ -55,7 +66,7 @@ export function useOptimization(jobId:string|undefined,active:boolean,sourceVers
  const setMode=useCallback((value:ReadingMode)=>{setModeState(value);if(jobId)saveOptimizationView(jobId,value)},[jobId])
  const setOptimized=useCallback((value:boolean)=>setMode(value?'optimized':'original'),[setMode])
  const setCompare=useCallback((value:boolean)=>setMode(value?'comparison':'optimized'),[setMode])
- const action=async(kind:'create'|'regenerate'|'pause'|'resume'|'delete',rewriteMode:RewriteMode='rewrite',phase:'workflow'|'generation'|'review'='workflow')=>{
+ const action=async(kind:'create'|'regenerate'|'pause'|'resume'|'delete'|'summaryRetry'|'summaryPause',rewriteMode:RewriteMode='rewrite',phase:'workflow'|'generation'|'review'='workflow')=>{
   if(!jobId||busy)return
   const version=generation.current
   statusEpoch.current++
@@ -68,9 +79,12 @@ export function useOptimization(jobId:string|undefined,active:boolean,sourceVers
     if(version===generation.current){setStatus(current=>current?{...current,published:null,candidate:null}:undefined);setResult(undefined);setOptimized(false)}
    }else{
     const create=kind==='create'||kind==='regenerate'
+    const auxiliary=kind==='summaryRetry'||kind==='summaryPause'
+    const idempotent=create||kind==='summaryRetry'
+    const path=kind==='summaryRetry'?'summaries/retry':kind==='summaryPause'?'summaries/pause':kind
     const identity=JSON.stringify({kind,rewriteMode})
-    if(create&&(!pendingKey.current||pendingRequest.current!==identity)){pendingKey.current=createIdempotencyKey();pendingRequest.current=identity}
-    const next=await request<OptimizationStatus>(create?root:`${root}/${kind}`,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json',...(create?{'Idempotency-Key':pendingKey.current!}:{})},body:JSON.stringify(create?{regenerate:kind==='regenerate',rewrite_mode:rewriteMode}:{run_id:status?.candidate?.id,phase})})
+    if(idempotent&&(!pendingKey.current||pendingRequest.current!==identity)){pendingKey.current=createIdempotencyKey();pendingRequest.current=identity}
+    const next=await request<OptimizationStatus>(create?root:`${root}/${path}`,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json',...(idempotent?{'Idempotency-Key':pendingKey.current!}:{})},body:JSON.stringify(create?{regenerate:kind==='regenerate',rewrite_mode:rewriteMode}:{run_id:auxiliary?status?.published?.id:status?.candidate?.id,phase})})
     if(version===generation.current){setStatus(next);pendingKey.current=undefined}
    }
   }catch(cause){if(!controller.signal.aborted&&version===generation.current)setError((cause as Error).message)}
@@ -79,9 +93,16 @@ export function useOptimization(jobId:string|undefined,active:boolean,sourceVers
  const invalidate=()=>{
   statusEpoch.current++;generation.current++;actionController.current?.abort()
   setBusy(false);setStatus(current=>current?{...current,published:null,candidate:null}:undefined)
-  setResult(undefined);setResultError('');setError('');setMode('original');setParagraphFilter('all')
+  setResult(undefined);setInsights(undefined);setInsightsError('');setResultError('');setError('');setMode('original');setParagraphFilter('all')
   setReload(n=>n+1)
  }
- return{invalidate,paragraphFilter,setParagraphFilter,status,error,busy,mode,setMode,view,setOptimized,compare,setCompare,action,selected,result:result?.run_id===runId?result:undefined,resultError,retry:()=>{setReload(n=>n+1);setResultReload(n=>n+1)}}
+ const currentInsights=insights?.run_id===runId?insights:undefined
+ const readingResult=useMemo(()=>{
+  if(!result||result.run_id!==runId)return undefined
+  if(!currentInsights)return result
+  const paragraph=(p:OptimizationResult['paragraphs'][number])=>({...p,group_summary:currentInsights.groups[String(p.ordinal)]})
+  return {...result,summary_status:currentInsights.summary_status,paragraphs:result.paragraphs.map(paragraph),scenes:result.scenes.map(scene=>({...scene,title_summary:currentInsights.scenes[scene.id],paragraphs:scene.paragraphs.map(paragraph)}))}
+ },[result,runId,currentInsights])
+ return{insights:currentInsights,insightsError,invalidate,paragraphFilter,setParagraphFilter,status,error,busy,mode,setMode,view,setOptimized,compare,setCompare,action,selected,result:readingResult,resultError,retry:()=>{setReload(n=>n+1);setResultReload(n=>n+1)}}
 }
 export type OptimizationController=ReturnType<typeof useOptimization>

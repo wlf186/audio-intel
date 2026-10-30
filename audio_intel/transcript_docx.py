@@ -10,7 +10,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from .transcript import comparison_source_text, reading_sections
+from .transcript import comparison_source_text, reading_sections, insight_label
 from .transcript_diff import text_changes
 from .utils import timecode
 
@@ -63,6 +63,11 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     for index, item in enumerate(sections):
         if result.get('video'):
             document.add_heading(f"画面 {index + 1} · {timecode(item['start'])} – {timecode(item['end'])}", 1)
+            if (item.get('title_summary') or {}).get('title'):
+                document.add_heading(item['title_summary']['title'], 1)
+                method = insight_label(item['title_summary'])
+                if method:
+                    document.add_paragraph(method)
             if not item.get('image') or item['id'] in hidden:
                 cell = document.add_table(rows=1, cols=1).cell(0, 0)
                 cell.text = '无稳定画面 / No stable picture' if not item.get('image') else '画面已隐藏 / Picture hidden'
@@ -123,6 +128,14 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                 document.add_paragraph().paragraph_format.space_after = Pt(4)
             else:
                 document.add_paragraph(paragraph['text'])
+            summary = paragraph.get('group_summary') or {}
+            if summary.get('state') == 'ready':
+                method = insight_label(summary)
+                content = document.add_paragraph('小结 / Summary' + (f' · {method}' if method else '') + '：' + ' '.join(summary.get('sentences', [])))
+                content.paragraph_format.left_indent = Mm(3)
+                for run in content.runs:
+                    run.font.size = Pt(10)
+                    run.font.color.rgb = RGBColor.from_string('667085')
         for link in item.get('linked_paragraphs', []):
             document.add_paragraph(f"本画面文字已并入画面 {link['scene_number']} 的成稿（{timecode(link['start'])}） / Text included in the earlier group")
         if not item['paragraphs'] and not item.get('linked_paragraphs'):

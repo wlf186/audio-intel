@@ -83,7 +83,7 @@ def test_v15_migration_clears_legacy_optimization_preserving_source(configured):
     db.init_db()
     with db.connect() as connection:
         assert before and not connection.execute('SELECT 1 FROM optimization_units').fetchall()
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 19
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 21
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
     assert store.status(identifier) == {'published': None, 'candidate': None}
     assert db.get_job(identifier)['result'] == source(2)
@@ -140,6 +140,12 @@ def configured(local, monkeypatch):
     async def review(*args, **kwargs):
         return {'outcome': 'pass', 'details': {'stage': 'review', 'issues': []}}
     monkeypatch.setattr(engine, 'review', review)
+    async def summary(*args, **kwargs):
+        return ['暂未确认预算，周五先测试。']
+    from audio_intel import optimization_summaries
+    # These regressions exercise the saved v1 policy; v2 has its own fixtures.
+    monkeypatch.setattr(optimization_summaries, 'VERSION', 1)
+    monkeypatch.setattr(optimization_summaries, 'generate', summary)
     return local
 
 
@@ -217,7 +223,7 @@ def test_v14_migration_preserves_history_queue_and_idempotency(local):
     assert {identifier: db.get_job(identifier) for identifier in before} == before
     assert not store.settings()['enabled']
     with db.connect() as connection:
-        assert connection.execute('SELECT min(version) FROM schema_meta').fetchone()[0] == 19
+        assert connection.execute('SELECT min(version) FROM schema_meta').fetchone()[0] == 21
         assert tuple(connection.execute('SELECT * FROM job_idempotency').fetchone()) == receipt
         assert tuple(connection.execute('SELECT * FROM queue_sequence').fetchone()) == sequence
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
@@ -525,4 +531,4 @@ def test_v16_migration_clears_legacy_candidate_preserving_source(configured):
     assert before and store.units(run) == []
     assert db.get_job(identifier)['result'] == source(1)
     with db.connect() as connection:
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0]==19
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0]==21

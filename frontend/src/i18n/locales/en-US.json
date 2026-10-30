@@ -745,6 +745,18 @@
     }
   },
   "optimization": {
+    "keywordInsight": "Keywords",
+    "sourceInsight": "Source excerpt",
+    "summaryFallbackCount": "Keywords {{keywords}} · Source excerpts {{source}}",
+    "groupSummary": "Group summary",
+    "summaryMissing": "Summary unavailable; retry missing summaries above",
+    "summarizing": "Creating summaries",
+    "summaryProgress": "Insights {{done}} / {{total}} · Unavailable {{failed}}",
+    "pauseSummaries": "Pause summaries",
+    "retrySummaries": "Retry missing summaries",
+    "legacySummaries": "Regenerate to add group summaries",
+    "summaryHelp": "Summaries and scene titles are generated automatically, with labelled keywords or source excerpts when needed.",
+    "summaryStates": {"paused": "Paused", "partial": "Partly unavailable", "queued": "Retry queued", "running": "Retrying"},
     "connectionDetails": "Connection verified · Technical details",
     "unsavedConfiguration": "Unsaved changes; active configuration is unchanged",
     "savedConfiguration": "Saved configuration",
@@ -779,7 +791,7 @@
     "characterProgress": "Edited {{done}} / {{total}} characters",
     "checkDetails": "Check details",
     "checkWarnings": "Possible factual changes: {{facts}} · Uncertain: {{uncertain}} · Unchecked: {{unavailable}}",
-    "workflowHelp": "The draft is delivered after editing and checks. The original transcript is always kept.",
+    "workflowHelp": "The draft is delivered after editing, checks and summary attempts. The original transcript is always kept.",
     "sceneScope": "Editing follows the current picture sections; paragraphs never span pictures.",
 
     "listenSource": "Listen to source {{time}}",

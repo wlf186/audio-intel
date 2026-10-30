@@ -70,9 +70,9 @@ historical jobs without a saved original WAV show an unavailable explanation and
 
 ## 简洁导出与磁盘 / Concise export and disk use
 
-音视频提供主操作「简洁导出」，可选择 PDF 或 Word（DOCX），次级「明细与字幕」保留 JSON、TXT、SRT、VTT。简洁 PDF/DOCX 将相同 speaker ID 的相邻发言合并为一段，保留第一句开始与最后一句结束时间，不删改口头语、不做总结；同名但不同 ID 的说话人不会误合并。视频也支持 JSON、TXT、SRT、VTT，并提供图文简洁 PDF/DOCX，按画面分段，画面下展示相应讨论。PDF 内嵌本地简体中文字体，无云服务或系统字体依赖。
+音视频提供主操作「简洁导出」，可选择 PDF 或 Word（DOCX），次级「明细与字幕」保留 JSON、TXT、SRT、VTT。原文版本的简洁 PDF/DOCX 将相同 speaker ID 的相邻发言合并为一段，保留第一句开始与最后一句结束时间，不删改口头语、不做总结；同名但不同 ID 的说话人不会误合并。优化稿和对照版的 PDF/Word 另含分组小结、画面标题与“关键词／原文要点”标记，使用相同脱敏及替换规则，详见[表达优化](EXPRESSION_OPTIMIZATION.md)。视频也支持 JSON、TXT、SRT、VTT，并提供图文简洁 PDF/DOCX，按画面分段，画面下展示相应讨论。PDF 内嵌本地简体中文字体，无云服务或系统字体依赖。
 
-Audio and video offer a concise export menu with PDF and editable Word (DOCX) and a secondary details/subtitles menu. For original-text exports, adjacent speech with the same speaker ID merges with its combined time range; words and disfluencies are preserved. Optimized exports instead use the published reading paragraphs described in [expression optimization](EXPRESSION_OPTIMIZATION.md). Equal names with different IDs do not merge. Video offers illustrated concise PDF/DOCX, with images followed by their discussion. A bundled Chinese font keeps PDF rendering offline.
+Audio and video offer a concise export menu with PDF and editable Word (DOCX) and a secondary details/subtitles menu. For original-text exports, adjacent speech with the same speaker ID merges with its combined time range; words and disfluencies are preserved. Optimized exports instead use the published reading paragraphs described in [expression optimization](EXPRESSION_OPTIMIZATION.md). Equal names with different IDs do not merge. Video offers illustrated concise PDF/DOCX, with images followed by their discussion. Optimized/comparison PDF/Word also include group summaries, scene titles and keyword/source-excerpt labels, using the same redaction and replacement rules. A bundled Chinese font keeps PDF rendering offline.
 
 上传直接顺序追加到一份文件，校验并 fsync 后才确认偏移；不创建分片文件再拼接、不预分配 25 GiB，不在重试时重写已确认数据。提交时同盘重命名。画面分析保存最终代表 JPEG；v2 另保存有上限、可重建的低分辨率压缩特征缓存，不保存高分辨率抽样序列。原音复用一份归一化 WAV；实际应用人声增强时另存一份增强 WAV，约每小时 115 MB，旁路时不增加；临时目录和数据目录在同一文件系统时完成阶段直接移动，否则跨盘移动需一次复制。失败/取消后的工作目录由现有 worker 清理。PDF 按需在内存生成，单渲染并发、64 MiB LRU 缓存（5 分钟）；单份 PDF 输入上限为 400 万文本字符、128 MiB JPEG，超过返回 413 并提示拆分。预览最多两个解码器且不写磁盘。修改截图后清理不再被当前/原始分段引用的图片，删除任务清理其输入与结果。
 
@@ -161,7 +161,7 @@ English: Each task/view retains its reading anchor and loaded count across navig
 
 ## 视频结果时间轴 / Video result timeline
 
-视频结果默认常显波形，上方为对应画面段的代表截图，共用同一时间刻度。“画面目录”列出全部画面段，与正文的“画面 1、画面 2…”对应。每个画面段是一段时间，代表截图取自该段中的某一时刻；预览分别标注“对应时段”和“截图时刻”。全片视图会省略放不下的缩略图，放大后显示更多，目录始终保留全部画面。
+视频结果默认常显波形，上方为对应画面段的代表截图，共用同一时间刻度。“画面目录”列出全部画面段，与正文的“画面 1、画面 2…”对应。有已生成标题时动态追加标题及必要的“关键词／原文要点”标记，原文阅读模式也可使用；标题变化不改变时间区间。每个画面段是一段时间，代表截图取自该段中的某一时刻；预览分别标注“对应时段”和“截图时刻”。全片视图会省略放不下的缩略图，放大后显示更多，目录始终保留全部画面。
 
 初始显示全片，可×2／÷2缩放（最小10秒，短视频以全长为限）。横向滚动条由页面绘制并始终可见，不随系统滚动条设置自动隐藏；滑块长度表示当前可见范围，全片视图时满宽且不可拖动。放大后可拖动滑块、点击轨道或使用触控板横滑浏览；手机也可横向拖动滑块或缩略图区。聚焦滚动条后，方向键移动可见范围的 10%，PageUp／PageDown 或点击空白轨道移动 90%，Home／End 到两端。横向浏览只改变可视窗口，不改变播放位置，并暂停自动跟随。播放点移出窗口时，“定位播放点”按钮可将窗口移回并恢复跟随；选择画面或操作波形也恢复跟随。正常纵向滚动不被时间轴拦截。
 
@@ -171,7 +171,7 @@ English: Each task/view retains its reading anchor and loaded count across navig
 
 结果页的增强状态位于音频下载旁，点击简短状态按钮查看设置强度、逐项处理状态和原因；设置强度不代表每一项一定已执行。较窄的结果卡片将原音／增强音下载收进“下载音频”菜单。内容区直接展示子页签，阅读模式与当前模式工具共用一行，正文独立滚动；手机和极矮窗口允许页面纵向滚动。时间轴横向滚动条占位固定，放大不会再挤出一整行平移控件。
 
-English: The scene directory lists every interval and matches the numbered illustrated sections. Thumbnails are representative frames; previews distinguish the interval from the frame capture time. Zoom in to see more thumbnails. After zooming, browse with the persistent page-rendered scrollbar, a horizontal trackpad gesture, or a touch drag over the bar or thumbnails. The bar remains visible regardless of OS auto-hide preferences; its length represents the visible range and it is disabled in full view. Focused arrow keys move 10% of the visible range; PageUp/PageDown and empty-track clicks move 90%; Home/End go to the boundaries. Browsing does not seek and pauses following. Locate playhead restores following without changing playback time; explicit waveform/scene navigation also resumes following. Vertical scrolling remains available.
+English: The scene directory lists every interval and matches the numbered illustrated sections. Available generated titles and keyword/source-excerpt labels are appended dynamically, including in original-text mode, without changing interval boundaries. Thumbnails are representative frames; previews distinguish the interval from the frame capture time. Zoom in to see more thumbnails. After zooming, browse with the persistent page-rendered scrollbar, a horizontal trackpad gesture, or a touch drag over the bar or thumbnails. The bar remains visible regardless of OS auto-hide preferences; its length represents the visible range and it is disabled in full view. Focused arrow keys move 10% of the visible range; PageUp/PageDown and empty-track clicks move 90%; Home/End go to the boundaries. Browsing does not seek and pauses following. Locate playhead restores following without changing playback time; explicit waveform/scene navigation also resumes following. Vertical scrolling remains available.
 
 Scene selection seeks to the interval start. Waveform clicks seek to the exact chosen time and reveal/highlight the illustrated paragraph or detailed sentence; dragging reveals the reader on release, and keyboard navigation does the same. Gaps reveal the next sentence and the endpoint reveals the final sentence without changing the selected time. Playback state is preserved. Playback ticks highlight without repeatedly scrolling the reader. Explicit navigation clears detailed-reader search/speaker filters; switching views still restores their independent bookmarks and storage lifetime is unchanged.
 

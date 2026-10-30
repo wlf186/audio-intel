@@ -735,6 +735,18 @@
     }
   },
   "optimization": {
+    "keywordInsight": "关键词",
+    "sourceInsight": "原文要点",
+    "summaryFallbackCount": "关键词{{keywords}} · 原文要点{{source}}",
+    "groupSummary": "分组小结",
+    "summaryMissing": "小结未生成，可在上方补试",
+    "summarizing": "正在提炼小结",
+    "summaryProgress": "小结 {{done}} / {{total}} · 未生成 {{failed}}",
+    "pauseSummaries": "暂停小结",
+    "retrySummaries": "补试未生成小结",
+    "legacySummaries": "重新优化可生成分组小结",
+    "summaryHelp": "小结与画面标题自动生成；必要时使用关键词或原文要点，保留生成方式标记。",
+    "summaryStates": {"paused": "已暂停", "partial": "部分未生成", "queued": "等待补试", "running": "正在补试"},
     "connectionDetails": "连接已验证 · 技术详情",
     "unsavedConfiguration": "有未保存的修改；当前生效配置未改变",
     "savedConfiguration": "已保存配置",
@@ -769,7 +781,7 @@
     "characterProgress": "已整理 {{done}} / {{total}} 字",
     "checkDetails": "检查提示",
     "checkWarnings": "事实疑点 {{facts}} 段 · 未确定 {{uncertain}} 段 · 未完成检查 {{unavailable}} 段",
-    "workflowHelp": "自动整理并完成检查后交付优化稿，原始转写始终保留。",
+    "workflowHelp": "完成改写、检查和小结提炼后交付优化稿，原始转写始终保留。",
     "sceneScope": "按当前画面分段整理，不跨画面合并。",
 
     "listenSource": "回听原文 {{time}}",

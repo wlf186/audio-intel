@@ -1301,6 +1301,14 @@ def _capabilities_example() -> dict[str, Any]:
         "services": ["asr", "tts"], "offline": True,
         "deployment": {"profile": "full", "default_compute_device": "gpu", "gpu_runtime_installed": True},
         "asr": {
+            "transcript_optimization": {
+                "supported": True, "provider": "ollama", "minimum_context": 16384, "output_tokens": 4096,
+                "text_versions": ["original", "optimized", "comparison"],
+                "rewrite_modes": ["polish", "rewrite", "editorial"], "default_rewrite_mode": "rewrite",
+                "summaries": {"version": 2, "automatic_fallback": True, "max_model_calls_per_node": 3,
+                    "node_timeout_seconds": 60, "group_sentences": 2, "continuous_script_chars": 50,
+                    "word_script_words": 30, "scene_title_chars": 20, "scene_title_words": 10, "retry_missing": True},
+            },
             "audio_enhancement": {"supported": True, "available": True, "default": "auto",
                 "modes": ["auto", "off"], "model": enhancer["name"], "model_revision": enhancer["revision"],
                 "compute_device": "cpu", "preserves_all_speakers": True, "enhanced_playback": True,
@@ -1433,10 +1441,83 @@ JOB_EXAMPLES["video_queued"] = {"summary": "视频任务排队 / Queued video ta
 }}
 
 
+def _optimization_examples() -> dict[str, dict[str, Any]]:
+    """Synthetic, consistent v2 examples shared by schemas and HTTP responses."""
+    run_id, job_id, scene_id = 'a' * 32, 'b' * 32, 'scene_1'
+    methods = ['model', 'model_repair', 'model_keywords', 'source_excerpt', None]
+    sources = ['营销部周三前完成方案提交，否则300万预算撤销。', '技术部周五前完成数据脱敏，否则不能上线。',
+               '预算为15万元，尚待财务确认。', '历史单据保留原审批记录；回滚只恢复代码版本。', '谢谢。']
+    texts = [['营销部须周三前提交方案，否则300万预算撤销。'], ['技术部周五前须完成数据脱敏，否则不能上线。'],
+             ['预算 · 15万元'], ['历史单据保留原审批记录'], []]
+    groups, paragraphs = {}, []
+    for i, (source, sentences, method) in enumerate(zip(sources, texts, methods)):
+        groups[str(i)] = {'state': 'ready' if method else 'not_applicable', 'sentences': sentences, 'error': None,
+            'generation_method': method, 'attempt_count': [1, 2, 3, 3, 0][i],
+            'quality_notice': {'model_keywords': 'keywords', 'source_excerpt': 'source_excerpt'}.get(method),
+            'skip_reason': None if method else 'no_substantive_content'}
+        paragraphs.append({'id': f'group_{i}', 'ordinal': i, 'speaker': f's{i % 2}', 'speaker_label': f'Speaker {i % 2 + 1}',
+            'start': i * 2., 'end': (i + 1) * 2., 'original_text': source, 'text': source, 'omitted': False,
+            'generation_method': 'model', 'review_outcome': 'pass', 'review_status': 'accepted', 'review_reason': None,
+            'review_details': {'stage': 'review', 'issues': [], 'diagnostic': None}, 'candidate_text': None,
+            'scene_ids': [scene_id], 'merged_source_count': 1, 'segment_ids': [i],
+            'sources': [{'segment_id': i, 'text': source, 'start_offset': 0, 'end_offset': len(source), 'start': i * 2., 'end': (i + 1) * 2.}],
+            'group_summary': groups[str(i)]})
+    scene = {'state': 'ready', 'title': '方案提交 · 数据脱敏', 'error': None, 'generation_method': 'model_keywords',
+             'attempt_count': 3, 'quality_notice': 'keywords', 'skip_reason': None}
+    counts = {'group': {'total': 5, 'processed': 5, 'ready': 4, 'skipped': 1, 'failed': 0, 'model_ready': 1,
+                       'repaired_ready': 1, 'keyword_ready': 1, 'extractive_ready': 1, 'fallback_ready': 2},
+              'scene': {'total': 1, 'processed': 1, 'ready': 1, 'skipped': 0, 'failed': 0, 'model_ready': 0,
+                       'repaired_ready': 0, 'keyword_ready': 1, 'extractive_ready': 0, 'fallback_ready': 1}}
+    status = {'version': 2, 'state': 'completed', 'revision': 9, 'counts': counts}
+    total_chars = sum(map(len, sources))
+    published = {'id': run_id, 'job_id': job_id, 'state': 'succeeded', 'published': True, 'phase': 'complete',
+        'reviewed_parts': 5, 'total_parts': 5, 'requires_regeneration': False, 'model': 'qwen3.5:9b',
+        'rewrite_mode': 'rewrite', 'total_chars': total_chars, 'completed_chars': total_chars,
+        'completed_units': 5, 'total_units': 5, 'activity_chars': 0, 'progress': 1., 'revision': 20,
+        'review_state': 'completed', 'reviewed_units': 5, 'review_total_units': 5,
+        'error': None, 'created_at': '2026-10-30T00:00:00+00:00', 'updated_at': '2026-10-30T00:01:00+00:00',
+        'summary_status': status}
+    queued = deepcopy(published)
+    queued.update(state='queued', published=False, phase='generation', reviewed_parts=0, completed_chars=0,
+                  completed_units=0, progress=0., review_state='queued', reviewed_units=0)
+    queued['summary_status'].update(state='pending', revision=1)
+    for bucket in queued['summary_status']['counts'].values():
+        for field in bucket:
+            if field != 'total':
+                bucket[field] = 0
+    paused = deepcopy(queued)
+    paused['state'] = 'paused'
+    paused['summary_status']['state'] = 'paused'
+    auxiliary = deepcopy(published)
+    auxiliary['summary_status']['state'] = 'queued'
+    bucket = auxiliary['summary_status']['counts']['group']
+    bucket.update(ready=3, processed=4, extractive_ready=0, fallback_ready=1)
+    auxiliary_paused = deepcopy(auxiliary)
+    auxiliary_paused['summary_status']['state'] = 'paused'
+    return {
+        'SummaryCounts': counts['group'], 'SummaryStatus': status, 'GroupSummary': groups['2'], 'SceneSummary': scene,
+        'ReviewDetails': {'stage': 'review', 'issues': [], 'diagnostic': 'Review evidence is not uniquely grounded'},
+        'OptimizationSummary': published, 'OptimizationStatus': {'enabled': True, 'published': published, 'candidate': None},
+        '_queued': {'enabled': True, 'published': None, 'candidate': queued},
+        '_paused': {'enabled': True, 'published': None, 'candidate': paused},
+        '_auxiliary_queued': {'enabled': True, 'published': auxiliary, 'candidate': None},
+        '_auxiliary_paused': {'enabled': True, 'published': auxiliary_paused, 'candidate': None},
+        'SummariesResponse': {'run_id': run_id, 'summary_status': status, 'groups': groups, 'scenes': {scene_id: scene}},
+        'OptimizedResult': {'run_id': run_id, 'complete': True, 'model': 'qwen3.5:9b', 'prompt_version': 7,
+            'rewrite_mode': 'rewrite', 'summary_status': status, 'paragraphs': paragraphs, 'needs_review_units': 0,
+            'review_state': 'completed', 'reviewed_units': 5, 'review_total_units': 5, 'uncertain_units': 0,
+            'unavailable_units': 0, 'basic_cleanup_units': 0,
+            'scenes': [{'id': scene_id, 'start': 0., 'end': 10., 'frame_time': None, 'image': None,
+                        'title_summary': scene, 'paragraphs': paragraphs}]},
+    }
+
+
 def _example_for_schema(value: dict[str, Any], schemas: dict[str, Any], seen: set[str] | None = None) -> Any:
     seen = set() if seen is None else seen
     if "example" in value:
         return value["example"]
+    if "const" in value:
+        return value["const"]
     if "default" in value:
         return value["default"]
     if value.get("enum"):
@@ -1475,9 +1556,11 @@ def _example_for_schema(value: dict[str, Any], schemas: dict[str, Any], seen: se
 def enrich_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Add documentation-only descriptions and examples without changing wire models."""
     schemas = schema.setdefault("components", {}).setdefault("schemas", {})
-    for name, example in {"VideoUploadResponse": VIDEO_UPLOAD_EXAMPLE, "VideoScenesResponse": VIDEO_SCENES_EXAMPLE}.items():
+    optimization_examples = _optimization_examples()
+    for name, example in {"VideoUploadResponse": VIDEO_UPLOAD_EXAMPLE, "VideoScenesResponse": VIDEO_SCENES_EXAMPLE,
+                          'AsrCapability': CAPABILITIES_EXAMPLE['asr'], **optimization_examples}.items():
         if name in schemas:
-            schemas[name]["example"] = example
+            schemas[name]["example"] = deepcopy(example)
     for schema_name, definition in schemas.items():
         if schema_name in {"HTTPValidationError", "ValidationError"}:
             continue
@@ -1531,7 +1614,12 @@ def enrich_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
                     response_schema = media.get("schema", {})
                     ref_name = response_schema.get("$ref", "").rsplit("/", 1)[-1]
                     if "example" not in media and "examples" not in media:
-                        if ref_name in {"JobResponse", "EventJobResponse"}:
+                        if ref_name == 'OptimizationStatus' and method == 'post':
+                            key = ('_auxiliary_paused' if path.endswith('/summaries/pause') else
+                                   '_auxiliary_queued' if path.endswith('/summaries/retry') else
+                                   '_paused' if path.endswith('/pause') else '_queued')
+                            media['example'] = deepcopy(optimization_examples[key])
+                        elif ref_name in {"JobResponse", "EventJobResponse"}:
                             media["examples"] = JOB_EXAMPLES
                         elif ref_name == "JobResultResponse":
                             media["examples"] = RESULT_EXAMPLES
@@ -1566,7 +1654,44 @@ with httpx.Client(base_url=base, headers=headers, timeout=360) as client:
     print(response.json())
 ```
 
-窗口不足或无法确认时任务暂停，保留检查点；旧任务恢复沿用原窗口。 / Insufficient or unknown allocations pause the run and preserve checkpoints; resumed runs retain their original window.
+主流程的预检、正文生成或正文复核发现窗口／容量故障时暂停并保留检查点；v2小结阶段可改用受长度限制的原文要点。恢复沿用原窗口。 / Main-workflow preflight, prose generation and prose review pause on context/capacity failures and preserve checkpoints. V2 insight generation can instead use bounded excerpts. Resumed runs retain their original window.
+
+## 分组小结与画面标题 / Group summaries and scene titles
+
+正文策略 v7、小结策略 v2 与 SQLite v21 是独立版本。新建／重新优化先完成正文及复核，再生成小结与标题及必要的自动兜底，最后发布。旧 v1 小结保持原策略；用户暂停或服务重启后需显式继续。
+
+V2 gives each insight/reduction node at most three model requests and 60 seconds including transport retries: generate, repair explicit abnormalities, then extract literal keywords. Accepted source-matched, length-compliant keywords finish the item. Only if no usable keywords remain does local extraction select a bounded clause/phrase; a short group may fit in full. Long-scene fallback may select from saved reduction notes. Chinese summary/title limits remain 50/20 characters; word-separated languages use 30/10 words, and mixed scripts use proportional budgets.
+
+`ready` 包括有用的关键词与原文要点，页面与 PDF/Word 分别标记。`generation_method` 为 model/model_repair/model_keywords/source_excerpt；它属于小结，区别于正文的同名字段。`attempt_count` 包括已结束的连接失败尝试，不计程序摘取；长画面累计各节点，可能大于3。目录、介绍、引用、操作过程仍是有效输入，仅纯空内容／问候等可跳过。
+
+Counts are separate for group and scene: `processed = ready + skipped + failed`; `fallback_ready = keyword_ready + extractive_ready` is already included in ready. V2's four known method counters sum to ready; legacy unknown methods cannot be inferred. Delivery rate is `ready/(total-skipped)`, not applicable for a zero denominator, and is distinct from factual accuracy. Global job lists/SSE remain metadata-only.
+
+使用 `GET /api/v1/jobs/{job_id}/transcript-optimization/summaries?run_id=...` 轻量读取小结，支持 ETag；无需为普通模型异常反复补试。以下示例只查询和统计，密钥为可选环境变量。
+
+```python
+import os
+import httpx
+
+base_url = os.getenv("AUDIO_INTEL_BASE_URL", "http://127.0.0.1:20810")
+job_id = os.environ["JOB_ID"]
+run_id = os.environ["OPTIMIZATION_ID"]
+api_key = os.getenv("AUDIO_INTEL_API_KEY")
+headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+with httpx.Client(base_url=base_url, headers=headers, timeout=30) as client:
+    response = client.get(f"/api/v1/jobs/{job_id}/transcript-optimization/summaries", params={"run_id": run_id})
+    response.raise_for_status()
+    insights = response.json()
+    for kind, counts in insights["summary_status"]["counts"].items():
+        eligible = counts["total"] - counts["skipped"]
+        rate = counts["ready"] / eligible if eligible else None
+        print(kind, rate, counts.get("fallback_ready", 0))
+    for group in insights["groups"].values():
+        print(group["state"], group.get("generation_method"), group["sentences"])
+```
+
+`POST .../summaries/retry` 仅用于已发布稿的暂停／遗留缺项，保留成功项及正文；携带 `{run_id}` 和 `Idempotency-Key`，首次入队202、重放或无工作200、冲突或无小结的旧稿409、队列／磁盘限制429。`POST .../summaries/pause` 暂停已发布稿的辅助工作；未发布稿仍用整个工作流的 pause/resume。所有恢复沿用原连接、模型摘要、窗口与来源快照。
+
+English: Explicit summary retry preserves prose and ready items using the original connection/model/context/source snapshots. It requires Idempotency-Key and returns 202 queued, 200 replay/no work, 409 conflict/legacy, or 429 admission/disk limits. Pause auxiliary work separately only for a published draft; unpublished work uses workflow pause/resume. No model switching or autonomous restart is implied.
 
 ## 优化与入库示例 / Optimization and enrollment examples
 

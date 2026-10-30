@@ -177,6 +177,11 @@ def export_result(result: dict[str, Any], policy: TranscriptExportRequest) -> di
             item['review_status'] = 'needs_review'
         if segment.get('review_note'):
             item['review_note'] = replacer.text(segment['review_note'])
+        if segment.get('group_summary'):
+            summary = segment['group_summary']
+            item['group_summary'] = {'state': summary['state'], 'sentences': [replacer.text(text) for text in summary.get('sentences', [])]}
+            if summary.get('generation_method') in ('model', 'model_repair', 'model_keywords', 'source_excerpt'):
+                item['group_summary']['generation_method'] = summary['generation_method']
         for key in ('scene_ids', 'merged_source_count', 'generation_method', 'review_outcome'):
             if key in segment:
                 item[key] = deepcopy(segment[key])
@@ -193,6 +198,12 @@ def export_result(result: dict[str, Any], policy: TranscriptExportRequest) -> di
         for key in ("scenes", "original_scenes"):
             if key in video:
                 exported["video"][key] = [{field: deepcopy(scene[field]) for field in ("id", "start", "end", "frame_time", "image") if field in scene} for scene in video[key]]
+                for original, scene in zip(video[key], exported['video'][key]):
+                    if original.get('title_summary'):
+                        summary = original['title_summary']
+                        scene['title_summary'] = {'state': summary['state'], 'title': replacer.text(summary['title']) if summary.get('title') else None}
+                        if summary.get('generation_method') in ('model', 'model_repair', 'model_keywords', 'source_excerpt'):
+                            scene['title_summary']['generation_method'] = summary['generation_method']
     return exported
 
 
@@ -228,6 +239,10 @@ def optimized_export_result(job: dict, policy: TranscriptExportRequest) -> dict:
     result = deepcopy(job['result'])
     version = draft.get('prompt_version', run['config'].get('prompt_version', 1))
     result.update(_optimized=True, text_version=policy.text_version, optimization_policy=version)
+    if result.get('video'):
+        titles = {scene['id']: scene.get('title_summary') for scene in draft.get('scenes', [])}
+        for scene in result['video'].get('scenes', []):
+            scene['title_summary'] = titles.get(scene['id'])
     if version >= 6:
         review_state = draft.get('review_state')
         notices = []
@@ -245,6 +260,8 @@ def optimized_export_result(job: dict, policy: TranscriptExportRequest) -> dict:
         if paragraph['omitted'] and policy.text_version == 'optimized':
             continue
         item = {key: paragraph[key] for key in ('speaker', 'speaker_label', 'start', 'end', 'text')}
+        if paragraph.get('group_summary'):
+            item['group_summary'] = deepcopy(paragraph['group_summary'])
         item['id'] = paragraph['ordinal']
         if paragraph.get('candidate_text') is not None:
             item['text'] = paragraph['candidate_text']

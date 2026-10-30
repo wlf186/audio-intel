@@ -8,6 +8,9 @@ import ssl
 import os
 import time
 from copy import deepcopy
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -24,6 +27,31 @@ OUTPUT_TOKENS = 4096
 
 class ContextWindowError(Exception):
     """Capacity failures must bypass prose and auxiliary-review fallbacks."""
+
+
+@dataclass
+class RequestBudget:
+    remaining: int
+
+
+_request_budget: ContextVar[RequestBudget | None] = ContextVar('optimization_request_budget', default=None)
+
+
+def requests_remaining() -> int | None:
+    budget = _request_budget.get()
+    return budget.remaining if budget is not None else None
+
+
+@contextmanager
+def request_budget(limit: int | None):
+    if limit is None:
+        yield
+        return
+    token = _request_budget.set(RequestBudget(limit))
+    try:
+        yield
+    finally:
+        _request_budget.reset(token)
 
 
 def check_capacity_error(message: str) -> None:
@@ -297,6 +325,11 @@ class ReviewFailed(ValueError):
 async def streamed_text(config: dict, payload: dict, activity=None) -> str:
     if not request_fits(config, payload):
         raise ContextWindowError('请求超出上下文预算，请调整窗口并重新验证 / Request exceeds context budget')
+    budget = _request_budget.get()
+    if budget is not None:
+        if budget.remaining <= 0:
+            raise InvalidOutput('Model request budget exhausted')
+        budget.remaining -= 1
     async with asyncio.timeout(120), client(config) as connection:
         content, final, last = '', None, time.monotonic()
         async with connection.stream('POST', 'api/chat', json=payload) as response:
@@ -394,6 +427,9 @@ async def generate(config: dict, batch: list[dict], hotwords: list[str], before,
     best = None
     lost_qualifiers = []
     for attempt in range(2):
+        if requests_remaining() == 0:
+            break
+        text, failure = None, 'remaining repetitions or literal disfluencies'
         try:
             text = clean_output(await streamed_text(config, payload, activity), original)
             lost_qualifiers = missing_qualifiers(original, text)
@@ -404,8 +440,8 @@ async def generate(config: dict, batch: list[dict], hotwords: list[str], before,
                 best = text
             if not needs_edit:
                 return Generation([(batch[0]['ordinal'], text)])
-        except (InvalidOutput, json.JSONDecodeError):
-            pass
+        except (InvalidOutput, json.JSONDecodeError) as exc:
+            failure = str(exc)
         except (httpx.HTTPError, TimeoutError):
             if best is not None:
                 return Generation([(batch[0]['ordinal'], best)])
@@ -414,6 +450,10 @@ async def generate(config: dict, batch: list[dict], hotwords: list[str], before,
             guidance = '请进一步整理target，主动删除嗯、啊、那个、然后等口头铺垫，合并重复意思，重组为简洁连贯的完整句子。只保留无法确定的局部原词，其余部分必须整理。保留所有独立信息和疑问，不补事实。只输出正文。'
             if lost_qualifiers:
                 guidance += '上次正文丢失了原文限定词：' + '、'.join(lost_qualifiers) + '。本次必须保留这些限定原词及其范围，分句关系含糊时用分号分开，不猜测关系。'
+            if config.get('request_policy_version') == 2:
+                if text is not None:
+                    payload['messages'].append({'role': 'assistant', 'content': text})
+                guidance += '\n本次仅修复已发现的异常：' + failure
             payload['messages'].append({'role': 'user', 'content': guidance})
     return Generation([(batch[0]['ordinal'], best if best is not None else basic_cleanup(original))], 'model' if best is not None else 'basic_cleanup')
 
@@ -470,8 +510,20 @@ async def review(config: dict, original: str, candidate: str, hotwords: list[str
                'stream': True, 'think': False, 'truncate': False, 'options': {'num_ctx': config['context_length'], 'num_predict': OUTPUT_TOKENS, 'temperature': 0}}
     first = None
     for attempt in range(2):
+        if requests_remaining() == 0:
+            break
         try:
-            result = validate_review(await structured(config, payload), original, candidate)
+            value = await structured(config, payload)
+            if config.get('request_policy_version') == 2:
+                try:
+                    return validate_review(value, original, candidate)
+                except InvalidOutput as exc:
+                    if value.get('verdict') == 'fact':
+                        # A grounding defect is uncertainty, not a pass or a
+                        # reason to ask the deterministic reviewer to vote again.
+                        return {'outcome': 'uncertain', 'details': {'stage': 'review', 'issues': [], 'diagnostic': str(exc)[:400]}}
+                    raise
+            result = validate_review(value, original, candidate)
             if result['outcome'] == 'pass':
                 return result if first is None else {'outcome': 'uncertain', 'details': {'stage': 'review', 'issues': []}}
             if result['outcome'] == 'uncertain':
@@ -481,6 +533,8 @@ async def review(config: dict, original: str, candidate: str, hotwords: list[str
             first = result
             payload['messages'][0]['content'] += '\n这是独立复查：只报告确定的事实差异。合理去重和风格改变必须判 pass。'
         except (InvalidOutput, json.JSONDecodeError):
+            if config.get('request_policy_version') == 2:
+                payload['messages'].append({'role': 'user', 'content': 'Previous response was invalid JSON or had an invalid verdict. Return only the required review JSON schema.'})
             continue
     return {'outcome': 'uncertain' if first else 'unavailable', 'details': {'stage': 'review', 'issues': []}}
 
@@ -512,6 +566,7 @@ async def repair_seam(config: dict, left: dict, right: dict, hotwords: list[str]
 
 def reading_result(result: dict, run_id: str, *, complete: bool = False) -> dict:
     run, units = store.snapshot(run_id)
+    insights = run['insights']
     if not run['published']:
         raise ValueError('请等待优化完成后导出 / Export requires a completed draft')
     if source_hash(result) != run['source_hash']:
@@ -520,6 +575,7 @@ def reading_result(result: dict, run_id: str, *, complete: bool = False) -> dict
     scenes = deepcopy(result.get('video', {}).get('scenes', []))
     for scene in scenes:
         scene['paragraphs'] = []
+        scene['title_summary'] = insights['scenes'].get(scene['id'])
     from .optimization_sources import scene_index, matching_scenes
     indexed_scenes = scene_index(scenes)
     scene_positions = {scene['id']: i for i, scene in enumerate(scenes)}
@@ -531,6 +587,7 @@ def reading_result(result: dict, run_id: str, *, complete: bool = False) -> dict
         value = {**unit, 'omitted': unit['text'] == '', 'speaker': first.get('speaker', unit.get('speaker')),
                  'speaker_label': first.get('speaker_label', unit.get('speaker_label')),
                  'merged_source_count': len(set(unit['segment_ids'])), 'scene_ids': related}
+        value['group_summary'] = insights['groups'].get(str(unit['ordinal']))
         values.append(value)
         if scenes:
             if run['config'].get('prompt_version', 1) >= 6:
@@ -542,4 +599,4 @@ def reading_result(result: dict, run_id: str, *, complete: bool = False) -> dict
     return {'run_id': run_id, 'complete': bool(run['published']), 'model': run['model'],
             'prompt_version': run['config'].get('prompt_version', 1), 'rewrite_mode': run['config'].get('rewrite_mode'),
             'needs_review_units': run['needs_review_units'], 'paragraphs': values, 'scenes': scenes,
-            'review_total_units': run['total_units'], **{field: run[field] for field in fields}}
+            'summary_status': insights['summary_status'], 'review_total_units': run['total_units'], **{field: run[field] for field in fields}}

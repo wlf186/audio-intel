@@ -6,6 +6,10 @@ from bisect import bisect_right
 from typing import Any
 
 
+def insight_label(summary: dict) -> str:
+    return {'model_keywords': '关键词 / Keywords', 'source_excerpt': '原文要点 / Source excerpt'}.get(summary.get('generation_method'), '')
+
+
 def join_text(left: str, right: str) -> str:
     if not left:
         return right

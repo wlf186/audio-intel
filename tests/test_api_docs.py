@@ -31,6 +31,81 @@ def docs_settings(tmp_path):
     )
 
 
+def test_openapi_examples_support_const_literals():
+    from audio_intel.api_docs import _example_for_schema
+    for literal in ('no_substantive_content', 0, False, None):
+        assert _example_for_schema({'const': literal}, {}) == literal
+    assert _example_for_schema({'anyOf': [{'type': 'string', 'const': 'no_substantive_content'}, {'type': 'null'}]}, {}) == 'no_substantive_content'
+
+
+def test_optimization_openapi_examples_validate_and_describe_v2(tmp_path, monkeypatch):
+    from audio_intel import optimization_api as optimization
+    from audio_intel.api_models import AsrCapability, CapabilitiesResponse
+    local = docs_settings(tmp_path)
+    monkeypatch.setattr(api_module, 'settings', local)
+    monkeypatch.setattr(db_module, 'settings', local)
+    schema = api_module.create_app().openapi()
+    models = {name: getattr(optimization, name) for name in (
+        'SummaryCounts', 'SummaryStatus', 'GroupSummary', 'SceneSummary', 'SummariesResponse',
+        'OptimizationSummary', 'OptimizationStatus', 'OptimizedResult', 'ReviewDetails')}
+    models.update(AsrCapability=AsrCapability, CapabilitiesResponse=CapabilitiesResponse)
+    for name, model in models.items():
+        definition = schema['components']['schemas'][name]
+        model.model_validate(definition['example'])
+        if name in ('SummaryCounts', 'GroupSummary', 'SceneSummary'):
+            for field, prop in definition['properties'].items():
+                if field in ('state', 'error'):
+                    continue
+                assert 'field; see the owning operation' not in prop['description'], (name, field)
+                assert ' / ' in prop['description']
+    for methods in schema['paths'].values():
+        for method, operation in methods.items():
+            if method not in HTTP_METHODS:
+                continue
+            for code, response in operation.get('responses', {}).items():
+                media = response.get('content', {}).get('application/json', {})
+                name = media.get('schema', {}).get('$ref', '').rsplit('/', 1)[-1]
+                if str(code).startswith('2') and name in models:
+                    models[name].model_validate(media['example'])
+    root = '/api/v1/jobs/{job_id}/transcript-optimization'
+    def example(suffix='', method='get', code='200'):
+        return schema['paths'][root + suffix][method]['responses'][code]['content']['application/json']['example']
+    ready = example()
+    assert ready['published']['state'] == 'succeeded' and ready['published']['phase'] == 'complete'
+    assert ready['candidate'] is None
+    queued = example(method='post', code='202')
+    assert queued['published'] is None and queued['candidate']['state'] == 'queued'
+    assert not queued['candidate']['published'] and queued['candidate']['progress'] == 0
+    assert example('/pause', 'post')['candidate']['state'] == 'paused'
+    assert example('/resume', 'post')['candidate']['state'] == 'queued'
+    assert example('/summaries/retry', 'post', '202')['published']['summary_status']['state'] == 'queued'
+    assert example('/summaries/pause', 'post')['published']['summary_status']['state'] == 'paused'
+    result, insights = example('/result'), example('/summaries')
+    assert result['run_id'] == insights['run_id'] == ready['published']['id']
+    assert result['summary_status'] == insights['summary_status'] == ready['published']['summary_status']
+    assert result['prompt_version'] == 7 and insights['summary_status']['version'] == 2
+    for kind, items in [('group', insights['groups']), ('scene', insights['scenes'])]:
+        count = insights['summary_status']['counts'][kind]
+        assert count['total'] == len(items)
+        assert count['processed'] == count['ready'] + count['skipped'] + count['failed']
+        assert count['fallback_ready'] == count['keyword_ready'] + count['extractive_ready']
+        assert count['ready'] == sum(count[key] for key in ('model_ready', 'repaired_ready', 'keyword_ready', 'extractive_ready'))
+        for item in items.values():
+            method = item['generation_method']
+            assert item['quality_notice'] == {'model_keywords': 'keywords', 'source_excerpt': 'source_excerpt'}.get(method)
+            assert (item['skip_reason'] == 'no_substantive_content') == (item['state'] == 'not_applicable')
+            if method in ('model_keywords', 'source_excerpt'):
+                assert item['state'] == 'ready'
+    assert {item['generation_method'] for item in insights['groups'].values()} == {'model', 'model_repair', 'model_keywords', 'source_excerpt', None}
+    for paragraph in result['paragraphs']:
+        assert paragraph['group_summary'] == insights['groups'][str(paragraph['ordinal'])]
+    for scene in result['scenes']:
+        assert scene['title_summary'] == insights['scenes'][scene['id']]
+    capability = schema['paths']['/api/v1/capabilities']['get']['responses']['200']['content']['application/json']['example']
+    assert capability['asr']['transcript_optimization']['summaries']['version'] == 2
+    assert capability['asr']['transcript_optimization']['summaries']['automatic_fallback']
+
+
 def test_swagger_is_fully_local_and_protected_by_csp(tmp_path, monkeypatch) -> None:
     local = docs_settings(tmp_path)
     monkeypatch.setattr(api_module, "settings", local)
@@ -80,7 +155,7 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         for method, operation in methods.items()
         if method in HTTP_METHODS
     ]
-    assert len(operations) == 101
+    assert len(operations) == 104
     assert len({operation["operationId"] for operation in operations}) == len(operations)
     assert all(operation.get("tags") for operation in operations)
     assert all("**English:**" in operation.get("description", "") for operation in operations)

@@ -352,7 +352,7 @@ def test_v12_migration_adds_receipts_without_changing_history(local):
     db.init_db();db.init_db()
     assert db.get_job(job['id']) == before
     with db.connect() as connection:
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 19
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 21
         assert connection.execute('SELECT COUNT(*) FROM library_imports').fetchone()[0] == 0
 
 
