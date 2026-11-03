@@ -20,7 +20,7 @@ from audio_intel import api, db, optimization_api as routes, optimization_engine
 from test_voiceprint_groups_exports import local
 
 
-PROFILE = {'base_url': 'http://ollama.invalid:11434', 'use_proxy': False, 'model': 'test-model', 'enabled': True,
+PROFILE = {'protocol': 'openai_chat_completions', 'extra_body': {}, 'base_url': 'http://ollama.invalid:11434', 'use_proxy': False, 'model': 'test-model', 'enabled': True,
            'context_length': 32768, 'model_context_length': 131072, 'model_digest': 'test-digest', 'prompt_version': engine.PROMPT_VERSION, 'verified_at': '2026-10-23T00:00:00+00:00'}
 
 
@@ -56,7 +56,7 @@ def test_provider_errors_do_not_become_paragraph_fallback(configured, monkeypatc
     calls = []
     async def generate(*args):
         calls.append(code)
-        response = httpx.Response(code, request=httpx.Request('POST', 'http://model.invalid/api/chat'))
+        response = httpx.Response(code, request=httpx.Request('POST', 'http://model.invalid/v1/chat/completions'))
         response.raise_for_status()
     monkeypatch.setattr(engine, 'generate', generate)
     identifier = job(source(2))
@@ -83,7 +83,7 @@ def test_v15_migration_clears_legacy_optimization_preserving_source(configured):
     db.init_db()
     with db.connect() as connection:
         assert before and not connection.execute('SELECT 1 FROM optimization_units').fetchall()
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 21
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 22
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
     assert store.status(identifier) == {'published': None, 'candidate': None}
     assert db.get_job(identifier)['result'] == source(2)
@@ -223,7 +223,7 @@ def test_v14_migration_preserves_history_queue_and_idempotency(local):
     assert {identifier: db.get_job(identifier) for identifier in before} == before
     assert not store.settings()['enabled']
     with db.connect() as connection:
-        assert connection.execute('SELECT min(version) FROM schema_meta').fetchone()[0] == 21
+        assert connection.execute('SELECT min(version) FROM schema_meta').fetchone()[0] == 22
         assert tuple(connection.execute('SELECT * FROM job_idempotency').fetchone()) == receipt
         assert tuple(connection.execute('SELECT * FROM queue_sequence').fetchone()) == sequence
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
@@ -496,19 +496,14 @@ def test_legacy_idempotency_replay_without_mode_still_works(configured):
 @pytest.mark.parametrize('failures', [0, 1, 2, 3])
 def test_verification_format_retries_are_bounded(monkeypatch, failures):
     calls = []
-    async def remote(connection, path, payload=None):
-        if path == 'api/tags':
-            return {'models': [{'name': 'test-model', 'digest': 'test-digest'}]}
-        if path == 'api/show':
-            return {'capabilities': ['completion'], 'model_info': {'test.context_length': 32768}}
-        return {'models': [{'name': 'test-model', 'digest': 'test-digest', 'context_length': 32768}]}
     async def generate(*args):
         calls.append(1)
         if len(calls) <= failures:
             raise engine.InvalidOutput('invalid')
         return [(0, '预算15万元。')]
+    async def structured(*args): return {"ok": True}
+    monkeypatch.setattr(engine, "structured", structured)
     async def sleep(delay): pass
-    monkeypatch.setattr(engine, 'remote_json', remote)
     monkeypatch.setattr(engine, 'generate', generate)
     monkeypatch.setattr(engine.asyncio, 'sleep', sleep)
     if failures == 3:
@@ -531,4 +526,4 @@ def test_v16_migration_clears_legacy_candidate_preserving_source(configured):
     assert before and store.units(run) == []
     assert db.get_job(identifier)['result'] == source(1)
     with db.connect() as connection:
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0]==21
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0]==22

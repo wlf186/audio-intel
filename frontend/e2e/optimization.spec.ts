@@ -39,7 +39,7 @@ for(const width of [1440,390])test(`optimization settings ${width}`,async({page}
  const panel=page.locator('.optimization-settings')
  await panel.getByLabel('服务地址').fill('http://iollama:11434')
  await panel.getByRole('button',{name:'获取模型',exact:true}).click()
- await panel.getByLabel('优化模型').selectOption('qwen3.5:9b')
+ await panel.getByLabel('优化模型').fill('qwen3.5:9b')
  await expect(panel.getByLabel('启用表达优化')).toBeDisabled()
  await panel.getByRole('button',{name:'重新验证',exact:true}).click()
  await expect(panel).toContainText('模型验证通过')
@@ -52,7 +52,7 @@ for(const width of [1440,390])test(`optimization settings ${width}`,async({page}
   const field=await row.locator('input,select').boundingBox(),button=await row.locator('button').boundingBox()
   expect(Math.abs(field!.y+field!.height-button!.y-button!.height)).toBeLessThanOrEqual(1)
  }
- if(width===390)for(const control of await panel.locator('button:visible,input[type="url"]:visible,input[type="number"]:visible,select:visible,.optimization-check:visible').all()){
+ if(width===390)for(const control of await panel.locator('button:visible,input[type="url"]:visible,input[type="number"]:visible,input[type="text"]:visible,input[type="password"]:visible,select:visible,.optimization-check:visible').all()){
   expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(44)
  }
  await page.screenshot({path:testInfo.outputPath('optimization-settings.png'),fullPage:true})
@@ -187,7 +187,7 @@ for(const width of [1440,390])test(`optimization settings retry and obsolete ver
  await panel.getByRole('button',{name:'重试',exact:true}).click()
  await expect(panel.getByLabel('服务地址')).toHaveValue(config.base_url)
  await panel.getByRole('button',{name:'获取模型',exact:true}).click()
- await panel.getByLabel('优化模型').selectOption('test-model')
+ await panel.getByLabel('优化模型').fill('test-model')
  await panel.getByRole('button',{name:'重新验证',exact:true}).click()
  await verify.arrived
  await panel.getByLabel('服务地址').fill('http://second.invalid:11434')

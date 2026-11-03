@@ -745,6 +745,18 @@
     }
   },
   "optimization": {
+    "budgetNotice": "Verification checks synthetic text and JSON generation, not the allocated context. Configure the actual Ollama context on its server.",
+
+    "apiKey": "Model service API key",
+    "keyStored": "Saved; leave unchanged to retain",
+    "keyOptional": "Optional for unauthenticated local services",
+    "clearKey": "Clear key",
+    "modelPlaceholder": "Enter a model ID or choose a discovered model",
+    "advanced": "Advanced parameters",
+    "extraBody": "Extra request parameters (JSON object)",
+    "extraHelp": "Configure thinking, temperature or output limits. Do not include credentials or override the model, messages or format.",
+    "invalidExtra": "Enter a valid JSON object.",
+
     "keywordInsight": "Keywords",
     "sourceInsight": "Source excerpt",
     "summaryFallbackCount": "Keywords {{keywords}} · Source excerpts {{source}}",
@@ -834,7 +846,7 @@
     "legacyMode": "Legacy policy",
     "rewriteModes": {"polish": {"label": "Natural polish", "help": "Remove verbal clutter, repetition and awkward phrasing while retaining a conversational tone."}, "rewrite": {"label": "Fluent rewrite", "help": "Recommended. Reorganize sentences into a clear, fluent conversational transcript."}, "editorial": {"label": "Editorial rewrite", "help": "Restructure each passage into concise, polished prose while retaining all information."}},
     "title": "Expression optimization",
-    "settingsHelp": "Connect Ollama to turn transcripts into clear, natural written conversation. The original transcript is retained.",
+    "settingsHelp": "Connect a model service (including Ollama) through OpenAI Chat Completions. The original transcript is retained.",
     "url": "Service URL",
     "proxy": "Use system proxy",
     "proxyHelp": "Uses the backend server proxy configuration and respects NO_PROXY. Usually unnecessary for local services.",
@@ -849,8 +861,8 @@
     "serviceNotice": "ⓘ Expression optimization sends transcript text, context and hotwords to this service. Make sure you trust it. Verification uses only built-in sample text.",
     "verifying": "Verifying generation. Initial model loading may take a while; intermittent format errors are retried automatically…",
     "verified": "Model verified. Save and enable when ready.",
-    "contextLength": "Requested context window (tokens)",
-    "contextHelp": "Minimum 16384 tokens, including input and output. Overrides the Ollama server default. Verify again after editing.",
+    "contextLength": "Context budget (tokens)",
+    "contextHelp": "Minimum 16384 tokens including input and output. A client budget, not a server window setting. Verify again after editing.",
     "requestedWindow": "Requested window {{value}}K.",
     "window": "Last verified allocation {{actual}} · Native model maximum {{maximum}}K",
     "windowUnrecorded": "Not recorded; verify again",

@@ -9,9 +9,13 @@ from contextlib import asynccontextmanager
 from typing import Any, Literal
 
 import httpx
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.responses import JSONResponse
 from fastapi import Depends, Header, HTTPException, Query, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
+from . import optimization_provider as provider
 from . import db, optimization_engine as engine, optimization_store as store, optimization_summaries as insights
 from .asr_speakers import speaker_update_lock
 from .document_download import reader_lease, deletion_guard
@@ -22,8 +26,9 @@ _managers: dict[str, 'Manager'] = {}
 
 class Connection(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    base_url: str = Field(max_length=2048)
-    use_proxy: bool = False
+    base_url: str = Field(max_length=2048, description="Chat Completions 基础地址，保留路径前缀；Ollama 示例 http://localhost:11434/v1 / Chat Completions base URL, retaining path prefixes; Ollama example http://localhost:11434/v1")
+    use_proxy: bool = Field(False, description="使用服务端系统代理并遵循 NO_PROXY / Use server proxy settings and honor NO_PROXY")
+    api_key: SecretStr | None = Field(None, max_length=8192, description='仅写入；省略沿用同地址密钥，空字符串清除 / Write only; omission retains same-endpoint key, empty clears it')
 
     @field_validator('base_url')
     @classmethod
@@ -32,26 +37,49 @@ class Connection(BaseModel):
 
 
 class ModelConnection(Connection):
-    model: str = Field(min_length=1, max_length=256)
-    context_length: int | None = Field(None, strict=True, ge=engine.MINIMUM_CONTEXT, description='请求上下文窗口（tokens），覆盖 Ollama 默认值；新连接默认16K / Requested context in tokens; overrides the Ollama default. New connections default to 16K.')
+    model: str = Field(min_length=1, max_length=256, description="服务接受的模型 ID，可直接填写，无需先获取列表 / Provider model ID; manual entry does not require model discovery")
+    extra_body: dict[str, Any] = Field(default_factory=dict, description='额外请求 JSON 对象，编码后最多16 KiB；不能覆盖工作流或鉴权字段，输出上限字段二选一 / Extra request JSON object, at most 16 KiB encoded; workflow/authentication fields are reserved and output limit fields are mutually exclusive')
+
+    @field_validator('extra_body')
+    @classmethod
+    def extra(cls, value):
+        return provider.validate_extra(value)
+
+    context_length: int | None = Field(None, strict=True, ge=engine.MINIMUM_CONTEXT, description='客户端输入加输出预算（tokens），不设置或证明服务端窗口；默认16K / Client input plus output budget, not a server allocation; default 16K.')
 
 
 class SaveConfiguration(ModelConnection):
-    enabled: bool = False
-    verification_token: str | None = None
+    enabled: bool = Field(False, description="启用需匹配已验证连接；关闭会暂停未完成优化 / Enabling requires a matching verified connection; disabling pauses unfinished optimization")
+    verification_token: str | None = Field(None, description="验证接口返回的凭证，10分钟内有效，API重启失效；未变更的已保存验证配置可省略 / Token from verification, valid for ten minutes and invalidated by API restart; unchanged saved verified profiles may omit it")
+
+
+class OptimizationModel(BaseModel):
+    name: str = Field(description='服务返回的模型 ID / Model ID returned by the provider')
+
+
+class OptimizationModelsResponse(BaseModel):
+    models: list[OptimizationModel] = Field(description='可选模型列表，空列表不阻止手动填写模型 / Optional model list; an empty list does not prevent manual model entry')
 
 
 class ConfigurationResponse(BaseModel):
-    base_url: str
-    use_proxy: bool
-    model: str
-    enabled: bool
-    context_length: int | None = None
-    model_context_length: int | None = None
-    observed_context_length: int | None = Field(None, description='最近验证时观测的窗口，非实时值 / Context observed at verified_at, not a live reading')
-    verified_at: str | None = None
-    model_digest: str | None = None
-    prompt_version: int | None = None
+    protocol: Literal['openai_chat_completions'] = Field('openai_chat_completions', description='只读协议标识 / Read-only protocol identifier')
+    has_api_key: bool = Field(False, description='仅表示服务端是否已保存密钥，不返回密钥 / Whether a key is stored server-side; never the key itself')
+    extra_body: dict[str, Any] = Field(default_factory=dict, description='已生效或本次验证使用的额外请求参数 / Effective or just-verified extra request parameters')
+    structured_output_mode: Literal['json_schema', 'json_object', 'prompt'] | None = Field(None, description='合成验证选择的 JSON 输出方式；未验证为 null / JSON output mode selected by synthetic verification; null if unverified')
+    base_url: str = Field(description='规范化的 Chat Completions 基础地址，未配置时为空 / Normalized Chat Completions base URL; empty when unconfigured')
+    use_proxy: bool = Field(description='本连接的服务端代理策略 / Server-side proxy policy for this connection')
+    model: str = Field(description='配置的模型 ID，未配置时为空 / Configured model ID; empty when unconfigured')
+    enabled: bool = Field(False, description='表达优化是否已启用，验证本身不会启用 / Whether optimization is enabled; verification alone does not enable it')
+    context_length: int | None = Field(None, description='客户端输入加输出预算，不是服务端实际窗口 / Client input plus output budget, not an allocated server context')
+    model_context_length: int | None = Field(None, deprecated=True, description='历史兼容字段；新协议无法查询原生上限，新验证返回 null / Legacy compatibility field; new verification returns null because native context limits cannot be queried generically')
+    observed_context_length: int | None = Field(None, deprecated=True, description='历史兼容字段；新协议不观测分配窗口，新验证返回 null / Legacy compatibility field; new verification returns null and does not observe server allocation')
+    verified_at: str | None = Field(None, description='合成验证成功时间，不是实时服务状态 / Time of successful synthetic verification, not live service status')
+    model_digest: str | None = Field(None, deprecated=True, description='历史兼容字段；新验证返回 null，不承诺远端模型摘要校验 / Legacy compatibility field; new verification returns null and does not validate remote model digests')
+    prompt_version: int | None = Field(None, description='正文提示策略版本，独立于数据库版本 / Prose prompt policy version, independent of database version')
+
+
+class ConfigurationResponseWithToken(ConfigurationResponse):
+    verification_token: str = Field(description='仅验证响应返回的短期凭证，保存时提交；10分钟有效，API重启失效 / Short-lived verification token to submit when saving; valid ten minutes, invalidated by API restart')
 
 
 class SummaryCounts(BaseModel):
@@ -235,12 +263,14 @@ def error_message(exc: Exception) -> str:
     if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
         return '模型响应超时，请检查服务后继续 / Model response timed out; check the service and resume'
     if isinstance(exc, httpx.HTTPStatusError):
-        return f'Ollama HTTP {exc.response.status_code}，请检查服务和模型 / Check the service and model'
+        return f'模型服务 HTTP {exc.response.status_code}，请检查密钥、服务和模型 / Check API key, service and model'
     if isinstance(exc, httpx.RequestError):
-        return '无法连接 Ollama，请检查服务地址和代理 / Cannot connect to Ollama; check URL and proxy'
+        return '无法连接模型服务，请检查地址和代理 / Cannot connect to model service; check URL and proxy'
     if isinstance(exc, HTTPException):
         return str(exc.detail)[:500]
-    return str(exc)[:500] or 'Optimization failed / 优化失败'
+    if isinstance(exc, (engine.ContextWindowError, engine.InvalidOutput, provider.UnsupportedFormat)):
+        return str(exc)[:500]
+    return '模型服务或配置异常，请重新验证 / Model service or configuration error; verify again'
 
 
 class Manager:
@@ -274,9 +304,8 @@ class Manager:
     async def check_model(self, profile: dict):
         if profile.get('prompt_version') != engine.PROMPT_VERSION:
             raise ValueError('优化策略已更新，请重新生成 / Optimization policy changed; regenerate')
-        models = await asyncio.wait_for(engine.discover(profile), 30)
-        if not any(m['name'] == profile['model'] and m['digest'] == profile['model_digest'] for m in models['models']):
-            raise ValueError('模型已变化或被删除，请重新验证并生成 / Model changed or was removed; verify and regenerate')
+        store.credential(provider.effective(profile))
+
 
     async def retry_io(self, operation, request_limit=None):
         with engine.request_budget(request_limit):
@@ -424,6 +453,30 @@ def stop_for_purge(job_id: str):
     store.delete(job_id)
 
 
+def public_configuration(value: dict) -> dict:
+    value = dict(value)
+    value['has_api_key'] = bool(store.credential(value))
+    return {k: v for k, v in value.items() if k in ConfigurationResponse.model_fields or k == 'verification_token'}
+
+
+def connection_input(body: Connection, current: dict) -> dict:
+    value = body.model_dump(exclude_none=True)
+    key = value.pop('api_key', None)
+    same = current.get('base_url') == value['base_url']
+    value['_api_key'] = key.get_secret_value() if key is not None else (store.credential(current) if same else '')
+    if same and current.get('credential_ref'):
+        value['credential_ref'] = current['credential_ref']
+    value['protocol'] = provider.PROTOCOL
+    if isinstance(body, ModelConnection):
+        matching = same and current.get('model') == value['model'] and current.get('use_proxy') == value['use_proxy']
+        value.setdefault('context_length', current.get('context_length', engine.DEFAULT_CONTEXT) if matching else engine.DEFAULT_CONTEXT)
+    return value
+
+
+def connection_identity(value: dict) -> dict:
+    return {key: value.get(key) for key in ('base_url', 'model', 'use_proxy', 'context_length', 'extra_body', '_api_key')}
+
+
 def register(app, api):
     manager = Manager(api.settings)
     app.state.optimization_manager = manager
@@ -434,6 +487,14 @@ def register(app, api):
     jobs = '/api/v1/jobs/{job_id}/transcript-optimization'
     errors = {**api.AUTH_RESPONSES, **api.CONFLICT_RESPONSE, **api.VALIDATION_RESPONSE, **api.NOT_FOUND_RESPONSE,
               429: {'description': 'Queue/resource limit; honor Retry-After / 队列或资源已满'}}
+    prior_validation = app.exception_handlers.get(RequestValidationError, request_validation_exception_handler)
+
+    @app.exception_handler(RequestValidationError)
+    async def configuration_validation(request: Request, exc: RequestValidationError):
+        if request.url.path == root or request.url.path.startswith(root + '/'):
+            return JSONResponse(status_code=422, content={'detail': [{k: error[k] for k in ('loc', 'msg', 'type')} for error in exc.errors()]})
+        return await prior_validation(request, exc)
+
     prior = app.router.lifespan_context
 
     @asynccontextmanager
@@ -450,25 +511,22 @@ def register(app, api):
                 _managers.pop(key, None)
     app.router.lifespan_context = lifespan
 
-    @app.get(root, summary='读取优化配置 / Get optimization configuration', description=api.bilingual('读取已保存的 Ollama 连接、模型与启用状态；不返回模型服务密钥。', 'Read the saved Ollama connection and enabled state.'), operation_id='getOptimizationConfiguration', tags=[TAG], response_model=ConfigurationResponse, responses=errors)
+    @app.get(root, summary='读取优化配置 / Get optimization configuration', description=api.bilingual('读取 Chat Completions 连接与启用状态；密钥只返回是否配置。', 'Read the saved Chat Completions connection and key presence; never the key.'), operation_id='getOptimizationConfiguration', tags=[TAG], response_model=ConfigurationResponse, responses=errors)
     def configuration(_: None = auth):
-        return store.settings()
+        return public_configuration(store.settings())
 
-    @app.post(root + '/discover', summary='获取模型 / Discover models', description=api.bilingual('按指定代理策略读取用户配置的 Ollama 模型列表，不发送历史转写。', 'Discover installed Ollama models using the selected proxy policy.'), operation_id='discoverOptimizationModels', tags=[TAG], responses=errors)
+    @app.post(root + '/discover', summary='获取模型 / Discover models', description=api.bilingual('可选获取兼容接口模型列表；失败仍可手动输入模型，不发送历史转写。', 'Optionally discover Chat Completions model IDs; manual IDs do not require discovery.'), operation_id='discoverOptimizationModels', tags=[TAG], response_model=OptimizationModelsResponse, responses=errors)
     async def discover(body: Connection, _: None = auth):
         try:
             async with probe_gate:
-                return await asyncio.wait_for(engine.discover(body.model_dump()), 30)
+                return await asyncio.wait_for(engine.discover(connection_input(body, store.settings())), 30)
         except Exception as exc:
             raise HTTPException(422, error_message(exc)) from exc
 
-    @app.post(root + '/verify', summary='验证优化模型 / Verify optimization model', description=api.bilingual('使用合成文本在 330 秒内验证正文生成和实际上下文窗口；辅助检查不可用不阻止连接验证。', 'Run synthetic prose generation within 330 seconds and verify the allocated context window. Auxiliary checking availability does not gate connection verification.'), operation_id='verifyOptimizationModel', tags=[TAG], responses=errors)
+    @app.post(root + '/verify', summary='验证优化模型 / Verify optimization model', description=api.bilingual('330 秒内用合成文本验证正文与 JSON 输出方式；不验证服务端实际窗口，不发送历史转写。', 'Verify synthetic prose and JSON output within 330 seconds, not server context allocation. No historical transcripts are sent.'), operation_id='verifyOptimizationModel', tags=[TAG], response_model=ConfigurationResponseWithToken, responses=errors)
     async def verify(body: ModelConnection, _: None = auth):
         try:
-            value = body.model_dump(exclude_none=True)
-            current = store.settings()
-            same_connection = all(current.get(k) == value[k] for k in ('base_url', 'model', 'use_proxy'))
-            value.setdefault('context_length', current.get('context_length', engine.DEFAULT_CONTEXT) if same_connection else engine.DEFAULT_CONTEXT)
+            value = connection_input(body, store.settings())
             async with probe_gate:
                 profile = await asyncio.wait_for(engine.verify(value), 330)
             token = uuid.uuid4().hex
@@ -476,7 +534,7 @@ def register(app, api):
                 if probes[key][0] < time.monotonic() or len(probes) >= 16:
                     del probes[key]
             probes[token] = (time.monotonic() + 600, profile)
-            return {**profile, 'verification_token': token}
+            return {**public_configuration(profile), 'verification_token': token}
         except Exception as exc:
             raise HTTPException(422, error_message(exc)) from exc
 
@@ -484,20 +542,22 @@ def register(app, api):
     async def save(body: SaveConfiguration, _: None = auth):
         async with manager.gate:
             current = store.settings()
-            identity = {key: getattr(body, key) for key in ('base_url', 'model', 'use_proxy')}
             probe = probes.get(body.verification_token or '')
             profile = probe[1] if probe and probe[0] > time.monotonic() else current
-            same_connection = all(profile.get(k) == v for k, v in identity.items())
-            identity['context_length'] = body.context_length if body.context_length is not None else (profile.get('context_length', engine.DEFAULT_CONTEXT) if same_connection else engine.DEFAULT_CONTEXT)
-            verified = all(profile.get(k) == v for k, v in identity.items()) and profile.get('verified_at') and profile.get('context_length', 0) >= engine.MINIMUM_CONTEXT
+            # A verify/save roundtrip may omit both the draft key and budget.
+            candidate = connection_input(body, profile if probe else current)
+            candidate.pop('enabled', None)
+            candidate.pop('verification_token', None)
+            expected = {**profile, '_api_key': store.credential(profile)}
+            verified = connection_identity(candidate) == connection_identity(expected) and profile.get('verified_at')
             if body.enabled and not verified:
                 raise HTTPException(409, '请先验证所选模型 / Verify the selected model first')
-            value = {**(profile if verified else identity), 'enabled': body.enabled}
+            value = {**(profile if verified else candidate), '_api_key': candidate['_api_key'], 'enabled': body.enabled}
             store.save_settings(value)
             if not body.enabled:
                 for job_id in store.summaries():
                     await manager.stop(job_id)
-            return value
+            return public_configuration(store.settings())
 
     @app.get(jobs, summary='读取优化状态 / Get optimization status', description=api.bilingual('返回已发布稿与候选摘要、当前阶段及已保存检查进度；生成、有限检查及首轮小结尝试结束才发布。支持 ETag 轮询。', 'Return published/candidate summaries, workflow phase and persisted reviewed_parts/total_parts. Published means generation, bounded checks and initial summary attempts are complete. Supports ETag polling.'), operation_id='getOptimizationStatus', tags=[TAG], response_model=OptimizationStatus, responses=errors)
     def status(job_id: str, request: Request, response: Response, _: None = auth):
@@ -549,7 +609,7 @@ def register(app, api):
             await manager.stop(job_id)
             return public_status(job_id)
 
-    @app.post(jobs + '/resume', summary='继续优化 / Resume optimization', description=api.bilingual('校验模型和来源后继续整个流程，复用检查点；已发布稿不能恢复，旧策略候选需要重新生成（409）。', 'Resume the complete optimization workflow after model/source verification, preserving generation and check progress. Published results cannot be resumed. Obsolete policy candidates require regeneration (409).'), operation_id='resumeTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, responses=errors)
+    @app.post(jobs + '/resume', summary='继续优化 / Resume optimization', description=api.bilingual('校验策略、凭据和来源后继续整个流程，复用检查点；已发布稿不能恢复，旧策略候选需要重新生成（409）。', 'Resume the complete optimization workflow after policy, credential and source verification, preserving generation and check progress. Published results cannot be resumed. Obsolete policy candidates require regeneration (409).'), operation_id='resumeTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, responses=errors)
     async def resume(job_id: str, body: RunRequest, _: None = auth):
         async with manager.gate:
             if not store.settings().get('enabled'):

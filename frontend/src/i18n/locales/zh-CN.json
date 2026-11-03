@@ -735,6 +735,18 @@
     }
   },
   "optimization": {
+    "budgetNotice": "验证仅确认合成文本与 JSON 生成可用，不证明服务端实际窗口。Ollama 实际窗口请在服务端设置。",
+
+    "apiKey": "模型服务 API Key",
+    "keyStored": "已保存；留空保留",
+    "keyOptional": "本地免鉴权服务可留空",
+    "clearKey": "清除密钥",
+    "modelPlaceholder": "输入模型 ID，或从获取的列表选择",
+    "advanced": "高级参数",
+    "extraBody": "额外请求参数（JSON 对象）",
+    "extraHelp": "可配置思考开关、温度与输出上限；不要填写密钥或覆盖模型、消息及格式字段。",
+    "invalidExtra": "请输入有效的 JSON 对象。",
+
     "keywordInsight": "关键词",
     "sourceInsight": "原文要点",
     "summaryFallbackCount": "关键词{{keywords}} · 原文要点{{source}}",
@@ -824,7 +836,7 @@
     "legacyMode": "旧版策略",
     "rewriteModes": {"polish": {"label": "自然润色", "help": "清理口头冗余、重复和病句，保留自然交流语气。"}, "rewrite": {"label": "流畅重写", "help": "默认推荐。充分重组句式与表达，形成清晰流畅的对谈稿。"}, "editorial": {"label": "深度成稿", "help": "更充分地梳理段落结构，使用紧凑书面表达，保留完整信息。"}},
     "title": "表达优化",
-    "settingsHelp": "连接 Ollama，将转写整理为清楚、自然的文字聊天记录。原始转写始终保留。",
+    "settingsHelp": "通过 OpenAI Chat Completions 兼容接口连接模型服务（含 Ollama）。原始转写始终保留。",
     "url": "服务地址",
     "proxy": "使用系统代理",
     "proxyHelp": "使用后端服务器的代理配置，并遵循 NO_PROXY；内网服务通常无需开启。",
@@ -839,8 +851,8 @@
     "serviceNotice": "ⓘ 进行表达优化时，转写正文、上下文和热词将发送到此服务，请确认服务可信。验证仅使用内置示例文本。",
     "verifying": "正在验证生成能力，首次加载模型可能较慢；偶发格式问题会自动重试…",
     "verified": "模型验证通过，可以保存并启用。",
-    "contextLength": "请求上下文窗口（tokens）",
-    "contextHelp": "最低 16384 tokens，包含输入与输出；覆盖 Ollama 的服务端默认值。修改后须重新验证。",
+    "contextLength": "上下文预算（tokens）",
+    "contextHelp": "最低 16384 tokens，包含输入与输出；仅为客户端预算，不设置服务端窗口。修改后须重新验证。",
     "requestedWindow": "请求窗口 {{value}}K。",
     "window": "最近验证实际窗口 {{actual}} · 模型原生上限 {{maximum}}K",
     "windowUnrecorded": "未记录，请重新验证",

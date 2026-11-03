@@ -44,10 +44,13 @@ Model identity and revision come only from `audio_intel/model_manifest.json`. Do
 
 ## Verification
 
-Run the checks relevant to every code change:
+Run the checks relevant to every code change. Full pytest can initialize default settings: disabling dotenv alone does not isolate the database. Set all runtime paths for that test process; never rewrite the deployment `.env`.
 
 ```bash
-.runtime/api/bin/python -m pytest -q
+AUDIO_INTEL_LOAD_ENV=0 AUDIO_INTEL_MOCK_MODE=1 \
+AUDIO_INTEL_DATA_DIR=tmp/test-suite/data AUDIO_INTEL_TEMP_DIR=tmp/test-suite/tmp \
+AUDIO_INTEL_CACHE_DIR=tmp/test-suite/cache AUDIO_INTEL_LOG_DIR=tmp/test-suite/logs \
+AUDIO_INTEL_RUN_DIR=tmp/test-suite/run .runtime/api/bin/python -m pytest -q
 .runtime/api/bin/python scripts/lock_dependencies.py --check
 corepack pnpm@10.15.1 --dir frontend typecheck
 corepack pnpm@10.15.1 --dir frontend build
@@ -63,6 +66,22 @@ Run isolated Linux service lifecycle tests when changing startup, shutdown, read
 
 ```bash
 .runtime/api/bin/python -m pytest -q tests/test_service_script.py
+```
+
+On Windows, launch the suite in a child PowerShell process so test variables cannot remain in the normal service shell:
+
+```powershell
+powershell.exe -NoProfile -Command {
+    $env:AUDIO_INTEL_LOAD_ENV="0"
+    $env:AUDIO_INTEL_MOCK_MODE="1"
+    $env:AUDIO_INTEL_DATA_DIR="tmp/test-suite/data"
+    $env:AUDIO_INTEL_TEMP_DIR="tmp/test-suite/tmp"
+    $env:AUDIO_INTEL_CACHE_DIR="tmp/test-suite/cache"
+    $env:AUDIO_INTEL_LOG_DIR="tmp/test-suite/logs"
+    $env:AUDIO_INTEL_RUN_DIR="tmp/test-suite/run"
+    & .\.runtime\api\Scripts\python.exe -m pytest -q
+    exit $LASTEXITCODE
+}
 ```
 
 Native Windows CI runs `tests/test_service_windows.py` and browser smoke coverage. Do not treat Linux process behavior as proof of Windows compatibility.

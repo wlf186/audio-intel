@@ -6,6 +6,8 @@ import re
 import subprocess
 import sys
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 import audio_intel.api as api_module
@@ -748,3 +750,63 @@ def test_optimization_documented_examples_wait_for_publication(tmp_path, monkeyp
         exec(compile(block, '<documented-example>', 'exec'), {})
     assert (tmp_path / 'optimized.txt').read_bytes() == b'published draft'
     assert len(calls) == 5
+
+
+def test_chat_completions_configuration_examples_match_public_contract(tmp_path, monkeypatch):
+    import json
+    from audio_intel import optimization_api as optimizer
+    local = docs_settings(tmp_path)
+    monkeypatch.setattr(api_module, 'settings', local)
+    monkeypatch.setattr(db_module, 'settings', local)
+    schema = api_module.create_app().openapi()
+    names = ('Connection', 'ModelConnection', 'SaveConfiguration', 'ConfigurationResponse',
+             'ConfigurationResponseWithToken', 'OptimizationModel', 'OptimizationModelsResponse')
+    for name in names:
+        definition = schema['components']['schemas'][name]
+        getattr(optimizer, name).model_validate(definition['example'])
+        for prop in definition['properties'].values():
+            assert ' / ' in prop['description'] and 'field; see the owning operation' not in prop['description']
+    root = '/api/v1/settings/transcript-optimization'
+    for path, method, model in [(root+'/discover','post',optimizer.Connection),
+                               (root+'/verify','post',optimizer.ModelConnection),
+                               (root,'put',optimizer.SaveConfiguration)]:
+        for example in schema['paths'][path][method]['requestBody']['content']['application/json']['examples'].values():
+            body = model.model_validate(example['value'])
+            assert body.base_url.startswith(('https://','http://'))
+    for path, method in [(root,'get'),(root,'put'),(root+'/verify','post')]:
+        response = schema['paths'][path][method]['responses']['200']['content']['application/json']['example']
+        assert response['context_length'] >= 16384
+        assert response['protocol'] == 'openai_chat_completions' and 'api_key' not in response
+        assert all(response[k] is None for k in ('model_context_length','observed_context_length','model_digest'))
+    models = schema['paths'][root+'/discover']['post']['responses']['200']['content']['application/json']
+    optimizer.OptimizationModelsResponse.model_validate(models['example'])
+    assert 'OptimizationModelsResponse' in models['schema']['$ref']
+    for name in ('model_context_length','observed_context_length','model_digest'):
+        assert schema['components']['schemas']['ConfigurationResponse']['properties'][name]['deprecated']
+
+
+@pytest.mark.parametrize('model_key', [None, '', 'synthetic-model-key'])
+def test_documented_configuration_preserves_omitted_model_key(monkeypatch, model_key):
+    import json
+    import os
+    import httpx
+    from audio_intel.api_docs import API_DESCRIPTION
+    section = API_DESCRIPTION.split('## 上下文配置示例 / Context configuration example',1)[1].split('\n## ',1)[0]
+    example = re.search(r'```python\n(.*?)```',section,re.S)[1]
+    for key,value in {'AUDIO_INTEL_BASE_URL':'http://service.invalid','OPTIMIZATION_BASE_URL':'http://model.invalid/v1','OPTIMIZATION_MODEL':'synthetic-model'}.items():monkeypatch.setenv(key,value)
+    monkeypatch.delenv('AUDIO_INTEL_API_KEY',raising=False)
+    monkeypatch.delenv('OPTIMIZATION_API_KEY',raising=False)
+    if model_key is not None:monkeypatch.setenv('OPTIMIZATION_API_KEY',model_key)
+    calls=[]
+    def respond(request):
+        body=json.loads(request.content);calls.append(request.url.path)
+        assert 'authorization' not in request.headers
+        if model_key is None:assert 'api_key' not in body
+        else:assert body['api_key']==model_key
+        if request.url.path.endswith('/verify'):return httpx.Response(200,json={'verification_token':'live-synthetic-token'})
+        assert body['verification_token']=='live-synthetic-token' and body['enabled']
+        return httpx.Response(200,json={'enabled':True})
+    original=httpx.Client
+    monkeypatch.setattr(httpx,'Client',lambda **kwargs:original(transport=httpx.MockTransport(respond),**kwargs))
+    exec(compile(example,'<configuration-example>','exec'),{})
+    assert len(calls)==2

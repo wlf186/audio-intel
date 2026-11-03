@@ -149,3 +149,5 @@
 @media(max-width:700px){.optimization-group-summary{display:block}.optimization-group-summary>small{display:block;margin-bottom:4px}.optimization-scene-title{font-size:16px}}
 
 .optimization-insight-method{font-size:12px;font-weight:400;color:var(--muted);margin-inline-start:10px;white-space:nowrap}
+
+.optimization-settings textarea{display:block;width:100%;box-sizing:border-box;min-height:110px;margin:8px 0;padding:8px 12px;background:var(--panel);color:var(--text);border:1px solid var(--line);font:inherit;line-height:1.5;resize:vertical}.optimization-settings input[type="text"],.optimization-settings input[type="password"]{min-height:44px;width:100%;min-width:0;box-sizing:border-box}.optimization-settings details>summary{min-height:44px;cursor:pointer;padding:12px 0;box-sizing:border-box}

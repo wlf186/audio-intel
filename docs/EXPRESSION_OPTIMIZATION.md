@@ -1,12 +1,14 @@
 # 表达优化 / Expression optimization
 
-在「系统状态 → 表达优化」配置 Ollama URL，获取模型、选择、验证、保存并启用；选择模型不会自动验证，未保存修改不改变当前生效配置。默认关闭，不会自动处理或发送历史转写。核心语音推理仍在本机运行；表达优化将本批来源正文、候选及任务提交时的热词发送到用户指定的 Ollama，不发送音视频，不提供隐式云端回退。非回环地址显示发送提醒；localhost 指服务端所在机器。
+在「系统状态 → 表达优化」配置 OpenAI Chat Completions 兼容服务的 Base URL、可选 API Key 与模型 ID，验证后保存并启用。Ollama 示例地址为 `http://localhost:11434/v1`；云服务使用其实际 API 地址与对应密钥。模型 ID 可手动输入；“获取模型”仅调用可选的 `/models`，列表不可用不妨碍手动验证。默认关闭，未保存修改不改变生效配置，也不会自动发送历史转写。优化只向明确配置的服务发送相关正文、候选及提交时的热词快照，不发送音视频、不提供隐式云端回退。localhost 指服务端所在机器。
 
-在设置中填写「请求上下文窗口（tokens）」：新连接默认 16384，最低 16K，例如 32768 为 32K、65536 为 64K；已有配置保留原值。窗口包含输入和输出，不能超过模型原生上限。每次调用显式发送该窗口，因此会覆盖 Ollama 的 `OLLAMA_CONTEXT_LENGTH` 默认值；该环境变量不是强制上限，设置较小窗口可控制本功能的资源预算。
+API Key 通过密码框输入，存入服务端 SQLite 独立凭据表；网页仅获知是否已配置。密钥不会回传或写入浏览器 localStorage/sessionStorage，未保存的密钥只在当前组件内存中保留。成功保存或重新加载配置后输入框清空。省略密钥沿用同地址已有值，点击“清除密钥”表示保存时清除，换地址不继承旧密钥。同一连接换钥适用于引用它的历史任务；任务快照只记录凭据引用。SQLite 备份包含服务凭据，应按部署数据妥善保管。
 
-验证先按所选窗口加载模型，再使用合成文本检查生成能力与实际分配。分配不足、无法确认或内存不足时验证失败，不自动缩小或扩大请求窗口。连接详情分别显示最近验证实际窗口、验证时间及模型原生上限；它们不是实时运行状态。旧记录没有实测值时显示「未记录」，需要重新验证。修改地址、代理、模型或请求窗口使旧验证失效，重新验证后才能保存启用；也可先关闭功能、保存尚未验证的配置。
+“高级参数”接受 JSON 对象，例如 `{"thinking":{"type":"disabled"}}`，实际支持情况取决于模型服务。Ollama 的兼容接口可用 `{"reasoning_effort":"none"}` 关闭支持关闭思考的模型；旧连接迁移会填写该参数。不能覆盖 `model`、`messages`、`stream`、`response_format`、工具调用或鉴权字段。默认输出上限按工作阶段使用 4096 或 1024；可设置 `max_tokens` 或 `max_completion_tokens`（二选一），`temperature:null` 表示不发送温度参数。所有参数参与验证绑定及任务快照。
 
-正文分块、生成、接缝和事实复核使用同一个请求窗口，预留输出空间，关闭 thinking，输出上限保持4096 tokens，禁止输入静默截断。主流程执行／恢复时按快照窗口加载并核验，每次模型响应在写入检查点前再次核验；此阶段窗口不足、无法确认或明确的容量错误会暂停任务并保留进度，不降级成基础整理或「复核不可用」后发布。普通复核连接或格式异常仍遵循有界处理。小结 v2 沿用同一连接、模型与请求窗口快照，单次输出上限1024 tokens；小结阶段的窗口／容量故障可改用程序摘取，见下方自动兜底说明。远端服务类型、模型和硬件会影响速度及质量。
+“上下文预算（tokens）”默认 16384、最低 16K，包含输入与输出；它仅用于客户端保守分片与预算检查，不设置也不证明服务端的实际窗口。Ollama 应使用服务端配置或 Modelfile 设置足够的 `num_ctx`。验证仅用合成文本确认正文和 JSON 输出，自动选择 JSON Schema、JSON Object 或提示词 JSON，正式任务继续执行本地结构与引用检查。
+
+验证不加载或查询 Ollama 原生管理接口。连接详情显示验证时间与客户端预算说明；修改地址、代理、模型、密钥、预算或高级参数均使验证失效，可先关闭并保存未验证配置。正文、接缝、复核及小结统一通过 Chat Completions，遵守原有有界重试和检查点规则。容量或输出截断错误在正文阶段暂停并保留进度，小结阶段仍可按已保存策略使用有标记的兜底。不会将思考内容当作正文；思考开关由明确填写的高级参数决定。远端服务、模型和硬件会影响速度及质量。
 
 全局窗口修改仅影响新任务，旧任务恢复继续使用原快照。需要降低旧任务窗口重跑时，使用「删除优化数据」再重新生成；该删除会清理该任务的已发布稿、候选和进度，原始转写及媒体保留，不会局部改写旧快照。
 
@@ -54,7 +56,7 @@ qwen3.5:4b 与 9b 的本轮实测仍有事实改变、复核漏报和整理不�
 
 所有接口沿用服务的 Bearer／浏览器会话认证。下列路径前缀为 `/api/v1`；字段详见本地 `/docs` 与 `/openapi.json`。
 
-验证与保存请求接受整数 `context_length`（最低 16384）。省略时沿用匹配验证凭证或同一连接的已保存窗口，新连接默认 16384。响应中的 `context_length` 为请求预算、`observed_context_length` 为 `verified_at` 时的实测分配、`model_context_length` 为模型原生上限；旧记录的实测值为 null。可执行的验证、保存示例见本地 `/docs`「上下文配置示例」。
+验证与保存请求接受整数 `context_length`（最低 16384）；省略时沿用匹配验证凭证或同连接预算，新连接默认 16384。配置响应提供 `protocol: openai_chat_completions`、`has_api_key`、`extra_body`、`structured_output_mode`；不返回 `api_key`。兼容字段 `observed_context_length`、`model_context_length`、`model_digest` 在新验证结果中为 null，不伪造服务端观测值。修改任一连接或生成参数均须重新验证。
 
 | 方法与路径 | 用途 |
 | --- | --- |
@@ -82,34 +84,42 @@ URL 应使用实际部署地址。客户端密钥通过 `AUDIO_INTEL_API_KEY` �
 
 ## 持久化与升级
 
-历史迁移说明：策略 v7／SQLite v19 增加统一阶段和检查进度。v18 及更早版本升级至 v19 时，一次性清理旧音频和视频优化正文、候选及检查记录，用户需手动重新优化；v19→v20 和 v20→v21 增量迁移保留已有数据及检查点（见下方分组小结说明）。原始转写、媒体、人物、热词快照和模型配置保留。升级前做 SQLite 一致性备份，无需复制历史媒体；遵循[升级指南](UPGRADE.md)恢复服务并验收后清理临时备份。
+从正式 v0.1.41（schema v19）到 v0.1.42（v22）为仅数据库的累积增量迁移。旧 Ollama 地址补 `/v1`，保留模型与预算，并填写 `reasoning_effort:none`；旧验证清除、启用关闭，未完成优化暂停。重新验证保存并启用后，可显式继续原检查点。不得将客户端预算当作实际服务端分配。已为 v22 且没有其他持久化迁移的实例，不需重复迁移备份。
+
+历史迁移说明：策略 v7／SQLite v19 增加统一阶段和检查进度。v18 及更早版本升级至 v19 时，一次性清理旧音频和视频优化正文、候选及检查记录，用户需手动重新优化；v19→v20→v21→v22 增量迁移保留已有数据及检查点（见下方分组小结说明）。原始转写、媒体、人物、热词快照和模型配置保留。升级前做 SQLite 一致性备份，无需复制历史媒体；遵循[升级指南](UPGRADE.md)恢复服务并验收后清理临时备份。
 
 档位与导出偏好继续长期保存，刷新、重开、退出登录和资料库替换后保留。阅读方式、搜索、位置、差异显示及新增来源明细开关属于当前任务浏览器会话，刷新保留、退出登录清理，最多保留 200 个任务，不存正文或密钥。差异显示默认开启，已有明确关闭的偏好继续尊重。
 
-English: Policy v7 scopes bounded reading paragraphs to one scene and one consecutive speaker turn. Generation and bounded annotation-only checks form one workflow; only its completed draft can be read or exported. A previous published draft stays available during regeneration. Comparison shows complete source and draft prose; source metadata is optional. Applying scene boundaries invalidates old drafts transactionally. The historical v18-and-earlier→v19 migration clears pre-v19 optimization data once, while preserving original jobs, media and model settings. The additive v19→v20 and v20→v21 migrations preserve existing drafts, candidates and insight checkpoints. Take a SQLite-only backup, restore the recorded deployment and verify it before removing the backup.
+English: Policy v7 scopes bounded reading paragraphs to one scene and one consecutive speaker turn. Generation and bounded annotation-only checks form one workflow; only its completed draft can be read or exported. A previous published draft stays available during regeneration. Comparison shows complete source and draft prose; source metadata is optional. Applying scene boundaries invalidates old drafts transactionally. The historical v18-and-earlier→v19 migration clears pre-v19 optimization data once, while preserving original jobs, media and model settings. The additive v19→v20→v21→v22 migrations preserve existing drafts, candidates and insight checkpoints. Take a SQLite-only backup, restore the recorded deployment and verify it before removing the backup.
 
 ## 开发质量验证
+
+云服务密钥从 `OPTIMIZATION_API_KEY` 读取，高级参数可通过 `OPTIMIZATION_EXTRA_BODY` JSON 提供；Ollama 示例可设置 `OPTIMIZATION_EXTRA_BODY='{"reasoning_effort":"none"}'`。不要把模型服务密钥与本项目客户端的 `AUDIO_INTEL_API_KEY` 混用。
 
 固定合成／去标识化语料在 `tests/fixtures/optimization_quality.json`。`scripts/evaluate_optimization.py` 直接调用所选服务，不创建应用任务；必须显式指定服务和模型。先验证语料，再串行执行两个模型，避免竞争资源：
 
 ```bash
 .runtime/api/bin/python scripts/evaluate_optimization.py --validate-corpus
-.runtime/api/bin/python scripts/evaluate_optimization.py --base-url http://localhost:11434 --model qwen3.5:4b --output tmp/quality-4b.json --repeats 3
-.runtime/api/bin/python scripts/evaluate_optimization.py --base-url http://localhost:11434 --model qwen3.5:9b --output tmp/quality-9b.json --repeats 3
-.runtime/api/bin/python scripts/evaluate_optimization.py --base-url http://localhost:11434 --model qwen3.5:4b --corpus tests/fixtures/optimization_quality_long.json --output tmp/quality-long-4b.json --repeats 1
+.runtime/api/bin/python scripts/evaluate_optimization.py --base-url http://localhost:11434/v1 --model qwen3.5:4b --output tmp/quality-4b.json --repeats 3
+.runtime/api/bin/python scripts/evaluate_optimization.py --base-url http://localhost:11434/v1 --model qwen3.5:9b --output tmp/quality-9b.json --repeats 3
+.runtime/api/bin/python scripts/evaluate_optimization.py --base-url http://localhost:11434/v1 --model qwen3.5:4b --corpus tests/fixtures/optimization_quality_long.json --output tmp/quality-long-4b.json --repeats 1
 ```
 
-Windows 使用 API 环境的对应 Python 路径。工具保存服务版本、模型 digest、策略及语料校验和、逐项输出和耗时；`--resume` 只恢复身份一致的结果。复核用预置候选独立测量，未知／不可用不从分母删除。语言改善和事实保留须对记录逐项独立审读，不能由改字比例自动认证。真实任务评测应复制到隔离测试目录，按来源范围比较并统计来源字数加权结果，不能修改用户任务来做测试。
+Windows 使用 API 环境的对应 Python 路径。工具保存模型 ID、结构化输出方式、额外参数、策略及语料校验和、逐项输出和耗时；通用协议不提供可靠的服务版本或模型 digest；`--resume` 只恢复身份一致的结果。复核用预置候选独立测量，未知／不可用不从分母删除。语言改善和事实保留须对记录逐项独立审读，不能由改字比例自动认证。真实任务评测应复制到隔离测试目录，按来源范围比较并统计来源字数加权结果，不能修改用户任务来做测试。
 
 ## 界面示例与复现 / Interface examples
 
 以下为合成测试内容，用于展示界面，不是模型质量证据。
 
+![兼容模型服务设置 / Compatible model settings](assets/optimization/settings-1440.png)
+
+[手机设置 / Mobile settings](assets/optimization/settings-390.png)
+
 ![桌面完整对照 / Desktop comparison](assets/optimization/comparison-1440.png)
 
 [手机对照 / Mobile comparison](assets/optimization/comparison-390.png)
 
-在隔离 mock 服务运行 `optimization-workflow.spec.ts` 和 `video-enrollment.spec.ts` 后，执行 `python3 scripts/collect_optimization_doc_assets.py` 收集截图。README 使用 `scripts/capture_readme_assets.mjs`，需设置 `AUDIO_INTEL_CAPTURE_BASE_URL` 为隔离服务地址，不能对正常部署创建演示任务。两个脚本仅使用合成任务；测试检查交互、控制台错误及桌面／390 px 横向溢出。
+在隔离 mock 服务运行 `optimization-workflow.spec.ts`、`video-enrollment.spec.ts` 和 `optimization-provider.spec.ts` 后，执行 `python3 scripts/collect_optimization_doc_assets.py` 收集截图。README 使用 `scripts/capture_readme_assets.mjs`，需设置 `AUDIO_INTEL_CAPTURE_BASE_URL` 为隔离服务地址，不能对正常部署创建演示任务。两个脚本仅使用合成任务；测试检查交互、控制台错误及桌面／390 px 横向溢出。
 
 English: These synthetic fixtures demonstrate layout, not model quality. Run both named Playwright files together against an isolated mock service, then collect screenshots. README capture also requires an isolated mock service and must never seed the normal deployment.
 
@@ -128,7 +138,7 @@ English: These synthetic fixtures demonstrate layout, not model quality. Run bot
 
 最终“原文要点”由程序规则摘取，不再调用模型：优先选取长度合适的原文子句，倾向含要求、预算、理由等信息的句子；没有合适子句时，再选择短语或长度受限的片段。不会默认复制整组全文，短分组可能恰好全部入选。中文小结50字、标题20字及其他语种预算仍有效。长画面处理全部来源后逐层归纳；最终兜底可能从已保存的分片归纳结果中摘取，不能将其一概理解为逐字引用原始转写。
 
-只在新建或重新优化时启用 v2；旧 v1 优化稿仍可阅读、导出及显式补试，保留其原策略。用户主动暂停及服务重启后继续保持暂停，需要显式继续；本次执行内的自动兜底不等于后台无限重启任务。已发布稿的“补试未生成小结”仍作为暂停／遗留缺项的恢复入口，保留正文和成功项，使用原模型、地址、代理、上下文、模型摘要和来源快照，不切换模型。模型或来源变化返回409。
+只在新建或重新优化时启用 v2；旧 v1 优化稿仍可阅读、导出及显式补试，保留其原策略。用户主动暂停及服务重启后继续保持暂停，需要显式继续；本次执行内的自动兜底不等于后台无限重启任务。已发布稿的“补试未生成小结”仍作为暂停／遗留缺项的恢复入口，保留正文和成功项，使用原模型 ID、地址、代理、预算、参数和来源快照，不切换模型。来源或提示策略不兼容返回409；服务端模型不可用按提供商错误处理，不通过摘要判断远端模型内容是否变化。
 
 SQLite v20→v21 只增加生成方式、尝试次数、质量提示和有界尝试记录，保留 v20 数据；v19→v20 的旧迁移同样保留已有任务及优化稿。每项最多保留12条尝试诊断，失败原因不会因显式补试清空；全局列表／SSE 只读计数，不载入候选或来源文本。升级前备份 SQLite 即可，无媒体迁移。小结版本独立于正文提示策略 v7。浏览器偏好及阅读草稿的存储期限不变。
 
@@ -144,3 +154,11 @@ SQLite v20→v21 只增加生成方式、尝试次数、质量提示和有界尝
 v2 单项可选元数据：`generation_method` 为 `model`、`model_repair`、`model_keywords`、`source_excerpt`；`attempt_count` 为已完成的模型请求数（长画面包含各节点）；`quality_notice` 为 `keywords`／`source_excerpt` 或 null；`skip_reason` 仅在无实质内容时为 `no_substantive_content`。计数增加 `model_ready`、`repaired_ready`、`keyword_ready`、`extractive_ready` 和后两者之和 `fallback_ready`；历史未知生成方式不推算为任何类别。有效交付率分别按小结、画面标题计算：`ready / (total - skipped)`，并同时报告各生成方式。分母为0时记为不适用，不宣称100%成功。`processed = ready + skipped + failed`，`fallback_ready = keyword_ready + extractive_ready`；v2 的四种已知生成方式之和为 `ready`，历史未知方式不能套用该分类等式。
 
 English: V2 generates once, repairs only explicit abnormalities once, then attempts literal keyword extraction. All transport retries share the same three-request / 60-second node budget. Accepted, source-matched keywords end the item immediately. Otherwise local rules select a bounded clause, phrase or excerpt, rather than copying the whole group by default. For reduced long scenes the selected text may come from saved intermediate notes. A short group can fit in full. All fallback output shares the length limits. A zero eligible denominator means no applicable delivery rate. Keywords and excerpts count as ready and are labelled in the reader and PDF/Word exports, with separate counters. Only genuinely empty/greeting inputs are excluded; outlines, introductions and procedures remain eligible. There is no auxiliary semantic-review voting loop or autonomous restart after a pause/reboot. Existing v1 runs retain their saved policy. SQLite v20→v21 is additive and requires a SQLite-only backup.
+
+### 配置接口补充
+
+`api_key` 仅写入；省略或 null 沿用同地址已保存值，空字符串清除，换地址不继承。`extra_body` 默认空对象，编码后最多16 KiB；不能覆盖模型、消息、流模式、输出格式、工具调用或鉴权字段。`max_tokens` 与 `max_completion_tokens` 只能指定一个，调整后会重新计算客户端输入加输出预算。
+
+`verification_token` 由 `/verify` 返回，10分钟内有效且 API 重启后失效；启用全新或更改后的配置需匹配验证结果。未更改的已保存验证配置可省略凭证。验证不会直接启用，也不会保存未提交的修改。GET 返回的只读字段不能整包直接用于 PUT。模型发现返回 `{ "models": [{"name":"模型ID"}] }`，不保证模型原生上限、权重摘要或服务版本。
+
+English: Configure a Chat Completions base URL, optional model-service API key and model ID. Discovery is optional. Verification negotiates JSON output using synthetic text, not server context allocation. Keys are write-only: omission/null retains a same-endpoint key, an empty string clears it, and changing endpoints does not inherit it. Verification tokens expire after ten minutes or an API restart; unchanged saved verified profiles can omit them. Legacy allocation/digest fields remain nullable compatibility fields. Upgrading v0.1.41 to v0.1.42 preserves drafts/checkpoints through schema v19→v22 but disables old Ollama connections pending re-verification.

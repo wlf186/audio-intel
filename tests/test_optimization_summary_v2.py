@@ -202,7 +202,7 @@ def test_v20_additive_migration_preserves_published_v1_and_checkpoints(configure
     db.init_db(); db.init_db()
     assert store.units(run) == before and insights.read(run) == value
     with db.connect() as c:
-        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 21
+        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 22
         assert not c.execute('PRAGMA foreign_key_check').fetchall()
 
 
@@ -230,7 +230,7 @@ def test_prose_transport_and_content_repair_share_actual_http_budget(monkeypatch
         requests.append(json.loads(request.content))
         if len(requests) == 2:
             return httpx.Response(503, text='temporarily unavailable')
-        return httpx.Response(200, text=json.dumps({'message': {'content': ''}, 'done': True, 'done_reason': 'stop'}) + '\n')
+        return httpx.Response(200, json={'choices': [{'message': {'content': ''}, 'finish_reason': 'stop'}]})
     monkeypatch.setattr(engine, 'client', lambda config: httpx.AsyncClient(base_url='http://ollama.invalid/', transport=httpx.MockTransport(response)))
     async def context(*args, **kwargs):
         return 32768
@@ -249,7 +249,7 @@ def test_prose_repair_keeps_valid_candidate_if_next_request_fails(monkeypatch):
         requests.append(json.loads(request.content))
         if len(requests) == 2:
             return httpx.Response(503, text='temporarily unavailable')
-        return httpx.Response(200, text=json.dumps({'message': {'content': '我们我们周五确认预算。'}, 'done': True, 'done_reason': 'stop'}, ensure_ascii=False) + '\n')
+        return httpx.Response(200, json={'choices': [{'message': {'content': '我们我们周五确认预算。'}, 'finish_reason': 'stop'}]})
     monkeypatch.setattr(engine, 'client', lambda config: httpx.AsyncClient(base_url='http://ollama.invalid/', transport=httpx.MockTransport(response)))
     async def context(*args, **kwargs):
         return 32768

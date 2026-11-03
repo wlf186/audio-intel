@@ -1,9 +1,14 @@
 # 升级指南
 
-## 未发布：小结 v2 与 SQLite v21
+## v0.1.42：通用模型接入与可靠小结
 
-数据迁移：**仅数据库，SQLite v20→v21 增量迁移**。增加小结生成方式、尝试次数和有界诊断；保留现有转写、优化稿及 v1 小结检查点，旧优化任务不自动转换策略。新建或重新优化后启用自动关键词／原文兜底。v19→v20 的小结迁移同样为增量迁移。升级前按下方范围创建 SQLite 一致性快照，无需复制媒体；更新源码、构建前端，恢复原服务并验收 API、supervisor、executor 后删除本次临时升级备份。更早版本仍需覆盖下列历史迁移要求。
+数据迁移：**仅数据库，正式 v0.1.41 的 SQLite v19→v22 累积增量迁移**。v20 增加分组小结、画面标题及检查点，v21 增加生成方式、尝试次数和有界诊断，v22 增加独立凭据表。所有已有任务、优化稿、来源、v1 小结策略及检查点保留；新建／重新优化启用小结 v2 的有标记关键词／原文要点兜底，不自动改写历史稿。
 
+表达优化统一使用 OpenAI Chat Completions 兼容接口。旧 Ollama 地址自动补 `/v1`，保留模型、代理与预算并填入 `reasoning_effort:none`，清除旧验证、关闭启用并暂停未完成优化。到系统状态重新验证、保存启用，再显式继续任务。上下文是客户端输入加输出预算，不再覆盖或查询实际服务端窗口；Ollama 窗口需在服务端配置。设置及密钥规则见[表达优化](EXPRESSION_OPTIMIZATION.md)。
+
+从 v19/v20/v21 升级前停服并创建 SQLite 一致快照，无需复制媒体。更新源码后执行 `./service.sh setup api`（Windows：`service.cmd setup api`）同步 API 环境并重建前端，恢复原 API、ASR/TTS supervisor 和 executor，验收后清理临时升级备份。API 依赖 pypdf 从6.21.2更新到6.21.4以修复已知漏洞；ASR/TTS/aligner依赖及模型不变。已为 v22 且无其他数据迁移的实例不需新增迁移备份。更早版本须累计核对下方历史迁移要求，尤其 pre-v19 的一次性旧优化清理。
+
+English: Upgrading released v0.1.41 migrates SQLite v19→v22 additively, retaining jobs, drafts and checkpoints; no media rewrite. Legacy Ollama connections require re-verification before enabling. Context is now a client budget. Stop services and take a SQLite-only backup before migration, run setup api to update pypdf 6.21.4 and rebuild the UI, restore all original processes and verify before removing temporary backups. Already-v22 deployments without additional data migrations need no repeated upgrade backup. Earlier upgrades must include intervening requirements. Speech models and inference dependencies are unchanged.
 
 ## v0.1.41：统一表达优化与入库音轨
 

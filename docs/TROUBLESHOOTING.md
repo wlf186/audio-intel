@@ -250,11 +250,11 @@ ASR 工作台使用固定的“新建音频转写 / 新建视频转写 / 任务�
 
 ## 表达优化连接、检查与结果
 
-- 获取模型成功仅证明列表可访问；仍需验证文本生成和请求窗口。localhost 指运行本项目服务的机器。`context_length` 是用户配置的请求窗口，会覆盖 Ollama 默认值；新连接默认16K。`observed_context_length` 是 `verified_at` 时的观测值，不是实时状态；`model_context_length` 是模型原生上限，不能代替实际分配。同系列4B/9B显示相同模型上限并不异常。
+- 模型列表是可选接口，不能获取时仍可手动输入模型 ID 验证。`context_length` 是输入加输出的客户端预算，不覆盖 Ollama 默认值、不证明服务端窗口；分配与模型摘要字段为空是正常状态。Ollama Base URL 通常以 `/v1` 结尾，实际窗口须在服务端配置。401/403 检查模型服务密钥，400 检查模型及高级参数，容量错误调整预算或服务端窗口后重试。
 - 正文生成、自动检查、小结／标题及必要的兜底结束后统一发布。正文阶段的持续连接、窗口或容量故障保存进度并暂停；复核连接故障可记录为不可用，证据引用无法定位时保留不确定及诊断，不当作通过。检查提示不会撤销已生成正文。
 - 小结 v2 的模型异常自动尝试定向修复、关键词及原文要点；关键词合格后即结束该项。小结阶段的窗口／容量故障和连续服务故障可直接触发程序摘取，仍受长度限制。“关键词／原文要点”是明确标记的替代输出，已计入 ready；成功交付比例不等于事实准确率。
-- “补试未生成小结”用于暂停或遗留缺项，不必为普通生成异常反复点击。用户主动暂停或服务重启后仍需显式继续；来源或模型变化需重新生成，自动兜底不绕过这些校验。
-- 当前为 SQLite v21；仅 v18 及更早版本迁往 v19 时一次性清理旧优化，v19→v20→v21 保留历史稿与检查点。应用新的画面边界也会使对应优化失效，需要重新优化；只预览参数或更换截图不会。
+- “补试未生成小结”用于暂停或遗留缺项，不必为普通生成异常反复点击。用户主动暂停或服务重启后仍需显式继续；来源或提示策略不兼容需重新生成，自动兜底不绕过这些校验。
+- 当前为 SQLite v22；仅 v18 及更早版本迁往 v19 时一次性清理旧优化，v19→v20→v21→v22 保留历史稿与检查点。v22 会将旧 Ollama 连接改为 `/v1` 并关闭启用；重新验证后启用，再显式继续任务。应用新的画面边界也会使对应优化失效，需要重新优化；只预览参数或更换截图不会。
 - 小模型可能保留原本清晰的短句，也可能误改事实；改字比例不是质量指标。详见[表达优化](EXPRESSION_OPTIMIZATION.md)及[验证边界](EXPRESSION_OPTIMIZATION_VALIDATION.md)。
 
-English: Model discovery does not replace generation/context verification. The configured request window overrides the Ollama default; the last verified allocation and native model limit describe different things. Localhost refers to the server machine. Prose capacity failures pause work; v2 insight-stage capacity/provider failures can use bounded, labelled excerpts. Accepted keywords finish the item without another fallback. Delivery rate includes labelled alternatives and is separate from factual accuracy. Explicit pauses/restarts require continuation. Current schema v21 preserves existing v19/v20 drafts; only the historical pre-v19 migration clears old optimization data once. Applied scene-boundary changes invalidate corresponding drafts; originals remain available.
+English: Model discovery is optional; enter a model ID manually if unavailable. Verification checks synthetic text/JSON output, not allocated context. Configure the actual Ollama context server-side. Check model API credentials for 401/403, parameters for 400, and budgets/server limits for capacity errors. Existing drafts and checkpoints survive the v22 migration.

@@ -1302,7 +1302,7 @@ def _capabilities_example() -> dict[str, Any]:
         "deployment": {"profile": "full", "default_compute_device": "gpu", "gpu_runtime_installed": True},
         "asr": {
             "transcript_optimization": {
-                "supported": True, "provider": "ollama", "minimum_context": 16384, "output_tokens": 4096,
+                "supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096,
                 "text_versions": ["original", "optimized", "comparison"],
                 "rewrite_modes": ["polish", "rewrite", "editorial"], "default_rewrite_mode": "rewrite",
                 "summaries": {"version": 2, "automatic_fallback": True, "max_model_calls_per_node": 3,
@@ -1441,6 +1441,36 @@ JOB_EXAMPLES["video_queued"] = {"summary": "视频任务排队 / Queued video ta
 }}
 
 
+_OPTIMIZATION_CONNECTION = {'base_url': 'http://localhost:11434/v1', 'use_proxy': False,
+    'model': 'qwen3.5:9b', 'context_length': 16384, 'extra_body': {'reasoning_effort': 'none'}}
+_OPTIMIZATION_VERIFIED = {**_OPTIMIZATION_CONNECTION, 'protocol': 'openai_chat_completions',
+    'has_api_key': False, 'enabled': True, 'structured_output_mode': 'json_schema',
+    'verified_at': '2026-11-03T00:00:00+00:00', 'prompt_version': 7,
+    'model_context_length': None, 'observed_context_length': None, 'model_digest': None}
+_OPTIMIZATION_SETTINGS_PATH = '/api/v1/settings/transcript-optimization'
+REQUEST_EXAMPLES.update({
+    (_OPTIMIZATION_SETTINGS_PATH + '/discover', 'post'): {
+        'local_ollama': {'summary': '可选发现本地模型 / Optional local discovery', 'value': {'base_url': _OPTIMIZATION_CONNECTION['base_url'], 'use_proxy': False}},
+        'compatible_cloud': {'summary': '替换为实际服务地址和密钥 / Replace with the real service URL and key', 'value': {'base_url': 'https://model.example.test/v1', 'use_proxy': False, 'api_key': 'replace-with-model-service-key'}}},
+    (_OPTIMIZATION_SETTINGS_PATH + '/verify', 'post'): {
+        'local_ollama': {'summary': '验证已安装模型 / Verify an installed model', 'value': deepcopy(_OPTIMIZATION_CONNECTION)}},
+    (_OPTIMIZATION_SETTINGS_PATH, 'put'): {
+        'verified_connection': {'summary': '使用本次验证返回的真实凭证 / Use the live token returned by verification', 'value': {**_OPTIMIZATION_CONNECTION, 'enabled': True, 'verification_token': 'replace-with-verification-response-token'}}},
+})
+
+
+def _optimization_connection_examples() -> dict[str, dict[str, Any]]:
+    return {
+        'Connection': {'base_url': _OPTIMIZATION_CONNECTION['base_url'], 'use_proxy': False},
+        'ModelConnection': deepcopy(_OPTIMIZATION_CONNECTION),
+        'SaveConfiguration': deepcopy(REQUEST_EXAMPLES[(_OPTIMIZATION_SETTINGS_PATH, 'put')]['verified_connection']['value']),
+        'ConfigurationResponse': deepcopy(_OPTIMIZATION_VERIFIED),
+        'ConfigurationResponseWithToken': {**_OPTIMIZATION_VERIFIED, 'enabled': False, 'verification_token': 'replace-with-verification-response-token'},
+        'OptimizationModel': {'name': 'qwen3.5:9b'},
+        'OptimizationModelsResponse': {'models': [{'name': 'qwen3.5:9b'}, {'name': 'qwen3.5:4b'}]},
+    }
+
+
 def _optimization_examples() -> dict[str, dict[str, Any]]:
     """Synthetic, consistent v2 examples shared by schemas and HTTP responses."""
     run_id, job_id, scene_id = 'a' * 32, 'b' * 32, 'scene_1'
@@ -1556,7 +1586,7 @@ def _example_for_schema(value: dict[str, Any], schemas: dict[str, Any], seen: se
 def enrich_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Add documentation-only descriptions and examples without changing wire models."""
     schemas = schema.setdefault("components", {}).setdefault("schemas", {})
-    optimization_examples = _optimization_examples()
+    optimization_examples = {**_optimization_examples(), **_optimization_connection_examples()}
     for name, example in {"VideoUploadResponse": VIDEO_UPLOAD_EXAMPLE, "VideoScenesResponse": VIDEO_SCENES_EXAMPLE,
                           'AsrCapability': CAPABILITIES_EXAMPLE['asr'], **optimization_examples}.items():
         if name in schemas:
@@ -1631,19 +1661,24 @@ def enrich_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
 API_DESCRIPTION += r"""
 ## 上下文配置示例 / Context configuration example
 
-请求窗口包含输入与输出，最低16K；覆盖 Ollama 默认值，需验证后保存。修改窗口使验证失效。实测窗口是验证时的观测值，旧记录可能为空。 / The requested window includes input and output, overrides the Ollama default, and must be verified before enabling. Observed allocation is historical and may be null for legacy settings.
+上下文预算包含输入与输出，最低16K；不设置或证明服务端窗口，修改后需重新验证。/ The client budget includes input and output (minimum 16K); it neither sets nor proves server context allocation. Reverify after editing.
 
 ```python
 import os
+import json
 import httpx
 
 base = os.environ['AUDIO_INTEL_BASE_URL'].rstrip('/')
-api_key = os.environ['AUDIO_INTEL_API_KEY']
-headers = {'Authorization': 'Bearer ' + api_key}
+api_key = os.getenv('AUDIO_INTEL_API_KEY', '')
+headers = {'Authorization': 'Bearer ' + api_key} if api_key else {}
 settings = '/api/v1/settings/transcript-optimization'
-connection = {'base_url': os.environ['OLLAMA_BASE_URL'],
-              'model': os.environ['OLLAMA_MODEL'], 'use_proxy': False,
+connection = {'base_url': os.environ['OPTIMIZATION_BASE_URL'],
+              'extra_body': json.loads(os.getenv('OPTIMIZATION_EXTRA_BODY', '{}')),
+              'model': os.environ['OPTIMIZATION_MODEL'], 'use_proxy': False,
               'context_length': 16384}
+# Omission retains a same-endpoint saved key; an explicit empty value clears it.
+if 'OPTIMIZATION_API_KEY' in os.environ:
+    connection['api_key'] = os.environ['OPTIMIZATION_API_KEY']
 with httpx.Client(base_url=base, headers=headers, timeout=360) as client:
     response = client.post(settings + '/verify', json=connection)
     response.raise_for_status()
@@ -1658,7 +1693,7 @@ with httpx.Client(base_url=base, headers=headers, timeout=360) as client:
 
 ## 分组小结与画面标题 / Group summaries and scene titles
 
-正文策略 v7、小结策略 v2 与 SQLite v21 是独立版本。新建／重新优化先完成正文及复核，再生成小结与标题及必要的自动兜底，最后发布。旧 v1 小结保持原策略；用户暂停或服务重启后需显式继续。
+正文策略 v7、小结策略 v2 与 SQLite v22 是独立版本。新建／重新优化先完成正文及复核，再生成小结与标题及必要的自动兜底，最后发布。旧 v1 小结保持原策略；用户暂停或服务重启后需显式继续。
 
 V2 gives each insight/reduction node at most three model requests and 60 seconds including transport retries: generate, repair explicit abnormalities, then extract literal keywords. Accepted source-matched, length-compliant keywords finish the item. Only if no usable keywords remain does local extraction select a bounded clause/phrase; a short group may fit in full. Long-scene fallback may select from saved reduction notes. Chinese summary/title limits remain 50/20 characters; word-separated languages use 30/10 words, and mixed scripts use proportional budgets.
 
@@ -1689,15 +1724,15 @@ with httpx.Client(base_url=base_url, headers=headers, timeout=30) as client:
         print(group["state"], group.get("generation_method"), group["sentences"])
 ```
 
-`POST .../summaries/retry` 仅用于已发布稿的暂停／遗留缺项，保留成功项及正文；携带 `{run_id}` 和 `Idempotency-Key`，首次入队202、重放或无工作200、冲突或无小结的旧稿409、队列／磁盘限制429。`POST .../summaries/pause` 暂停已发布稿的辅助工作；未发布稿仍用整个工作流的 pause/resume。所有恢复沿用原连接、模型摘要、窗口与来源快照。
+`POST .../summaries/retry` 仅用于已发布稿的暂停／遗留缺项，保留成功项及正文；携带 `{run_id}` 和 `Idempotency-Key`，首次入队202、重放或无工作200、冲突或无小结的旧稿409、队列／磁盘限制429。`POST .../summaries/pause` 暂停已发布稿的辅助工作；未发布稿仍用整个工作流的 pause/resume。恢复沿用原连接、模型 ID、参数、预算和来源快照；凭据通过引用读取，不进行远端模型摘要校验。
 
 English: Explicit summary retry preserves prose and ready items using the original connection/model/context/source snapshots. It requires Idempotency-Key and returns 202 queued, 200 replay/no work, 409 conflict/legacy, or 429 admission/disk limits. Pause auxiliary work separately only for a published draft; unpublished work uses workflow pause/resume. No model switching or autonomous restart is implied.
 
 ## 优化与入库示例 / Optimization and enrollment examples
 
-先在系统状态配置、验证并启用 Ollama。以下脚本创建优化、等待整体发布并导出 TXT；环境变量 `JOB_ID` 指向已完成的普通音视频任务。保存 `OPTIMIZATION_KEY` 并在同一次提交重试时复用，429 按 Retry-After 稍后重试；故障或暂停不会无限轮询。Bearer 密钥仅从环境变量读取。
+先在系统状态配置、验证并启用 Chat Completions。以下脚本创建优化、等待整体发布并导出 TXT；环境变量 `JOB_ID` 指向已完成的普通音视频任务。保存 `OPTIMIZATION_KEY` 并在同一次提交重试时复用，429 按 Retry-After 稍后重试；故障或暂停不会无限轮询。Bearer 密钥仅从环境变量读取。
 
-Configure and enable a verified Ollama model first. Supply a completed audio/video job ID and retain the same optimization key for submission retries. The example waits for publication before exporting; paused/failed work requires explicit action.
+Configure and enable a verified Chat Completions model first. Supply a completed audio/video job ID and retain the same optimization key for submission retries. The example waits for publication before exporting; paused/failed work requires explicit action.
 
 ```python
 import os

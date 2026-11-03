@@ -185,7 +185,7 @@ async def evaluate(arguments) -> None:
     cases = [case for case in corpus['cases'] if arguments.split == 'all' or case['split'] == arguments.split]
     if not cases:
         raise ValueError('The selected split has no cases')
-    config = {'base_url': engine.normalize_url(arguments.base_url), 'model': arguments.model,
+    config = {'protocol': 'openai_chat_completions', '_api_key': os.getenv('OPTIMIZATION_API_KEY', ''), 'extra_body': json.loads(os.getenv('OPTIMIZATION_EXTRA_BODY', '{}')), 'base_url': engine.normalize_url(arguments.base_url), 'model': arguments.model,
               'use_proxy': arguments.use_proxy, 'context_length': arguments.context,
               'rewrite_mode': arguments.rewrite_mode, 'prompt_version': engine.PROMPT_VERSION}
     identity = {'corpus_sha256': hashlib.sha256(arguments.corpus.read_bytes()).hexdigest(),
@@ -196,11 +196,10 @@ async def evaluate(arguments) -> None:
                 'generation_pipeline': 'prepared_parts_forced_seams_assembly_v1',
                 'review_pipeline': 'whole_fixed_source_and_candidate_v1',
                 'policy_sha256': hashlib.sha256((ROOT/'audio_intel/optimization_policy.py').read_bytes() + (ROOT/'audio_intel/optimization_engine.py').read_bytes()).hexdigest()}
-    remote = await engine.discover(config)
-    model = next((item for item in remote['models'] if item['name'] == arguments.model), None)
-    if not model:
-        raise ValueError('Requested model is not installed on the configured service')
-    identity['model_digest'] = model['digest']
+    config = await engine.verify(config)
+    remote = {}
+    identity['structured_output_mode'] = config['structured_output_mode']
+    identity['extra_body'] = config['extra_body']
     if arguments.output.exists():
         if not arguments.resume:
             raise ValueError('Output exists; choose a new path or explicitly --resume')

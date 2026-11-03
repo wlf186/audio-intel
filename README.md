@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  After model setup, core speech inference runs offline and task data stays on your machine. Optional transcript optimization sends relevant text to your configured Ollama service.
+  After model setup, core speech inference runs offline and task data stays on your machine. Optional transcript optimization sends relevant text to your configured OpenAI Chat Completions-compatible service (including local Ollama).
 </p>
 
 <p align="center">
@@ -43,7 +43,7 @@ Video results include a zoomable picture-and-waveform timeline with horizontal s
 
 Voiceprint libraries support groups, scoped ASR recognition and batch move/delete. Transcript downloads support default-on name/note redaction and up to 100 keyword replacements, with persistent browser preferences. ZIP v2 includes groups and imports remain compatible with v1. Upgrade backups cover only necessary data and must be removed after complete acceptance; see [the upgrade guide](docs/UPGRADE.md).
 
-Optional Ollama optimization offers three rewrite strengths, merged consecutive speech, complete side-by-side comparison and illustrated exports. New drafts include source-bound group summaries and video scene titles in reading and PDF/Word exports. Generation, bounded checks and automatic summary recovery publish together. Abnormal outputs receive bounded repair, then labelled keywords or source excerpts supply a fallback; accepted keywords finish the item. Paused or legacy missing insights retain an explicit recovery action. Small models can still miss or change facts, so retain source comparison. Voiceprint enrollment offers original or enhanced audio, defaulting to original. See [expression optimization](docs/EXPRESSION_OPTIMIZATION.md).
+Optional Chat Completions optimization offers three rewrite strengths, merged consecutive speech, complete side-by-side comparison and illustrated exports. New drafts include source-bound group summaries and video scene titles in reading and PDF/Word exports. Generation, bounded checks and automatic summary recovery publish together. Abnormal outputs receive bounded repair, then labelled keywords or source excerpts supply a fallback; accepted keywords finish the item. Paused or legacy missing insights retain an explicit recovery action. Small models can still miss or change facts, so retain source comparison. Voiceprint enrollment offers original or enhanced audio, defaulting to original. See [expression optimization](docs/EXPRESSION_OPTIMIZATION.md).
 
 ## Interface preview
 
@@ -68,7 +68,7 @@ Transcription results support entering speaker names and optional notes manually
 | Area | Capabilities |
 | --- | --- |
 | **Local speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, concise PDF/Word (DOCX), and detailed JSON/SRT/VTT/TXT export |
-| **Optional transcript cleanup** | User-configured Ollama, verified model context, resumable reading drafts, original/draft comparison and redacted PDF/DOCX/TXT exports; disabled by default |
+| **Optional transcript cleanup** | User-configured OpenAI Chat Completions-compatible service, verified text/JSON generation, resumable reading drafts, original/draft comparison and redacted PDF/DOCX/TXT exports; disabled by default |
 | **Speaker intelligence** | Voiceprints distinguish namesakes by notes and support named, renameable samples; custom and voiceprint-derived hotword lists improve domain vocabulary while completed tasks retain immutable snapshots |
 | **Local voice studio** | Qwen3-TTS 0.6B/1.7B, preset voices, one-off or library-based voice cloning with optional 3–30 second library reference ranges, 1.7B VoiceDesign, and WAV/FLAC/MP3 output |
 | **Document synthesis** | EPUB, TXT, Markdown, text PDF, DOCX, XLSX and PPTX; structural/length previews, reusable imports with bulk removal, checkpoint recovery, and album-tagged ZIP / complete MP3 downloads |
@@ -241,7 +241,7 @@ Add `Authorization: Bearer $AUDIO_INTEL_API_KEY` when authentication is configur
 | [Library transfer](docs/LIBRARY.md) | Voiceprints and hotwords, full ZIP transfer, merge/replacement, pinyin sorting and A–Z index |
 | [Workspace layout](docs/WORKSPACES.md) | Resizable desktop panes, independent layout preferences, compact library and video reading |
 | [Speech enhancement](docs/ASR_ENHANCEMENT.md) | Offline denoising, quiet-speech gain, playback comparison, API controls and paired validation |
-| [Expression optimization](docs/EXPRESSION_OPTIMIZATION.md) | Ollama setup, faithful cleanup, pause/resume, comparison, exports and API |
+| [Expression optimization](docs/EXPRESSION_OPTIMIZATION.md) | Chat Completions setup, faithful cleanup, pause/resume, comparison, exports and API |
 | [API](docs/API.md) | Native asynchronous and OpenAI-compatible usage contracts |
 | [Architecture and capabilities](docs/ARCHITECTURE.md) | Pipelines, models, devices, acceleration, queues, progress, and cancellation |
 | [Local HTTPS](docs/HTTPS.md) | Project CA, certificate trust, SAN renewal, and fingerprint verification |

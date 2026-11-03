@@ -11,69 +11,28 @@ from test_optimization import PROFILE, configured, job, source, start, url, wait
 from test_voiceprint_groups_exports import local
 
 
-def transport(monkeypatch, *, observed=65536, status=200, message=None, loaded=True):
+@pytest.mark.parametrize('requested', [16384, 32768, 65536])
+def test_client_budget_does_not_claim_server_allocation(monkeypatch, requested):
+    from test_optimization_provider import CONFIG, stream
     calls = []
     def handle(request):
-        body = json.loads(request.content) if request.content else None
+        body = json.loads(request.content)
         calls.append((request.url.path, body))
-        if request.url.path == '/api/tags':
-            return httpx.Response(200, json={'models': [{'name': PROFILE['model'], 'digest': PROFILE['model_digest']}]})
-        if request.url.path == '/api/show':
-            return httpx.Response(200, json={'capabilities': ['completion'], 'model_info': {'test.context_length': 262144}})
-        if request.url.path == '/api/ps':
-            models = [{'name': PROFILE['model'], 'digest': PROFILE['model_digest'], 'context_length': observed}] if loaded else []
-            return httpx.Response(200, json={'models': models})
-        if not body.get('messages'):
-            return httpx.Response(200, json={'done': True, 'done_reason': 'load'})
-        if status != 200:
-            return httpx.Response(status, json={'error': message})
-        event = {'message': {'content': '预算15万元，不是50万元。暂未确认。'}, 'done': True, 'done_reason': 'stop'}
-        if message:
-            event = {'error': message, 'done': True}
-        return httpx.Response(200, text=json.dumps(event)+'\n')
-    monkeypatch.setattr(engine, 'client', lambda config: httpx.AsyncClient(base_url=config['base_url']+'/', transport=httpx.MockTransport(handle)))
-    return calls
-
-
-@pytest.mark.parametrize('requested', [16384, 32768, 65536])
-def test_verify_uses_requested_window_not_native_or_running_maximum(monkeypatch, requested):
-    calls = transport(monkeypatch)
-    result = asyncio.run(engine.verify({**PROFILE, 'context_length': requested}))
+        return httpx.Response(200, text=stream('{"ok":true}' if body.get('response_format') else '预算15万元，不是50万元。这个暂时还没有确认。'))
+    monkeypatch.setattr(engine, 'client', lambda config: httpx.AsyncClient(base_url='http://model.invalid/v1/', transport=httpx.MockTransport(handle)))
+    result = asyncio.run(engine.verify({**CONFIG, 'context_length': requested}))
     assert result['context_length'] == requested
-    assert result['observed_context_length'] == 65536
-    assert result['model_context_length'] == 262144
-    posts = [body for path, body in calls if path == '/api/chat']
-    assert posts[0]['messages'] == []  # Allocate before inspecting /ps.
-    assert all(body['options']['num_ctx'] == requested for body in posts)
-    assert all(body['truncate'] is False for body in posts if body['messages'])
+    assert result['observed_context_length'] is result['model_context_length'] is None
+    assert all(path == '/v1/chat/completions' for path, body in calls)
+    assert all('options' not in body and 'truncate' not in body for path, body in calls)
 
 
-@pytest.mark.parametrize('observed,loaded', [(16384, True), (32768, False)])
-def test_verification_rejects_insufficient_or_unknown_allocation(monkeypatch, observed, loaded):
-    calls = transport(monkeypatch, observed=observed, loaded=loaded)
-    with pytest.raises(engine.ContextWindowError, match='请求窗口 32768'):
-        asyncio.run(engine.verify(PROFILE))
-    assert not any(body and body.get('messages') for path, body in calls if path == '/api/chat')
-
-
-def test_verification_rejects_over_model_max_before_loading(monkeypatch):
-    calls = transport(monkeypatch)
-    with pytest.raises(ValueError, match='超过模型原生上限'):
-        asyncio.run(engine.verify({**PROFILE, 'context_length': 524288}))
-    assert not any(path == '/api/chat' for path, _ in calls)
-
-
-@pytest.mark.parametrize('status,message', [(500, 'CUDA out of memory'), (413, 'input exceeds the context length'), (200, 'context window limit exceeded')])
+@pytest.mark.parametrize('status,message', [(500, 'CUDA out of memory'), (413, 'input exceeds the context length')])
 def test_capacity_errors_escape_generation_fallback(monkeypatch, status, message):
-    transport(monkeypatch, status=status, message=message)
+    from test_optimization_provider import CONFIG
+    monkeypatch.setattr(engine, 'client', lambda config: httpx.AsyncClient(base_url='http://model.invalid/v1/', transport=httpx.MockTransport(lambda r: httpx.Response(status, json={'error': message}))))
     with pytest.raises(engine.ContextWindowError):
-        asyncio.run(engine.generate(PROFILE, [{'ordinal': 0, 'original_text': '预算15万元。'}], [], '', '', None))
-
-
-def test_window_shrink_after_successful_response_cannot_be_accepted(monkeypatch):
-    transport(monkeypatch, observed=16384)
-    with pytest.raises(engine.ContextWindowError, match='观测窗口 16384'):
-        asyncio.run(engine.generate(PROFILE, [{'ordinal': 0, 'original_text': '预算15万元。'}], [], '', '', None))
+        asyncio.run(engine.generate(CONFIG, [{'ordinal': 0, 'original_text': '预算15万元。'}], [], '', '', None))
 
 
 def test_context_configuration_binding_defaults_and_schema(local, monkeypatch):
@@ -125,7 +84,7 @@ def test_documented_context_configuration_example(monkeypatch):
         return httpx.Response(200, json=body)
     original = httpx.Client
     monkeypatch.setattr(httpx, 'Client', lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs))
-    for k, v in {'AUDIO_INTEL_BASE_URL': 'http://test.invalid', 'AUDIO_INTEL_API_KEY': 'synthetic-key', 'OLLAMA_BASE_URL': 'http://model.invalid', 'OLLAMA_MODEL': 'test-model'}.items():
+    for k, v in {'AUDIO_INTEL_BASE_URL': 'http://test.invalid', 'AUDIO_INTEL_API_KEY': 'synthetic-key', 'OPTIMIZATION_BASE_URL': 'http://model.invalid/v1', 'OPTIMIZATION_MODEL': 'test-model'}.items():
         monkeypatch.setenv(k, v)
     exec(compile(blocks[0], '<context-example>', 'exec'), {})
     assert calls == ['/api/v1/settings/transcript-optimization/verify', '/api/v1/settings/transcript-optimization']

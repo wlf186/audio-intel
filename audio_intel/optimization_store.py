@@ -78,17 +78,59 @@ def migrate(connection: sqlite3.Connection) -> None:
 
     from .optimization_summaries import migrate as migrate_summaries
     migrate_summaries(connection)
+    from . import optimization_provider as provider
+    with connection:
+        connection.execute('BEGIN IMMEDIATE')
+        connection.execute('CREATE TABLE IF NOT EXISTS optimization_credentials (id TEXT PRIMARY KEY, base_url TEXT NOT NULL, api_key TEXT NOT NULL)')
+        if connection.execute('SELECT version FROM schema_meta').fetchone()[0] < 22:
+            row = connection.execute('SELECT value_json FROM optimization_settings WHERE singleton=1').fetchone()
+            if row:
+                config = json.loads(row[0])
+                if config.get('base_url') and config.get('protocol') != provider.PROTOCOL:
+                    config = provider.effective(config)
+                    config.update(enabled=False, verified_at=None, model_digest=None, model_context_length=None, observed_context_length=None)
+                    connection.execute('UPDATE optimization_settings SET value_json=? WHERE singleton=1', (encode(config),))
+            connection.execute("UPDATE transcript_optimizations SET state='paused',error='协议已更新，请重新验证连接后继续 / Protocol updated; verify connection and resume',revision=revision+1,updated_at=? WHERE state IN ('queued','running','pausing')", (db.utcnow(),))
+            connection.execute("UPDATE transcript_optimizations SET summary_state='paused',summary_revision=summary_revision+1 WHERE summary_state IN ('queued','running')")
+            connection.execute('UPDATE schema_meta SET version=22')
 
 
 def settings() -> dict:
     with db.connect() as connection:
         row = connection.execute('SELECT value_json FROM optimization_settings WHERE singleton=1').fetchone()
-    return json.loads(row[0]) if row else {'base_url': '', 'model': '', 'use_proxy': False, 'enabled': False, 'context_length': 16384}
+    return json.loads(row[0]) if row else {'base_url': '', 'model': '', 'use_proxy': False, 'enabled': False, 'context_length': 16384, 'protocol': 'openai_chat_completions', 'extra_body': {}}
+
+
+def credential(config: dict) -> str:
+    if '_api_key' in config:
+        return config['_api_key']
+    reference = config.get('credential_ref')
+    if not reference:
+        return ''
+    with db.connect() as connection:
+        row = connection.execute('SELECT base_url,api_key FROM optimization_credentials WHERE id=?', (reference,)).fetchone()
+    if row is None or row[0] != config['base_url']:
+        raise ValueError('模型服务凭据缺失或地址不匹配 / Model credential missing or endpoint mismatch')
+    return row[1]
 
 
 def save_settings(value: dict) -> None:
+    value = dict(value)
     with db.connect() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        if '_api_key' in value:
+            key = value.pop('_api_key')
+            reference = value.get('credential_ref')
+            row = connection.execute('SELECT base_url FROM optimization_credentials WHERE id=?', (reference,)).fetchone() if reference else None
+            if not row or row[0] != value['base_url']:
+                reference = uuid.uuid4().hex
+            connection.execute('INSERT INTO optimization_credentials VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET api_key=excluded.api_key',
+                               (reference, value['base_url'], key))
+            value['credential_ref'] = reference
         connection.execute('INSERT INTO optimization_settings VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET value_json=excluded.value_json', (encode(value),))
+        # Keep credentials while any historical run can retry its insights.
+        connection.execute("DELETE FROM optimization_credentials WHERE id != COALESCE(?, '') AND id NOT IN (SELECT json_extract(config_json, '$.credential_ref') FROM transcript_optimizations WHERE json_extract(config_json, '$.credential_ref') IS NOT NULL)", (value.get('credential_ref'),))
+        connection.commit()
 
 
 def summary(row: Any) -> dict:
@@ -176,6 +218,8 @@ def replay(job_id: str, key: str, regenerate: bool, rewrite_mode: str | None = N
 
 def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: str, hotwords: list[str], paragraphs: list[dict], minimum_free: int = 0) -> tuple[str, bool]:
     import shutil
+    if '_api_key' in config or 'api_key' in config:
+        raise ValueError('Task snapshots cannot contain credentials')
     fingerprint = digest({'regenerate': regenerate, **({'rewrite_mode': config['rewrite_mode']} if 'rewrite_mode' in config else {})})
     key_hash = digest(key)
     with db.connect() as connection:
