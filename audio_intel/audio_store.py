@@ -15,7 +15,9 @@ from .asr_resources import AsrResourceLimitError, check_resources, current_budge
 store_stack: ContextVar[ExitStack | None] = ContextVar("audio_stores", default=None)
 
 BLOCK = 65_536
-MAX_READ = 60 * 16000
+# Legacy float-second endpoints can differ by one sample after independent int()
+# conversions (e.g. 2.01..62.01). Preserve those samples without unbounded reads.
+MAX_READ = 60 * 16000 + 1
 RATE = 16000
 
 
@@ -71,7 +73,7 @@ class AudioStore:
 
     def read(self, start: int, end: int) -> np.ndarray:
         if not 0 <= start <= end <= self.count or end - start > MAX_READ:
-            raise ValueError('Audio read must be within the file and at most 60 seconds')
+            raise ValueError('Audio read must be within the file and at most 60 seconds plus one endpoint sample')
         if self.budget:
             self.budget.check(memory=(end - start) * 8)
         with self.lock:

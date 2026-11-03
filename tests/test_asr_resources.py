@@ -77,6 +77,23 @@ def test_store_preserves_unquantized_samples_normalization_and_wav(tmp_path):
     (tmp_path / 'samples.f32').unlink()
 
 
+def test_60_second_float_endpoints_preserve_the_extra_sample(tmp_path, monkeypatch):
+    from asr import pipeline
+    monkeypatch.setattr(pipeline, 'settings', replace(settings, mock_mode=False))
+    start, end = 2.01, 62.01
+    first, last = int(start * 16000), int(end * 16000)
+    assert last - first == 960001
+    values = np.linspace(-.7, .7, last + 1, dtype=np.float32)
+    with AudioStore(tmp_path / 'endpoints.f32') as store:
+        store.append(values)
+        store.file.flush()
+        chunks = pipeline.combine_vad([{'start': start, 'end': end}], end)
+        assert len(chunks) == 1
+        output = pipeline.write_chunks(store, 16000, chunks, tmp_path / 'chunks')
+    sf.write(tmp_path / 'legacy.wav', values[first:last], 16000, subtype='PCM_16')
+    assert Path(output[0]['path']).read_bytes() == (tmp_path / 'legacy.wav').read_bytes()
+
+
 def test_silence_and_window_descriptors_match_legacy(tmp_path):
     from importlib.util import find_spec
     with AudioStore(tmp_path / 'samples.f32') as store:
