@@ -20,6 +20,7 @@ RATE = 16000
 
 
 class AudioStore:
+    sample_rate = RATE
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
@@ -49,6 +50,16 @@ class AudioStore:
     def __len__(self) -> int:
         return self.count
 
+    @property
+    def sample_count(self) -> int:
+        return self.count
+
+    def iter_blocks(self, size: int = BLOCK):
+        if not 0 < size <= MAX_READ:
+            raise ValueError('Invalid audio block size')
+        for start in range(0, self.count, size):
+            yield self.read(start, min(self.count, start + size))
+
     def __array__(self, *args: Any, **kwargs: Any) -> Any:
         raise TypeError('AudioStore requires bounded reads, not whole-array conversion')
 
@@ -77,10 +88,13 @@ class AudioStore:
             if not math.isfinite(peak):
                 raise ValueError('Audio contains non-finite samples')
             self._grow(len(block))
-            self.file.seek(self.count * 4)
-            block.tofile(self.file)
+            self._write_block(block)
             self.count += len(block)
             self.peak = max(self.peak, peak)
+
+    def _write_block(self, block: np.ndarray) -> None:
+        self.file.seek(self.count * 4)
+        block.tofile(self.file)
 
     def _grow(self, count: int) -> None:
         # Existing public playback format is RIFF PCM16, not a silent RF64 change.

@@ -59,11 +59,11 @@ class Budget:
     @classmethod
     def start(cls, config: Any, pid: int, work: Path, output: Path) -> Budget:
         try:
+            from .video_uploads import remaining_bytes
             total, available = memory_capacity()
             reserve = max(GIB, total // 10)
             process = psutil.Process(pid)
             baseline = tree_rss(pid, process.create_time())
-            from .video_uploads import remaining_bytes
             free = min(shutil.disk_usage(config.temp_dir).free, shutil.disk_usage(output).free) - remaining_bytes()
             memory = config.asr_memory_budget_bytes or max(0, (available - reserve) // 2)
             disk = config.asr_work_budget_bytes or max(0, (free - config.min_free_disk_bytes) // 2)
@@ -85,21 +85,27 @@ class Budget:
         if not force and not memory and not work and time.monotonic() - self.last_check < .5:
             return
         try:
-            rss = tree_rss(self.policy['pid'], self.policy['created'])
-            self.peak_rss = max(self.peak_rss, rss)
-            used = 0
-            for key in ('work', 'output'):
-                for path in Path(self.policy[key]).rglob('*'):
-                    try:
-                        if path.is_file() and not path.is_symlink():
-                            used += path.stat().st_size
-                    except FileNotFoundError:
-                        pass
-            self.peak_work = max(self.peak_work, used)
-            _, available = memory_capacity()
-            from .video_uploads import remaining_bytes
-            free = min(shutil.disk_usage(Path(self.policy[k]) if Path(self.policy[k]).exists() else Path(self.policy[k]).parent).free
-                       for k in ("work", "output")) - remaining_bytes()
+            refresh = force or not hasattr(self, '_snapshot') or time.monotonic() - self.last_check >= .5 or memory >= 64 * 1024**2
+            if refresh:
+                rss = tree_rss(self.policy['pid'], self.policy['created'])
+                self.peak_rss = max(self.peak_rss, rss)
+                used = 0
+                for key in ('work', 'output'):
+                    for path in Path(self.policy[key]).rglob('*'):
+                        try:
+                            if path.is_file() and not path.is_symlink():
+                                used += path.stat().st_size
+                        except FileNotFoundError:
+                            pass
+                self.peak_work = max(self.peak_work, used)
+                _, available = memory_capacity()
+                from .video_uploads import remaining_bytes
+                free = min(shutil.disk_usage(Path(self.policy[k]) if Path(self.policy[k]).exists() else Path(self.policy[k]).parent).free
+                           for k in ("work", "output")) - remaining_bytes()
+                self._snapshot = rss, used, available, free
+                self.last_check = time.monotonic()
+            else:
+                rss, used, available, free = self._snapshot
             checks = [('memory growth', rss + memory - self.policy['baseline_rss'], self.policy['memory_bytes']),
                       ('system memory', memory, available - self.policy['memory_reserve']),
                       ('workspace', used + work, self.policy['work_bytes']),
@@ -107,9 +113,10 @@ class Budget:
             for name, required, limit in checks:
                 if required > limit:
                     self.fail(name, required, limit)
-            self.last_check = time.monotonic()
         except AsrResourceLimitError:
             raise
+        except psutil.NoSuchProcess:
+            return  # Supervisor reconciles an exited executor via the normal exit path.
         except Exception as exc:
             raise AsrResourceLimitError('Cannot inspect ASR resource usage') from exc
 

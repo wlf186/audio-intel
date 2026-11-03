@@ -63,6 +63,7 @@ def decode_audio(source: Path, output: Path) -> tuple[Any, int]:
             stream = container.streams.audio[0]
             resampler = av.AudioResampler(format="fltp", layout="mono", rate=16000)
             for frame in container.decode(stream):
+                check_resources(memory=frame.samples * (len(frame.layout.channels) + 2) * 8)
                 for converted in resampler.resample(frame):
                     store.append(converted.to_ndarray().reshape(-1))
             for converted in resampler.resample(None):
@@ -138,6 +139,7 @@ def write_chunks(audio: Any, rate: int, chunks: list[dict[str, float]], director
     directory.mkdir(parents=True, exist_ok=True)
     output = []
     for index, chunk in enumerate(chunks):
+        check_resources(work=max(0, int((chunk["end"] - chunk["start"]) * rate)) * 2, stage="writing_chunks")
         path = directory / f"chunk-{index:04d}.wav"
         if source is not None:
             import soundfile as sf
@@ -435,13 +437,26 @@ def _turn_cluster_centers(
             selected.append((speaker_id, start, end))
     if not selected:
         return {}
-    output = model.generate(
-        input=[audio[int(start * 16000):int(end * 16000)] for _, start, end in selected],
-        cache={},
-        is_final=True,
-        batch_size=batch_size,
-    )
-    vectors = torch.cat([item["spk_embedding"] for item in output], dim=0).detach().cpu().numpy()
+    if isinstance(audio, AudioStore):
+        if audio.budget:
+            audio.budget.check(memory=len(selected) * 8192)
+        batches = []
+        for offset in range(0, len(selected), batch_size):
+            output = model.generate(
+                input=[audio[int(start * 16000):int(end * 16000)]
+                       for _, start, end in selected[offset:offset + batch_size]],
+                cache={}, is_final=True, batch_size=batch_size,
+            )
+            batches.extend(item['spk_embedding'].detach().cpu().numpy() for item in output)
+        vectors = np.concatenate(batches, axis=0)
+    else:
+        output = model.generate(
+            input=[audio[int(start * 16000):int(end * 16000)] for _, start, end in selected],
+            cache={},
+            is_final=True,
+            batch_size=batch_size,
+        )
+        vectors = torch.cat([item["spk_embedding"] for item in output], dim=0).detach().cpu().numpy()
     if len(vectors) != len(selected):
         raise ValueError("CAM++ returned an unexpected number of turn embeddings")
     centers = {}
@@ -597,6 +612,7 @@ def run_stage(
     if budget:
         payload["_resource_policy"] = budget.policy
         budget.check(force=True)
+    check_resources(memory=len(payload.get("chunks", [])) * 16384)
     atomic_json(input_path, payload)
     environment = os.environ.copy()
     environment.update({"PYTHONPATH": str(settings.root), "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})

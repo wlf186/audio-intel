@@ -116,6 +116,7 @@ def _run_one_job(
     state = "failed"
     recycle_reason: str | None = None
     budget = None
+    resource_failure = False
     token = current_budget.set(None)
     try:
         if kind == 'asr':
@@ -138,7 +139,7 @@ def _run_one_job(
     except AsrResourceLimitError as exc:
         if budget:
             budget.record(settings.jobs_dir / job_id, job['attempts'], str(exc))
-        (context.work_dir / "resource-failure.pending").touch()
+        resource_failure = True
         return {"state": "resource_limited", "error_message": str(exc)[:2000]}
     except JobCancelled as exc:
         # The supervisor owns terminal cancellation. Keeping the row running here
@@ -169,7 +170,7 @@ def _run_one_job(
     finally:
         current_budget.reset(token)
         # Supervisor records terminal resource failure only after the complete tree exits.
-        if not context.work_dir.joinpath('resource-failure.pending').exists():
+        if not resource_failure:
             shutil.rmtree(context.work_dir, ignore_errors=True)
     return {"state": state, "recycle_reason": recycle_reason}
 
@@ -357,6 +358,15 @@ def _complete_resource_failure(kind: str, process: Any, connection: Any, job: di
     clean_partials(job['id'], settings.jobs_dir)
     shutil.rmtree(settings.temp_dir / job['id'], ignore_errors=True)
     _fail_voiceprint_import(job, message)
+    try:
+        directory = settings.jobs_dir / job['id']
+        (directory / 'error.log').write_text(message, encoding='utf-8')
+        diagnostic = directory / 'diagnostics' / f"attempt-{job['attempts']}-resource-budget.json"
+        if not diagnostic.exists():
+            diagnostic.parent.mkdir(parents=True, exist_ok=True)
+            atomic_json(diagnostic, {'error': message, 'stage': current['stage'], 'policy': None})
+    except OSError:
+        pass
     finish_job(job['id'], 'failed', stage='failed', error_code='AsrResourceLimitError',
                error_message=message[:2000], heartbeat_at=utcnow())
 

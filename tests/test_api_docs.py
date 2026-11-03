@@ -40,6 +40,16 @@ def test_openapi_examples_support_const_literals():
     assert _example_for_schema({'anyOf': [{'type': 'string', 'const': 'no_substantive_content'}, {'type': 'null'}]}, {}) == 'no_substantive_content'
 
 
+def test_asr_resource_failure_is_documented_without_submission_shape_change(tmp_path, monkeypatch):
+    local = docs_settings(tmp_path)
+    monkeypatch.setattr(api_module, 'settings', local)
+    monkeypatch.setattr(db_module, 'settings', local)
+    schema = api_module.create_app().openapi()
+    assert 'AsrResourceLimitError' in schema['info']['description']
+    assert 'Original inputs are retained' in schema['info']['description']
+    assert 'memory_budget' not in schema['components']['schemas']['VideoJobRequest']['properties']
+
+
 def test_optimization_openapi_examples_validate_and_describe_v2(tmp_path, monkeypatch):
     from audio_intel import optimization_api as optimization
     from audio_intel.api_models import AsrCapability, CapabilitiesResponse

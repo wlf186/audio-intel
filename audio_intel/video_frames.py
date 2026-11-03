@@ -178,6 +178,7 @@ def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | No
         with av.open(str(source)) as container:
             video = next(s for s in container.streams.video if not (s.disposition & av.stream.Disposition.attached_pic))
             audio = container.streams.audio[0]
+            check_resources(memory=video.width * video.height * 64, stage='video_analysis')
             origin = float(container.start_time or 0) / av.time_base
             duration = float(container.duration or 0) / av.time_base
             resampler = av.AudioResampler(format='fltp', layout='mono', rate=16000)
@@ -198,6 +199,7 @@ def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | No
             for packet in container.demux(video, audio):
                 for frame in packet.decode():
                     if isinstance(frame, av.AudioFrame):
+                        check_resources(memory=frame.samples * (len(frame.layout.channels) + 2) * 8)
                         for converted in resampler.resample(frame):
                             add_audio(converted)
                     else:
