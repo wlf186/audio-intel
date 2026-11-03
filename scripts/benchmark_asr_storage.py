@@ -12,6 +12,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import subprocess
 import threading
 import time
 from types import SimpleNamespace
@@ -71,6 +72,16 @@ def main() -> None:
         audio.close()
         stopped.set(); sampler.join()
         report['peak_tree_rss_bytes'] = peak[0]
+        source_root = Path(__file__).resolve().parents[1]
+        report['source_hashes'] = {
+            name: hashlib.sha256((source_root/name).read_bytes()).hexdigest()
+            for name in ('audio_intel/audio_store.py', 'audio_intel/asr_resources.py', 'asr/pipeline.py')
+        }
+        try:
+            report['source_sha'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=source_root, text=True).strip()
+            report['source_dirty'] = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=source_root, text=True).strip())
+        except (OSError, subprocess.CalledProcessError):
+            report['source_sha'] = None
         report['note'] = 'Cache counters measure logical payload writes, not SSD NAND writes. Model inference is measured separately.'
         (root/'report.json').write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
         budget.record(output, 1)

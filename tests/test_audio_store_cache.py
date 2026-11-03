@@ -122,3 +122,23 @@ def test_short_writes_are_completed_without_duplicate_payload(tmp_path):
         store.append(values)
         assert store.stats['spilled_bytes'] == values.nbytes
         assert np.array_equal(store[:], values)
+
+
+def test_io_exception_traceback_does_not_pin_memory_mapping(tmp_path):
+    import errno
+    path = tmp_path/'cache.f32'
+    store = AudioStore(path, memory_limit_bytes=BLOCK*4)
+    store.append(np.ones(BLOCK, dtype=np.float32))
+    actual = path.open('w+b', buffering=0)
+    class BrokenWriter:
+        def __getattr__(self, name):
+            return getattr(actual, name)
+        def write(self, data):
+            raise OSError(errno.ENOSPC, 'fixture disk full')
+    store.file = BrokenWriter()
+    with pytest.raises(OSError) as failure:
+        store.reclaim(BLOCK*4)
+    # Keep the complete traceback alive during cleanup, as worker error handling does.
+    assert failure.value.__traceback__ is not None
+    store.close()
+    assert store.memory_bytes == 0 and not path.exists()

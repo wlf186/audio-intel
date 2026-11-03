@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from .asr_resources import AsrResourceLimitError, check_resources, current_budget
+from .asr_resources import AsrResourceLimitError, current_budget
 
 store_stack: ContextVar[ExitStack | None] = ContextVar("audio_stores", default=None)
 
@@ -164,7 +164,9 @@ class AudioStore:
         with self.lock:
             for _ in range(min(pages, len(self.resident))):
                 item = self.resident[0]
-                values = np.frombuffer(item.memory, dtype=np.float32, count=item.count)
+                # An I/O exception retains its traceback arguments. An owned bounded
+                # copy prevents that traceback from pinning an exported mmap view.
+                values = np.frombuffer(item.memory, dtype=np.float32, count=item.count).copy()
                 try:
                     offset = self._write(values)
                 finally:
