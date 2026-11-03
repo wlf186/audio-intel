@@ -142,3 +142,34 @@ def test_io_exception_traceback_does_not_pin_memory_mapping(tmp_path):
     assert failure.value.__traceback__ is not None
     store.close()
     assert store.memory_bytes == 0 and not path.exists()
+
+
+def test_memory_cache_does_not_reserve_an_unwritten_float_file(tmp_path, monkeypatch):
+    p = policy(tmp_path)
+    p.update(work_bytes=BLOCK*3*2+8192, audio_cache_bytes=BLOCK*4*4)
+    budget = resources.Budget(p)
+    monkeypatch.setattr(resources, 'tree_rss', lambda *a: 100 + sum(x.memory_bytes for x in budget.audio_stores))
+    monkeypatch.setattr(resources, 'memory_capacity', lambda: (100*1024**3, 100*1024**3))
+    monkeypatch.setattr('audio_intel.video_uploads.remaining_bytes', lambda: 0)
+    token = resources.current_budget.set(budget)
+    try:
+        with AudioStore(tmp_path/'cache.f32') as store:
+            store.append(np.ones(BLOCK*3, dtype=np.float32))
+            store.finish(tmp_path/'normalized.wav')
+            assert store.stats['spilled_bytes'] == 0
+            assert not store.path.exists()
+            assert np.all(store[:BLOCK] == 1)
+    finally:
+        resources.current_budget.reset(token)
+
+
+def test_cache_policy_respects_admin_cap_and_quarter_budget(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from audio_intel.config import settings
+    monkeypatch.setattr(resources, 'memory_capacity', lambda: (100*1024**3, 100*1024**3))
+    monkeypatch.setattr('audio_intel.video_uploads.remaining_bytes', lambda: 0)
+    for cap, expected in [(4*1024**3, 10*1024**2//4), (BLOCK*4+17, BLOCK*4), (0, 0)]:
+        config = replace(settings, temp_dir=tmp_path, asr_memory_budget_bytes=10*1024**2,
+                         asr_work_budget_bytes=1024**3, asr_audio_cache_max_bytes=cap)
+        budget = resources.Budget.start(config, resources.psutil.Process().pid, tmp_path, tmp_path)
+        assert budget.policy['audio_cache_bytes'] == expected

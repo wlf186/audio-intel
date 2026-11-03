@@ -25,6 +25,21 @@ from audio_intel.asr_resources import Budget, current_budget, tree_rss
 from audio_intel.config import settings
 
 
+def source_identity() -> dict:
+    report = {}
+    source_root = Path(__file__).resolve().parents[1]
+    report['source_hashes'] = {
+        name: hashlib.sha256((source_root/name).read_bytes()).hexdigest()
+        for name in ('audio_intel/audio_store.py', 'audio_intel/asr_resources.py', 'asr/pipeline.py', 'audio_intel/video_frames.py')
+    }
+    try:
+        report['source_sha'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=source_root, text=True).strip()
+        report['source_dirty'] = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=source_root, text=True).strip())
+    except (OSError, subprocess.CalledProcessError):
+        report['source_sha'] = None
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', required=True, type=Path)
@@ -32,6 +47,7 @@ def main() -> None:
     parser.add_argument('--cache-max-bytes', type=int, default=4 * 1024**3)
     parser.add_argument('--video', action='store_true')
     args = parser.parse_args()
+    identity = source_identity()
     if args.cache_max_bytes < 0 or not args.source.is_file():
         parser.error('Require an existing source and nonnegative cache cap')
     root = args.output_dir.resolve()
@@ -72,16 +88,10 @@ def main() -> None:
         audio.close()
         stopped.set(); sampler.join()
         report['peak_tree_rss_bytes'] = peak[0]
-        source_root = Path(__file__).resolve().parents[1]
-        report['source_hashes'] = {
-            name: hashlib.sha256((source_root/name).read_bytes()).hexdigest()
-            for name in ('audio_intel/audio_store.py', 'audio_intel/asr_resources.py', 'asr/pipeline.py')
-        }
-        try:
-            report['source_sha'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=source_root, text=True).strip()
-            report['source_dirty'] = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=source_root, text=True).strip())
-        except (OSError, subprocess.CalledProcessError):
-            report['source_sha'] = None
+        report.update(identity)
+        report['source_unchanged'] = source_identity()['source_hashes'] == identity['source_hashes']
+        if not report['source_unchanged']:
+            raise RuntimeError('Source changed during benchmark; rerun from fixed source')
         report['note'] = 'Cache counters measure logical payload writes, not SSD NAND writes. Model inference is measured separately.'
         (root/'report.json').write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
         budget.record(output, 1)
