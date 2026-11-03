@@ -14,9 +14,13 @@ API_DESCRIPTION = r"""
 
 ## 执行器异常退出 / Unexpected executor exit
 
+ASR 音轨采用内存优先、按需落盘缓存；缓存上限由服务端 `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES` 控制（默认 4 GiB，且不超过任务内存预算的 25%，0 为直接落盘），无需新增请求参数。归一化不重写缓存。
+
 `AsrResourceLimitError` 表示 ASR 主机内存或工作空间超预算；原件保留，调整资源后可完整重试，无自动算法降级。
 
 `WorkerProcessExit` 表示执行器意外退出。错误详情可含退出码、POSIX 信号或 Windows 十六进制状态；仅 SIGKILL 加任务期间增长的 cgroup OOM 计数会提示“疑似 OOM”，仍需内核日志确认。每次尝试的本地有界诊断保留在任务目录，内存采样不进入列表或 SSE。
+
+ASR uses memory-first audio caching with spill-on-demand. AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES defaults to 4 GiB, additionally capped at 25% of the task RAM budget; zero selects disk. Normalization does not rewrite cached samples. This is server configuration, not a request field.
 
 `AsrResourceLimitError` means ASR exceeded its host-memory/workspace budget. Original inputs are retained for a complete retry; algorithms are not automatically downgraded.
 

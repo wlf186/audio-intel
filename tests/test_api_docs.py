@@ -47,6 +47,8 @@ def test_asr_resource_failure_is_documented_without_submission_shape_change(tmp_
     schema = api_module.create_app().openapi()
     assert 'AsrResourceLimitError' in schema['info']['description']
     assert 'Original inputs are retained' in schema['info']['description']
+    assert 'AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES' in schema['info']['description']
+    assert 'audio_cache_max_bytes' not in schema['components']['schemas']['VideoJobRequest']['properties']
     assert 'memory_budget' not in schema['components']['schemas']['VideoJobRequest']['properties']
 
 

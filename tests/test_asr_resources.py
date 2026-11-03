@@ -25,7 +25,7 @@ def test_13_hour_decode_buffers_are_bounded(tmp_path, monkeypatch):
             assert item.stop - item.start <= BLOCK
             return np.full(min(item.stop, len(self)) - item.start, -.25, dtype=np.float32)
     with AudioStore(tmp_path / 'virtual.f32') as store:
-        monkeypatch.setattr(store, '_write_block', lambda block: None)
+        monkeypatch.setattr(store, '_write', lambda block: 0)
         tracemalloc.start()
         try:
             store.append(VirtualAudio())
@@ -48,7 +48,6 @@ def test_vad_keeps_60_second_cache_and_final_flush(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, 'funasr', types.SimpleNamespace(AutoModel=lambda **kwargs: Model()))
     with AudioStore(tmp_path / 'vad.f32') as store:
         store.silence(120 * 16000 + 127)
-        store.file.flush()
         result = run_vad(store, 16000)
     assert [x[0] for x in calls] == [960000, 960000, 127]
     assert len({x[1] for x in calls}) == 1
@@ -74,7 +73,7 @@ def test_store_preserves_unquantized_samples_normalization_and_wav(tmp_path):
     sf.write(tmp_path / 'legacy.wav', expected, 16000, subtype='PCM_16')
     assert target.read_bytes() == (tmp_path / 'legacy.wav').read_bytes()
     target.unlink()  # Native Windows handle ownership.
-    (tmp_path / 'samples.f32').unlink()
+    assert not (tmp_path / 'samples.f32').exists()
 
 
 def test_60_second_float_endpoints_preserve_the_extra_sample(tmp_path, monkeypatch):
@@ -86,7 +85,6 @@ def test_60_second_float_endpoints_preserve_the_extra_sample(tmp_path, monkeypat
     values = np.linspace(-.7, .7, last + 1, dtype=np.float32)
     with AudioStore(tmp_path / 'endpoints.f32') as store:
         store.append(values)
-        store.file.flush()
         chunks = pipeline.combine_vad([{'start': start, 'end': end}], end)
         assert len(chunks) == 1
         output = pipeline.write_chunks(store, 16000, chunks, tmp_path / 'chunks')
@@ -102,7 +100,7 @@ def test_no_vad_fallback_streams_original_long_chunk(tmp_path, monkeypatch, enha
     source = tmp_path / 'enhanced.wav'
     sf.write(source, values, 16000, subtype='PCM_16')
     with AudioStore(tmp_path / 'long.f32') as store:
-        store.append(values); store.file.flush()
+        store.append(values)
         chunks = pipeline.combine_vad([], 65.)
         assert chunks == [{'start': 0., 'end': 65.}]
         output = pipeline.write_chunks(store, 16000, chunks, tmp_path / 'chunks', source=source if enhanced else None)
@@ -129,7 +127,6 @@ def test_silence_and_window_descriptors_match_legacy(tmp_path):
     with AudioStore(tmp_path / 'samples.f32') as store:
         store.silence(16000)
         store.append(np.ones(91_321, dtype=np.float32))
-        store.file.flush()
         regions = [{'start': 1., 'end': 1.5}, {'start': 2., 'end': 6.7}]
         descriptors = speaker_windows(store, regions)
         assert all(isinstance(x[2], tuple) for x in descriptors)

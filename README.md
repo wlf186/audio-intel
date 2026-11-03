@@ -274,3 +274,5 @@ Models, task inputs, generated outputs, the SQLite database, voices, voiceprints
 ## License
 
 Project-owned code is licensed under the [Apache License 2.0](LICENSE). Downloaded model weights are not included in the repository and remain subject to their upstream licenses; see [third-party and model notices](THIRD_PARTY_NOTICES.md). The code license does not grant rights to third-party names or intellectual property; see the [brand and project status notice](BRAND_NOTICE.md).
+
+ASR 长音频和视频使用内存优先的有界 float32 缓存，资源不足时按需落盘，每个采样最多写一次；归一化不重写缓存。缓存默认最多 4 GiB 且不超过任务内存预算的 25%，可通过 `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES` 设置（0 为直接落盘）。配置与写入计量见[资源预算](docs/TROUBLESHOOTING.md#asr-resource-budgets--asr-资源预算)。

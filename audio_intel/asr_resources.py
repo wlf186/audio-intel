@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import shutil
 import time
+import threading
 from typing import Any
 
 import psutil
@@ -55,6 +56,8 @@ class Budget:
         self.peak_rss = policy['baseline_rss']
         self.peak_work = 0
         self.stage = 'starting'
+        self.audio_stores = []
+        self.lock = threading.RLock()
 
     @classmethod
     def start(cls, config: Any, pid: int, work: Path, output: Path) -> Budget:
@@ -71,6 +74,7 @@ class Budget:
                 raise AsrResourceLimitError('Insufficient ASR resource headroom / ASR 资源余量不足')
             return cls(dict(version=1, pid=pid, created=process.create_time(), baseline_rss=baseline,
                             memory_bytes=memory, work_bytes=disk, memory_reserve=reserve,
+                            audio_cache_bytes=min(config.asr_audio_cache_max_bytes, memory // 4) // 262144 * 262144,
                             disk_reserve=config.min_free_disk_bytes, work=str(work), output=str(output)))
         except AsrResourceLimitError:
             raise
@@ -81,7 +85,12 @@ class Budget:
         raise AsrResourceLimitError(f'ASR {self.stage}: {resource} requires {required} bytes; '
                                     f'budget/available {max(0, limit)} bytes / 资源预算不足，输入已保留')
 
-    def check(self, *, memory: int = 0, work: int = 0, force: bool = False) -> None:
+    def check(self, *, memory: int = 0, work: int = 0, force: bool = False,
+              reclaim: bool = True, disk_only: bool = False) -> None:
+        with self.lock:
+            self._check(memory=memory, work=work, force=force, reclaim=reclaim, disk_only=disk_only)
+
+    def _check(self, *, memory: int, work: int, force: bool, reclaim: bool, disk_only: bool) -> None:
         if not force and not memory and not work and time.monotonic() - self.last_check < .5:
             return
         try:
@@ -103,14 +112,40 @@ class Budget:
                 free = min(shutil.disk_usage(Path(self.policy[k]) if Path(self.policy[k]).exists() else Path(self.policy[k]).parent).free
                            for k in ("work", "output")) - remaining_bytes()
                 self._snapshot = rss, used, available, free
+                self._cache_snapshot = sum(x.memory_bytes for x in self.audio_stores)
+                self._write_snapshot = sum(x.stats['spilled_bytes'] + x.stats['normalized_written_bytes'] for x in self.audio_stores)
                 self.last_check = time.monotonic()
             else:
                 rss, used, available, free = self._snapshot
+                growth = max(0, sum(x.memory_bytes for x in self.audio_stores) - self._cache_snapshot)
+                writes = max(0, sum(x.stats['spilled_bytes'] + x.stats['normalized_written_bytes'] for x in self.audio_stores) - self._write_snapshot)
+                rss += growth
+                available -= growth
+                used += writes
+                free -= writes
+            if reclaim and not disk_only and any(x.memory_bytes for x in self.audio_stores):
+                margin = min(512 * 1024**2, self.policy['memory_bytes'] // 10)
+                needed = max(0, rss + memory - self.policy['baseline_rss'] - self.policy['memory_bytes'] + margin,
+                             memory - available + self.policy['memory_reserve'] + margin)
+                if needed:
+                    freed = 0
+                    for store in self.audio_stores:
+                        try:
+                            freed += store.reclaim(needed - freed)
+                        except AsrResourceLimitError:
+                            break  # Soft reclamation is optional; enforce the hard limits below.
+                        if freed >= needed:
+                            break
+                    if freed:
+                        self._check(memory=memory, work=work, force=True, reclaim=False, disk_only=False)
+                        return
             checks = [('memory growth', rss + memory - self.policy['baseline_rss'], self.policy['memory_bytes']),
                       ('system memory', memory, available - self.policy['memory_reserve']),
                       ('workspace', used + work, self.policy['work_bytes']),
                       ('disk headroom', work, free - self.policy['disk_reserve'])]
             for name, required, limit in checks:
+                if disk_only and name in {'memory growth', 'system memory'}:
+                    continue
                 if required > limit:
                     self.fail(name, required, limit)
         except AsrResourceLimitError:
@@ -126,6 +161,8 @@ class Budget:
             value = dict(policy=self.policy, observed_peak_tree_rss_bytes=self.peak_rss,
                          observed_peak_work_bytes=self.peak_work, stage=self.stage, error=error,
                          note='RSS sums shared pages conservatively; sampling is not an OS hard limit.')
+            if self.audio_stores:
+                value['audio_cache'] = [dict(x.stats) for x in self.audio_stores]
             assert len(json.dumps(value).encode()) <= 16384
             folder = directory / 'diagnostics'
             folder.mkdir(parents=True, exist_ok=True)

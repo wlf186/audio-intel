@@ -58,7 +58,8 @@ def decode_audio(source: Path, output: Path) -> tuple[Any, int]:
     import av
     import numpy as np
 
-    with AudioStore(output.with_suffix('.f32')) as store:
+    store = AudioStore(output.with_suffix('.f32'))
+    try:
         with av.open(str(source)) as container:
             stream = container.streams.audio[0]
             resampler = av.AudioResampler(format="fltp", layout="mono", rate=16000)
@@ -69,8 +70,10 @@ def decode_audio(source: Path, output: Path) -> tuple[Any, int]:
             for converted in resampler.resample(None):
                 store.append(converted.to_ndarray().reshape(-1))
         store.finish(output)
-    # Reopen for bounded downstream reads; never expose the entire array.
-    return AudioStore.open(output.with_suffix('.f32')), 16000
+        return store, 16000
+    except BaseException:
+        store.close()
+        raise
 
 
 def _mock_audio(source: Path, output: Path) -> tuple[list[float], int]:
@@ -84,7 +87,6 @@ def _mock_audio(source: Path, output: Path) -> tuple[list[float], int]:
     store = AudioStore(output.with_suffix('.f32'))
     for start in range(0, int(duration * rate), 65_536):
         store.append([0.06 * math.sin(2 * math.pi * 180 * i / rate) for i in range(start, min(int(duration * rate), start + 65_536))])
-    store.file.flush()
     with wave.open(str(output), 'wb') as handle:
         handle.setnchannels(1); handle.setsampwidth(2); handle.setframerate(rate)
         for start in range(0, len(store), 65_536):
@@ -956,6 +958,14 @@ def _process_job(context: JobContext) -> dict[str, Any]:
     else:
         audio, rate = _mock_audio(source, normalized) if settings.mock_mode else decode_audio(source, normalized)
     duration = len(audio) / rate
+    try:
+        waveform = waveform_peaks(audio, 240)
+    except Exception as exc:
+        if isinstance(exc, AsrResourceLimitError):
+            raise
+        waveform = []
+        logger.warning("Unable to prepare ASR waveform for job %s (%s samples)",
+                       context.job_id, len(audio), exc_info=True)
     context.set_input_duration(duration)
     context.progress(0.10, "voice_activity_detection")
     if settings.mock_mode:
@@ -1052,29 +1062,36 @@ def _process_job(context: JobContext) -> dict[str, Any]:
             if isinstance(exc, AsrResourceLimitError):
                 raise
             voiceprint_status["status"] = "degraded"
+    def owned_diarize(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return diarize(*args, **kwargs)
+        finally:
+            if isinstance(audio, AudioStore):
+                audio.close()
+
     diarization_executor = None
     diarization_future = None
     if request.get("diarize") and not settings.mock_mode and _parallel_diarization_enabled(compute_device):
         diarization_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="asr-diarization")
         if voiceprint_people:
             diarization_future = diarization_executor.submit(
-                diarize, audio, vad, request.get("speaker_count"), diarization_batch_size,
+                owned_diarize, audio, vad, request.get("speaker_count"), diarization_batch_size,
                 voiceprint_people, True,
             )
         else:
             diarization_future = diarization_executor.submit(
-                diarize, audio, vad, request.get("speaker_count"), diarization_batch_size,
+                owned_diarize, audio, vad, request.get("speaker_count"), diarization_batch_size,
             )
         diarization = []
     elif request.get("diarize") and not settings.mock_mode:
         if voiceprint_people:
-            diarization, voiceprint_matches, match_status = diarize(
+            diarization, voiceprint_matches, match_status = owned_diarize(
                 audio, vad, request.get("speaker_count"), batch_size=diarization_batch_size,
                 voiceprint_people=voiceprint_people, return_metadata=True,
             )
             voiceprint_status.update(match_status)
         else:
-            diarization = diarize(
+            diarization = owned_diarize(
                 audio, vad, request.get("speaker_count"), batch_size=diarization_batch_size,
             )
     elif settings.mock_mode:
@@ -1082,6 +1099,8 @@ def _process_job(context: JobContext) -> dict[str, Any]:
         diarization = [{"start": 0, "end": midpoint, "speaker": "Speaker_0"}, {"start": midpoint, "end": duration, "speaker": "Speaker_1"}]
     else:
         diarization = [{"start": 0, "end": duration, "speaker": "Speaker_0"}]
+    if diarization_future is None and isinstance(audio, AudioStore):
+        audio.close()
     try:
         context.progress(0.32, f"qwen3_asr_{compute_device}")
         if settings.mock_mode:
@@ -1215,14 +1234,7 @@ def _process_job(context: JobContext) -> dict[str, Any]:
             shutil.move(str(enhanced), str(target))
             enhancement["playback_url"] = f"/api/v1/jobs/{context.job_id}/artifacts/enhanced.wav"
         result["audio_enhancement"] = enhancement
-    try:
-        result["waveform"] = waveform_peaks(audio, 240)
-    except Exception as exc:
-        if isinstance(exc, AsrResourceLimitError):
-            raise
-        result["waveform"] = []
-        logger.warning("Unable to prepare ASR waveform for job %s (%s samples)",
-                       context.job_id, len(audio), exc_info=True)
+    result["waveform"] = waveform
     context.progress(0.96, "writing_exports")
     if video_result is not None:
         result["video"] = video_result

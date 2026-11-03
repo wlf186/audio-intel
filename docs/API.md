@@ -1052,3 +1052,5 @@ if os.environ.get("AUDIO_INTEL_RESUME_SUMMARIES") == "1":
     response.raise_for_status()
     print(response.status_code, response.json())
 ```
+
+ASR 音轨采用内存优先、按需落盘缓存；服务端 `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES` 默认 4 GiB，且不超过任务内存预算的 25%，0 为直接落盘。归一化不重写缓存；请求及结果结构保持兼容。资源不足仍返回任务错误 `AsrResourceLimitError`，原始输入保留。详见[资源预算](TROUBLESHOOTING.md#asr-resource-budgets--asr-资源预算)。
