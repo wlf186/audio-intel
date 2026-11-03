@@ -6,7 +6,7 @@
 
 表达优化统一使用 OpenAI Chat Completions 兼容接口。旧 Ollama 地址自动补 `/v1`，保留模型、代理与预算并填入 `reasoning_effort:none`，清除旧验证、关闭启用并暂停未完成优化。到系统状态重新验证、保存启用，再显式继续任务。上下文是客户端输入加输出预算，不再覆盖或查询实际服务端窗口；Ollama 窗口需在服务端配置。设置及密钥规则见[表达优化](EXPRESSION_OPTIMIZATION.md)。
 
-从 v19/v20/v21 升级前停服并创建 SQLite 一致快照，无需复制媒体。更新源码后执行 `./service.sh setup api`（Windows：`service.cmd setup api`）同步 API 环境并重建前端，恢复原 API、ASR/TTS supervisor 和 executor，验收后清理临时升级备份。API 依赖 pypdf 从6.21.2更新到6.21.4以修复已知漏洞；ASR/TTS/aligner依赖及模型不变。已为 v22 且无其他数据迁移的实例不需新增迁移备份。更早版本须累计核对下方历史迁移要求，尤其 pre-v19 的一次性旧优化清理。
+从 v19/v20/v21 升级前停服并创建 SQLite 一致快照，无需复制媒体。更新源码后执行 `./service.sh setup api`（Windows：`service.cmd setup api`）同步 API 环境并重建前端，恢复原 API、ASR/TTS supervisor 和 executor，验收后清理临时升级备份。API 依赖 pypdf 从 6.21.2 更新到 6.21.4 以修复已知漏洞；ASR/TTS/aligner 依赖及模型不变。已为 v22 且无其他数据迁移的实例不需新增迁移备份。更早版本须累计核对下方历史迁移要求，尤其 pre-v19 的一次性旧优化清理。
 
 English: Upgrading released v0.1.41 migrates SQLite v19→v22 additively, retaining jobs, drafts and checkpoints; no media rewrite. Legacy Ollama connections require re-verification before enabling. Context is now a client budget. Stop services and take a SQLite-only backup before migration, run setup api to update pypdf 6.21.4 and rebuild the UI, restore all original processes and verify before removing temporary backups. Already-v22 deployments without additional data migrations need no repeated upgrade backup. Earlier upgrades must include intervening requirements. Speech models and inference dependencies are unchanged.
 

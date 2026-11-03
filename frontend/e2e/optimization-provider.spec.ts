@@ -47,7 +47,12 @@ for(const width of [1440,390])test(`Chat Completions manual model and private ke
  await expect(panel.getByLabel('优化模型',{exact:true})).toHaveValue('qwen3.5:9b')
  await expect(panel.getByLabel('模型服务 API Key',{exact:true})).toHaveAttribute('placeholder','已保存；留空保留')
  await panel.getByText('高级参数',{exact:true}).click()
- await panel.screenshot({path:info.outputPath('chat-completions-settings-saved.png')})
+ // Expand the scroll container and hide shell chrome only while capturing this documentation panel.
+ await panel.screenshot({
+  path:info.outputPath('chat-completions-settings-saved.png'),
+  animations:'disabled',
+  style:'.app-shell{height:auto!important;overflow:visible!important}.app-shell>main{overflow:visible!important}.app-shell>header,.app-shell>footer,.skip-link{visibility:hidden!important}'
+ })
  await panel.getByText('高级参数',{exact:true}).click()
  await panel.getByRole('button',{name:'清除密钥',exact:true}).click()
  await expect(panel.getByRole('button',{name:'保存并启用',exact:true})).toBeDisabled()
