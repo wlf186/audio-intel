@@ -141,6 +141,30 @@ def write_chunks(audio: Any, rate: int, chunks: list[dict[str, float]], director
     for index, chunk in enumerate(chunks):
         check_resources(work=max(0, int((chunk["end"] - chunk["start"]) * rate)) * 2, stage="writing_chunks")
         path = directory / f"chunk-{index:04d}.wav"
+        if isinstance(audio, AudioStore):
+            import soundfile as sf
+            first, last = int(chunk['start'] * rate), int(chunk['end'] * rate)
+            with ExitStack() as stack:
+                reader = stack.enter_context(sf.SoundFile(source)) if source is not None else None
+                if reader is not None:
+                    reader.seek(first)
+                if settings.mock_mode:
+                    writer = stack.enter_context(wave.open(str(path), 'wb'))
+                    writer.setnchannels(1); writer.setsampwidth(2); writer.setframerate(rate)
+                else:
+                    writer = stack.enter_context(sf.SoundFile(path, 'w', samplerate=rate, channels=1, subtype='PCM_16'))
+                # No-VAD fallback is deliberately one original chunk, however long.
+                for position in range(first, last, 65_536):
+                    end = min(last, position + 65_536)
+                    samples = reader.read(end - position, dtype='float32') if reader is not None else audio.read(position, end)
+                    if len(samples) != end - position:
+                        raise ValueError('Chunk source changed during read')
+                    if settings.mock_mode:
+                        writer.writeframes(b''.join(int(max(-1, min(1, x)) * 32767).to_bytes(2, 'little', signed=True) for x in samples))
+                    else:
+                        writer.write(samples)
+            output.append({"index": index, "path": str(path), **chunk})
+            continue
         if source is not None:
             import soundfile as sf
             with sf.SoundFile(source) as reader:
@@ -613,6 +637,11 @@ def run_stage(
         payload["_resource_policy"] = budget.policy
         budget.check(force=True)
     check_resources(memory=len(payload.get("chunks", [])) * 16384)
+    if operation in {'transcribe', 'align'}:
+        durations = sorted((max(0., item['end'] - item['start']) for item in payload.get('chunks', [])), reverse=True)
+        # Preserve original chunks, including the whole-file no-VAD fallback;
+        # reject over-budget model inputs before launching their execution stage.
+        check_resources(memory=math.ceil(sum(durations[:max(1, int(payload.get('batch_size', 1)))]) * 16000 * 64), stage=operation)
     atomic_json(input_path, payload)
     environment = os.environ.copy()
     environment.update({"PYTHONPATH": str(settings.root), "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})

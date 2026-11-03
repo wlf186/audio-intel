@@ -94,6 +94,36 @@ def test_60_second_float_endpoints_preserve_the_extra_sample(tmp_path, monkeypat
     assert Path(output[0]['path']).read_bytes() == (tmp_path / 'legacy.wav').read_bytes()
 
 
+@pytest.mark.parametrize('enhanced', [False, True])
+def test_no_vad_fallback_streams_original_long_chunk(tmp_path, monkeypatch, enhanced):
+    from asr import pipeline
+    monkeypatch.setattr(pipeline, 'settings', replace(settings, mock_mode=False))
+    values = np.linspace(-.6, .6, 65 * 16000, dtype=np.float32)
+    source = tmp_path / 'enhanced.wav'
+    sf.write(source, values, 16000, subtype='PCM_16')
+    with AudioStore(tmp_path / 'long.f32') as store:
+        store.append(values); store.file.flush()
+        chunks = pipeline.combine_vad([], 65.)
+        assert chunks == [{'start': 0., 'end': 65.}]
+        output = pipeline.write_chunks(store, 16000, chunks, tmp_path / 'chunks', source=source if enhanced else None)
+    assert Path(output[0]['path']).read_bytes() == source.read_bytes()
+
+
+def test_model_input_budget_rejects_large_no_vad_chunk_before_spawn(tmp_path, monkeypatch):
+    from asr import pipeline
+    monkeypatch.setattr(resources, 'tree_rss', lambda *args: 100)
+    monkeypatch.setattr(resources, 'memory_capacity', lambda: (10 * 1024**3, 10 * 1024**3))
+    monkeypatch.setattr('audio_intel.video_uploads.remaining_bytes', lambda: 0)
+    monkeypatch.setattr(pipeline.subprocess, 'Popen', lambda *a, **k: pytest.fail('Must reject before spawning'))
+    token = resources.current_budget.set(resources.Budget(policy(tmp_path)))
+    try:
+        with pytest.raises(resources.AsrResourceLimitError, match='memory growth'):
+            pipeline.run_stage('transcribe', {'chunks': [{'start': 0., 'end': 13.5 * 3600}], 'batch_size': 1}, tmp_path)
+        assert not (tmp_path / 'transcribe-input.json').exists()
+    finally:
+        resources.current_budget.reset(token)
+
+
 def test_silence_and_window_descriptors_match_legacy(tmp_path):
     from importlib.util import find_spec
     with AudioStore(tmp_path / 'samples.f32') as store:
