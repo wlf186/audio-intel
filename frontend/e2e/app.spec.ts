@@ -635,7 +635,8 @@ test('partial library failures stay local and keep editors unavailable',async({p
  await expect(page.locator('.connection-banner')).toHaveCount(0)
 })
 
-test('voiceprint metadata synchronizes independently selectable full and surname-free system lists',async({page})=>{
+for(const delayed of [false,true])test(`voiceprint metadata synchronizes independently selectable full and surname-free system lists (${delayed?'held':'normal'} refresh)`,{tag:'@timing'},async({page,responseGate})=>{
+ const refreshGate=responseGate()
  const errors:string[]=[]
  page.on('pageerror',error=>errors.push(error.message))
  page.on('console',message=>{if(message.type()==='error')errors.push(message.text())})
@@ -646,6 +647,10 @@ test('voiceprint metadata synchronizes independently selectable full and surname
   {id:'hotwords_voiceprint_people_short',name:'声纹库人名（去姓）',kind:'system',terms:[] as string[],term_count:0,created_at:now,updated_at:now},
  ]
  let submitted:any
+ await page.route('**/api/v1/voiceprints/groups',async route=>{
+  if(delayed&&submitted)await refreshGate.hold()
+  await route.fulfill({json:{items:[{id:'voiceprint_ungrouped',name:'未分组',kind:'system',person_count:people.length,created_at:now,updated_at:now}]}})
+ })
  await routeJobList(page,route=>route.fulfill({json:{items:[],count:0,total:0,limit:100,offset:0,has_more:false}}))
  await page.route('**/api/v1/capabilities',route=>route.fulfill({json:{asr:{hotword_library:{supported:true,max_lists:100,max_terms_per_list:200,max_selected_lists:8,max_selected_terms:500,max_prompt_chars:8000,max_name_chars:80,max_term_chars:64},speaker_count:{min:1,max:15,default:'auto'},voiceprint_library:true,aligner_languages:['Chinese']},limits:{max_clone_reference_seconds:15},events:{sse:false}}}))
  await page.route('**/api/v1/voiceprints/people',async route=>{
@@ -671,6 +676,16 @@ test('voiceprint metadata synchronizes independently selectable full and surname
  expect(submitted).toEqual({name:'张三丰',note:'研发一部',include_in_hotword_library:true,group_id:'voiceprint_ungrouped'})
  await expect(page.locator('.samples-panel .person-note')).toHaveText('研发一部')
  await expect(page.getByText('已加入人名热词')).toBeVisible()
+ // Metadata renders before all post-save refreshes finish; navigation stays guarded.
+ if(delayed){
+  await refreshGate.arrived
+  await expect(page.getByRole('button',{name:'编辑 张三丰',exact:true})).toBeDisabled()
+  await page.getByRole('tab',{name:'热词库',exact:true}).click()
+  await expect(page.getByRole('status')).toContainText('请等待当前操作完成后再离开')
+  await expect(page.getByRole('tab',{name:'声纹库',exact:true})).toHaveAttribute('aria-selected','true')
+  refreshGate.release()
+ }
+ await expect(page.getByRole('button',{name:'编辑 张三丰',exact:true})).toBeEnabled()
  await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'资料库'}).click()
  await page.getByRole('tab',{name:'热词库',exact:true}).click()
  const fullList=page.locator('.hotword-list article').filter({hasText:'声纹库人名（全名）'})
