@@ -135,6 +135,10 @@ Completed ASR results support explicit task-local name/note editing. The browser
 
 Custom scenario lists and the two system-generated voiceprint-name lists are selected per normal ASR task. They are converted into a Qwen vocabulary context and stored as an immutable request snapshot. Hotwords never apply to clone-reference analysis or voiceprint sample imports.
 
+ASR result waveforms retain ceil-width legacy bins and four-decimal peaks. Reduction reads at most 65,536 samples per block; temporary memory does not scale with recording length. The separately versioned waveform sidecar uses its existing uniform-bin contract. Recoverable preview errors yield an empty optional waveform, preserving exports.
+
+Executor crash diagnostics sample only executor RSS at the existing heartbeat, reset for each dispatch, and remain outside worker details/job revisions/SSE. Unexpected exits record platform status and best-effort cgroup-v2 OOM counter changes in bounded per-attempt local files. OOM attribution remains tentative. Diagnostic failures never change queue recovery or cancellation ordering.
+
 ## TTS pipeline
 
 | Model group | Preset / CustomVoice | Clone / Base | VoiceDesign |

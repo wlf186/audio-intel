@@ -12,6 +12,16 @@ API_DESCRIPTION = r"""
 >
 > 本项目是独立、非官方、以非商业方式维护的开源项目，未获得 CD PROJEKT RED、R. Talsorian Games 或任何相关权利方的授权、赞助、认可或背书，与其不存在隶属关系。`Sandevistan` 名称及相关第三方知识产权的权利归各自权利人所有。 / This is an independent, unofficial open-source project maintained on a non-commercial basis. It has not been authorized, sponsored, approved, or endorsed by CD PROJEKT RED, R. Talsorian Games, or any related rights holder, and is not affiliated with them. Rights in the Sandevistan name and related third-party intellectual property remain with their respective owners.
 
+## 执行器异常退出 / Unexpected executor exit
+
+`WorkerProcessExit` 表示执行器意外退出。错误详情可含退出码、POSIX 信号或 Windows 十六进制状态；仅 SIGKILL 加任务期间增长的 cgroup OOM 计数会提示“疑似 OOM”，仍需内核日志确认。每次尝试的本地有界诊断保留在任务目录，内存采样不进入列表或 SSE。
+
+`WorkerProcessExit` retains its stable code. Human-readable details may include an exit code, POSIX signal or Windows status. SIGKILL with an increased cgroup OOM counter indicates possible OOM, not proof about a specific PID. Bounded per-attempt diagnostics stay local; memory samples do not affect list/SSE semantics.
+
+```json
+{"error_code":"WorkerProcessExit","error_message":"ASR execution process exited unexpectedly (exit_code=-9, signal=SIGKILL; possible system OOM / 疑似系统内存不足，需内核日志确认)"}
+```
+
 ## 快速开始 / Quick start
 
 本页、`/openapi.json`、Swagger 代码/样式/图标、数据和模型推理均由本机提供；运行期间不访问 CDN、在线校验器或模型云服务。 / This page, its assets, data, and inference stay local at runtime.
@@ -979,7 +989,7 @@ FIELD_DESCRIPTIONS = {
     "request": "创建任务时保存的请求快照 / Request snapshot stored when the job was created",
     "result": "成功任务的结果；未完成时为 null / Successful result; null before completion",
     "error_code": "稳定错误代码 / Stable error code",
-    "error_message": "可供用户或开发者阅读的错误详情 / Human-readable error detail",
+    "error_message": "可读错误详情；WorkerProcessExit 可含退出码、平台信号和疑似 OOM 提示，不作为机器判断依据 / Human-readable error detail; WorkerProcessExit may include exit code, platform signal and possible OOM evidence; clients must use error_code",
     "created_at": "创建时间（ISO 8601） / Creation time in ISO 8601 format",
     "updated_at": "最后更新时间（ISO 8601） / Last update time in ISO 8601 format",
     "started_at": "开始处理时间（ISO 8601） / Processing start time in ISO 8601 format",

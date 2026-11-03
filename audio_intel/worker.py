@@ -21,6 +21,7 @@ from .db import (
     upsert_worker, utcnow,
 )
 from .observability import stage_details
+from .executor_diagnostics import ExecutorDiagnostics
 from .utils import atomic_json, read_json
 
 
@@ -349,6 +350,7 @@ def run(kind: str) -> None:
     remaining_processes: list[int] = []
     executor_dirty = False
     idle_since: float | None = None
+    diagnostics: ExecutorDiagnostics | None = None
 
     try:
         while not stop:
@@ -361,7 +363,9 @@ def run(kind: str) -> None:
                         if current.get("cancel_requested"):
                             _forced_cancel(current)
                         else:
-                            message = f"{kind.upper()} execution process exited unexpectedly"
+                            probe = diagnostics or ExecutorDiagnostics(process.pid)
+                            message = probe.record(current, process.exitcode,
+                                                   settings.jobs_dir / current['id'], utcnow())
                             _fail_voiceprint_import(current, message)
                             shutil.rmtree(settings.temp_dir / current["id"], ignore_errors=True)
                             finish_job(
@@ -376,6 +380,7 @@ def run(kind: str) -> None:
                 current_job = None
                 executor_dirty = False
                 idle_since = None
+                diagnostics = None
                 upsert_worker(worker_id, kind, worker_pid, "idle", details={"executor_pid": process.pid})
 
             if current_job is None:
@@ -405,6 +410,7 @@ def run(kind: str) -> None:
                     worker_id, kind, worker_pid, "busy", current_job["id"],
                     {"stage": "starting", "executor_pid": process.pid},
                 )
+                diagnostics = ExecutorDiagnostics(process.pid)
                 connection.send(current_job["id"])
                 next_heartbeat = 0.0
 
@@ -436,6 +442,7 @@ def run(kind: str) -> None:
                         upsert_worker(worker_id, kind, worker_pid, "running" if current_job else "idle", current_job["id"] if current_job else None, details={"executor_pid": process.pid})
                         if current_job is not None:
                             update_job(current_job["id"], error_code=None, error_message=None)
+                            diagnostics = ExecutorDiagnostics(process.pid)
                             connection.send(current_job["id"])
                         continue
                     if completed.get("state") == "cancelled":
@@ -477,6 +484,8 @@ def run(kind: str) -> None:
 
             now = time.monotonic()
             if now >= next_heartbeat:
+                if diagnostics is not None:
+                    diagnostics.sample()
                 touch_job_heartbeat(current["id"])
                 upsert_worker(
                     worker_id, kind, worker_pid, "busy", current["id"],

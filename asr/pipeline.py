@@ -1118,6 +1118,8 @@ def process_job(context: JobContext) -> dict[str, Any]:
         result["waveform"] = waveform_peaks(audio, 240)
     except Exception:
         result["waveform"] = []
+        logger.warning("Unable to prepare ASR waveform for job %s (%s samples)",
+                       context.job_id, len(audio), exc_info=True)
     context.progress(0.96, "writing_exports")
     if video_result is not None:
         result["video"] = video_result

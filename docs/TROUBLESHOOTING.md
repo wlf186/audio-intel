@@ -134,6 +134,16 @@ submit a new job with `off` when preferred. Retry preserves the persisted mode.
 - 停止失败时任务会保持 `cancelling` 并继续重试，避免残留进程仍在写文件。查看 `./service.sh logs all`，并用 `nvidia-smi` 确认是否存在项目外的 GPU 进程。
 - `AUDIO_INTEL_CANCEL_GRACE_SECONDS` 可调整协作退出窗口；降低它会更早强制停止，通常保持默认值 `1` 即可。
 
+## ASR 在收尾阶段失败或出现 WorkerProcessExit
+
+超长录音可能在旧版 88% 收尾阶段因波形预览将全部采样转成 Python 列表而耗尽主机内存。v0.1.43 改为固定块统计，保留旧峰值和分箱规则；它控制的是波形附加内存，解码数组和模型仍占用内存。可捕获的波形异常降级为空波形并记录警告。
+
+新发生的执行器异常保留 `WorkerProcessExit`，错误信息包含可用退出码、POSIX 信号或 Windows 状态。任务目录的 `diagnostics/attempt-N-executor-exit.json` 和 `error.log` 记录最后阶段、观察到的执行器 RSS 高水位、最近系统可用内存及可用的 cgroup OOM 计数变化；采样不是精确峰值。SIGKILL 本身不能证明 OOM，计数也可能来自同组其他进程；不可采集时记录未知。诊断是尽力写入，不阻塞队列恢复。
+
+历史失败记录不补写原因或自动重试。原输入仍保留时可明确重试，或以新幂等键提交独立验证任务。重试仍完整执行原请求，没有 ASR 阶段断点恢复。
+
+English: ASR waveform reduction has bounded extra memory since v0.1.43. Decoding and models still use memory. Exit diagnostics retain the stable WorkerProcessExit code and provide platform-aware status, observed RSS and best-effort cgroup evidence. SIGKILL or a shared OOM counter alone cannot prove the cause. Historical failures are unchanged; explicitly retry or submit a separate job. ASR does not resume partial stages.
+
 ## 任务完成后内存没有立即下降
 
 - ASR/TTS 执行器会在连续任务和短暂突发之间复用。只有同类队列已经排空时才开始空闲计时；默认 60 秒内出现新任务会取消计时并继续复用，不会为了回收内存跳过或延迟已排队任务。

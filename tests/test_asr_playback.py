@@ -248,3 +248,19 @@ def test_historical_missing_original_wav_download_is_not_regenerated(local):
         assert client.get(f"/api/v1/jobs/{job['id']}/playback?download=true").status_code == 404
         assert not (local.jobs_dir / job['id'] / 'output').exists()
         assert db.get_job(job['id']) == before
+
+
+def test_optional_waveform_failure_keeps_transcript_and_exports(local, monkeypatch):
+    def fail(*args):
+        raise MemoryError('synthetic preview allocation failure')
+    monkeypatch.setattr(pipeline, 'waveform_peaks', fail)
+    db.init_db()
+    job = create_asr(local)
+    _, completed = run_asr(job)
+    assert completed['state'] == 'succeeded'
+    assert completed['result']['text']
+    assert completed['result']['waveform'] == []
+    output = local.jobs_dir / job['id'] / 'output'
+    for suffix in ('json', 'srt', 'vtt', 'txt'):
+        assert (output / ('transcript.' + suffix)).is_file()
+    assert (output / 'playback.wav').is_file()

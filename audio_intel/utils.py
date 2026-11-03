@@ -5,7 +5,7 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Protocol
 
 
 SAFE_NAME = re.compile(r"[^\w.\-\u4e00-\u9fff]+", re.UNICODE)
@@ -38,9 +38,34 @@ def timecode(seconds: float, separator: str = ".") -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}{separator}{milliseconds:03d}"
 
 
-def waveform_peaks(samples: Iterable[float], bins: int = 1200) -> list[float]:
-    values = list(samples)
-    if not values:
+class SampleSequence(Protocol):
+    def __len__(self) -> int: ...
+    def __getitem__(self, index: slice) -> Any: ...
+
+
+def waveform_peaks(samples: SampleSequence, bins: int = 1200) -> list[float]:
+    """Legacy ceil-width bins, with bounded temporary memory even for one bin."""
+    import numpy as np
+
+    if not isinstance(bins, int) or isinstance(bins, bool) or bins <= 0:
+        raise ValueError("bins must be a positive integer")
+    total = len(samples)  # Unknown-length iterators must never be materialized.
+    if not total:
         return []
-    width = max(1, math.ceil(len(values) / bins))
-    return [round(max(abs(float(v)) for v in values[i : i + width]), 4) for i in range(0, len(values), width)]
+    width = max(1, (total + bins - 1) // bins)
+    peaks = []
+    for start in range(0, total, width):
+        end = min(total, start + width)
+        peak = 0.0
+        for cursor in range(start, end, 65_536):
+            # float64 preserves the old per-sample float() conversion, including
+            # integer inputs, without boxing the complete recording into a list.
+            block = np.asarray(samples[cursor:min(end, cursor + 65_536)], dtype=np.float64)
+            if block.ndim != 1:
+                raise ValueError("Expected one-dimensional audio samples")
+            maximum = float(np.max(np.abs(block)))
+            if not math.isfinite(maximum):
+                raise ValueError("Audio contains non-finite samples")
+            peak = max(peak, maximum)
+        peaks.append(round(peak, 4))
+    return peaks

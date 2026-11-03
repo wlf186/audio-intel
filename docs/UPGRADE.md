@@ -1,5 +1,13 @@
 # 升级指南
 
+## v0.1.43：长音频波形内存与退出诊断
+
+从 v0.1.42 升级：**无数据库迁移，无历史文件改写，无需额外升级备份**。ASR 收尾波形按固定大小分块计算，保留旧分箱与四位小数规则，修复超长音频转换整段 Python 列表的内存暴涨。模型、精度、采样率、分段和推理参数不变。
+
+`WorkerProcessExit` 错误码不变，可读信息补充退出码、平台信号和有依据的疑似 OOM 提示；新发生的异常在任务目录保存有界诊断。历史失败任务不会自动重试或补写诊断。同步源码并重建前端，按本机部署流程刷新原有 API、ASR/TTS supervisor 和 executor；本版无依赖调整，不必重新安装模型环境。
+
+English: From v0.1.42, no database migration, historical-file rewrite or extra upgrade backup is required. ASR waveform reduction now uses bounded temporary memory while retaining legacy bins/rounding. Model identity, precision, audio and inference settings remain unchanged. WorkerProcessExit keeps its code and adds readable process-exit evidence plus bounded local per-attempt diagnostics. Historical tasks are not retried or rewritten. Rebuild and refresh all original service processes; inference environments need no reinstall.
+
 ## v0.1.42：通用模型接入与可靠小结
 
 数据迁移：**仅数据库，正式 v0.1.41 的 SQLite v19→v22 累积增量迁移**。v20 增加分组小结、画面标题及检查点，v21 增加生成方式、尝试次数和有界诊断，v22 增加独立凭据表。所有已有任务、优化稿、来源、v1 小结策略及检查点保留；新建／重新优化启用小结 v2 的有标记关键词／原文要点兜底，不自动改写历史稿。
