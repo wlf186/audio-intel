@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import httpx
 
@@ -296,25 +297,34 @@ def test_complete_idempotency_summary_exports_latest_and_cleanup(configured):
 
 def test_pause_resume_disable_and_no_late_writes(configured, monkeypatch):
     calls = []
+    blocked, cancelled = threading.Event(), threading.Event()
+    unit_count = 8
     async def generate(profile,batch,hotwords,before,after,activity):
         calls.append([p['ordinal'] for p in batch])
         if len(calls) == 2:
-            await asyncio.sleep(60)
+            blocked.set()
+            try:
+                await asyncio.sleep(60)
+            finally:
+                cancelled.set()
+        await asyncio.sleep(0)
         return [(p['ordinal'],p['original_text'].replace('那个','')) for p in batch]
     monkeypatch.setattr(engine,'generate',generate)
-    identifier = job(source(100))
+    identifier = job(source(unit_count))
     with TestClient(api.create_app()) as client:
         start(client,identifier)
         state = wait(client,identifier,lambda s: bool(s['candidate'] and s['candidate']['completed_units']>0))
         run = state['candidate']['id']
+        assert blocked.wait(timeout=8)
         assert client.post(url(identifier)+'/pause',json={'run_id':run}).status_code == 200
+        assert cancelled.is_set()
         paused = client.get(url(identifier)).json()['candidate']
         assert paused['state'] == 'paused' and 0 < paused['progress'] < 1
-        assert not store.checkpoint(run,[(99,'late output')])
+        assert not store.checkpoint(run,[(unit_count-1,'late output')])
         assert client.post(f'/api/v1/jobs/{identifier}/transcript-export',json={'format':'pdf','text_version':'optimized','optimization_id':run}).status_code == 409
         assert client.post(url(identifier)+'/resume',json={'run_id':run}).status_code == 200
         state = wait(client,identifier,lambda s: bool(s['published']))
-        assert state['published']['completed_units'] == 100
+        assert state['published']['completed_units'] == unit_count
         assert not any(set(calls[0])&set(batch) for batch in calls[1:])
         start(client,identifier,True,'optimization-regenerate-key')
         disabled = {k: PROFILE[k] for k in ('base_url','model','use_proxy')}
