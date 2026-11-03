@@ -7,7 +7,8 @@ import math
 import mmap
 from bisect import bisect_right
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from itertools import islice
 from pathlib import Path
 import threading
 from typing import Any
@@ -25,11 +26,19 @@ MAX_READ = 60 * 16000 + 1
 RATE = 16000
 
 
-@dataclass
+@dataclass(slots=True)
+class _Page:
+    memory: mmap.mmap
+    count: int = 0
+    extents: list[_Extent] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class _Extent:
     start: int
     count: int
-    memory: mmap.mmap | None = None
+    page: _Page | None = None
+    page_offset: int = 0
     offset: int | None = None
 
 
@@ -52,7 +61,7 @@ class AudioStore:
         self.closed = False
         self.extents: list[_Extent] = []
         self.starts: list[int] = []
-        self.resident: deque[_Extent] = deque()
+        self.resident: deque[_Page] = deque()
         self.budget = current_budget.get()
         limit = (self.budget.policy.get('audio_cache_bytes', 0) if self.budget else 0) if memory_limit_bytes is None else memory_limit_bytes
         self.memory_limit = max(0, limit) // (BLOCK * 4) * (BLOCK * 4)
@@ -106,8 +115,8 @@ class AudioStore:
                 first, last = max(start, item.start), min(end, item.start + item.count)
                 if first < last:
                     offset = first - item.start
-                    if item.memory is not None:
-                        result[first-start:last-start] = np.frombuffer(item.memory, dtype=np.float32, count=last-first, offset=offset*4)
+                    if item.page is not None:
+                        result[first-start:last-start] = np.frombuffer(item.page.memory, dtype=np.float32, count=last-first, offset=(item.page_offset + offset)*4)
                     elif item.offset is not None:
                         self.file.seek(item.offset + offset * 4)
                         data = self.file.read((last-first)*4)
@@ -159,21 +168,24 @@ class AudioStore:
             return 0
         pages = min(len(self.resident), (needed + BLOCK * 4 - 1) // (BLOCK * 4))
         if self.budget:
-            self.budget.check(work=pages * BLOCK * 4 + self.wav_remaining, reclaim=False, disk_only=True)
+            self.budget.check(work=sum(page.count * 4 for page in islice(self.resident, pages)) + self.wav_remaining,
+                              reclaim=False, disk_only=True)
         freed = 0
         with self.lock:
             for _ in range(min(pages, len(self.resident))):
-                item = self.resident[0]
+                page = self.resident[0]
                 # An I/O exception retains its traceback arguments. An owned bounded
                 # copy prevents that traceback from pinning an exported mmap view.
-                values = np.frombuffer(item.memory, dtype=np.float32, count=item.count).copy()
+                values = np.frombuffer(page.memory, dtype=np.float32, count=page.count).copy()
                 try:
                     offset = self._write(values)
                 finally:
                     del values
-                item.memory.close()
-                item.memory = None
-                item.offset = offset
+                for item in page.extents:
+                    item.offset = offset + item.page_offset * 4
+                    item.page = None
+                page.extents.clear()
+                page.memory.close()
                 self.resident.popleft()
                 self.memory_bytes -= BLOCK * 4
                 freed += BLOCK * 4
@@ -185,36 +197,43 @@ class AudioStore:
     def append(self, values: Any) -> None:
         position = 0
         while position < len(values):
-            item = self.extents[-1] if self.extents else None
-            room = BLOCK - item.count if item and item.memory is not None and item.count < BLOCK else BLOCK
+            page = self.resident[-1] if self.resident else None
+            room = BLOCK - page.count if page and page.count < BLOCK else BLOCK
             size = min(room, len(values) - position)
             block = np.asarray(values[position:position + size], dtype=np.float32)
             peak = float(np.max(np.abs(block)))
             if not math.isfinite(peak):
                 raise ValueError('Audio contains non-finite samples')
             self._grow(size)
-            # A budget check may have spilled the previously partial page.
-            item = self.extents[-1] if self.extents else None
-            if not (item and item.memory is not None and item.count + size <= BLOCK):
-                if self.memory_limit:
+            if self.memory_limit:
+                # Logical timestamp gaps do not consume physical cache pages.
+                # Several nonadjacent audio extents can share the same page.
+                page = self.resident[-1] if self.resident else None
+                if page is None or page.count + size > BLOCK:
                     self.reclaim(self.memory_bytes + BLOCK * 4 - self.memory_limit, 'quota')
                     if self.budget:
                         self.budget.check(memory=BLOCK * 4)
-                    item = _Extent(self.count, 0, mmap.mmap(-1, BLOCK * 4))
-                    self._add(item)
-                    self.resident.append(item)
+                    page = _Page(mmap.mmap(-1, BLOCK * 4))
+                    self.resident.append(page)
                     self.memory_bytes += BLOCK * 4
                     self.stats['peak_cache_bytes'] = max(self.stats['peak_cache_bytes'], self.memory_bytes)
-                else:
-                    if self.budget:
-                        self.budget.check(work=size * 4 + self.wav_remaining)
-                    self._add(_Extent(self.count, size, offset=self._write(block)))
-                    item = None
-            if item is not None:
-                view = np.frombuffer(item.memory, dtype=np.float32, count=size, offset=item.count*4)
+                view = np.frombuffer(page.memory, dtype=np.float32, count=size, offset=page.count*4)
                 view[:] = block
                 del view
-                item.count += size
+                previous = self.extents[-1] if self.extents else None
+                if (previous is not None and previous.page is page
+                        and previous.start + previous.count == self.count
+                        and previous.page_offset + previous.count == page.count):
+                    previous.count += size
+                else:
+                    item = _Extent(self.count, size, page=page, page_offset=page.count)
+                    self._add(item)
+                    page.extents.append(item)
+                page.count += size
+            else:
+                if self.budget:
+                    self.budget.check(work=size * 4 + self.wav_remaining)
+                self._add(_Extent(self.count, size, offset=self._write(block)))
             self.count += size
             self.peak = max(self.peak, peak)
             position += size
@@ -225,7 +244,7 @@ class AudioStore:
         self._grow(count)
         if count:
             item = self.extents[-1] if self.extents else None
-            if item and item.memory is None and item.offset is None:
+            if item and item.page is None and item.offset is None:
                 item.count += count
             else:
                 self._add(_Extent(self.count, count))
@@ -252,9 +271,9 @@ class AudioStore:
             if self.closed:
                 return
             self.closed = True
-            for item in self.resident:
-                item.memory.close()
-                item.memory = None
+            for page in self.resident:
+                page.memory.close()
+                page.extents.clear()
             self.resident.clear()
             self.memory_bytes = 0
             if self.file is not None:

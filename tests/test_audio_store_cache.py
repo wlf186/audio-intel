@@ -173,3 +173,20 @@ def test_cache_policy_respects_admin_cap_and_quarter_budget(tmp_path, monkeypatc
                          asr_work_budget_bytes=1024**3, asr_audio_cache_max_bytes=cap)
         budget = resources.Budget.start(config, resources.psutil.Process().pid, tmp_path, tmp_path)
         assert budget.policy['audio_cache_bytes'] == expected
+
+
+@pytest.mark.parametrize('pages', [0, 1, 2])
+def test_tiny_video_timestamp_gaps_share_physical_pages(tmp_path, pages):
+    values = np.linspace(-.7, .7, BLOCK*2, dtype=np.float32)
+    expected = np.zeros(BLOCK*4, dtype=np.float32)
+    expected[::2] = values
+    with AudioStore(tmp_path/'cache.f32', memory_limit_bytes=pages*BLOCK*4) as store:
+        for value in values:
+            store.append(np.asarray([value], dtype=np.float32))
+            store.silence(1)
+        assert store.memory_bytes <= pages*BLOCK*4
+        assert store.stats['spilled_bytes'] == max(0, 2-pages)*BLOCK*4
+        assert np.array_equal(store[:], expected)
+        store.reclaim(store.memory_bytes)
+        assert np.array_equal(store[:], expected)
+        assert store.stats['spilled_bytes'] == values.nbytes
