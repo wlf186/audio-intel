@@ -7,6 +7,7 @@ import io
 import json
 import threading
 import time
+from types import SimpleNamespace
 
 from docx import Document
 from fastapi.testclient import TestClient
@@ -141,8 +142,18 @@ def test_context_capacity_failure_uses_source_without_switching_model(monkeypatc
 
 def test_deadline_does_not_multiply_model_timeouts(monkeypatch):
     monkeypatch.setattr(policy, 'ITEM_SECONDS', .02)
+    clock = [0.0]
+    monkeypatch.setattr(policy, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+    cancelled = []
     async def stall(*args):
-        await asyncio.sleep(1)
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            # asyncio timers may fire one clock-resolution early on Windows.
+            # Model the deadline explicitly while still exercising real cancellation.
+            clock[0] = budget.deadline
+            cancelled.append(True)
+            raise
     async def record(*args):
         pass
     monkeypatch.setattr(engine, 'structured', stall)
@@ -150,6 +161,7 @@ def test_deadline_does_not_multiply_model_timeouts(monkeypatch):
     budget = policy.Budget()
     result = asyncio.run(policy.generate(PROFILE, '周五执行维护。', 'scene', policy.Circuit(), record, budget))
     assert time.monotonic() - before < .3 and budget.calls == 1
+    assert cancelled == [True]
     assert result.method == 'source_excerpt'
 
 
