@@ -24,6 +24,8 @@ from .video_frames import crop_picture, features, picture_at, save_picture
 VERSION = 'presentation-v3'
 LEGACY_VERSION = 'presentation-v2'
 CACHE_VERSION = 1
+from .asr_resources import AsrResourceLimitError, check_resources
+
 CACHE_LIMIT = 512 * 1024**2
 CHUNK_SIZE = 60
 
@@ -174,12 +176,13 @@ class FeatureWriter:
             buffer = io.BytesIO()
             np.savez_compressed(buffer, frames=data, times=np.asarray(self.times, dtype=np.float64))
             payload = buffer.getvalue()
+            check_resources(work=len(payload))
             if self.bytes + len(payload) > CACHE_LIMIT or shutil.disk_usage(self.staging).free - len(payload) < self.min_free:
                 raise OSError('Feature cache budget exhausted')
             (self.staging / f'{self.chunks:06d}.npz').write_bytes(payload)
             self.bytes += len(payload)
             self.chunks += 1
-        except OSError:
+        except (OSError, AsrResourceLimitError):
             self.abort()
         finally:
             self.arrays.clear()

@@ -232,3 +232,13 @@ English: Choose Word (DOCX) in Concise export, or in the mobile format selector 
 从转写结果「加入声纹库」时可选择原音或增强音，每次打开默认原音，与主播放器选择独立，不保存浏览器偏好。没有增强音时选项禁用；视频弹窗试听随选择切换，切换时停止播放。选择适用于整批原始语句，每句仍独立成为样本，同一来源不能通过切换音轨重复入库。增强文件缺失返回 404，保留选择供重试，不自动回退或补生成。原音保持现有规则：音频使用来源录音，视频使用对齐时间轴的 playback.wav。
 
 English: Enrollment offers Original (default on every open) and Enhanced independently of the main player. The selection applies to all selected original segments and is not persisted. Video preview follows the selected track and stops when switching. Missing enhanced audio returns 404 without fallback or regeneration; duplicate-source protection remains unchanged. Each original segment becomes one sample. See [API](API.md).
+
+## ASR resource budgets / ASR 资源预算
+
+所有 ASR 队列任务（音频、视频、兼容转写、参考分析和声纹入库）使用磁盘上的 float32 音轨和有界读取，不提前量化模型输入。解码/归一化每块最多 65,536 采样，VAD 保持原有 60 秒边界、缓存和末尾刷新；说话人窗口与有效批量不变。全局聚类、增强统计和结果元数据仍需要内存，不能把文件支持的音轨视为恒定总内存保证。
+
+`AUDIO_INTEL_ASR_MEMORY_BUDGET_BYTES` 限制每任务新增主机内存，`AUDIO_INTEL_ASR_WORK_BUDGET_BYTES` 限制工作文件和生成产物（不含上传原件）。0 为自动值，正整数为管理员上限。自动内存额度为有效可用内存减去 max(1 GiB, 有效总内存的 10%) 后的一半；执行器起始进程树 RSS 加额度形成观察上限。Linux 可读取的 cgroup v2 余量参与计算，其他情况采用系统内存。自动空间额度为磁盘空闲减去未完成上传预留和现有磁盘安全水位后的一半。预算在任务开始冻结，运行时再次检查真实余量。跨目录盘符分别受实际剩余空间约束；建议临时目录与数据目录在同一文件系统。
+
+资源不足时任务以 `AsrResourceLimitError` 明确失败，错误说明阶段、资源、需求和预算，上传原件保留。有效延迟和静音不裁剪，大时间戳间隙在写入前核算容量；原 PCM16 WAV 容量限制继续生效，不自动改用 RF64。必需步骤不降级算法、不跳过说话人、不自动重试；用户可调整预算/释放资源后完整重试。每次尝试的 `diagnostics/attempt-N-resource-budget.json` 最多 16 KiB，仅本地保存，不向全局列表/SSE 发布采样。RSS 进程树求和会保守计入共享页，一秒监督采样不是操作系统硬上限，外部进程仍可能造成 OOM。
+
+English: All ASR queue paths use file-backed unquantized float32 samples and bounded reads. The two server settings cap additional host RAM and generated workspace; zero selects automatic budgets, frozen at task start with live headroom checks. Memory defaults to half the available capacity after reserving max(1 GiB, 10% of effective total RAM); workspace defaults to half the free space after upload reservations and the disk safety margin. Preserve VAD state/boundaries, model identity, precision, batching, diarization and media timing. Exceeding a budget fails explicitly with AsrResourceLimitError and retains the original input. No request fields or database schema change; historical data is not rewritten. RSS monitoring is conservative and is not an OS hard limit. No automatic algorithm downgrade or partial resume is introduced.

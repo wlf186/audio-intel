@@ -14,7 +14,11 @@ API_DESCRIPTION = r"""
 
 ## 执行器异常退出 / Unexpected executor exit
 
+`AsrResourceLimitError` 表示 ASR 主机内存或工作空间超预算；原件保留，调整资源后可完整重试，无自动算法降级。
+
 `WorkerProcessExit` 表示执行器意外退出。错误详情可含退出码、POSIX 信号或 Windows 十六进制状态；仅 SIGKILL 加任务期间增长的 cgroup OOM 计数会提示“疑似 OOM”，仍需内核日志确认。每次尝试的本地有界诊断保留在任务目录，内存采样不进入列表或 SSE。
+
+`AsrResourceLimitError` means ASR exceeded its host-memory/workspace budget. Original inputs are retained for a complete retry; algorithms are not automatically downgraded.
 
 `WorkerProcessExit` retains its stable code. Human-readable details may include an exit code, POSIX signal or Windows status. SIGKILL with an increased cgroup OOM counter indicates possible OOM, not proof about a specific PID. Bounded per-attempt diagnostics stay local; memory samples do not affect list/SSE semantics.
 

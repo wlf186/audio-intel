@@ -58,6 +58,8 @@ class Settings:
     document_archive_bytes: int = int(os.getenv("AUDIO_INTEL_DOCUMENT_ARCHIVE_BYTES", str(256 * 1024**2)))
     max_document_downloads: int = int(os.getenv("AUDIO_INTEL_MAX_DOCUMENT_DOWNLOADS", "2"))
     max_queued_asr: int = int(os.getenv("AUDIO_INTEL_MAX_QUEUED_ASR", "5"))
+    asr_memory_budget_bytes: int = max(0, int(os.getenv("AUDIO_INTEL_ASR_MEMORY_BUDGET_BYTES", "0")))
+    asr_work_budget_bytes: int = max(0, int(os.getenv("AUDIO_INTEL_ASR_WORK_BUDGET_BYTES", "0")))
     max_queued_tts: int = int(os.getenv("AUDIO_INTEL_MAX_QUEUED_TTS", "5"))
     max_concurrent_submissions: int = int(
         os.getenv("AUDIO_INTEL_MAX_CONCURRENT_SUBMISSIONS", "2")

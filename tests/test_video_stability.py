@@ -84,7 +84,7 @@ def test_real_video_versions_cache_and_audio_are_compatible(tmp_path):
     settings = {'min_change_percent': 3, 'min_stable_seconds': 5}
     audio, rate, new = decode(source, tmp_path / 'new.wav', tmp_path / 'new/frames', None, Context(), settings)
     old_audio, old_rate, old = decode(source, tmp_path / 'old.wav', tmp_path / 'old/frames', None, Context(), settings, 'presentation-v2')
-    assert np.array_equal(audio, old_audio) and rate == old_rate
+    assert len(audio) == len(old_audio) and np.array_equal(audio[:], old_audio[:]) and rate == old_rate
     assert new['contract_version'] == 2 and new['detector'] == 'presentation-v3'
     assert old['contract_version'] == 1 and old['detector'] == 'presentation-v2'
     assert all(s['image'] is None and s['frame_time'] is None for s in new['scenes'])

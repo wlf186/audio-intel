@@ -282,7 +282,7 @@ def test_v2_picture_detection_preserves_decoded_audio(tmp_path):
     current = decode(source, tmp_path/'v2.wav', tmp_path/'v2-frames', None, Context(),
                      detection_settings={'min_change_percent':3, 'min_stable_seconds':1})
     assert legacy[1] == current[1] == 16000
-    assert np.array_equal(legacy[0], current[0])
+    assert len(legacy[0]) == len(current[0]) and np.array_equal(legacy[0][:], current[0][:])
     assert (tmp_path/'v1.wav').read_bytes() == (tmp_path/'v2.wav').read_bytes()
     assert legacy[2]['duration'] == current[2]['duration']
 

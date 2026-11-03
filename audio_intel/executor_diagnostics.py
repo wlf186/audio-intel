@@ -15,8 +15,8 @@ from .utils import atomic_json
 logger = logging.getLogger(__name__)
 
 
-def oom_kills() -> int | None:
-    """Read this process's cgroup-v2 counter, accounting for mount namespaces."""
+def cgroup_memory_directory() -> Path | None:
+    """Resolve this process's cgroup v2 within its mount namespace."""
     if os.name == "nt":
         return None
     try:
@@ -32,7 +32,18 @@ def oom_kills() -> int | None:
                 import re
                 return re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), value)
             relative = Path(group).relative_to(unescape(fields[3]))
-            path = Path(unescape(fields[4])) / relative / 'memory.events'
+            return Path(unescape(fields[4])) / relative
+    except Exception:
+        pass
+    return None
+
+
+def oom_kills() -> int | None:
+    """Read this process's shared cgroup OOM counter when available."""
+    try:
+        folder = cgroup_memory_directory()
+        if folder is not None:
+            path = folder / 'memory.events'
             with path.open(encoding='utf-8') as stream:
                 counters = dict(row.split() for row in stream.read(4096).splitlines())
             return int(counters['oom_kill'])

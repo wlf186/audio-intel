@@ -22,6 +22,7 @@ from .db import (
 )
 from .observability import stage_details
 from .executor_diagnostics import ExecutorDiagnostics
+from .asr_resources import AsrResourceLimitError, Budget, current_budget
 from .utils import atomic_json, read_json
 
 
@@ -114,8 +115,17 @@ def _run_one_job(
     context = JobContext(job, worker_id, worker_pid)
     state = "failed"
     recycle_reason: str | None = None
+    budget = None
+    token = current_budget.set(None)
     try:
+        if kind == 'asr':
+            budget = Budget.start(settings, os.getpid(), context.work_dir, context.output_dir)
+            current_budget.set(budget)
+            atomic_json(context.work_dir / 'resource-policy.json', budget.policy)
         result = processor(context)
+        if budget:
+            budget.check(force=True)
+            budget.record(settings.jobs_dir / job_id, job['attempts'])
         current = get_job(job_id)
         if current and current.get("cancel_requested"):
             raise JobCancelled("Job cancellation requested")
@@ -125,6 +135,11 @@ def _run_one_job(
             result_json=result, heartbeat_at=utcnow(),
         )
         state = "succeeded"
+    except AsrResourceLimitError as exc:
+        if budget:
+            budget.record(settings.jobs_dir / job_id, job['attempts'], str(exc))
+        (context.work_dir / "resource-failure.pending").touch()
+        return {"state": "resource_limited", "error_message": str(exc)[:2000]}
     except JobCancelled as exc:
         # The supervisor owns terminal cancellation. Keeping the row running here
         # ensures clients cannot observe ``cancelled`` before this executor and
@@ -152,7 +167,10 @@ def _run_one_job(
         )
         state = "failed"
     finally:
-        shutil.rmtree(context.work_dir, ignore_errors=True)
+        current_budget.reset(token)
+        # Supervisor records terminal resource failure only after the complete tree exits.
+        if not context.work_dir.joinpath('resource-failure.pending').exists():
+            shutil.rmtree(context.work_dir, ignore_errors=True)
     return {"state": state, "recycle_reason": recycle_reason}
 
 
@@ -327,6 +345,22 @@ def _complete_cancelled_executor(
     _executor_metadata_path(kind).unlink(missing_ok=True)
 
 
+def _complete_resource_failure(kind: str, process: Any, connection: Any, job: dict, message: str) -> None:
+    _retire_executor(kind, process, connection)
+    current = get_job(job['id'])
+    if current is None or current['state'] != 'running':
+        return
+    if current.get('cancel_requested'):
+        _forced_cancel(current)
+        return
+    from .document_store import clean_partials
+    clean_partials(job['id'], settings.jobs_dir)
+    shutil.rmtree(settings.temp_dir / job['id'], ignore_errors=True)
+    _fail_voiceprint_import(job, message)
+    finish_job(job['id'], 'failed', stage='failed', error_code='AsrResourceLimitError',
+               error_message=message[:2000], heartbeat_at=utcnow())
+
+
 def run(kind: str) -> None:
     init_db()
     worker_pid = os.getpid()
@@ -351,6 +385,7 @@ def run(kind: str) -> None:
     executor_dirty = False
     idle_since: float | None = None
     diagnostics: ExecutorDiagnostics | None = None
+    resource_budget: Budget | None = None
 
     try:
         while not stop:
@@ -411,6 +446,7 @@ def run(kind: str) -> None:
                     {"stage": "starting", "executor_pid": process.pid},
                 )
                 diagnostics = ExecutorDiagnostics(process.pid)
+                resource_budget = None
                 connection.send(current_job["id"])
                 next_heartbeat = 0.0
 
@@ -420,6 +456,15 @@ def run(kind: str) -> None:
                 except EOFError:
                     continue
                 if completed.get("job_id") == current_job["id"]:
+                    if completed.get("state") == "resource_limited":
+                        _complete_resource_failure(kind, process, connection, current_job, completed['error_message'])
+                        process, connection = _spawn_executor(kind, worker_id, worker_pid)
+                        current_job = None
+                        resource_budget = None
+                        executor_dirty = False
+                        idle_since = None
+                        upsert_worker(worker_id, kind, worker_pid, 'idle', details={'executor_pid': process.pid})
+                        continue
                     if completed.get("state") == "retrying":
                         _retire_executor(kind, process, connection)
                         from .document_store import clean_partials
@@ -484,6 +529,26 @@ def run(kind: str) -> None:
 
             now = time.monotonic()
             if now >= next_heartbeat:
+                if kind == 'asr' and not current.get('cancel_requested'):
+                    policy_path = settings.temp_dir / current['id'] / 'resource-policy.json'
+                    if resource_budget is None:
+                        policy = read_json(policy_path)
+                        if policy:
+                            resource_budget = Budget(policy)
+                    if resource_budget and process.is_alive() and policy_path.exists():
+                        resource_budget.stage = current['stage']
+                        try:
+                            resource_budget.check(force=True)
+                        except AsrResourceLimitError as exc:
+                            resource_budget.record(settings.jobs_dir / current['id'], current['attempts'], str(exc))
+                            _complete_resource_failure(kind, process, connection, current, str(exc))
+                            process, connection = _spawn_executor(kind, worker_id, worker_pid)
+                            current_job = None
+                            resource_budget = None
+                            executor_dirty = False
+                            idle_since = None
+                            upsert_worker(worker_id, kind, worker_pid, 'idle', details={'executor_pid': process.pid})
+                            continue
                 if diagnostics is not None:
                     diagnostics.sample()
                 touch_job_heartbeat(current["id"])

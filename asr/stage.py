@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from audio_intel.asr_resources import AsrResourceLimitError, Budget, current_budget
 from audio_intel.performance import lower_batch_size
 from audio_intel.progress import ThrottledProgress, progress_snapshot_path
 from audio_intel.utils import atomic_json
@@ -355,6 +356,8 @@ def enhance(payload: dict[str, Any]) -> dict[str, Any]:
     except JobCancelled:
         raise
     except (OSError, ValueError, RuntimeError) as exc:
+        if isinstance(exc, AsrResourceLimitError):
+            raise
         Path(payload["enhanced_path"]).unlink(missing_ok=True)
         result = {"mode": "auto", "status": "fallback", "reason": "model_unavailable" if isinstance(exc, FileNotFoundError)
                 else "resource_unavailable" if isinstance(exc, OSError) else "invalid_output" if isinstance(exc, ValueError)
@@ -385,7 +388,12 @@ def main() -> None:
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     payload = json.loads(args.input.read_text(encoding="utf-8"))
-    result = {"transcribe": transcribe, "align": align, "enhance": enhance}[args.operation](payload)
+    if payload.get("_resource_policy"):
+        current_budget.set(Budget(payload["_resource_policy"]))
+    try:
+        result = {"transcribe": transcribe, "align": align, "enhance": enhance}[args.operation](payload)
+    except AsrResourceLimitError as exc:
+        result = {"_resource_error": str(exc)}
     args.output.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
 
 

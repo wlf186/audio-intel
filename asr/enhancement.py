@@ -1,6 +1,8 @@
 """Bounded-memory, offline speech enhancement without changing the media clock."""
 from __future__ import annotations
 
+from audio_intel.asr_resources import AsrResourceLimitError, check_resources
+
 import math
 import shutil
 import time
@@ -259,6 +261,7 @@ def _signal_profile(source: Path, mixed: Path, regions: list[dict[str, float]],
     with sf.SoundFile(source) as original, sf.SoundFile(mixed) as reader:
         total = len(reader)
         frames = math.ceil(total / FRAME_SAMPLES)
+        check_resources(memory=frames * 256, stage="audio_enhancement")
         rms, peaks = np.zeros(frames), np.zeros(frames)
         supported = np.zeros(frames, dtype=bool)
         for region in regions:
@@ -619,6 +622,8 @@ def enhance_independent(source: Path, target: Path, regions: list[dict[str, floa
             except JobCancelled:
                 raise
             except (OSError, ValueError, RuntimeError) as exc:
+                if isinstance(exc, AsrResourceLimitError):
+                    raise
                 intermediate.unlink(missing_ok=True)
                 noise.update(status="fallback", reason=failure(exc))
             result["elapsed_seconds"] += time.monotonic() - started
@@ -634,6 +639,8 @@ def enhance_independent(source: Path, target: Path, regions: list[dict[str, floa
             except JobCancelled:
                 raise
             except (OSError, ValueError, RuntimeError) as exc:
+                if isinstance(exc, AsrResourceLimitError):
+                    raise
                 gain.update(status="fallback", reason=failure(exc))
             result["elapsed_seconds"] += time.monotonic() - started
         applied = gain["status"] == "applied" or noise["status"] == "applied"

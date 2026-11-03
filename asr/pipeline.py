@@ -10,6 +10,9 @@ import time
 import sys
 import wave
 import shutil
+from contextlib import ExitStack
+from audio_intel.audio_store import AudioStore, speaker_windows, window_audio, store_stack
+from audio_intel.asr_resources import AsrResourceLimitError, check_resources, current_budget, clustering_memory
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -55,25 +58,18 @@ def decode_audio(source: Path, output: Path) -> tuple[Any, int]:
     import av
     import numpy as np
 
-    samples: list[Any] = []
-    with av.open(str(source)) as container:
-        stream = container.streams.audio[0]
-        resampler = av.AudioResampler(format="fltp", layout="mono", rate=16000)
-        for frame in container.decode(stream):
-            converted = resampler.resample(frame)
-            for audio_frame in converted:
-                samples.append(audio_frame.to_ndarray().reshape(-1))
-        for audio_frame in resampler.resample(None):
-            samples.append(audio_frame.to_ndarray().reshape(-1))
-    if not samples:
-        raise ValueError("Audio contains no decodable samples")
-    audio = np.concatenate(samples).astype(np.float32)
-    peak = float(np.max(np.abs(audio)))
-    if peak > 1.0:
-        audio /= peak
-    import soundfile as sf
-    sf.write(output, audio, 16000, subtype="PCM_16")
-    return audio, 16000
+    with AudioStore(output.with_suffix('.f32')) as store:
+        with av.open(str(source)) as container:
+            stream = container.streams.audio[0]
+            resampler = av.AudioResampler(format="fltp", layout="mono", rate=16000)
+            for frame in container.decode(stream):
+                for converted in resampler.resample(frame):
+                    store.append(converted.to_ndarray().reshape(-1))
+            for converted in resampler.resample(None):
+                store.append(converted.to_ndarray().reshape(-1))
+        store.finish(output)
+    # Reopen for bounded downstream reads; never expose the entire array.
+    return AudioStore.open(output.with_suffix('.f32')), 16000
 
 
 def _mock_audio(source: Path, output: Path) -> tuple[list[float], int]:
@@ -84,19 +80,35 @@ def _mock_audio(source: Path, output: Path) -> tuple[list[float], int]:
         duration = 18.0
     duration = max(2.0, duration)
     rate = 16000
-    audio = [0.06 * math.sin(2 * math.pi * 180 * i / rate) for i in range(int(duration * rate))]
-    with wave.open(str(output), "wb") as handle:
+    store = AudioStore(output.with_suffix('.f32'))
+    for start in range(0, int(duration * rate), 65_536):
+        store.append([0.06 * math.sin(2 * math.pi * 180 * i / rate) for i in range(start, min(int(duration * rate), start + 65_536))])
+    store.file.flush()
+    with wave.open(str(output), 'wb') as handle:
         handle.setnchannels(1); handle.setsampwidth(2); handle.setframerate(rate)
-        handle.writeframes(b"".join(int(max(-1, min(1, x)) * 32767).to_bytes(2, "little", signed=True) for x in audio))
-    return audio, rate
+        for start in range(0, len(store), 65_536):
+            values = store[start:min(len(store), start + 65_536)]
+            handle.writeframes(b''.join(int(max(-1, min(1, x)) * 32767).to_bytes(2, 'little', signed=True) for x in values))
+    return store, rate
 
 
 def run_vad(audio: Any, sample_rate: int) -> list[dict[str, float]]:
     from funasr import AutoModel
 
     model = AutoModel(model=str(settings.models_dir / "FSMN-VAD"), device="cpu", disable_update=True)
-    result = model.generate(input=audio, fs=sample_rate)
-    raw = (result[0].get("value") or result[0].get("timestamp") or []) if result else []
+    if isinstance(audio, AudioStore):
+        raw = []
+        cache = {}
+        stride = 60 * sample_rate
+        for start in range(0, len(audio), stride):
+            end = min(len(audio), start + stride)
+            check_resources(memory=(len(raw) + 6000) * 1024, stage="voice_activity_detection")
+            result = model.generate(input=audio[start:end], fs=sample_rate, cache=cache,
+                                    chunk_size=60000, is_streaming_input=False, is_final=end == len(audio))
+            raw.extend((result[0].get("value") or result[0].get("timestamp") or []) if result else [])
+    else:
+        result = model.generate(input=audio, fs=sample_rate)
+        raw = (result[0].get("value") or result[0].get("timestamp") or []) if result else []
     segments = [{"start": float(item[0]) / 1000, "end": float(item[1]) / 1000} for item in raw]
     return segments
 
@@ -164,18 +176,28 @@ def diarize(
         disable_update=True,
         disable_pbar=True,
     )
-    vad_with_audio = [[item["start"], item["end"], audio[int(item["start"] * 16000):int(item["end"] * 16000)]] for item in vad]
-    chunks = sv_chunk(vad_with_audio)
+    vad_with_audio = [[item["start"], item["end"], None] for item in vad] if isinstance(audio, AudioStore) else [
+        [item["start"], item["end"], audio[int(item["start"] * 16000):int(item["end"] * 16000)]] for item in vad]
+    chunks = speaker_windows(audio, vad) if isinstance(audio, AudioStore) else sv_chunk(vad_with_audio)
     if not chunks:
         diarized = [{**item, "speaker": "Speaker_0"} for item in vad]
         return (diarized, {}, {"status": "empty_audio", "indexed_samples": 0}) if return_metadata else diarized
-    embeddings = model.generate(
-        input=[chunk[2] for chunk in chunks],
-        cache={},
-        is_final=True,
-        batch_size=batch_size,
-    )
-    vectors = torch.cat([item["spk_embedding"] for item in embeddings], dim=0).detach().cpu().numpy()
+    if isinstance(audio, AudioStore):
+        if audio.budget:
+            # Preserve all pinned clustering branches. Bound even their worst-case global structures.
+            audio.budget.check(memory=max(len(chunks) * 8192, clustering_memory(len(chunks))))
+        batches = []
+        for start in range(0, len(chunks), batch_size):
+            current = chunks[start:start + batch_size]
+            outputs = model.generate(input=[window_audio(audio, chunk) for chunk in current],
+                                     cache={}, is_final=True, batch_size=batch_size)
+            batches.extend(item["spk_embedding"].detach().cpu().numpy() for item in outputs)
+        import numpy as np
+        vectors = np.concatenate(batches, axis=0)
+    else:
+        embeddings = model.generate(input=[chunk[2] for chunk in chunks], cache={},
+                                    is_final=True, batch_size=batch_size)
+        vectors = torch.cat([item["spk_embedding"] for item in embeddings], dim=0).detach().cpu().numpy()
     cluster = ClusterBackend(merge_thr=0.78).cpu()
     labels = _cluster_speakers(vectors, speakers, cluster)
     if speakers is None:
@@ -184,6 +206,8 @@ def diarize(
                 audio, chunks, vad_with_audio, labels, vectors, model, batch_size,
             )
         except Exception as exc:
+            if isinstance(exc, AsrResourceLimitError):
+                raise
             logger.warning("Automatic speaker refinement skipped: %s", exc)
     matches: dict[str, dict[str, Any]] = {}
     voiceprint_status = {"status": "disabled", "indexed_samples": 0}
@@ -193,7 +217,9 @@ def diarize(
             chunks, vad_with_audio, labels, vectors, return_spk_center=True,
         )
         result = [{"start": float(item[0]), "end": float(item[1]), "speaker": f"Speaker_{int(item[2])}"} for item in diarized]
-    except Exception:
+    except Exception as exc:
+        if isinstance(exc, AsrResourceLimitError):
+            raise
         result = [{"start": float(chunk[0]), "end": float(chunk[1]), "speaker": f"Speaker_{int(label)}"} for chunk, label in zip(chunks, labels)]
     if voiceprint_people is not None:
         if speaker_centers is None:
@@ -201,7 +227,9 @@ def diarize(
         else:
             try:
                 matches, voiceprint_status = _match_voiceprints(model, speaker_centers, voiceprint_people)
-            except Exception:
+            except Exception as exc:
+                if isinstance(exc, AsrResourceLimitError):
+                    raise
                 voiceprint_status = {"status": "degraded", "indexed_samples": 0}
     return (result, matches, voiceprint_status) if return_metadata else result
 
@@ -253,6 +281,8 @@ def _match_voiceprints(
                         embedding_model=VOICEPRINT_EMBEDDING_MODEL, embedding_error=None,
                     )
                 except Exception as exc:
+                    if isinstance(exc, AsrResourceLimitError):
+                        raise
                     skipped_samples += 1
                     update_voiceprint_sample(sample["id"], embedding_error=str(exc)[:500])
                     continue
@@ -508,7 +538,9 @@ def _stop_stage_process(process: subprocess.Popen[Any]) -> None:
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
         psutil.wait_procs(alive, timeout=0.5)
-    except Exception:
+    except Exception as exc:
+        if isinstance(exc, AsrResourceLimitError):
+            raise
         process.kill()
     process.wait(timeout=2)
 
@@ -561,6 +593,10 @@ def run_stage(
     input_path, output_path = directory / f"{operation}-input.json", directory / f"{operation}-output.json"
     progress_path = directory / f"{operation}-progress.json"
     payload["progress_path"] = str(progress_path)
+    budget = current_budget.get()
+    if budget:
+        payload["_resource_policy"] = budget.policy
+        budget.check(force=True)
     atomic_json(input_path, payload)
     environment = os.environ.copy()
     environment.update({"PYTHONPATH": str(settings.root), "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
@@ -571,6 +607,7 @@ def run_stage(
     last_progress_sequence = 0
     try:
         while process.poll() is None:
+            check_resources()
             last_progress_sequence = _drain_stage_progress(
                 progress_path, progress_callback, last_progress_sequence,
             )
@@ -582,7 +619,11 @@ def run_stage(
         if process.poll() is None:
             _stop_stage_process(process)
         raise
-    return json.loads(output_path.read_text(encoding="utf-8"))
+    check_resources(memory=output_path.stat().st_size * 20)
+    result = json.loads(output_path.read_text(encoding="utf-8"))
+    if "_resource_error" in result:
+        raise AsrResourceLimitError(result["_resource_error"])
+    return result
 
 
 def run_model_stage(
@@ -838,6 +879,15 @@ def _mock_transcription_examples(requested_language: str | None) -> tuple[str, l
 
 
 def process_job(context: JobContext) -> dict[str, Any]:
+    with ExitStack() as stack:
+        token = store_stack.set(stack)
+        try:
+            return _process_job(context)
+        finally:
+            store_stack.reset(token)
+
+
+def _process_job(context: JobContext) -> dict[str, Any]:
     request = context.job["request"]
     compute_device = request.get("compute_device", "gpu")
     asr_model = resolve_asr_model(request.get("model"))
@@ -918,6 +968,10 @@ def process_job(context: JobContext) -> dict[str, Any]:
         chunks = write_chunks(audio, rate, combine_vad(vad, duration), context.work_dir / "chunks", source=enhanced)
     else:
         chunks = write_chunks(audio, rate, combine_vad(vad, duration), context.work_dir / "chunks")
+    if isinstance(audio, AudioStore) and request.get("diarize"):
+        windows = speaker_windows(audio, vad)
+        check_resources(memory=max(len(windows) * 8192, clustering_memory(len(windows))), stage="speaker_diarization")
+        del windows
     acceleration_enabled = bool(request.get("accelerate_single_task", False))
     hardware_acceleration = resolve_acceleration(acceleration_enabled, compute_device)
     acceleration = resolve_acceleration(
@@ -949,7 +1003,9 @@ def process_job(context: JobContext) -> dict[str, Any]:
                 eligible = set(request["voiceprint_person_ids"])
                 voiceprint_people = [person for person in voiceprint_people if person["id"] in eligible]
                 voiceprint_status["missing_person_ids"] = sorted(eligible - {person["id"] for person in voiceprint_people})
-        except Exception:
+        except Exception as exc:
+            if isinstance(exc, AsrResourceLimitError):
+                raise
             voiceprint_status["status"] = "degraded"
     diarization_executor = None
     diarization_future = None
@@ -1116,7 +1172,9 @@ def process_job(context: JobContext) -> dict[str, Any]:
         result["audio_enhancement"] = enhancement
     try:
         result["waveform"] = waveform_peaks(audio, 240)
-    except Exception:
+    except Exception as exc:
+        if isinstance(exc, AsrResourceLimitError):
+            raise
         result["waveform"] = []
         logger.warning("Unable to prepare ASR waveform for job %s (%s samples)",
                        context.job_id, len(audio), exc_info=True)
@@ -1132,6 +1190,7 @@ def process_job(context: JobContext) -> dict[str, Any]:
         result["playback_url"] = f"/api/v1/jobs/{context.job_id}/playback"
     else:
         result["playback_url"] = save_playback_audio(context.job_id, normalized)
+    check_resources(memory=len(result.get("segments", [])) * 16384, stage="writing_exports")
     result = write_asr_exports(context.job_id, result, request.get("export_formats", ["json", "srt", "vtt", "txt"]))
     if enhancement is not None and enhancement.get("status") == "applied":
         target = context.output_dir / "enhanced.wav"
@@ -1184,7 +1243,9 @@ def _finalize_voiceprint_import(
                 embedding=vector.astype("float32").tobytes(), embedding_model=VOICEPRINT_EMBEDDING_MODEL,
             )
         update_voiceprint_sample(sample["id"], **values)
-    except Exception:
+    except Exception as exc:
+        if isinstance(exc, AsrResourceLimitError):
+            raise
         temporary.unlink(missing_ok=True)
         target.unlink(missing_ok=True)
         raise

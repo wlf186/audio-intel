@@ -13,6 +13,9 @@ import av
 import numpy as np
 from PIL import Image
 
+from .audio_store import AudioStore
+from .asr_resources import check_resources
+
 
 def crop_picture(frame: Any, roi: dict[str, float] | None) -> Image.Image:
     picture = frame.to_image()
@@ -31,6 +34,7 @@ def save_picture(picture: Image.Image, directory: Path) -> str:
     buffer = io.BytesIO()
     picture.save(buffer, format='JPEG', quality=85, optimize=False)
     payload = buffer.getvalue()
+    check_resources(work=len(payload))
     name = hashlib.sha256(payload).hexdigest() + '.jpg'
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / name
@@ -165,82 +169,81 @@ def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | No
         detector = Detector(detection_settings)
         from .config import settings
         writer = FeatureWriter(frame_directory.parent / 'scene-features', source, roi, settings.min_free_disk_bytes)
-    samples: list[np.ndarray] = []
-    sample_count = 0
-    last_sample = -1.0
-    video_end = 0.0
-    last_progress = 0.0
-    with av.open(str(source)) as container:
-        video = next(s for s in container.streams.video if not (s.disposition & av.stream.Disposition.attached_pic))
-        audio = container.streams.audio[0]
-        origin = float(container.start_time or 0) / av.time_base
-        duration = float(container.duration or 0) / av.time_base
-        resampler = av.AudioResampler(format='fltp', layout='mono', rate=16000)
+    samples = AudioStore(normalized.with_suffix(".f32"))
+    try:
+        sample_count = 0
+        last_sample = -1.0
+        video_end = 0.0
+        last_progress = 0.0
+        with av.open(str(source)) as container:
+            video = next(s for s in container.streams.video if not (s.disposition & av.stream.Disposition.attached_pic))
+            audio = container.streams.audio[0]
+            origin = float(container.start_time or 0) / av.time_base
+            duration = float(container.duration or 0) / av.time_base
+            resampler = av.AudioResampler(format='fltp', layout='mono', rate=16000)
 
-        def add_audio(converted: Any) -> None:
-            nonlocal sample_count
-            array = converted.to_ndarray().reshape(-1)
-            position = round((float(converted.time) - origin) * 16000) if converted.time is not None else sample_count
-            if position > sample_count:
-                samples.append(np.zeros(position - sample_count, dtype=np.float32))
-                sample_count = position
-            if position < sample_count:
-                array = array[min(len(array), sample_count - position):]
-            if len(array):
-                samples.append(array)
-                sample_count += len(array)
+            def add_audio(converted: Any) -> None:
+                nonlocal sample_count
+                array = converted.to_ndarray().reshape(-1)
+                position = round((float(converted.time) - origin) * 16000) if converted.time is not None else sample_count
+                if position > sample_count:
+                    samples.silence(position - sample_count)
+                    sample_count = position
+                if position < sample_count:
+                    array = array[min(len(array), sample_count - position):]
+                if len(array):
+                    samples.append(array)
+                    sample_count += len(array)
 
-        for packet in container.demux(video, audio):
-            for frame in packet.decode():
-                if isinstance(frame, av.AudioFrame):
-                    for converted in resampler.resample(frame):
-                        add_audio(converted)
-                else:
-                    timestamp = max(0.0, float(frame.time or 0) - origin)
-                    video_end = max(video_end, timestamp + float(frame.duration or 0) * float(frame.time_base))
-                    if timestamp - last_sample >= .49:
-                        if writer is not None:
-                            rgb = thumbnail(frame, roi)
-                            detector.feed(rgb, timestamp)
-                            writer.add(rgb, timestamp)
-                        else:
-                            detector.feed(crop_picture(frame, roi), timestamp)
-                        last_sample = timestamp
-                    if time.monotonic() - last_progress >= 2:
-                        context.progress(.04 + .05 * min(1, timestamp / max(duration, timestamp, 1)), 'video_analysis',
-                                         completed=int(timestamp), total=math.ceil(duration) if duration else None, unit='media_second')
-                        last_progress = time.monotonic()
-        for converted in resampler.resample(None):
-            add_audio(converted)
-    if not samples or (detector.anchor is None if writer is not None else detector.picture is None):
-        raise ValueError('Video has no decodable audio or picture')
-    end = max(video_end, sample_count / 16000)
-    padding = round(end * 16000) - sample_count
-    if padding > 0:
-        samples.append(np.zeros(padding, dtype=np.float32))
-    values = np.concatenate(samples)
-    del samples
-    peak = float(np.max(np.abs(values)))
-    if peak > 1:
-        values /= peak
-    normalized.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(normalized, values, 16000, format='WAV', subtype='PCM_16')
-    detector.flush(end)
-    if writer is not None:
-        from .video_detection import LEGACY_VERSION, VERSION, materialize, stable_representatives
-        writer.finish(end, origin)
-        strict = detector_version != LEGACY_VERSION
-        if strict:
-            stable_representatives(source, frame_directory.parent / 'scene-features', roi, detector.scenes,
-                                   detector.settings.min_stable_seconds, lambda *args: None)
-        materialize(source, detector.scenes, frame_directory, roi, origin, lambda *args: None)
-        return values, 16000, {'contract_version': 2 if strict else 1, 'revision': 1, 'duration': end, 'time_origin': origin,
-                              'roi': roi, 'detector': VERSION if strict else LEGACY_VERSION, 'scene_detection': detection_settings,
-                              'scenes': detector.scenes, 'automatic_scenes': [dict(s) for s in detector.scenes],
-                              'original_scenes': [dict(s) for s in detector.scenes]}
-    return values, 16000, {'contract_version': 1, 'revision': 1, 'duration': end, 'time_origin': origin,
-                          'roi': roi, 'detector': 'presentation-v1', 'scenes': detector.scenes,
-                          'original_scenes': [dict(scene) for scene in detector.scenes]}
+            for packet in container.demux(video, audio):
+                for frame in packet.decode():
+                    if isinstance(frame, av.AudioFrame):
+                        for converted in resampler.resample(frame):
+                            add_audio(converted)
+                    else:
+                        timestamp = max(0.0, float(frame.time or 0) - origin)
+                        video_end = max(video_end, timestamp + float(frame.duration or 0) * float(frame.time_base))
+                        if timestamp - last_sample >= .49:
+                            if writer is not None:
+                                rgb = thumbnail(frame, roi)
+                                detector.feed(rgb, timestamp)
+                                writer.add(rgb, timestamp)
+                            else:
+                                detector.feed(crop_picture(frame, roi), timestamp)
+                            last_sample = timestamp
+                        if time.monotonic() - last_progress >= 2:
+                            context.progress(.04 + .05 * min(1, timestamp / max(duration, timestamp, 1)), 'video_analysis',
+                                             completed=int(timestamp), total=math.ceil(duration) if duration else None, unit='media_second')
+                            last_progress = time.monotonic()
+            for converted in resampler.resample(None):
+                add_audio(converted)
+        if not len(samples) or (detector.anchor is None if writer is not None else detector.picture is None):
+            raise ValueError('Video has no decodable audio or picture')
+        end = max(video_end, sample_count / 16000)
+        padding = round(end * 16000) - sample_count
+        if padding > 0:
+            samples.silence(padding)
+        values = samples.finish(normalized)
+        detector.flush(end)
+        if writer is not None:
+            from .video_detection import LEGACY_VERSION, VERSION, materialize, stable_representatives
+            writer.finish(end, origin)
+            strict = detector_version != LEGACY_VERSION
+            if strict:
+                stable_representatives(source, frame_directory.parent / 'scene-features', roi, detector.scenes,
+                                       detector.settings.min_stable_seconds, lambda *args: None)
+            materialize(source, detector.scenes, frame_directory, roi, origin, lambda *args: None)
+            return values, 16000, {'contract_version': 2 if strict else 1, 'revision': 1, 'duration': end, 'time_origin': origin,
+                                  'roi': roi, 'detector': VERSION if strict else LEGACY_VERSION, 'scene_detection': detection_settings,
+                                  'scenes': detector.scenes, 'automatic_scenes': [dict(s) for s in detector.scenes],
+                                  'original_scenes': [dict(s) for s in detector.scenes]}
+        return values, 16000, {'contract_version': 1, 'revision': 1, 'duration': end, 'time_origin': origin,
+                              'roi': roi, 'detector': 'presentation-v1', 'scenes': detector.scenes,
+                              'original_scenes': [dict(scene) for scene in detector.scenes]}
+
+    except BaseException:
+        samples.close()
+        raise
 
 
 def picture_at(source: Path, timestamp: float, roi: dict | None, origin: float = 0) -> Image.Image:
