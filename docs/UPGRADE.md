@@ -4,7 +4,7 @@
 
 从 v0.1.43 更新无需数据库迁移、历史文件改写或额外升级备份。模型与依赖锁不变；浮点音轨采用内存优先、按需落盘缓存，读取时归一化避免整份缓存重写。新增 ASR 主机内存与工作空间预算，超限明确失败并保留输入。按本机维护流程等待空闲、停服更新，并刷新原 API、ASR/TTS supervisor 和 executor。详见[资源预算](TROUBLESHOOTING.md#asr-resource-budgets--asr-资源预算)。
 
-English: This unreleased development change needs no data migration, historical-file rewrite or extra upgrade backup from v0.1.43. Models and dependency locks are unchanged. Restore and verify every original service process after the final source change.
+English: This unreleased development change needs no data migration, historical-file rewrite or extra upgrade backup from v0.1.43. Models and dependency locks are unchanged. Audio caches now prefer bounded RAM and spill only as needed; normalization no longer rewrites them. Restore and verify every original service process after the final source change.
 
 ## v0.1.43：长音频波形内存与退出诊断
 

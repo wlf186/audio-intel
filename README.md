@@ -170,6 +170,8 @@ See the [Linux installation guide](docs/INSTALL.md) or [native Windows guide](do
 
 ## How it works
 
+ASR audio and video use bounded, memory-first float32 caches. Samples spill only when needed and are written at most once; normalization does not rewrite the cache. The default cache cap is 4 GiB, additionally limited to 25% of the task RAM budget. Set `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES=0` for direct disk storage. See [resource budgets and write measurements](docs/TROUBLESHOOTING.md#asr-resource-budgets--asr-资源预算).
+
 ```text
 20810 (default) FastAPI + local React Web UI
         │
@@ -274,5 +276,3 @@ Models, task inputs, generated outputs, the SQLite database, voices, voiceprints
 ## License
 
 Project-owned code is licensed under the [Apache License 2.0](LICENSE). Downloaded model weights are not included in the repository and remain subject to their upstream licenses; see [third-party and model notices](THIRD_PARTY_NOTICES.md). The code license does not grant rights to third-party names or intellectual property; see the [brand and project status notice](BRAND_NOTICE.md).
-
-ASR 长音频和视频使用内存优先的有界 float32 缓存，资源不足时按需落盘，每个采样最多写一次；归一化不重写缓存。缓存默认最多 4 GiB 且不超过任务内存预算的 25%，可通过 `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES` 设置（0 为直接落盘）。配置与写入计量见[资源预算](docs/TROUBLESHOOTING.md#asr-resource-budgets--asr-资源预算)。
