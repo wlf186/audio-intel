@@ -36,7 +36,7 @@ def oom_kills() -> int | None:
             with path.open(encoding='utf-8') as stream:
                 counters = dict(row.split() for row in stream.read(4096).splitlines())
             return int(counters['oom_kill'])
-    except (OSError, ValueError, KeyError, StopIteration, IndexError):
+    except Exception:
         pass
     return None
 
@@ -61,7 +61,7 @@ class ExecutorDiagnostics:
             self.last_rss = process.memory_info().rss
             self.peak_rss = max(self.peak_rss or 0, self.last_rss)
             self.available_bytes = psutil.virtual_memory().available
-        except (psutil.Error, OSError):
+        except Exception:
             pass
 
     def record(self, job: dict[str, Any], exit_code: int | None, directory: Path,

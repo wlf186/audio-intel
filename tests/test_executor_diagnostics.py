@@ -18,6 +18,13 @@ from test_worker import _wait_for_job, _stop_test_supervisor
     ('nt', -1073741819, None, None, False), ('nt', 17, None, None, False),
 ])
 def test_exit_evidence_and_conservative_oom(tmp_path, monkeypatch, platform, code, delta, signal, possible):
+    if platform == 'posix' and os.name == 'nt':
+        # Simulated POSIX evidence must not use the Windows signal enum.
+        from enum import IntEnum
+        class PosixSignals(IntEnum):
+            SIGKILL = 9
+            SIGSEGV = 11
+        monkeypatch.setattr(diagnostics.signal, 'Signals', PosixSignals)
     counts = iter([None, None] if delta is None else [5, 5 + delta])
     monkeypatch.setattr(diagnostics, 'oom_kills', lambda: next(counts))
     probe = diagnostics.ExecutorDiagnostics(os.getpid())
@@ -88,3 +95,12 @@ if __name__=='__main__':
         assert not (local.temp_dir/first['id']).exists()
     finally:
         _stop_test_supervisor(supervisor)
+
+
+def test_sampling_unexpected_probe_errors_are_optional(monkeypatch):
+    monkeypatch.setattr(diagnostics, 'oom_kills', lambda: None)
+    def unavailable(*args):
+        raise RuntimeError('probe unavailable')
+    monkeypatch.setattr(diagnostics.psutil, 'Process', unavailable)
+    probe = diagnostics.ExecutorDiagnostics(123)
+    assert probe.last_rss is None
