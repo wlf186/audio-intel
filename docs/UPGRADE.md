@@ -7,6 +7,17 @@ SQLite v22→v23 为增量数据库迁移：增加任务列表／worker 查询�
 Development migration v22→v23 adds indexes and durable maintenance state only. Stop services and back up SQLite, then restore and accept all original components before removing the temporary backup. This requirement also applies to v22 deployments; release-specific notes below describe earlier versions.
 
 
+### ASR temporary I/O
+
+第二批优化省去转写／对齐分块 WAV，减少资源检查和进度快照开销，复用代表帧解码器，并优化波形读取。本批及本次文档补齐没有新增迁移，不改写历史媒体；已在 v23 的实例无需额外升级备份。从 v22 或更早版本跨越第一批时，仍按实际迁移范围备份 SQLite，不能将“第二批无迁移”理解为整个升级无需备份。
+
+ASR 转写和对齐默认按原采样边界读取已保存的 16 kHz 单声道 PCM16 原音或增强音，不再重复生成分块 WAV；音频量化结果、VAD 分块、模型精度和批次规则保持一致。服务端 `AUDIO_INTEL_ASR_CHUNK_INPUT` 未设置或空值使用 `range`；`wav` 恢复旧分块文件路径，其他值启动报错，修改后须按维护流程重启。它不是 HTTP 请求参数，也不改变请求／结果结构。原始上传、归一化音轨、实际增强音及最终产物仍正常保存，分块免落盘不表示任务总写入为零。
+
+ASR transcription and alignment read exact sample intervals from the saved 16 kHz mono PCM16 original or enhanced track, avoiding duplicate chunk WAVs while preserving audio quantization, VAD boundaries, model precision and batching. The server setting `AUDIO_INTEL_ASR_CHUNK_INPUT` defaults to `range` when absent or empty; `wav` restores legacy chunk files. Other values fail startup; restart through the maintenance procedure after changes. This is not an HTTP request field and changes no request/result schema. Uploaded originals, normalized audio, applied enhancement and final artifacts still write normally; eliminating chunk files does not eliminate all task writes.
+
+The second batch reduces chunk-file writes, resource/progress overhead, representative-frame container opens and waveform reads. It and this documentation update add no migration or historical media rewrite. Existing v23 deployments need no extra upgrade backup; installations crossing the first batch from v22 or earlier still require the applicable SQLite backup. Refresh the recorded API, supervisors and executors through the maintenance procedure, then verify `/docs`, `/openapi.json` and historical access.
+
+
 ## v0.1.44：ASR 全流程资源控制与按需音频缓存
 
 从 v0.1.43 更新无需数据库迁移、历史文件改写或额外升级备份。模型与依赖锁不变；浮点音轨采用内存优先、按需落盘缓存，读取时归一化避免整份缓存重写。新增 ASR 主机内存与工作空间预算，超限明确失败并保留输入。按本机维护流程等待空闲、停服更新，并刷新原 API、ASR/TTS supervisor 和 executor。详见[资源预算](TROUBLESHOOTING.md#asr-resource-budgets--asr-资源预算)。
@@ -619,14 +630,3 @@ SQLite v18 → v19 **包含一次性数据清理**：删除全部旧音频及视
 浏览器长期档位及导出偏好不变。来源明细开关新增为每任务会话偏好，刷新保留、退出登录清理；默认显示差异，尊重已有关闭选择。升级后刷新浏览器。
 
 English: Schema v19 deletes all pre-upgrade optimization drafts and checkpoints once, but preserves original jobs/media and settings. Use a stopped-service SQLite-only backup, rebuild, restore the recorded components and verify final process identities and historical data before cleanup. New drafts publish only after generation and bounded checks finish; previous drafts remain readable during regeneration under unchanged scene boundaries.
-
-### ASR temporary I/O
-
-`AUDIO_INTEL_ASR_CHUNK_INPUT=range` (default, also for an empty value) reads the
-existing normalized/enhanced 16 kHz mono PCM16 audio by exact sample intervals.
-It avoids temporary chunk WAV files without changing VAD boundaries, models or
-precision. Set `AUDIO_INTEL_ASR_CHUNK_INPUT=wav` and restart through the maintenance
-procedure above to use the legacy chunk-file path. Other values are rejected at
-startup. This setting changes no HTTP fields or persisted job/result formats.
-Waveform generation reads PCM16 WAV in one bounded pass; other encodings retain
-the existing decoder. Window waveforms use bounded blocks and the same peak bins.

@@ -155,3 +155,9 @@ Runtime stays offline and never sends recordings to model hosts. Both models use
 the existing ASR Torch/NumPy environment. Missing denoising weights leave base ASR
 usable; policy 6 can still apply speech gain and reports per-operation outcomes.
 Only no usable enhanced output falls back to the original audio.
+
+## ASR I/O configuration / ASR I/O 配置
+
+The root `.env.example` documents `AUDIO_INTEL_ASR_CHUNK_INPUT=range|wav`; missing/empty uses `range`. Copy only the intended setting to your deployment configuration and restart through the [maintenance workflow](UPGRADE.md#local-development-and-deployment). Exported variables still take precedence. This setting is independent of the float-cache capacity; see [configuration and diagnostics](TROUBLESHOOTING.md#asr-chunk-input--asr-分块输入).
+
+中文：根目录配置示例新增分块输入模式，未设置或空值默认 `range`，`wav` 为旧路径回退；其他值启动报错。仅同步所需设置，保留部署配置及环境变量优先级，按维护流程重启。它与浮点缓存容量独立，详见上述排障说明。

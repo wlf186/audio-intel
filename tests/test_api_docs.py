@@ -48,6 +48,9 @@ def test_asr_resource_failure_is_documented_without_submission_shape_change(tmp_
     assert 'AsrResourceLimitError' in schema['info']['description']
     assert 'Original inputs are retained' in schema['info']['description']
     assert 'AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES' in schema['info']['description']
+    assert 'AUDIO_INTEL_ASR_CHUNK_INPUT' in schema['info']['description']
+    for item in schema['components']['schemas'].values():
+        assert not {'chunk_input', 'audio_source', 'start_sample', 'end_sample'} & item.get('properties', {}).keys()
     assert 'audio_cache_max_bytes' not in schema['components']['schemas']['VideoJobRequest']['properties']
     assert 'memory_budget' not in schema['components']['schemas']['VideoJobRequest']['properties']
 

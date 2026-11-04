@@ -1066,3 +1066,13 @@ SQLite 空闲页至少 64 MiB 且占数据库至少 25% 时安排后台压缩。
 Deletion immediately removes media and database records. Single deletion still returns 204. Batch deletion adds `database_compaction_status` (`not_needed`, `scheduled`, `completed`, `failed`); scheduled maintenance is not a deletion failure. `database_compacted` means compaction actually completed before the response, and reclaimed-byte counts exclude future savings. Automatic compaction requires at least 64 MiB and 25% free pages, 60 seconds of business idle time and 24 hours since successful compaction. Pending checks run every 60 seconds, with a one-hour retry delay and a 30-second execution budget. New business writes and shutdown interrupt compaction; a busy checkpoint retries without repeating VACUUM.
 
 普通音频转写和 OpenAI-compatible transcription 的 multipart 文件直接写入任务卷的暂存文件并原子移交。文件大小上限不变，multipart 额外开销最多 1 MiB；无 Content-Length 时也逐块计数。其他上传接口的协议不变。
+
+## ASR chunk input / ASR 分块输入
+
+ASR 转写和对齐默认按原采样边界读取已保存的 16 kHz 单声道 PCM16 原音或增强音，不再重复生成分块 WAV；音频量化结果、VAD 分块、模型精度和批次规则保持一致。服务端 `AUDIO_INTEL_ASR_CHUNK_INPUT` 未设置或空值使用 `range`；`wav` 恢复旧分块文件路径，其他值启动报错，修改后须按维护流程重启。它不是 HTTP 请求参数，也不改变请求／结果结构。原始上传、归一化音轨、实际增强音及最终产物仍正常保存，分块免落盘不表示任务总写入为零。
+
+ASR transcription and alignment read exact sample intervals from the saved 16 kHz mono PCM16 original or enhanced track, avoiding duplicate chunk WAVs while preserving audio quantization, VAD boundaries, model precision and batching. The server setting `AUDIO_INTEL_ASR_CHUNK_INPUT` defaults to `range` when absent or empty; `wav` restores legacy chunk files. Other values fail startup; restart through the maintenance procedure after changes. This is not an HTTP request field and changes no request/result schema. Uploaded originals, normalized audio, applied enhancement and final artifacts still write normally; eliminating chunk files does not eliminate all task writes.
+
+PCM16 WAV 产物波形采用单遍有界读取，可见窗口波形按固定块聚合。峰值、时间范围、缓存和 `429`／`Retry-After` 行为保持不变。
+
+PCM16 WAV artifact peaks use one bounded read pass; visible-window peaks aggregate fixed-size blocks. Peak values, time ranges, caching and `429`/`Retry-After` behavior remain unchanged.

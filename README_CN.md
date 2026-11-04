@@ -170,7 +170,7 @@ Invoke-RestMethod http://127.0.0.1:20810/api/v1/health
 
 ## 工作原理
 
-ASR 长音频和视频使用内存优先的有界 float32 缓存，资源不足时按需落盘，每个采样最多写一次；归一化不重写缓存。缓存默认最多 4 GiB 且不超过任务内存预算的 25%，可通过 `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES` 设置（0 为直接落盘）。配置与写入计量见[资源预算](docs/TROUBLESHOOTING.md#asr-resource-budgets--asr-资源预算)。
+ASR 长音频和视频使用内存优先的有界 float32 缓存，资源不足时按需落盘，每个采样最多写一次；归一化不重写缓存。缓存默认最多 4 GiB 且不超过任务内存预算的 25%，可通过 `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES` 设置（0 为直接落盘）。转写与对齐默认按已保存 PCM16 区间读取，省去临时分块 WAV；`AUDIO_INTEL_ASR_CHUNK_INPUT=wav` 可在重启后恢复旧路径，原件、归一化及增强音仍正常保存。配置与写入计量见[资源预算](docs/TROUBLESHOOTING.md#asr-resource-budgets--asr-资源预算)。
 
 ```text
 20810（默认）FastAPI + 本地 React Web UI

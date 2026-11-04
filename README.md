@@ -170,7 +170,7 @@ See the [Linux installation guide](docs/INSTALL.md) or [native Windows guide](do
 
 ## How it works
 
-ASR audio and video use bounded, memory-first float32 caches. Samples spill only when needed and are written at most once; normalization does not rewrite the cache. The default cache cap is 4 GiB, additionally limited to 25% of the task RAM budget. Set `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES=0` for direct disk storage. See [resource budgets and write measurements](docs/TROUBLESHOOTING.md#asr-resource-budgets--asr-资源预算).
+ASR audio and video use bounded, memory-first float32 caches. Samples spill only when needed and are written at most once; normalization does not rewrite the cache. The default cache cap is 4 GiB, additionally limited to 25% of the task RAM budget. Set `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES=0` for direct disk storage. Transcription/alignment now read saved PCM16 intervals without temporary chunk WAVs; `AUDIO_INTEL_ASR_CHUNK_INPUT=wav` provides a restart-based legacy fallback. This does not eliminate original/normalized/enhanced audio writes. See [resource budgets and write measurements](docs/TROUBLESHOOTING.md#asr-resource-budgets--asr-资源预算).
 
 ```text
 20810 (default) FastAPI + local React Web UI

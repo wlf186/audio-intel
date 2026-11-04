@@ -264,21 +264,49 @@ ASR 工作台使用固定的“新建音频转写 / 新建视频转写 / 任务�
 - 正文生成、自动检查、小结／标题及必要的兜底结束后统一发布。正文阶段的持续连接、窗口或容量故障保存进度并暂停；复核连接故障可记录为不可用，证据引用无法定位时保留不确定及诊断，不当作通过。检查提示不会撤销已生成正文。
 - 小结 v2 的模型异常自动尝试定向修复、关键词及原文要点；关键词合格后即结束该项。小结阶段的窗口／容量故障和连续服务故障可直接触发程序摘取，仍受长度限制。“关键词／原文要点”是明确标记的替代输出，已计入 ready；成功交付比例不等于事实准确率。
 - “补试未生成小结”用于暂停或遗留缺项，不必为普通生成异常反复点击。用户主动暂停或服务重启后仍需显式继续；来源或提示策略不兼容需重新生成，自动兜底不绕过这些校验。
-- 当前为 SQLite v22；仅 v18 及更早版本迁往 v19 时一次性清理旧优化，v19→v20→v21→v22 保留历史稿与检查点。v22 会将旧 Ollama 连接改为 `/v1` 并关闭启用；重新验证后启用，再显式继续任务。应用新的画面边界也会使对应优化失效，需要重新优化；只预览参数或更换截图不会。
+- 当前为 SQLite v23；仅 v18 及更早版本迁往 v19 时一次性清理旧优化，v19→v20→v21→v22→v23 保留历史稿与检查点。v22 会将旧 Ollama 连接改为 `/v1` 并关闭启用；重新验证后启用，再显式继续任务。应用新的画面边界也会使对应优化失效，需要重新优化；只预览参数或更换截图不会。
 - 小模型可能保留原本清晰的短句，也可能误改事实；改字比例不是质量指标。详见[表达优化](EXPRESSION_OPTIMIZATION.md)及[验证边界](EXPRESSION_OPTIMIZATION_VALIDATION.md)。
 
 English: Model discovery is optional; enter a model ID manually if unavailable. Verification checks synthetic text/JSON output, not allocated context. Configure the actual Ollama context server-side. Check model API credentials for 401/403, parameters for 400, and budgets/server limits for capacity errors. Existing drafts and checkpoints survive the v22 migration.
 
 ## ASR resource budgets / ASR 资源预算
 
-所有 ASR 队列任务（音频、视频、兼容转写、参考分析和声纹入库）使用内存优先的 float32 音轨和有界读取，不提前量化模型输入。缓存最多占任务内存预算的 25%，并受 `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES` 限制（默认 4 GiB，0 为直接落盘）。超过额度或出现内存压力时仅淘汰需要释放的块，每个采样最多落盘一次；归一化在读取副本上计算，不重写缓存。视频补静音使用逻辑区间，仍按完整时间轴核算 PCM16 文件和 WAV 容量。波形提前计算，最后一个音频读取者结束后释放缓存。区间读取允许浮点秒端点换算产生的一个采样余量，保持旧切片内容。解码/归一化每块最多 65,536 采样，VAD 保持原有 60 秒边界、缓存和末尾刷新；说话人窗口与有效批量不变。全局聚类、增强统计和结果元数据仍需要内存，缓存额度不是恒定总内存保证。
+所有 ASR 队列任务（音频、视频、兼容转写、参考分析和声纹入库）使用内存优先的 float32 音轨缓存和有界读取；缓存保留未量化采样供既有 VAD、说话人和波形分析使用，转写与对齐则沿用 PCM16 音频量化结果。缓存最多占任务内存预算的 25%，并受 `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES` 限制（默认 4 GiB，0 为直接落盘）。超过额度或出现内存压力时仅淘汰需要释放的块，每个采样最多落盘一次；归一化在读取副本上计算，不重写缓存。视频补静音使用逻辑区间，仍按完整时间轴核算 PCM16 文件和 WAV 容量。波形提前计算，最后一个音频读取者结束后释放缓存。区间读取允许浮点秒端点换算产生的一个采样余量，保持旧切片内容。解码/归一化每块最多 65,536 采样，VAD 保持原有 60 秒边界、缓存和末尾刷新；说话人窗口与有效批量不变。全局聚类、增强统计和结果元数据仍需要内存，缓存额度不是恒定总内存保证。
 
 `AUDIO_INTEL_ASR_MEMORY_BUDGET_BYTES` 限制每任务新增主机内存，`AUDIO_INTEL_ASR_WORK_BUDGET_BYTES` 限制工作文件和生成产物（不含上传原件）。0 为自动值，正整数为管理员上限。自动内存额度为有效可用内存减去 max(1 GiB, 有效总内存的 10%) 后的一半；执行器起始进程树 RSS 加额度形成观察上限。Linux 可读取的 cgroup v2 余量参与计算，其他情况采用系统内存。自动空间额度为磁盘空闲减去未完成上传预留和现有磁盘安全水位后的一半。预算在任务开始冻结，运行时再次检查真实余量。跨目录盘符分别受实际剩余空间约束；建议临时目录与数据目录在同一文件系统。
 
 资源不足时任务以 `AsrResourceLimitError` 明确失败，错误说明阶段、资源、需求和预算，上传原件保留。有效延迟和静音不裁剪，大时间戳间隙在写入前核算容量；原 PCM16 WAV 容量限制继续生效，不自动改用 RF64。必需步骤不降级算法、不跳过说话人、不自动重试；用户可调整预算/释放资源后完整重试。每次尝试的 `diagnostics/attempt-N-resource-budget.json` 最多 16 KiB，仅本地保存，不向全局列表/SSE 发布采样。RSS 进程树求和会保守计入共享页，一秒监督采样不是操作系统硬上限，外部进程仍可能造成 OOM。
 
-English: All ASR queue paths use memory-first unquantized float32 samples with bounded reads. Cache RAM is capped at 25% of the task RAM budget and AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES (4 GiB by default; zero selects disk). Evicted samples are written at most once, normalization never rewrites the cache, and timestamp padding uses logical zero intervals. `AUDIO_INTEL_ASR_MEMORY_BUDGET_BYTES` and `AUDIO_INTEL_ASR_WORK_BUDGET_BYTES` cap additional host RAM and generated workspace; zero selects automatic budgets, frozen at task start with live headroom checks. Memory defaults to half the available capacity after reserving max(1 GiB, 10% of effective total RAM); workspace defaults to half the free space after upload reservations and the disk safety margin. Preserve VAD state/boundaries, model identity, precision, batching, diarization and media timing. Exceeding a budget fails explicitly with AsrResourceLimitError and retains the original input. No request fields or database schema change; historical data is not rewritten. RSS monitoring is conservative and is not an OS hard limit. No automatic algorithm downgrade or partial resume is introduced.
+English: All ASR queue paths use a memory-first unquantized float32 cache with bounded reads for existing VAD, speaker and waveform analysis; transcription/alignment retain their PCM16 audio quantization. Cache RAM is capped at 25% of the task RAM budget and AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES (4 GiB by default; zero selects disk). Evicted samples are written at most once, normalization never rewrites the cache, and timestamp padding uses logical zero intervals. `AUDIO_INTEL_ASR_MEMORY_BUDGET_BYTES` and `AUDIO_INTEL_ASR_WORK_BUDGET_BYTES` cap additional host RAM and generated workspace; zero selects automatic budgets, frozen at task start with live headroom checks. Memory defaults to half the available capacity after reserving max(1 GiB, 10% of effective total RAM); workspace defaults to half the free space after upload reservations and the disk safety margin. Preserve VAD state/boundaries, model identity, precision, batching, diarization and media timing. Exceeding a budget fails explicitly with AsrResourceLimitError and retains the original input. No request fields or database schema change; historical data is not rewritten. RSS monitoring is conservative and is not an OS hard limit. No automatic algorithm downgrade or partial resume is introduced.
 
 缓存诊断在既有本地 attempt 文件中记录峰值缓存、累计浮点写入和淘汰原因。内存足够时浮点缓存写入为零；这不表示原有 PCM16、增强文件或任务总写入为零，也不等于 SSD NAND 实测写入量。可用 ASR 环境运行 `scripts/benchmark_asr_storage.py --source <media> --output-dir <new-directory>` 计量；测试应隔离运行目录并设置 `AUDIO_INTEL_LOAD_ENV=0`。
 
 English: Existing local attempt diagnostics record peak cache allocation, cumulative float-cache writes and eviction reasons. A RAM-resident task writes no float cache, while its existing PCM16/enhancement outputs still write normally. These counters measure logical payload writes, not SSD NAND writes. Run `scripts/benchmark_asr_storage.py --source <media> --output-dir <new-directory>` with the ASR interpreter and `AUDIO_INTEL_LOAD_ENV=0`; keep test state isolated.
+
+## ASR chunk input / ASR 分块输入
+
+ASR 转写和对齐默认按原采样边界读取已保存的 16 kHz 单声道 PCM16 原音或增强音，不再重复生成分块 WAV；音频量化结果、VAD 分块、模型精度和批次规则保持一致。服务端 `AUDIO_INTEL_ASR_CHUNK_INPUT` 未设置或空值使用 `range`；`wav` 恢复旧分块文件路径，其他值启动报错，修改后须按维护流程重启。它不是 HTTP 请求参数，也不改变请求／结果结构。原始上传、归一化音轨、实际增强音及最终产物仍正常保存，分块免落盘不表示任务总写入为零。
+
+ASR transcription and alignment read exact sample intervals from the saved 16 kHz mono PCM16 original or enhanced track, avoiding duplicate chunk WAVs while preserving audio quantization, VAD boundaries, model precision and batching. The server setting `AUDIO_INTEL_ASR_CHUNK_INPUT` defaults to `range` when absent or empty; `wav` restores legacy chunk files. Other values fail startup; restart through the maintenance procedure after changes. This is not an HTTP request field and changes no request/result schema. Uploaded originals, normalized audio, applied enhancement and final artifacts still write normally; eliminating chunk files does not eliminate all task writes.
+
+### Reproduce chunk I/O / 复现分块 I/O
+
+`AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES=0` selects direct disk storage for the float32 cache; it does not disable writes and is independent of chunk input mode. To diagnose a range-input regression, set `AUDIO_INTEL_ASR_CHUNK_INPUT=wav`, wait for idle and follow the [maintenance procedure](UPGRADE.md#local-development-and-deployment) to restart; restore `range` through the same procedure. Preserve the original input and diagnostics for comparison.
+
+中文：缓存容量设为 0 表示浮点缓存直接落盘，与分块输入模式独立。排查区间输入异常时可设置 `wav`，等待空闲后按维护流程重启；恢复 `range` 也需重启。保留原始输入及诊断以便对比，不修改正常部署的其他配置。
+
+Use an existing saved **16 kHz mono PCM16 WAV**, opened read-only. The script creates and removes legacy comparison chunks under the report directory, performs no inference and downloads no models. Use a fresh output directory; the report contains checksums, not transcript text. From the repository root:
+
+```bash
+AUDIO_INTEL_LOAD_ENV=0 .runtime/asr/bin/python scripts/benchmark_io_efficiency.py \
+  --source /path/to/saved-pcm16.wav --output tmp/io-check/report.json --repeat 3
+```
+
+```powershell
+$env:AUDIO_INTEL_LOAD_ENV="0"
+& .\.runtime\asr\Scripts\python.exe scripts/benchmark_io_efficiency.py --source C:\audio\saved-pcm16.wav --output tmp/io-check/report.json --repeat 3
+```
+
+Replace the source with your saved WAV. `samples_equal` verifies identical decoded samples; `wav_bytes` and `range_bytes` measure temporary chunk file bytes, while `wav_seconds` and `range_seconds` measure this I/O comparison only. These are not end-to-end inference timings or SSD NAND-write/lifetime measurements. Cache effects and hardware affect timings. The separate `benchmark_asr_storage.py` measures float-cache/decode storage instead.
+
+中文：替换示例源路径，使用新的输出目录。基准只读源 WAV，但会在报告目录创建并清理旧路径对照分块；不运行推理、不下载模型。`samples_equal` 检查采样一致，字节字段只计临时分块，耗时只涵盖本次 I/O 对照；不能据此推算端到端加速或 SSD 寿命。浮点缓存／解码写入仍由另一存储基准计量。

@@ -12,6 +12,14 @@ API_DESCRIPTION = r"""
 >
 > 本项目是独立、非官方、以非商业方式维护的开源项目，未获得 CD PROJEKT RED、R. Talsorian Games 或任何相关权利方的授权、赞助、认可或背书，与其不存在隶属关系。`Sandevistan` 名称及相关第三方知识产权的权利归各自权利人所有。 / This is an independent, unofficial open-source project maintained on a non-commercial basis. It has not been authorized, sponsored, approved, or endorsed by CD PROJEKT RED, R. Talsorian Games, or any related rights holder, and is not affiliated with them. Rights in the Sandevistan name and related third-party intellectual property remain with their respective owners.
 
+## ASR 分块输入 / ASR chunk input
+
+ASR 转写和对齐默认按原采样边界读取已保存的 16 kHz 单声道 PCM16 原音或增强音，不再重复生成分块 WAV；音频量化结果、VAD 分块、模型精度和批次规则保持一致。服务端 `AUDIO_INTEL_ASR_CHUNK_INPUT` 未设置或空值使用 `range`；`wav` 恢复旧分块文件路径，其他值启动报错，修改后须按维护流程重启。它不是 HTTP 请求参数，也不改变请求／结果结构。原始上传、归一化音轨、实际增强音及最终产物仍正常保存，分块免落盘不表示任务总写入为零。
+
+ASR transcription and alignment read exact sample intervals from the saved 16 kHz mono PCM16 original or enhanced track, avoiding duplicate chunk WAVs while preserving audio quantization, VAD boundaries, model precision and batching. The server setting `AUDIO_INTEL_ASR_CHUNK_INPUT` defaults to `range` when absent or empty; `wav` restores legacy chunk files. Other values fail startup; restart through the maintenance procedure after changes. This is not an HTTP request field and changes no request/result schema. Uploaded originals, normalized audio, applied enhancement and final artifacts still write normally; eliminating chunk files does not eliminate all task writes.
+
+PCM16 WAV artifact waveforms use one bounded read pass; window peaks use fixed-size blocks with unchanged bins, cache and concurrency limits. / PCM16 WAV 产物波形单遍读取，窗口波形按固定块聚合，分箱、缓存和并发限制不变。
+
 ## 执行器异常退出 / Unexpected executor exit
 
 ASR 音轨采用内存优先、按需落盘缓存；缓存上限由服务端 `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES` 控制（默认 4 GiB，且不超过任务内存预算的 25%，0 为直接落盘），无需新增请求参数。归一化不重写缓存。
