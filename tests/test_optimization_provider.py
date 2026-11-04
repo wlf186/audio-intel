@@ -120,7 +120,7 @@ def test_v21_upgrade_retains_historical_snapshots(local):
     assert db.get_job(job['id'])['state']=='succeeded'
     assert store.get(run)['config'] == snapshot and store.parts(run, 0) == before
     assert store.get(run)['state'] == 'paused'
-    with db.connect() as c:assert c.execute('SELECT version FROM schema_meta').fetchone()[0]==22
+    with db.connect() as c:assert c.execute('SELECT version FROM schema_meta').fetchone()[0]==23
 
 
 def test_stream_cancellation_closes_response():

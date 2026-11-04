@@ -280,6 +280,7 @@ class Manager:
         self.current_id: str | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.gate = asyncio.Lock()
+        self.wake = asyncio.Event()
 
     async def stop(self, job_id: str, deleting: bool = False):
         values = store.status(job_id)
@@ -414,6 +415,7 @@ class Manager:
             store.delete(job_id)
         try:
             while True:
+                self.wake.clear()
                 if store.settings().get('enabled') and not self.gate.locked():
                     with db.connect() as connection:
                         generation = connection.execute("SELECT id,state FROM transcript_optimizations WHERE state='queued' OR (published=1 AND summary_state='queued') ORDER BY COALESCE(summary_requested_at,created_at),id LIMIT 1").fetchone()
@@ -425,7 +427,9 @@ class Manager:
                         self.current = asyncio.create_task(self.execute_summaries(identifier) if auxiliary else self.execute(identifier))
                         await asyncio.gather(self.current, return_exceptions=True)
                         self.current_id, self.current = None, None
-                await asyncio.sleep(.05)
+                        continue
+                from .background_wake import wait_for_work
+                await wait_for_work(self.wake)
         finally:
             if self.current:
                 self.current.cancel()
@@ -554,6 +558,7 @@ def register(app, api):
                 raise HTTPException(409, '请先验证所选模型 / Verify the selected model first')
             value = {**(profile if verified else candidate), '_api_key': candidate['_api_key'], 'enabled': body.enabled}
             store.save_settings(value)
+            manager.wake.set()
             if not body.enabled:
                 for job_id in store.summaries():
                     await manager.stop(job_id)
@@ -596,6 +601,7 @@ def register(app, api):
                 _, replayed = await asyncio.to_thread(prepare)
             except (ValueError, FileNotFoundError) as exc:
                 raise HTTPException(409, str(exc)) from exc
+            manager.wake.set()
             if replayed:
                 response.status_code = 200
             return public_status(job_id)
@@ -624,6 +630,7 @@ def register(app, api):
             if item['published']:
                 raise HTTPException(409, 'Completed draft cannot be resumed')
             store.resume(body.run_id)
+            manager.wake.set()
             return public_status(job_id)
 
     @app.get(jobs + '/summaries', summary='读取分组与画面小结 / Read group summaries and scene titles', description=api.bilingual('按任务读取小结附加数据，不载入完整正文。v2 包含生成方式、尝试次数、关键词／原文要点标记及分类计数，ready 包括有效兜底。兼容旧稿 not_requested；支持 ETag。', 'Read per-job insights without transcript prose. V2 includes generation method, attempt count, keyword/source-excerpt notices and separate counters; ready includes meaningful fallback. Legacy drafts return not_requested. Supports ETag.'), operation_id='getOptimizationSummaries', tags=[TAG], response_model=SummariesResponse, responses=errors)
@@ -656,6 +663,7 @@ def register(app, api):
                 if engine.source_hash(parent(job_id)['result']) != item['source_hash']:
                     raise HTTPException(409, 'Source changed; regenerate')
                 queued = insights.retry(body.run_id, key, api.settings.min_free_disk_bytes)
+            manager.wake.set()
             if not queued:
                 response.status_code = 200
             return public_status(job_id)

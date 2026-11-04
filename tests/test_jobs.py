@@ -249,7 +249,7 @@ def test_historical_jobs_backfill_compute_device_names(tmp_path, monkeypatch) ->
     assert db_module.get_job(old_tts["id"])["request"]["compute_device_name"] == "CPU"
     assert db_module.get_job(named["id"])["request"]["compute_device_name"] == "Original GPU"
     with sqlite3.connect(local.database_path) as database:
-        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 22
+        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 23
 
 
 def test_schema_upgrade_reaches_voiceprints_without_a_gpu(tmp_path, monkeypatch) -> None:
@@ -264,7 +264,7 @@ def test_schema_upgrade_reaches_voiceprints_without_a_gpu(tmp_path, monkeypatch)
     db_module.init_db()
 
     with sqlite3.connect(local.database_path) as database:
-        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 22
+        assert database.execute("SELECT version FROM schema_meta").fetchone()[0] == 23
         assert database.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='voiceprint_people'"
         ).fetchone()[0] == 1
@@ -422,7 +422,8 @@ def test_batch_delete_purges_files_queue_and_database(tmp_path, monkeypatch) -> 
         assert body["deleted_count"] == 2
         assert body["failed_count"] == 2
         assert body["reclaimed_bytes"] > 0
-        assert body["database_compacted"] is True
+        assert body["database_compacted"] is False
+        assert body["database_compaction_status"] == "not_needed"
         assert {item["code"] for item in body["failed"]} == {"running", "not_found"}
         for job in (completed, queued):
             assert db_module.get_job(job["id"]) is None
@@ -431,7 +432,7 @@ def test_batch_delete_purges_files_queue_and_database(tmp_path, monkeypatch) -> 
         assert db_module.get_job(running["id"]) is not None
         assert (local.jobs_dir / running["id"]).is_dir()
         with sqlite3.connect(local.database_path) as database:
-            assert database.execute("PRAGMA freelist_count").fetchone()[0] == 0
+            assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
 def test_batch_delete_keeps_failed_item_and_continues(tmp_path, monkeypatch) -> None:

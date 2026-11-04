@@ -135,7 +135,7 @@ def test_playback_publication_exact_copy_failure_cleanup_and_retry(local, monkey
         monkeypatch.setattr(pipeline.os, 'replace', real_replace)
         job = create_asr(local)
         real_save = pipeline.save_playback_audio
-        def fail_save(*_):
+        def fail_save(*_, **kwargs):
             raise OSError('playback disk full')
         monkeypatch.setattr(pipeline, 'save_playback_audio', fail_save)
         outcome, failed = run_asr(job)
@@ -264,3 +264,41 @@ def test_optional_waveform_failure_keeps_transcript_and_exports(local, monkeypat
     for suffix in ('json', 'srt', 'vtt', 'txt'):
         assert (output / ('transcript.' + suffix)).is_file()
     assert (output / 'playback.wav').is_file()
+
+
+@pytest.mark.parametrize("cross_device", [False, True])
+def test_consumed_playback_moves_or_copies_only_across_devices(local, monkeypatch, cross_device):
+    import errno
+    normalized = local.temp_dir / 'move.wav'
+    expected = write_wave(normalized)
+    replace_file = pipeline.os.replace
+    copy_file = pipeline.shutil.copy2
+    copies = []
+    def replace(source, target):
+        if cross_device and Path(source) == normalized:
+            raise OSError(errno.EXDEV, 'different filesystem')
+        return replace_file(source, target)
+    def copy(source, target):
+        copies.append(source)
+        return copy_file(source, target)
+    monkeypatch.setattr(pipeline.os, 'replace', replace)
+    monkeypatch.setattr(pipeline.shutil, 'copy2', copy)
+    pipeline.save_playback_audio('moved', normalized, consume=True)
+    assert (local.jobs_dir / 'moved/output/playback.wav').read_bytes() == expected
+    assert not normalized.exists()
+    assert len(copies) == int(cross_device)
+
+
+def test_playback_move_permission_error_does_not_copy(local, monkeypatch):
+    source = local.temp_dir / 'normalized.wav'
+    expected = write_wave(source)
+    def fail(*args):
+        raise PermissionError('denied')
+    def no_copy(*args):
+        raise AssertionError('Only EXDEV permits fallback')
+    monkeypatch.setattr(pipeline.os, 'replace', fail)
+    monkeypatch.setattr(pipeline.shutil, 'copy2', no_copy)
+    with pytest.raises(PermissionError):
+        pipeline.save_playback_audio('denied', source, consume=True)
+    assert source.read_bytes() == expected
+    assert not list((local.jobs_dir/'denied/output').glob('*.partial'))

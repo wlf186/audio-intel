@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import errno
 import html
 import logging
 import math
@@ -778,9 +779,11 @@ def _speaker_turns(
     chunk: dict[str, Any],
     diarization: list[dict[str, Any]],
     expose_words: bool,
+    index: Any = None,
 ) -> tuple[list[dict[str, Any]], set[str]]:
     words = chunk.get("words") or []
-    fallback_speaker = speaker_at(chunk["start"], chunk["end"], diarization)
+    lookup = index.speaker_at if index is not None else lambda start, end: speaker_at(start, end, diarization)
+    fallback_speaker = lookup(chunk["start"], chunk["end"])
     if not words:
         return [
             _segment_payload(
@@ -790,7 +793,7 @@ def _speaker_turns(
         ], {fallback_speaker}
 
     word_items = [
-        {**word, "speaker": speaker_at(word["start"], word["end"], diarization)}
+        {**word, "speaker": lookup(word["start"], word["end"])}
         for word in words
     ]
     observed_speakers = {word["speaker"] for word in word_items}
@@ -845,8 +848,10 @@ def assemble(
     expose_words = aligned if expose_words is None else expose_words
     segments: list[dict[str, Any]] = []
     speaker_ids: set[str] = set()
+    from .speaker_index import SpeakerIndex
+    speaker_index = SpeakerIndex(diarization)
     for chunk in chunks:
-        turns, observed = _speaker_turns(chunk, diarization, expose_words)
+        turns, observed = _speaker_turns(chunk, diarization, expose_words, speaker_index)
         speaker_ids.update(observed)
         for turn in turns:
             turn["id"] = len(segments)
@@ -882,15 +887,24 @@ def assemble(
     return merge_speakers(result)[0]
 
 
-def save_playback_audio(job_id: str, normalized: Path) -> str:
+def save_playback_audio(job_id: str, normalized: Path, *, consume: bool = False) -> str:
     """Keep the exact ASR timeline after the executor's work directory is removed."""
     output = settings.jobs_dir / job_id / "output"
     output.mkdir(parents=True, exist_ok=True)
     target = output / "playback.wav"
     temporary = output / "playback.wav.partial"
     try:
+        if consume:
+            try:
+                os.replace(normalized, target)
+                return f"/api/v1/jobs/{job_id}/playback"
+            except OSError as exc:
+                if exc.errno != errno.EXDEV:
+                    raise
         shutil.copy2(normalized, temporary)
         os.replace(temporary, target)
+        if consume:
+            normalized.unlink()
     finally:
         temporary.unlink(missing_ok=True)
     return f"/api/v1/jobs/{job_id}/playback"
@@ -1246,7 +1260,10 @@ def _process_job(context: JobContext) -> dict[str, Any]:
             shutil.move(str(context.work_dir / "scene-features"), str(context.output_dir / "scene-features"))
         result["playback_url"] = f"/api/v1/jobs/{context.job_id}/playback"
     else:
-        result["playback_url"] = save_playback_audio(context.job_id, normalized)
+        result["playback_url"] = save_playback_audio(
+            context.job_id, normalized,
+            consume=request.get("purpose") not in {"voiceprint_import", "tts_clone_reference"},
+        )
     check_resources(memory=len(result.get("segments", [])) * 16384, stage="writing_exports")
     result = write_asr_exports(context.job_id, result, request.get("export_formats", ["json", "srt", "vtt", "txt"]))
     if enhancement is not None and enhancement.get("status") == "applied":

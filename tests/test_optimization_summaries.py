@@ -163,7 +163,7 @@ def test_v19_migration_is_additive_and_legacy_runs_do_not_generate(configured):
     with TestClient(api.create_app()) as client:
         assert client.post(url(identifier)+'/summaries/retry', json={'run_id': run}, headers={'Idempotency-Key': 'legacy-summary-retry'}).status_code == 409
     with db.connect() as c:
-        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 22
+        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 23
         assert not c.execute('PRAGMA foreign_key_check').fetchall()
 
 

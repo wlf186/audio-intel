@@ -44,12 +44,15 @@ def register(app: FastAPI, api: Any) -> None:
     config = api.settings
     app.state.library_changing = False
     app.state.library_requests = 0
+    from .background_wake import wait_for_work
+    wake = asyncio.Event()
     prior_lifespan = app.router.lifespan_context
 
     async def manager():
         await asyncio.to_thread(transfer.recover, config)
         last_cleanup = 0.0
         while True:
+            wake.clear()
             with database.connect() as db:
                 item = db.execute("SELECT id,state FROM library_imports WHERE state IN ('queued','applying') ORDER BY (state='applying') DESC,created_at LIMIT 1").fetchone()
             if item:
@@ -67,7 +70,7 @@ def register(app: FastAPI, api: Any) -> None:
                 if time.monotonic() - last_cleanup > 60:
                     await asyncio.to_thread(expire, config)
                     last_cleanup = time.monotonic()
-                await asyncio.sleep(.25)
+                await wait_for_work(wake)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -138,6 +141,7 @@ def register(app: FastAPI, api: Any) -> None:
                     with database.connect() as db:
                         db.execute("INSERT INTO library_imports(id,name,state,key_hash,fingerprint,size_bytes,created_at,updated_at) VALUES(?,?,'queued',?,?,?,?,?)",
                                    (identifier, name, key, sha, size, database.utcnow(), database.utcnow()))
+                    wake.set()
                     return public(config, store.get(identifier))
                 except BaseException:
                     shutil.rmtree(task_root, ignore_errors=True)
@@ -213,6 +217,7 @@ def register(app: FastAPI, api: Any) -> None:
                 raise HTTPException(409, "Library changed; refresh the preview / 资料库已变化，请刷新预览")
             store.update(identifier, state="applying", mode=payload.mode, error=None)
             accepted = True
+            wake.set()
             return public(config, store.get(identifier))
         finally:
             if not accepted:

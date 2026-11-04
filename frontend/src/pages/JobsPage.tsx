@@ -176,9 +176,9 @@ export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJob
    setSelected(current=>new Set([...current].filter(id=>!deletedSet.has(id))))
    onJobsRemoved(deletedIds)
    await refreshAll()
-   setNotice(t('jobs.history.deletedNotice',{count:result.deleted_count,size:size(result.reclaimed_bytes,locale),database:t(result.database_compacted?'jobs.history.databaseCompacted':'jobs.history.databaseNotCompacted')}))
+   setNotice(t('jobs.history.deletedNotice',{count:result.deleted_count,size:size(result.reclaimed_bytes,locale),database:t(result.database_compaction_status==='scheduled'?'jobs.history.databaseScheduled':result.database_compaction_status==='not_needed'?'jobs.history.databaseNotNeeded':result.database_compacted?'jobs.history.databaseCompacted':'jobs.history.databaseNotCompacted')}))
    if(result.failed.length)setError(t('jobs.history.deleteFailed',{count:result.failed_count,message:result.failed.map(item=>item.message).join(t('common.separator.semicolon'))}))
-   if(!result.database_compacted)setError(current=>[current,result.maintenance_error||t('jobs.history.compactionFailed')].filter(Boolean).join(t('common.separator.semicolon')))
+   if(result.database_compaction_status==='failed')setError(current=>[current,result.maintenance_error||t('jobs.history.compactionFailed')].filter(Boolean).join(t('common.separator.semicolon')))
    setPendingDelete([])
   }catch(cause){setError((cause as Error).message)}finally{setBusy(false)}
  }

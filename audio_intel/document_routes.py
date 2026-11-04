@@ -10,7 +10,8 @@ def document_route_class(config: Any) -> type[APIRoute]:
     class DocumentRoute(APIRoute):
         def get_route_handler(self):
             handler = super().get_route_handler()
-            if self.path != "/api/v1/tts/document-jobs":
+            audio = self.path in {"/api/v1/asr/jobs", "/v1/audio/transcriptions"}
+            if self.path != "/api/v1/tts/document-jobs" and not audio:
                 return handler
 
             async def route(request: Request):
@@ -21,6 +22,15 @@ def document_route_class(config: Any) -> type[APIRoute]:
                     scheme, _, token = request.headers.get("authorization", "").partition(" ")
                     require_api_key(request, HTTPAuthorizationCredentials(scheme=scheme, credentials=token) if token else None,
                                     request.cookies.get(SESSION_COOKIE))
+                if audio:
+                    from .audio_upload import AudioParser
+                    parser = AudioParser(request, config)
+                    try:
+                        request._form = await parser.parse()
+                        return await handler(request)
+                    finally:
+                        # Also clean up when the request cancellation scope is cancelled.
+                        parser.cleanup()
                 receive = request._receive
                 total = 0
                 limit = min(config.max_upload_bytes, 100 * 1024**2) + 1024**2

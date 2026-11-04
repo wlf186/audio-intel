@@ -13,7 +13,7 @@ export function highlightText(text:string,query:string){
 
 import {useLayoutEffect,useMemo,useState,useRef,type RefObject} from 'react'
 import {useTranslation} from 'react-i18next'
-export function TranscriptSearchNavigation({query,entries,root,onReveal}:{query:string;entries:{id:string;texts:string[]}[];root:RefObject<HTMLElement|null>;onReveal:(id:string)=>void}){
+export function TranscriptSearchNavigation({query,entries,root,onReveal,visibleRevision}:{visibleRevision?:unknown;query:string;entries:{id:string;texts:string[]}[];root:RefObject<HTMLElement|null>;onReveal:(id:string)=>void}){
  const {t}=useTranslation()
  const needle=query.trim().toLocaleLowerCase()
  const hits=useMemo(()=>entries.flatMap(entry=>{
@@ -34,7 +34,7 @@ export function TranscriptSearchNavigation({query,entries,root,onReveal}:{query:
   if(mark&&last.current?.node===mark&&last.current.query===query&&last.current.index===index)return
   root.current?.querySelectorAll('.search-current').forEach(node=>node.classList.remove('search-current'))
   if(mark){last.current={node:mark,query,index};mark.classList.add('search-current');mark.scrollIntoView({block:'center',inline:'nearest'})}
- })
+ },[hits,index,query,root,visibleRevision])
  if(!needle)return null
  const jump=(direction:number)=>{const next=index<0?(direction>0?0:hits.length-1):(index+direction+hits.length)%hits.length;setSelection({query,index:next});onReveal(hits[next].id)}
  return <div className="transcript-search-navigation" role="group" aria-label={t('optimization.searchMatches')}><span role="status">{index<0?t('optimization.hitTotal',{count:hits.length}):t('optimization.hitCount',{current:index+1,total:hits.length})}</span><button className="button" disabled={!hits.length} onClick={()=>jump(-1)}>{t('optimization.previousHit')}</button><button className="button" disabled={!hits.length} onClick={()=>jump(1)}>{t('optimization.nextHit')}</button></div>

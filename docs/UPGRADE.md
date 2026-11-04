@@ -1,5 +1,12 @@
 # 升级指南
 
+## 当前开发版：性能与存储维护
+
+SQLite v22→v23 为增量数据库迁移：增加任务列表／worker 查询索引及持久化后台压缩状态，不重写历史任务、优化稿或媒体。升级前按下文流程停服并创建 SQLite-only 一致快照；完成全组件恢复和验收后清理临时备份。此版本也要求 v22 实例备份。任务删除不再同步 VACUUM，具体阈值和响应字段见 [API 文档](API.md#删除后的数据库维护--database-maintenance-after-deletion)。模型、精度、分块和推理参数不变。
+
+Development migration v22→v23 adds indexes and durable maintenance state only. Stop services and back up SQLite, then restore and accept all original components before removing the temporary backup. This requirement also applies to v22 deployments; release-specific notes below describe earlier versions.
+
+
 ## v0.1.44：ASR 全流程资源控制与按需音频缓存
 
 从 v0.1.43 更新无需数据库迁移、历史文件改写或额外升级备份。模型与依赖锁不变；浮点音轨采用内存优先、按需落盘缓存，读取时归一化避免整份缓存重写。新增 ASR 主机内存与工作空间预算，超限明确失败并保留输入。按本机维护流程等待空闲、停服更新，并刷新原 API、ASR/TTS supervisor 和 executor。详见[资源预算](TROUBLESHOOTING.md#asr-resource-budgets--asr-资源预算)。

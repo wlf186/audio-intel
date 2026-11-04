@@ -91,6 +91,34 @@ Service entrypoints automatically load the project-root `.env`, with exported en
 2. **Authorize** → `GET /api/v1/capabilities`：鉴权并读取实时能力和默认值 / authenticate and read live capabilities.
 3. 长任务使用异步 `/api/v1/asr/jobs` 或 `/api/v1/tts/jobs`；需要一次生成多个独立音频时使用 `/api/v1/tts/sequence-jobs`。复用 `Idempotency-Key` 并通过 SSE 或 `status_url` 跟踪；OpenAI 客户端可使用同步 `/v1/audio/transcriptions`、`/v1/audio/speech`。
 
+## 删除与空闲压缩 / Deletion and idle compaction
+
+删除立即清理文件和记录；压缩延后至空闲窗口。批量响应的 `database_compaction_status` 为
+`not_needed`、`scheduled`、`completed` 或 `failed`。`scheduled` 不是删除失败；
+`database_compacted` 仅表示响应前已实际完成压缩，释放字节不含预计收益。单项删除成功仍为 204。
+
+Deletion removes files and rows immediately. Compaction runs during idle time;
+scheduled maintenance does not fail deletion. Reclaimed bytes are actual savings.
+The following example permanently deletes only the explicitly supplied job ID:
+
+```python
+import os
+import httpx
+
+base = os.environ.get("AUDIO_INTEL_BASE_URL", "http://127.0.0.1:20810")
+api_key = os.environ.get("AUDIO_INTEL_API_KEY", "")
+job_id = os.environ["JOB_ID"]  # Choose the task to permanently delete.
+response = httpx.post(
+    base + "/api/v1/jobs/batch-delete",
+    headers={"Authorization": "Bearer " + api_key} if api_key else {},
+    json={"job_ids": [job_id], "purge": True}, timeout=60,
+)
+response.raise_for_status()
+result = response.json()
+print(result["deleted_count"], result["failed"], result["reclaimed_bytes"])
+print("Database maintenance:", result["database_compaction_status"])
+```
+
 ## 声纹分组与脱敏下载 / Voiceprint groups and redacted downloads
 
 `GET /api/v1/voiceprints/groups` 查询分组；新增人员默认“未分组”，删除自建分组将人员移回默认组。批量移动 `/api/v1/voiceprints/people/batch-move` 原子执行，批量删除 `/api/v1/voiceprints/people/batch-delete` 返回逐人结果并要求 `purge=true`。

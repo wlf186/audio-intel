@@ -16,7 +16,7 @@ import psutil
 
 from .config import settings
 from .db import (
-    claim_job, finish_job, get_job, init_db, recover_stale, update_job,
+    claim_job, finish_job, get_job, get_job_control, init_db, recover_stale,
     touch_job_heartbeat, update_job, update_job_progress, update_voiceprint_sample,
     upsert_worker, utcnow,
 )
@@ -71,7 +71,7 @@ class JobContext:
         *, stage_progress: float | None = None, unit: str | None = None,
         basis: str = "observed", activity: dict[str, Any] | None = None,
     ) -> None:
-        snapshot = get_job(self.job_id)
+        snapshot = get_job_control(self.job_id)
         if snapshot and snapshot.get("cancel_requested"):
             raise JobCancelled("Job cancellation requested")
         detail = stage_details({
@@ -84,10 +84,9 @@ class JobContext:
             detail["stage_code"], completed, total,
             stage_progress=detail["stage_progress"], stage_unit=detail["unit"],
             progress_basis=detail["basis"], activity=detail["activity"],
-        )
-        upsert_worker(
-            self.worker_id, self.job["kind"], self.worker_pid, "busy", self.job_id,
-            {"stage": stage, "executor_pid": os.getpid()},
+            worker=(self.worker_id, self.job["kind"], self.worker_pid, "busy", self.job_id,
+                    {"stage": stage, "executor_pid": os.getpid()}),
+            return_job=False,
         )
 
     def set_input_duration(self, seconds: float) -> None:
@@ -357,7 +356,7 @@ def _complete_resource_failure(kind: str, process: Any, connection: Any, job: di
     from .document_store import clean_partials
     clean_partials(job['id'], settings.jobs_dir)
     shutil.rmtree(settings.temp_dir / job['id'], ignore_errors=True)
-    _fail_voiceprint_import(job, message)
+    _fail_voiceprint_import(current, message)
     try:
         directory = settings.jobs_dir / job['id']
         (directory / 'error.log').write_text(message, encoding='utf-8')
@@ -373,6 +372,12 @@ def _complete_resource_failure(kind: str, process: Any, connection: Any, job: di
 
 def run(kind: str) -> None:
     init_db()
+    from .db import keep_database_open
+    with keep_database_open():
+        _run(kind)
+
+
+def _run(kind: str) -> None:
     worker_pid = os.getpid()
     worker_id = f"{kind}-{socket.gethostname()}-{worker_pid}"
     stop = False
@@ -391,6 +396,7 @@ def run(kind: str) -> None:
     })
     current_job: dict[str, Any] | None = None
     next_heartbeat = 0.0
+    next_idle_heartbeat = 0.0
     remaining_processes: list[int] = []
     executor_dirty = False
     idle_since: float | None = None
@@ -447,7 +453,9 @@ def run(kind: str) -> None:
                                 details={"executor_pid": process.pid},
                             )
                             continue
-                    upsert_worker(worker_id, kind, worker_pid, "idle", details={"executor_pid": process.pid})
+                    if time.monotonic() >= next_idle_heartbeat:
+                        upsert_worker(worker_id, kind, worker_pid, "idle", details={"executor_pid": process.pid})
+                        next_idle_heartbeat = time.monotonic() + 5.0
                     time.sleep(settings.worker_poll_seconds)
                     continue
                 idle_since = None
@@ -481,7 +489,7 @@ def run(kind: str) -> None:
                         clean_partials(current_job["id"], settings.jobs_dir)
                         deadline = time.monotonic() + float(completed["retry_delay"])
                         while not stop and time.monotonic() < deadline:
-                            current = get_job(current_job["id"])
+                            current = get_job_control(current_job["id"])
                             if current is None or current.get("cancel_requested"):
                                 if current:
                                     _forced_cancel(current)
@@ -532,7 +540,7 @@ def run(kind: str) -> None:
                     upsert_worker(worker_id, kind, worker_pid, "idle", details={"executor_pid": process.pid})
                 continue
 
-            current = get_job(current_job["id"])
+            current = get_job_control(current_job["id"])
             if current is None or current["state"] != "running":
                 time.sleep(WORKER_MONITOR_SECONDS)
                 continue
@@ -561,11 +569,10 @@ def run(kind: str) -> None:
                             continue
                 if diagnostics is not None:
                     diagnostics.sample()
-                touch_job_heartbeat(current["id"])
-                upsert_worker(
+                touch_job_heartbeat(current["id"], worker=(
                     worker_id, kind, worker_pid, "busy", current["id"],
                     {"stage": current["stage"], "executor_pid": process.pid},
-                )
+                ))
                 next_heartbeat = now + WORKER_HEARTBEAT_SECONDS
 
             if not current.get("cancel_requested"):
@@ -587,7 +594,7 @@ def run(kind: str) -> None:
                             executor_dirty = True
                             idle_since = None
                         break
-                latest = get_job(current["id"])
+                latest = get_job_control(current["id"])
                 if latest is None or latest["state"] != "running":
                     current_job = None
                     break

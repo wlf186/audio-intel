@@ -188,9 +188,13 @@ def _stop_process(identity: dict[str, Any] | None) -> None:
         pass
 
 
+from .background_wake import wait_for_work
+
+
 class ImportManager:
     def __init__(self, config: Any) -> None:
         self.config = config
+        self.wake = asyncio.Event()
 
     async def run(self) -> None:
         for item in await asyncio.to_thread(store.imports):
@@ -198,11 +202,12 @@ class ImportManager:
                 await asyncio.to_thread(_stop_process, item.get("process"))
                 store.update_import(item["id"], state="queued", process_json=None)
         while True:
+            self.wake.clear()
             pending = await asyncio.to_thread(store.pending_import)
             if pending:
                 await self.parse(pending)
             else:
-                await asyncio.sleep(.25)
+                await wait_for_work(self.wake)
 
     async def parse(self, item: dict[str, Any]) -> None:
         root = import_root(self.config, item["id"])
@@ -317,6 +322,7 @@ def register(app: FastAPI, api: Any) -> None:
                         db.execute("""INSERT INTO document_imports(id,name,suffix,state,key_hash,fingerprint,size_bytes,created_at,updated_at)
                             VALUES(?,?,?,'queued',?,?,?,?,?)""", (identifier, name, suffix, key, digest([name, sha]), size, utcnow(), utcnow()))
                         db.execute("COMMIT")
+                    manager.wake.set()
                     return public_import(config, store.get_import(identifier))
                 except BaseException:
                     shutil.rmtree(root, ignore_errors=True)
@@ -355,6 +361,7 @@ def register(app: FastAPI, api: Any) -> None:
                 if not changed:
                     raise HTTPException(409, "Document import is no longer failed")
                 db.execute("COMMIT")
+            manager.wake.set()
             return public_import(config, store.get_import(identifier))
         finally:
             import anyio

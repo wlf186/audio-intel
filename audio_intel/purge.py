@@ -7,7 +7,6 @@ from typing import Any
 
 from .config import settings
 from .db import (
-    compact_database,
     delete_job_record,
     delete_voiceprint_sample_record,
     get_voiceprint_sample,
@@ -113,13 +112,15 @@ def purge_jobs(job_ids: list[str], compact: bool = True) -> dict[str, Any]:
         except Exception as exc:
             failed.append({"id": job_id, "code": "purge_failed", "message": str(exc)[:500]})
 
-    database_compacted = True
+    database_compacted = False
+    database_compaction_status = "not_needed"
     maintenance_error: str | None = None
     if deleted and compact:
         try:
-            compact_database()
+            from .database_maintenance import request_compaction
+            database_compaction_status = request_compaction()
         except Exception as exc:
-            database_compacted = False
+            database_compaction_status = "failed"
             maintenance_error = str(exc)[:500]
     database_after = database_allocated_bytes()
     database_reclaimed = max(0, database_before - database_after)
@@ -130,6 +131,7 @@ def purge_jobs(job_ids: list[str], compact: bool = True) -> dict[str, Any]:
         "reclaimed_bytes": sum(item["reclaimed_bytes"] for item in deleted) + database_reclaimed,
         "database_reclaimed_bytes": database_reclaimed,
         "database_compacted": database_compacted,
+        "database_compaction_status": database_compaction_status,
         "maintenance_error": maintenance_error,
         "deleted": deleted,
         "failed": failed,

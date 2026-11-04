@@ -1,11 +1,11 @@
 import {highlightText,TranscriptSearchNavigation} from './TranscriptSearch'
-import {useEffect,useRef,useState} from 'react'
+import {memo,useEffect,useMemo,useRef,useState} from 'react'
 import {createPortal} from 'react-dom'
 import {Fingerprint} from 'lucide-react'
 import {useTranslation} from 'react-i18next'
 import type {VideoScenesResource} from '../hooks/useVideoScenes'
 import {formatTime} from '../lib/api'
-import type {Job,JobResult,VideoScene} from '../lib/types'
+import type {Job,JobResult,VideoScene,VideoParagraph} from '../lib/types'
 import {Modal} from './Modal'
 import {SceneDetection} from './SceneDetection'
 import type {SceneDetectionCapability} from '../lib/sceneDetection'
@@ -52,24 +52,35 @@ export function VideoTranscript({job,toolbar,onUpdated,onSeek,onRename,onEnroll,
   observer.observe(target)
   return()=>{active=false;observer.disconnect()}
  },[data,visible,refreshing])
- const hiddenScenes=new Set(data?.revision===job.result?.video?.revision?job.result?.video?.export_hidden_scene_ids||[]:[])
+ const hiddenScenes=useMemo(()=>new Set(data?.revision===job.result?.video?.revision?job.result?.video?.export_hidden_scene_ids||[]:[]),[data?.revision,job.result?.video?.revision,job.result?.video?.export_hidden_scene_ids])
+ const searchEntries=useMemo(()=>(data?.scenes||[]).map(scene=>({id:scene.id,texts:(scene.paragraphs||[]).filter(p=>speakerFilter==='all'||p.speaker===speakerFilter).map(p=>p.text)})),[data?.scenes,speakerFilter])
+ const shownScenes=useMemo(()=>{
+  const needle=query.trim().toLocaleLowerCase()
+  return (data?.scenes||[]).slice(0,visible).map((scene,index)=>({scene,index,paragraphs:scene.paragraphs?.filter(p=>(speakerFilter==='all'||p.speaker===speakerFilter)&&(!needle||p.text.toLocaleLowerCase().includes(needle)))})).filter(item=>!(needle||speakerFilter!=='all')||item.paragraphs?.length)
+ },[data?.scenes,visible,speakerFilter,query])
  const activeScene=data?.scenes[readingIndex(data.scenes,currentTime)]
  const activeParagraph=activeScene?.paragraphs?.[readingIndex(activeScene.paragraphs,currentTime)]
  const tools=<div className="video-reading-tools">{detectionCapability?.preview?<button className="button" disabled={!data||refreshing||Boolean(error)} onClick={()=>setDetectionOpen(true)}>{t('sceneDetection.title')}</button>:null}</div>
- return <>{detectionOpen&&detectionCapability&&job.result?<SceneDetection jobId={job.id} result={job.result} capability={detectionCapability} onClose={()=>setDetectionOpen(false)} onUpdated={onUpdated}/>:null}{toolbar?createPortal(tools,toolbar):tools}<TranscriptSearchNavigation query={query} entries={(data?.scenes||[]).map(scene=>({id:scene.id,texts:(scene.paragraphs||[]).filter(p=>speakerFilter==='all'||p.speaker===speakerFilter).map(p=>p.text)}))} root={scrollRoot} onReveal={id=>setVisible(n=>Math.max(n,(data?.scenes.findIndex(scene=>scene.id===id)??-1)+1))}/><div className="video-transcript" ref={scrollRoot} aria-busy={refreshing}>
+ return <>{detectionOpen&&detectionCapability&&job.result?<SceneDetection jobId={job.id} result={job.result} capability={detectionCapability} onClose={()=>setDetectionOpen(false)} onUpdated={onUpdated}/>:null}{toolbar?createPortal(tools,toolbar):tools}<TranscriptSearchNavigation query={query} entries={searchEntries} visibleRevision={shownScenes} root={scrollRoot} onReveal={id=>setVisible(n=>Math.max(n,(data?.scenes.findIndex(scene=>scene.id===id)??-1)+1))}/><div className="video-transcript" ref={scrollRoot} aria-busy={refreshing}>
   {error?<p className="error" role="alert">{error} <button className="button" onClick={()=>reload()}>{t('common.actions.reload')}</button></p>:refreshing?<p className="reader-refresh-status" role="status">{t('video.loading')}</p>:null}
   {data?<>
-   {data.scenes.slice(0,visible).map((scene,index)=>{
-    const paragraphs=scene.paragraphs?.filter(p=>(speakerFilter==='all'||p.speaker===speakerFilter)&&(!query.trim()||p.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())))
-    if((query.trim()||speakerFilter!=='all')&&!paragraphs?.length)return null
-    return <section className={`video-section${activeScene?.id===scene.id?' navigation-active':''}`} key={scene.id} data-search-owner={scene.id} data-reader-id={scene.id} data-reader-time={scene.start} data-reader-end={scene.end}>
-    <header><h3>{t('video.scene',{number:index+1})}</h3><button className="video-scene-time" onClick={()=>onSeek(scene.start)}>{formatTime(scene.start,false)} – {formatTime(scene.end,false)}</button>{hiddenScenes.has(scene.id)?<span className="scene-hidden-badge">{t('sceneDetection.hidden')}</span>:null}</header>
-    <div className="video-scene-content"><Frame jobId={job.id} scene={scene}/><div className="video-scene-text">
-    {paragraphs?.length?paragraphs.map((paragraph,i)=><div className={`video-paragraph${paragraph===activeParagraph?' navigation-active':''}`} key={i}><div><button className="video-speaker" onClick={()=>onRename(paragraph.speaker)}>{paragraph.speaker_label}</button><button className="video-paragraph-time" onClick={()=>onSeek(paragraph.start)}>{formatTime(paragraph.start,false)} – {formatTime(paragraph.end,false)}</button><button className="icon-button video-enroll" title={t('asr.results.addToVoiceprints')} aria-label={t('asr.results.addToVoiceprints')} onClick={()=>onEnroll(paragraph.speaker,paragraph.segment_ids)}><Fingerprint size={17}/></button></div><p>{highlightText(paragraph.text,query)}</p></div>):<p className="video-silent">{t('video.noSpeech')}</p>}
-    </div></div>
-
-   </section>})}
+   {shownScenes.map(({scene,index,paragraphs})=><SceneSection key={scene.id} jobId={job.id} scene={scene} index={index} paragraphs={paragraphs} active={activeScene?.id===scene.id} activeParagraph={activeScene?.id===scene.id?activeParagraph:undefined} hidden={hiddenScenes.has(scene.id)} query={query} onSeek={onSeek} onRename={onRename} onEnroll={onEnroll}/>)}
    <div className="segment-load-more" ref={sentinel}><span>{t('video.sceneCount',{visible:Math.min(visible,data.scenes.length),total:data.scenes.length})}</span>{visible<data.scenes.length?<button className="button" onClick={()=>setVisible(value=>Math.min(data.scenes.length,value+20))}>{t('asr.results.loadMore')}</button>:null}</div>
   </>:null}
  </div></>
 }
+
+type SceneCallbacks={onSeek:(time:number)=>void;onRename:(id:string)=>void;onEnroll:(id:string,segmentIds:number[])=>void}
+const Paragraph=memo(function Paragraph({paragraph,active,query,onSeek,onRename,onEnroll}:SceneCallbacks&{paragraph:VideoParagraph;active:boolean;query:string}){
+ const {t}=useTranslation()
+ return <div className={`video-paragraph${active?' navigation-active':''}`}><div><button className="video-speaker" onClick={()=>onRename(paragraph.speaker)}>{paragraph.speaker_label}</button><button className="video-paragraph-time" onClick={()=>onSeek(paragraph.start)}>{formatTime(paragraph.start,false)} – {formatTime(paragraph.end,false)}</button><button className="icon-button video-enroll" title={t('asr.results.addToVoiceprints')} aria-label={t('asr.results.addToVoiceprints')} onClick={()=>onEnroll(paragraph.speaker,paragraph.segment_ids)}><Fingerprint size={17}/></button></div><p>{highlightText(paragraph.text,query)}</p></div>
+})
+const SceneSection=memo(function SceneSection({jobId,scene,index,paragraphs,active,activeParagraph,hidden,query,onSeek,onRename,onEnroll}:SceneCallbacks&{jobId:string;scene:VideoScene;index:number;paragraphs?:VideoParagraph[];active:boolean;activeParagraph?:VideoParagraph;hidden:boolean;query:string}){
+ const {t}=useTranslation()
+ return <section className={`video-section${active?' navigation-active':''}`} data-search-owner={scene.id} data-reader-id={scene.id} data-reader-time={scene.start} data-reader-end={scene.end}>
+  <header><h3>{t('video.scene',{number:index+1})}</h3><button className="video-scene-time" onClick={()=>onSeek(scene.start)}>{formatTime(scene.start,false)} – {formatTime(scene.end,false)}</button>{hidden?<span className="scene-hidden-badge">{t('sceneDetection.hidden')}</span>:null}</header>
+  <div className="video-scene-content"><Frame jobId={jobId} scene={scene}/><div className="video-scene-text">
+   {paragraphs?.length?paragraphs.map((paragraph,i)=><Paragraph key={i} paragraph={paragraph} active={paragraph===activeParagraph} query={query} onSeek={onSeek} onRename={onRename} onEnroll={onEnroll}/>):<p className="video-silent">{t('video.noSpeech')}</p>}
+  </div></div>
+ </section>
+})

@@ -125,7 +125,7 @@ Configure an explicitly selected Chat Completions service in System → Expressi
 - Capability discovery adds `asr.transcript_optimization`, including `rewrite_modes` and `default_rewrite_mode`. Browsers request optimizer resources only after authentication and an explicit `supported=true`; missing/unsupported capability snapshots retain original reading without optimizer requests. Job lists and SSE carry optimization summaries only, without draft/source text. Original ASR results, timed subtitles and voiceprint references are unchanged.
 - `POST /api/v1/jobs/{job_id}/transcript-export` accepts `text_version="original"` (default), `"optimized"`, or `"comparison"`. Non-original requests require the published `optimization_id`; optimized exports allow PDF/DOCX/TXT and comparisons PDF/DOCX. Comparisons use landscape A4, timed original sources on the left and readable prose on the right, with equal-sized text and repeating column headers across page breaks. Legacy drafts retain change highlighting. Pending workflow checks prevent publication and download of the new candidate (409). Once checks finish, unavailable checks are disclosed without preventing download of the published draft. Unsupported combinations return 422, unfinished or stale drafts 409. Redaction and replacements apply to both sides and review explanations. Filenames append `-优化稿` or `-对照版` to the task basename.
 
-中文：在系统状态选择并验证 Chat Completions 后保存启用；独立单并发队列，最多 5 个排队任务。生成、自动检查、发布是一次流程，检查仅标注；原文始终保留，重新生成期间旧稿保留至新稿整体完成。正式应用新检测划分会事务性清理旧优化。正文策略 v7、小结策略 v2 与当前 SQLite v22 是独立版本。仅 v18 及更早版本迁往 v19 时一次性清理旧优化；v19→v20→v21→v22 为增量迁移，保留历史稿和检查点。升级按实际跨越范围备份 SQLite，原始任务、媒体及模型配置保留。浏览器阅读／来源明细偏好属于当前会话，最多 200 个任务，退出登录和删除任务时清理。
+中文：在系统状态选择并验证 Chat Completions 后保存启用；独立单并发队列，最多 5 个排队任务。生成、自动检查、发布是一次流程，检查仅标注；原文始终保留，重新生成期间旧稿保留至新稿整体完成。正式应用新检测划分会事务性清理旧优化。正文策略 v7、小结策略 v2 与当前 SQLite v23 是独立版本。仅 v18 及更早版本迁往 v19 时一次性清理旧优化；v19→v20→v21→v22→v23 为增量迁移，保留历史稿和检查点。升级按实际跨越范围备份 SQLite，原始任务、媒体及模型配置保留。浏览器阅读／来源明细偏好属于当前会话，最多 200 个任务，退出登录和删除任务时清理。
 
 ```bash
 # First configure and enable a verified model in System; use a completed ASR task.
@@ -1056,3 +1056,13 @@ if os.environ.get("AUDIO_INTEL_RESUME_SUMMARIES") == "1":
 ASR 音轨采用内存优先、按需落盘缓存；服务端 `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES` 默认 4 GiB，且不超过任务内存预算的 25%，0 为直接落盘。归一化不重写缓存；请求及结果结构保持兼容。资源不足仍返回任务错误 `AsrResourceLimitError`，原始输入保留。详见[资源预算](TROUBLESHOOTING.md#asr-resource-budgets--asr-资源预算)。
 
 English: ASR uses memory-first audio caching with spill-on-demand. The server setting `AUDIO_INTEL_ASR_AUDIO_CACHE_MAX_BYTES` defaults to 4 GiB, capped further at 25% of the task RAM budget; zero selects disk storage. Normalization never rewrites the cache. Request/result schemas are unchanged; `AsrResourceLimitError` still retains the original input for a full retry.
+
+### 删除后的数据库维护 / Database maintenance after deletion
+
+任务删除立即清理媒体和数据库记录；单个删除成功仍返回 204。批量删除的 `database_compacted` 仅在响应前实际完成压缩时为 true。新增 `database_compaction_status` 为 `not_needed`、`scheduled`、`completed` 或 `failed`；`scheduled` 不代表删除失败，`reclaimed_bytes` 和 `database_reclaimed_bytes` 仅统计当次实际释放空间，不包括预计压缩收益。
+
+SQLite 空闲页至少 64 MiB 且占数据库至少 25% 时安排后台压缩。需业务空闲 60 秒，距上次成功压缩至少 24 小时；待处理维护每 60 秒检查，失败或中断至少等待 1 小时。新业务写入或服务停止可中断压缩，单次执行预算 30 秒。压缩完成但 checkpoint 忙碌时只重试 checkpoint。维护状态持久保存，不要求客户端高频轮询。
+
+Deletion immediately removes media and database records. Single deletion still returns 204. Batch deletion adds `database_compaction_status` (`not_needed`, `scheduled`, `completed`, `failed`); scheduled maintenance is not a deletion failure. `database_compacted` means compaction actually completed before the response, and reclaimed-byte counts exclude future savings. Automatic compaction requires at least 64 MiB and 25% free pages, 60 seconds of business idle time and 24 hours since successful compaction. Pending checks run every 60 seconds, with a one-hour retry delay and a 30-second execution budget. New business writes and shutdown interrupt compaction; a busy checkpoint retries without repeating VACUUM.
+
+普通音频转写和 OpenAI-compatible transcription 的 multipart 文件直接写入任务卷的暂存文件并原子移交。文件大小上限不变，multipart 额外开销最多 1 MiB；无 Content-Length 时也逐块计数。其他上传接口的协议不变。

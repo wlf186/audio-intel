@@ -338,6 +338,9 @@ def require_api_key(
 
 async def save_upload(upload: UploadFile, target: Path, limit: int | None = None) -> tuple[int, str]:
     target.parent.mkdir(parents=True, exist_ok=True)
+    from .audio_upload import StagedAudio
+    if isinstance(upload, StagedAudio):
+        return await upload.adopt(target, limit)
     partial = target.with_suffix(target.suffix + ".partial")
     def persist() -> tuple[int, str]:
         size = 0
@@ -982,7 +985,28 @@ def create_app() -> FastAPI:
     settings.ensure_directories()
     init_db()
     default_device = settings.default_compute_device
+    from contextlib import asynccontextmanager
+    from .audio_upload import clean_staging
+    from .database_maintenance import Maintenance
+    config = settings
+    maintenance = Maintenance(config)
+
+    @asynccontextmanager
+    async def lifespan(application):
+        from .db import keep_database_open
+        with keep_database_open():
+            await run_in_threadpool(clean_staging, config)
+            task = asyncio.create_task(maintenance.run())
+            try:
+                yield
+            finally:
+                maintenance.stop.set()
+                maintenance.interrupt.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
     app = FastAPI(
+        lifespan=lifespan,
         title="Sandevistan-Audio",
         description=API_DESCRIPTION,
         version=__version__,
@@ -1004,6 +1028,13 @@ def create_app() -> FastAPI:
         "workers": list_workers(),
     }, poll_seconds=EVENT_SNAPSHOT_POLL_SECONDS, semantic_key=event_semantic_key,
        revision_loader=lambda: event_revision(EVENT_SNAPSHOT_JOB_LIMIT))
+
+    @app.middleware("http")
+    async def maintenance_business_activity(request: Request, call_next: Any) -> Response:
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            with maintenance.business_request():
+                return await call_next(request)
+        return await call_next(request)
 
     @app.middleware("http")
     async def submission_admission(request: Request, call_next: Any) -> Response:
@@ -2525,7 +2556,7 @@ def create_app() -> FastAPI:
         "/api/v1/jobs/batch-delete", response_model=BatchDeleteResponse,
         response_model_exclude_unset=True, tags=[JOB_TAG],
         summary="批量永久删除任务 / Permanently delete jobs in a batch",
-        description=bilingual("最多 100 个 ID。逐项返回删除或失败结果；运行中任务不会被删除。", "Accepts up to 100 IDs and returns per-item outcomes. Running jobs are never deleted."),
+        description=bilingual("最多 100 个 ID。逐项返回删除或失败结果；运行中任务不会被删除。database_compaction_status 表示无需压缩、已安排、已完成或失败；已安排的空闲维护不影响删除成功，释放字节仅统计实际释放量。", "Accepts up to 100 IDs and returns per-item outcomes. Running jobs are never deleted. database_compaction_status is not_needed, scheduled, completed or failed; scheduled idle maintenance does not fail deletion. Reclaimed bytes report actual savings only."),
         operation_id="batchDeleteJobs",
         responses={**AUTH_RESPONSES, **CONFLICT_RESPONSE, **VALIDATION_RESPONSE},
     )
@@ -2619,8 +2650,6 @@ def create_app() -> FastAPI:
             failure = result["failed"][0]
             status = 404 if failure["code"] == "not_found" else 409 if failure["code"] in {"running", "downloading"} else 500
             raise HTTPException(status_code=status, detail=failure["message"])
-        if not result["database_compacted"]:
-            raise HTTPException(status_code=500, detail=result["maintenance_error"] or "Database compaction failed")
         return Response(status_code=204)
 
     @app.get(

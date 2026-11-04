@@ -943,6 +943,7 @@ class BatchDeleteResponse(PublicModel):
     reclaimed_bytes: int
     database_reclaimed_bytes: int
     database_compacted: bool
+    database_compaction_status: Literal["not_needed", "scheduled", "completed", "failed"]
     maintenance_error: str | None = None
     deleted: list[PurgeDeletedItem]
     failed: list[PurgeFailedItem]

@@ -167,14 +167,32 @@ def _preserve_reserved_custom_hotword_lists(db: sqlite3.Connection) -> None:
 
 
 @contextmanager
+def keep_database_open() -> Iterator[None]:
+    """Keep WAL alive for this process lifetime, without sharing a transaction.
+
+    Each invocation owns its connection and captures its path at entry, so tests,
+    alternate instances and spawned processes cannot reuse another keeper.
+    """
+    connection = sqlite3.connect(settings.database_path, isolation_level=None)
+    try:
+        connection.execute("PRAGMA journal_mode=WAL")
+        yield
+    finally:
+        connection.close()
+
+
+@contextmanager
 def connect() -> Iterator[sqlite3.Connection]:
     settings.ensure_directories()
-    connection = sqlite3.connect(settings.database_path, timeout=30, isolation_level=None)
+    path = settings.database_path
+    connection = sqlite3.connect(path, timeout=30, isolation_level=None)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("PRAGMA foreign_keys=ON")
     connection.execute("PRAGMA busy_timeout=30000")
     connection.execute("PRAGMA secure_delete=ON")
+    from .database_maintenance import notify_write
+    connection.set_trace_callback(lambda sql: notify_write(path, sql))
     try:
         yield connection
     finally:
@@ -443,6 +461,19 @@ def init_db() -> None:
         migrate_voiceprint_groups(db)
         from .optimization_store import migrate as migrate_optimizations
         migrate_optimizations(db)
+        db.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_workers_latest ON workers(kind,heartbeat_at DESC,id DESC);
+            CREATE INDEX IF NOT EXISTS idx_jobs_newest ON jobs(created_at DESC,id DESC);
+            CREATE INDEX IF NOT EXISTS idx_jobs_kind_newest ON jobs(kind,created_at DESC,id DESC);
+            CREATE TABLE IF NOT EXISTS database_maintenance (
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                pending INTEGER NOT NULL DEFAULT 0,
+                checkpoint_pending INTEGER NOT NULL DEFAULT 0,
+                attempted_at TEXT, succeeded_at TEXT, error TEXT
+            );
+            INSERT OR IGNORE INTO database_maintenance(singleton) VALUES(1);
+            UPDATE schema_meta SET version=23 WHERE version<23;
+        """)
         db.execute(
             """CREATE TABLE IF NOT EXISTS queue_sequence (
                singleton INTEGER PRIMARY KEY CHECK(singleton=1),value INTEGER NOT NULL)"""
@@ -797,13 +828,33 @@ def list_jobs_page(
     return [_decode(row) for row in rows], total  # type: ignore[misc]
 
 
-def touch_job_heartbeat(job_id: str, heartbeat_at: str | None = None) -> None:
+def get_job_control(job_id: str) -> dict[str, Any] | None:
+    """Read only fields needed by the frequent cancellation/liveness monitor."""
+    with connect() as db:
+        row = db.execute(
+            "SELECT id,state,stage,attempts,cancel_requested,heartbeat_at FROM jobs WHERE id=?",
+            (job_id,),
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def touch_job_heartbeat(job_id: str, heartbeat_at: str | None = None,
+                        *, worker: tuple | None = None) -> None:
     """Record executor liveness without changing the task's semantic version."""
     with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        now = heartbeat_at or utcnow()
+        recent = db.execute("SELECT heartbeat_at FROM jobs WHERE id=?", (job_id,)).fetchone()
+        if recent and recent[0] and (datetime.fromisoformat(now) - datetime.fromisoformat(recent[0])).total_seconds() < 0.9:
+            db.execute("COMMIT")
+            return
         db.execute(
             "UPDATE jobs SET heartbeat_at=? WHERE id=?",
-            (heartbeat_at or utcnow(), job_id),
+            (now, job_id),
         )
+        if worker:
+            _write_worker(db, *worker, now=now)
+        db.execute("COMMIT")
 
 
 def update_job(job_id: str, **values: Any) -> dict[str, Any] | None:
@@ -838,6 +889,7 @@ def update_job_progress(
     stage_unit: str | None = None,
     progress_basis: str = "observed",
     activity: dict[str, Any] | None = None,
+    *, worker: tuple | None = None, return_job: bool = True,
 ) -> dict[str, Any] | None:
     if progress_basis not in {"observed", "estimated"}:
         raise ValueError("progress_basis must be observed or estimated")
@@ -845,7 +897,7 @@ def update_job_progress(
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
         row = db.execute(
-            "SELECT attempts,stage_code,progress,stage_progress FROM jobs WHERE id=?", (job_id,)
+            "SELECT attempts,stage_code,progress,stage_progress,stage,stage_current,stage_total,stage_unit,progress_basis,progress_activity_json FROM jobs WHERE id=?", (job_id,)
         ).fetchone()
         if row is None:
             db.execute("ROLLBACK")
@@ -890,6 +942,16 @@ def update_job_progress(
         if activity is not None:
             activity = {**activity, "updated_at": activity.get("updated_at") or now}
         activity_json = json.dumps(activity, ensure_ascii=False) if activity is not None else None
+        previous_activity = json.loads(row["progress_activity_json"]) if row["progress_activity_json"] else None
+        def semantic(value):
+            return {key: item for key, item in value.items() if key != "updated_at"} if value else value
+        unchanged = not stage_changed and (
+            row['progress'], row['stage'], row['stage_current'], row['stage_total'],
+            row['stage_progress'], row['stage_unit'], row['progress_basis'], semantic(previous_activity)
+        ) == (progress, stage, stage_current, stage_total, stage_progress, stage_unit, progress_basis, semantic(activity))
+        if unchanged:
+            db.execute("COMMIT")
+            return get_job(job_id) if return_job else None
         db.execute(
             """UPDATE jobs SET progress=?,stage=?,stage_code=?,stage_current=?,stage_total=?,
                stage_progress=?,stage_unit=?,progress_basis=?,progress_activity_json=?,
@@ -899,8 +961,10 @@ def update_job_progress(
                 stage_unit, progress_basis, activity_json, now, now, job_id,
             ),
         )
+        if worker:
+            _write_worker(db, *worker, now=now)
         db.execute("COMMIT")
-    return get_job(job_id)
+    return get_job(job_id) if return_job else None
 
 
 def finish_job(job_id: str, state: str, **values: Any) -> dict[str, Any] | None:
@@ -1113,9 +1177,12 @@ def recover_stale(kind: str) -> int:
 
 
 def upsert_worker(worker_id: str, kind: str, pid: int, state: str, current_job_id: str | None = None, details: dict[str, Any] | None = None) -> None:
-    now = utcnow()
     with connect() as db:
-        db.execute(
+        _write_worker(db, worker_id, kind, pid, state, current_job_id, details, now=utcnow())
+
+
+def _write_worker(db, worker_id, kind, pid, state, current_job_id=None, details=None, *, now):
+    db.execute(
             """INSERT INTO workers(id,kind,pid,state,current_job_id,details_json,heartbeat_at)
                VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET pid=excluded.pid,state=excluded.state,
                current_job_id=excluded.current_job_id,details_json=excluded.details_json,heartbeat_at=excluded.heartbeat_at""",
@@ -1126,10 +1193,10 @@ def upsert_worker(worker_id: str, kind: str, pid: int, state: str, current_job_i
 def list_workers() -> list[dict[str, Any]]:
     with connect() as db:
         rows = db.execute(
-            """SELECT worker.* FROM workers AS worker
-               WHERE worker.id = (
+            """SELECT worker.* FROM (SELECT DISTINCT kind FROM workers) AS kinds
+               JOIN workers AS worker ON worker.id = (
                    SELECT latest.id FROM workers AS latest
-                   WHERE latest.kind = worker.kind
+                   WHERE latest.kind = kinds.kind
                    ORDER BY latest.heartbeat_at DESC, latest.id DESC
                    LIMIT 1
                )
@@ -1148,10 +1215,10 @@ def event_revision(job_limit: int = 100) -> dict[str, Any]:
         workers = db.execute(
             """SELECT worker.id,worker.kind,worker.pid,worker.state,
                       worker.current_job_id,worker.details_json
-               FROM workers AS worker
-               WHERE worker.id = (
+               FROM (SELECT DISTINCT kind FROM workers) AS kinds
+               JOIN workers AS worker ON worker.id = (
                    SELECT latest.id FROM workers AS latest
-                   WHERE latest.kind = worker.kind
+                   WHERE latest.kind = kinds.kind
                    ORDER BY latest.heartbeat_at DESC, latest.id DESC LIMIT 1
                ) ORDER BY worker.kind"""
         ).fetchall()

@@ -188,7 +188,7 @@ def test_deployment_docs_keep_full_and_cpu_profile_contracts() -> None:
     assert "complete executor process tree to exit" in architecture
     assert "2.11.0+cu130（full）" in dependencies
     assert "2.11.0+cpu（CPU-only）" in dependencies
-    assert "SQLite schema v22 data" in agents
+    assert "SQLite schema v23 data" in agents
 
 
 def test_optimization_overviews_describe_labelled_recovery() -> None:
