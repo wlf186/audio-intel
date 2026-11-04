@@ -20,10 +20,21 @@ from asr.chunk_input import chunk_reader
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--source', type=Path, required=True)
+    parser.add_argument('--source', type=Path)
+    parser.add_argument('--suite', choices=['chunks', 'all'], default='chunks')
+    parser.add_argument('--baseline', default='1c4a537')
+    parser.add_argument('--candidate', default='HEAD')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--repeat', type=int, default=3)
     args = parser.parse_args()
+    if args.suite == 'all':
+        if args.source is not None or args.repeat < 3:
+            parser.error('Full suite generates all inputs; --source is forbidden and --repeat must be >= 3')
+        from io_efficiency_suite import run_suite
+        run_suite(args)
+        return
+    if args.source is None:
+        parser.error('--source is required for the legacy chunk comparison')
     info = sf.info(args.source)
     if info.samplerate != 16000 or info.channels != 1 or info.subtype != 'PCM_16' or args.repeat < 1:
         parser.error('Require mono 16 kHz PCM16 and positive repeat')

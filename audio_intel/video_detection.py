@@ -362,24 +362,43 @@ def preview(request: dict, folder: Path, progress: Callable) -> dict:
     return {'scenes': detector.scenes, 'settings': detector.settings.model_dump(), 'detector': VERSION, 'contract_version': 2, 'cache_hit': hit}
 
 
+class PreviewProgress:
+    """Best-effort immutable snapshots; stage boundaries bypass ordinary throttling."""
+
+    def __init__(self, folder: Path):
+        self.folder = folder / '.progress'
+        self.sequence = 0
+        self.last_time = 0.
+        self.published: dict | None = None
+        self.pending: dict | None = None
+
+    def __call__(self, phase: str, completed: float, total: float) -> None:
+        previous = self.pending
+        self.pending = {'phase': phase, 'completed': completed, 'total': total}
+        if self.pending == self.published:
+            return
+        boundary = (self.published is None or previous is None or phase != previous['phase']
+                    or phase != self.published['phase']
+                    or completed >= total)
+        if boundary or time.monotonic() - self.last_time >= .25:
+            self.flush()
+
+    def flush(self) -> None:
+        if self.pending is None or self.pending == self.published:
+            return
+        self.sequence += 1
+        try:
+            publish_snapshot(self.folder / f'progress-{self.sequence:08d}.json', self.pending)
+        except (OSError, ValueError, TypeError):
+            return
+        self.published = self.pending
+        self.last_time = time.monotonic()
+
+
 def main() -> None:
     folder = Path(sys.argv[1])
     request = json.loads((folder / 'request.json').read_text(encoding='utf-8'))
-    number = 0
-    last = 0.
-
-    def progress(phase: str, completed: float, total: float):
-        nonlocal number, last
-        if time.monotonic() - last < .25 and completed < total:
-            return
-        number += 1
-        last = time.monotonic()
-        # Immutable progress files avoid replacing files open by Windows readers.
-        try:
-            publish_snapshot(folder / '.progress' / f'progress-{number:08d}.json',
-                             {'phase': phase, 'completed': completed, 'total': total})
-        except (OSError, ValueError, TypeError):
-            pass
+    progress = PreviewProgress(folder)
     try:
         result = preview(request, folder, progress)
         (folder / 'result.json').write_text(json.dumps(result), encoding='utf-8')
@@ -387,6 +406,9 @@ def main() -> None:
         # Never put private media paths or decoded content in API error messages.
         (folder / 'error.json').write_text(json.dumps({'error': 'Video analysis failed; retry the preview'}), encoding='utf-8')
         raise
+    finally:
+        # Flush only observed work, including on catchable failure/cancellation.
+        progress.flush()
 
 
 if __name__ == '__main__':
