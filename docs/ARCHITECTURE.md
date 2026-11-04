@@ -356,3 +356,5 @@ ASR transcription and alignment read exact sample intervals from the saved 16 kH
 - PCM16 WAV artifact waveforms use exact header frame counts and one bounded read pass. Other encodings retain the existing decoder. Timeline windows read blocks of at most 8192 frames and aggregate the original integer bins. Peak rounding, cache fingerprints, two calculation slots and reader leases remain unchanged; no new persistent waveform cache is introduced.
 
 中文：资源检查复用 0.5 秒窗口内的磁盘快照，大内存预检单独刷新内存，强制检查和每秒监督检查保持有效；目录不跟随链接，同卷空间查询合并。ASR 与画面检测预览使用独立进度目录、不可变编号和紧凑 JSON，合并最新有效状态，退出后最终排空，文件占用时重试清理；进度失败不影响推理。代表帧每次物化复用一个容器并去重目标，逐目标 seek 及图片内容规则不变。PCM16 WAV 波形单遍读取，时间窗口按最多 8192 帧的块聚合，峰值、缓存和并发规则不变。
+
+Synthetic-only paired measurements and reproduction instructions: [performance validation](PERFORMANCE_VALIDATION.md).
