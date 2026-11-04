@@ -248,16 +248,24 @@ def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | No
         raise
 
 
-def picture_at(source: Path, timestamp: float, roi: dict | None, origin: float = 0) -> Image.Image:
-    with av.open(str(source)) as container:
-        stream = next(s for s in container.streams.video if not (s.disposition & av.stream.Disposition.attached_pic))
-        target = timestamp + origin
-        container.seek(max(0, int(target / float(stream.time_base))), stream=stream, backward=True)
-        last = None
-        for frame in container.decode(stream):
+def picture_from_container(container, timestamp: float, roi: dict | None, origin: float = 0) -> Image.Image:
+    stream = next(s for s in container.streams.video if not (s.disposition & av.stream.Disposition.attached_pic))
+    target = timestamp + origin
+    container.seek(max(0, int(target / float(stream.time_base))), stream=stream, backward=True)
+    last = None
+    decoded = container.decode(stream)
+    try:
+        for frame in decoded:
             last = frame
             if float(frame.time or 0) >= target - .001:
                 return crop_picture(frame, roi)
         if last is not None:
             return crop_picture(last, roi)
+    finally:
+        decoded.close()
     raise ValueError('No frame at this timestamp')
+
+
+def picture_at(source: Path, timestamp: float, roi: dict | None, origin: float = 0) -> Image.Image:
+    with av.open(str(source)) as container:
+        return picture_from_container(container, timestamp, roi, origin)

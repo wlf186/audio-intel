@@ -61,6 +61,17 @@ def pcm_peaks(samples: Any) -> list[float]:
 
 def file_waveform(path: Path) -> dict[str, Any]:
     import av
+    import soundfile as sf
+    try:
+        source = sf.SoundFile(path)
+    except (OSError, RuntimeError):
+        source = None
+    if source is not None:
+        with source:
+            if source.format == 'WAV' and source.subtype == 'PCM_16':
+                total, rate = source.frames, source.samplerate
+                peaks = _reduce((block.T for block in source.blocks(blocksize=8192, dtype='float32', always_2d=True)), total)
+                return {"artifact_name": path.name, "duration": total / rate, "waveform": peaks}
     def blocks():
         with av.open(str(path)) as source:
             if len(source.streams.audio) != 1:

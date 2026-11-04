@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+import json
+import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -66,3 +68,17 @@ class ThrottledProgress:
         self.last_current = current
         self.last_emitted_at = now
         return True
+
+
+def publish_snapshot(path: Path, value: dict[str, Any]) -> None:
+    """Publish to a unique final name; callers treat I/O failures as optional."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + '.partial')
+    try:
+        temporary.write_text(json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False), encoding='utf-8')
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass

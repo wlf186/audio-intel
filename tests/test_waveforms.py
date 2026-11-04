@@ -200,3 +200,31 @@ def test_interrupted_waveform_write_cleanup_keeps_completed_cache(tmp_path):
     clean_partials('job', tmp_path)
     assert not partial.exists()
     assert complete.read_text() == '{}'
+
+
+def test_pcm16_stereo_fast_path_avoids_av_decode(tmp_path, monkeypatch):
+    import av
+    path = tmp_path / 'pcm.wav'
+    samples = np.random.default_rng(4).uniform(-1, 1, (17003, 2)).astype('float32')
+    sf.write(path, samples, 16000, subtype='PCM_16')
+    decoded, _ = sf.read(path, dtype='float32', always_2d=True)
+    expected = waveforms._reduce([decoded.T], len(decoded))
+    monkeypatch.setattr(av, 'open', lambda *a, **k: pytest.fail('PCM16 must not decode twice'))
+    assert waveforms.file_waveform(path)['waveform'] == expected
+
+
+def test_window_waveform_reads_blocks_instead_of_bins(tmp_path, monkeypatch):
+    from audio_intel import waveform_ranges
+    path = tmp_path / 'window.wav'
+    sf.write(path, np.random.default_rng(3).uniform(-1, 1, 17003), 16000, subtype='PCM_16')
+    decoded, _ = sf.read(path, dtype='float32')
+    calls = []
+    original = sf.SoundFile.read
+    def read(self, frames=-1, *args, **kwargs):
+        calls.append(frames)
+        return original(self, frames, *args, **kwargs)
+    monkeypatch.setattr(sf.SoundFile, 'read', read)
+    actual = waveform_ranges.retrieve(path, 'original', 0, None, 1000)
+    expected = [round(float(np.max(np.abs(decoded[i * len(decoded) // 1000:(i + 1) * len(decoded) // 1000]))), 4) for i in range(1000)]
+    assert actual['waveform'] == expected
+    assert calls == [8192, 8192, 619]

@@ -243,7 +243,7 @@ class PreviewManager:
                 shutil.rmtree(path, ignore_errors=True)
 
     def drain(self, item: dict):
-        for path in sorted(item['folder'].glob('progress-*.json')):
+        for path in sorted((item['folder'] / '.progress').glob('progress-*.json')):
             try:
                 value = json.loads(path.read_text(encoding='utf-8'))
                 with self.lock:

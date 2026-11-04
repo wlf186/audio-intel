@@ -12,6 +12,7 @@ import uuid
 import zipfile
 import zlib
 from pathlib import Path
+from contextlib import ExitStack
 from typing import Any, Callable
 
 import av
@@ -19,12 +20,13 @@ import numpy as np
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
-from .video_frames import crop_picture, features, picture_at, save_picture
+from .video_frames import crop_picture, features, picture_at, picture_from_container, save_picture
 
 VERSION = 'presentation-v3'
 LEGACY_VERSION = 'presentation-v2'
 CACHE_VERSION = 1
 from .asr_resources import AsrResourceLimitError, check_resources
+from .progress import publish_snapshot
 
 CACHE_LIMIT = 512 * 1024**2
 CHUNK_SIZE = 60
@@ -263,19 +265,28 @@ def scan(source: Path, roi: dict | None, detector: Detector, writer: FeatureWrit
 
 def materialize(source: Path, scenes: list[dict], folder: Path, roi: dict | None, origin: float, progress: Callable, existing: list[dict] | None = None, existing_folder: Path | None = None) -> None:
     reusable = {s['frame_time']: s['image'] for s in existing or [] if s.get('image') and s.get('frame_time') is not None}
-    for index, scene in enumerate(scenes):
-        if scene['frame_time'] is None:
-            scene['image'] = None
+    with ExitStack() as stack:
+        container = None
+        generated = {}
+        for index, scene in enumerate(scenes):
+            timestamp = scene['frame_time']
+            if timestamp is None:
+                scene['image'] = None
+            else:
+                name = generated.get(timestamp)
+                if name is None:
+                    name = reusable.get(timestamp)
+                    if name and existing_folder and (existing_folder / name).is_file():
+                        folder.mkdir(parents=True, exist_ok=True)
+                        if not (folder / name).is_file():
+                            shutil.copyfile(existing_folder / name, folder / name)
+                    else:
+                        if container is None:
+                            container = stack.enter_context(av.open(str(source)))
+                        name = save_picture(picture_from_container(container, timestamp, roi, origin), folder)
+                    generated[timestamp] = name
+                scene['image'] = name
             progress('images', index + 1, len(scenes))
-            continue
-        name = reusable.get(scene['frame_time'])
-        if name and existing_folder and (existing_folder / name).is_file():
-            folder.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(existing_folder / name, folder / name)
-        else:
-            name = save_picture(picture_at(source, scene['frame_time'], roi, origin), folder)
-        scene['image'] = name
-        progress('images', index + 1, len(scenes))
 
 
 def select_representatives(samples, scenes: list[dict], hold: float, progress: Callable) -> None:
@@ -365,8 +376,8 @@ def main() -> None:
         last = time.monotonic()
         # Immutable progress files avoid replacing files open by Windows readers.
         try:
-            (folder / f'progress-{number:08d}.json').write_text(
-                json.dumps({'phase': phase, 'completed': completed, 'total': total}), encoding='utf-8')
+            publish_snapshot(folder / '.progress' / f'progress-{number:08d}.json',
+                             {'phase': phase, 'completed': completed, 'total': total})
         except OSError:
             pass
     try:

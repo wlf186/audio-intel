@@ -23,8 +23,16 @@ def _optional_path(name: str) -> Path | None:
     return path if path.is_absolute() else (ROOT / path).resolve()
 
 
+def _chunk_input() -> str:
+    value = os.getenv('AUDIO_INTEL_ASR_CHUNK_INPUT', '').strip() or 'range'
+    if value not in {'range', 'wav'}:
+        raise ValueError('AUDIO_INTEL_ASR_CHUNK_INPUT must be range or wav')
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
+    asr_chunk_input: str = _chunk_input()
     root: Path = ROOT
     data_dir: Path = _path("AUDIO_INTEL_DATA_DIR", "data")
     temp_dir: Path = _path("AUDIO_INTEL_TEMP_DIR", "tmp")

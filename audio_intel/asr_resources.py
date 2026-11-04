@@ -7,6 +7,8 @@ from pathlib import Path
 import shutil
 import time
 import threading
+import os
+import stat
 from typing import Any
 
 import psutil
@@ -94,18 +96,30 @@ class Budget:
         if not force and not memory and not work and time.monotonic() - self.last_check < .5:
             return
         try:
-            refresh = force or not hasattr(self, '_snapshot') or time.monotonic() - self.last_check >= .5 or memory >= 64 * 1024**2
+            refresh = force or not hasattr(self, '_snapshot') or time.monotonic() - self.last_check >= .5
             if refresh:
                 rss = tree_rss(self.policy['pid'], self.policy['created'])
                 self.peak_rss = max(self.peak_rss, rss)
                 used = 0
                 for key in ('work', 'output'):
-                    for path in Path(self.policy[key]).rglob('*'):
+                    pending = [Path(self.policy[key])]
+                    while pending:
+                        directory = pending.pop()
                         try:
-                            if path.is_file() and not path.is_symlink():
-                                used += path.stat().st_size
+                            with os.scandir(directory) as entries:
+                                for entry in entries:
+                                    try:
+                                        info = entry.stat(follow_symlinks=False)
+                                    except FileNotFoundError:
+                                        continue
+                                    if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+                                        continue
+                                    if stat.S_ISDIR(info.st_mode):
+                                        pending.append(Path(entry.path))
+                                    elif stat.S_ISREG(info.st_mode):
+                                        used += info.st_size
                         except FileNotFoundError:
-                            pass
+                            continue
                 self.peak_work = max(self.peak_work, used)
                 _, available = memory_capacity()
                 from .video_uploads import remaining_bytes
@@ -119,8 +133,15 @@ class Budget:
                 rss, used, available, free = self._snapshot
                 growth = max(0, sum(x.memory_bytes for x in self.audio_stores) - self._cache_snapshot)
                 writes = max(0, sum(x.stats['spilled_bytes'] + x.stats['normalized_written_bytes'] for x in self.audio_stores) - self._write_snapshot)
-                rss += growth
-                available -= growth
+                if memory >= 64 * 1024**2:
+                    rss = tree_rss(self.policy['pid'], self.policy['created'])
+                    _, available = memory_capacity()
+                    self.peak_rss = max(self.peak_rss, rss)
+                    self._cache_snapshot = sum(x.memory_bytes for x in self.audio_stores)
+                    self._snapshot = rss, self._snapshot[1], available, self._snapshot[3]
+                else:
+                    rss += growth
+                    available -= growth
                 used += writes
                 free -= writes
             if reclaim and not disk_only and any(x.memory_bytes for x in self.audio_stores):

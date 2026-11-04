@@ -594,8 +594,8 @@ def _drain_stage_progress(
 ) -> int:
     latest: tuple[int, dict[str, Any]] | None = None
     consumed: list[Path] = []
-    for sequence, snapshot_path in progress_snapshot_paths(progress_path):
-        if sequence <= last_sequence:
+    for sequence, snapshot_path in reversed(progress_snapshot_paths(progress_path)):
+        if sequence <= last_sequence or latest is not None:
             consumed.append(snapshot_path)
             continue
         try:
@@ -633,7 +633,7 @@ def run_stage(
     progress_callback: Any | None = None,
 ) -> dict[str, Any]:
     input_path, output_path = directory / f"{operation}-input.json", directory / f"{operation}-output.json"
-    progress_path = directory / f"{operation}-progress.json"
+    progress_path = directory / ".progress" / operation / "progress.json"
     payload["progress_path"] = str(progress_path)
     budget = current_budget.get()
     if budget:
@@ -1033,10 +1033,16 @@ def _process_job(context: JobContext) -> dict[str, Any]:
                 if enhancement.get("status") == "applied":
                     from .enhancement import merge_regions
                     vad = merge_regions(vad, enhancement.pop("speech_regions", []))
-    if enhancement and enhancement.get("status") == "applied":
-        chunks = write_chunks(audio, rate, combine_vad(vad, duration), context.work_dir / "chunks", source=enhanced)
+    audio_source = None
+    chunk_source = enhanced if enhancement and enhancement.get('status') == 'applied' else normalized
+    if settings.asr_chunk_input == 'range':
+        audio_source = {'path': str(chunk_source), 'sample_rate': rate}
+        chunks = [{**chunk, 'index': index, 'start_sample': int(chunk['start'] * rate),
+                   'end_sample': int(chunk['end'] * rate)}
+                  for index, chunk in enumerate(combine_vad(vad, duration))]
     else:
-        chunks = write_chunks(audio, rate, combine_vad(vad, duration), context.work_dir / "chunks")
+        chunks = write_chunks(audio, rate, combine_vad(vad, duration), context.work_dir / 'chunks',
+                              source=enhanced if chunk_source == enhanced else None)
     if isinstance(audio, AudioStore) and request.get("diarize"):
         windows = speaker_windows(audio, vad)
         check_resources(memory=max(len(windows) * 8192, clustering_memory(len(windows))), stage="speaker_diarization")
@@ -1130,6 +1136,7 @@ def _process_job(context: JobContext) -> dict[str, Any]:
                 "model_path": str(settings.models_dir / asr_model["name"]),
                 "model_id": asr_model["public_id"],
                 "chunks": chunks,
+                "audio_source": audio_source,
                 "language": request.get("language"),
                 "context": request.get("effective_context", request.get("context", "")),
                 "batch_size": target_batch_size,
@@ -1170,6 +1177,7 @@ def _process_job(context: JobContext) -> dict[str, Any]:
             aligned = run_model_stage(context, "align", {
                 "model_path": str(settings.models_dir / "Qwen3-ForcedAligner-0.6B"),
                 "chunks": items,
+                "audio_source": audio_source,
                 "batch_size": alignment_batch_size,
             }, context.work_dir, compute_device, 0.68)
             items = aligned["chunks"]

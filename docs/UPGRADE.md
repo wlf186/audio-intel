@@ -619,3 +619,14 @@ SQLite v18 → v19 **包含一次性数据清理**：删除全部旧音频及视
 浏览器长期档位及导出偏好不变。来源明细开关新增为每任务会话偏好，刷新保留、退出登录清理；默认显示差异，尊重已有关闭选择。升级后刷新浏览器。
 
 English: Schema v19 deletes all pre-upgrade optimization drafts and checkpoints once, but preserves original jobs/media and settings. Use a stopped-service SQLite-only backup, rebuild, restore the recorded components and verify final process identities and historical data before cleanup. New drafts publish only after generation and bounded checks finish; previous drafts remain readable during regeneration under unchanged scene boundaries.
+
+### ASR temporary I/O
+
+`AUDIO_INTEL_ASR_CHUNK_INPUT=range` (default, also for an empty value) reads the
+existing normalized/enhanced 16 kHz mono PCM16 audio by exact sample intervals.
+It avoids temporary chunk WAV files without changing VAD boundaries, models or
+precision. Set `AUDIO_INTEL_ASR_CHUNK_INPUT=wav` and restart through the maintenance
+procedure above to use the legacy chunk-file path. Other values are rejected at
+startup. This setting changes no HTTP fields or persisted job/result formats.
+Waveform generation reads PCM16 WAV in one bounded pass; other encodings retain
+the existing decoder. Window waveforms use bounded blocks and the same peak bins.

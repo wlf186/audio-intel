@@ -36,18 +36,24 @@ def retrieve(path: Path, track: str, start: float, end: float | None, points: in
             last = min(source.frames, math.ceil(upper * source.samplerate))
             total = last - first
             count = min(points, total)
-            peaks = []
+            peaks = [0.] * count
             source.seek(first)
-            for index in range(count):
-                remaining = (index + 1) * total // count - index * total // count
-                peak = 0.
-                while remaining:
-                    block = source.read(min(8192, remaining), dtype='float32')
-                    if not len(block):
-                        raise ValueError('Audio changed while reading')
-                    peak = max(peak, float(np.max(np.abs(block))))
-                    remaining -= len(block)
-                peaks.append(round(min(1., peak), 4))
+            offset = 0
+            index = 0
+            while offset < total:
+                block = source.read(min(8192, total - offset), dtype='float32')
+                if not len(block):
+                    raise ValueError('Audio changed while reading')
+                cursor = 0
+                while cursor < len(block):
+                    boundary = (index + 1) * total // count
+                    size = min(len(block) - cursor, boundary - offset)
+                    peaks[index] = max(peaks[index], float(np.max(np.abs(block[cursor:cursor + size]))))
+                    cursor += size
+                    offset += size
+                    if offset == boundary:
+                        index += 1
+            peaks = [round(min(1., peak), 4) for peak in peaks]
             result = {'track': track, 'duration': duration, 'start': first / source.samplerate,
                       'end': last / source.samplerate, 'waveform': peaks}
         after = path.stat()

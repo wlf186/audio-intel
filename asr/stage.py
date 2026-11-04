@@ -10,8 +10,9 @@ from typing import Any
 
 from audio_intel.asr_resources import AsrResourceLimitError, Budget, current_budget
 from audio_intel.performance import lower_batch_size
-from audio_intel.progress import ThrottledProgress, progress_snapshot_path
+from audio_intel.progress import ThrottledProgress, progress_snapshot_path, publish_snapshot
 from audio_intel.utils import atomic_json
+from .chunk_input import with_chunk_reader
 
 
 ASR_INITIAL_OUTPUT_TOKENS_PER_SECOND = 3.0
@@ -34,7 +35,7 @@ def _progress(
         payload["_progress_sequence"] = sequence
         snapshot_path = progress_snapshot_path(Path(base_path), sequence)
         try:
-            atomic_json(snapshot_path, {
+            publish_snapshot(snapshot_path, {
                 "stage": stage, "completed": completed, "total": total,
                 "stage_progress": stage_progress, "unit": unit,
                 "basis": basis, "activity": activity,
@@ -85,7 +86,8 @@ def _stage_acceleration(
     }
 
 
-def transcribe(payload: dict[str, Any]) -> dict[str, Any]:
+@with_chunk_reader
+def transcribe(payload: dict[str, Any], read_audio) -> dict[str, Any]:
     import torch
     from qwen_asr import Qwen3ASRModel
 
@@ -188,7 +190,7 @@ def transcribe(payload: dict[str, Any]) -> dict[str, Any]:
         if callable(getattr(thinker, "register_forward_hook", None)):
             handles.append(thinker.register_forward_hook(thinker_hook))
         try:
-            audio_input = [item["path"] for item in current]
+            audio_input = read_audio(current)
             context_input = [payload.get("context", "")] * len(current)
             language_input = [forced_language] * len(current) if forced_language else None
             results = model.transcribe(
@@ -207,6 +209,7 @@ def transcribe(payload: dict[str, Any]) -> dict[str, Any]:
                 _clear_cuda(torch)
             continue
         finally:
+            audio_input = None
             _remove_hooks(handles)
         actual_sizes.append(len(current))
         output.extend(
@@ -230,7 +233,8 @@ def transcribe(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def align(payload: dict[str, Any]) -> dict[str, Any]:
+@with_chunk_reader
+def align(payload: dict[str, Any], read_audio) -> dict[str, Any]:
     import torch
     from qwen_asr import Qwen3ForcedAligner
 
@@ -287,7 +291,7 @@ def align(payload: dict[str, Any]) -> dict[str, Any]:
         for layer in [*audio_layers, *text_layers]:
             handles.append(layer.register_forward_hook(layer_hook))
         try:
-            audio_input = [item["path"] for _, item in current]
+            audio_input = read_audio([item for _, item in current])
             text_input = [item["text"] for _, item in current]
             language_input = [item["language"] for _, item in current]
             results = model.align(
@@ -305,6 +309,7 @@ def align(payload: dict[str, Any]) -> dict[str, Any]:
                 _clear_cuda(torch)
             continue
         finally:
+            audio_input = None
             _remove_hooks(handles)
         actual_sizes.append(len(current))
         for (index, item), result in zip(current, results):
