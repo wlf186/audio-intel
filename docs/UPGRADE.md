@@ -1,11 +1,13 @@
 # 升级指南
 
-## 当前开发版：性能与存储维护
+## v0.1.45：转写性能与存储维护
 
-SQLite v22→v23 为增量数据库迁移：增加任务列表／worker 查询索引及持久化后台压缩状态，不重写历史任务、优化稿或媒体。升级前按下文流程停服并创建 SQLite-only 一致快照；完成全组件恢复和验收后清理临时备份。此版本也要求 v22 实例备份。任务删除不再同步 VACUUM，具体阈值和响应字段见 [API 文档](API.md#删除后的数据库维护--database-maintenance-after-deletion)。模型、精度、分块和推理参数不变。
+从正式版 v0.1.44 升级：**数据迁移仅涉及数据库（SQLite v22→v23）**。增量迁移增加任务列表／worker 查询索引及持久化后台压缩状态，不重写历史任务、优化稿或媒体。升级前按下文流程停服并创建 SQLite-only 一致快照；完成全组件恢复和验收后清理临时备份。此版本也要求 v22 实例备份。任务删除不再同步 VACUUM，具体阈值和响应字段见 [API 文档](API.md#删除后的数据库维护--database-maintenance-after-deletion)。模型、精度、分块和推理参数不变。
 
-Development migration v22→v23 adds indexes and durable maintenance state only. Stop services and back up SQLite, then restore and accept all original components before removing the temporary backup. This requirement also applies to v22 deployments; release-specific notes below describe earlier versions.
+Upgrading released v0.1.44 to v0.1.45 performs a database-only v22→v23 migration, adding indexes and durable maintenance state only. Stop services and back up SQLite, then restore and accept all original components before removing the temporary backup. This requirement also applies to v22 deployments. Existing v23 development deployments with these migrations already applied need no repeated backup for the version/documentation-only release update. Earlier starting versions must also follow the intervening upgrade notes below.
 
+
+本版包含流式上传、播放音轨原子移交、说话人索引、队列／数据库维护与前端阅读优化，以及第二批五项 I/O 优化和预览进度边界修复。脱敏合成基准及其限制见[性能验收报告](PERFORMANCE_VALIDATION.md)。Python 和前端版本同步至 0.1.45；重建前端，按下方流程刷新 API、ASR/TTS supervisor 和 executor。依赖锁、模型和推理参数保持不变。
 
 ### ASR temporary I/O
 
