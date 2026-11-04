@@ -237,3 +237,31 @@ if __name__=='__main__':worker.run('asr')
         assert supervisor.poll() is None
     finally:
         _stop_test_supervisor(supervisor)
+
+
+def test_large_memory_checks_do_not_rescan_fresh_workspace(tmp_path, monkeypatch):
+    clock = [10.]
+    scans = []
+    rss = []
+    original = resources.os.scandir
+    def scan(path):
+        scans.append(path)
+        return original(path)
+    monkeypatch.setattr(resources.os, 'scandir', scan)
+    monkeypatch.setattr(resources.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(resources, 'tree_rss', lambda *args: rss.append(1) or 100)
+    monkeypatch.setattr(resources, 'memory_capacity', lambda: (10 * 1024**3, 10 * 1024**3))
+    monkeypatch.setattr('audio_intel.video_uploads.remaining_bytes', lambda: 0)
+    budget = resources.Budget(policy(tmp_path))
+    budget.check(memory=128 * 1024**2)
+    initial = len(scans)
+    for _ in range(3):
+        clock[0] += .1
+        budget.check(memory=128 * 1024**2)
+    assert len(scans) == initial
+    assert len(rss) == 4
+    clock[0] += .3
+    budget.check(memory=128 * 1024**2)
+    assert len(scans) == initial * 2
+    budget.check(force=True)
+    assert len(scans) == initial * 3

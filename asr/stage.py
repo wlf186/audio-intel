@@ -31,22 +31,21 @@ def _progress(
 ) -> None:
     base_path = payload.get("progress_path")
     if base_path:
+        snapshot = {"stage": stage, "completed": completed, "total": total,
+                    "stage_progress": stage_progress, "unit": unit,
+                    "basis": basis, "activity": activity}
+        if snapshot == payload.get('_last_progress_snapshot'):
+            return
         sequence = int(payload.get("_progress_sequence", 0)) + 1
         payload["_progress_sequence"] = sequence
         snapshot_path = progress_snapshot_path(Path(base_path), sequence)
         try:
-            publish_snapshot(snapshot_path, {
-                "stage": stage, "completed": completed, "total": total,
-                "stage_progress": stage_progress, "unit": unit,
-                "basis": basis, "activity": activity,
-            })
-        except OSError:
+            publish_snapshot(snapshot_path, snapshot)
+            payload['_last_progress_snapshot'] = snapshot
+        except (OSError, ValueError, TypeError):
             if not payload.get("_progress_warning_emitted"):
-                logger.warning(
-                    "Unable to publish ASR progress snapshot %s; inference will continue",
-                    snapshot_path,
-                    exc_info=True,
-                )
+                logger.warning("Unable to publish ASR progress snapshot %s; inference will continue",
+                               snapshot_path, exc_info=True)
                 payload["_progress_warning_emitted"] = True
 
 

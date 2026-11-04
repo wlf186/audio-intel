@@ -386,3 +386,31 @@ def test_video_frames_do_not_decode_images_with_pillow(tmp_path, monkeypatch, de
     picture = picture_at(source, 1, {"x": 0, "y": 0, "width": .9, "height": .9})
     name = save_picture(picture, tmp_path / "preview")
     assert (tmp_path / "preview" / name).read_bytes().startswith(b"\xff\xd8")
+
+
+def test_materialize_reuses_decoder_and_preserves_images(tmp_path, monkeypatch):
+    from audio_intel import video_detection as detection, video_frames
+    source = tmp_path / 'fixture.mp4'
+    video_file(source)
+    times = [.1, 1.2, 1.2, None, 3.7]
+    expected = {}
+    for timestamp in times:
+        if timestamp is not None and timestamp not in expected:
+            expected[timestamp] = video_frames.save_picture(video_frames.picture_at(source, timestamp, None), tmp_path / 'expected')
+    original = detection.av.open
+    calls = []
+    def open_video(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(detection.av, 'open', open_video)
+    scenes = [{'frame_time': timestamp} for timestamp in times]
+    detection.materialize(source, scenes, tmp_path / 'actual', None, 0, lambda *args: None)
+    assert len(calls) == 1
+    for scene in scenes:
+        if scene['frame_time'] is None:
+            assert scene['image'] is None
+        else:
+            name = expected[scene['frame_time']]
+            assert scene['image'] == name
+            assert (tmp_path / 'actual' / name).read_bytes() == (tmp_path / 'expected' / name).read_bytes()
+    source.unlink()

@@ -378,7 +378,7 @@ def main() -> None:
         try:
             publish_snapshot(folder / '.progress' / f'progress-{number:08d}.json',
                              {'phase': phase, 'completed': completed, 'total': total})
-        except OSError:
+        except (OSError, ValueError, TypeError):
             pass
     try:
         result = preview(request, folder, progress)

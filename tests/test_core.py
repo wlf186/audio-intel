@@ -6,6 +6,7 @@ from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
 import sys
+import json
 import wave
 
 import numpy as np
@@ -53,20 +54,20 @@ def test_model_progress_is_throttled_and_boundary_can_be_forced(monkeypatch) -> 
 def test_asr_progress_uses_immutable_numbered_snapshots(tmp_path, monkeypatch) -> None:
     base_path = tmp_path / "transcription-progress.json"
     destinations = []
-    real_atomic_json = atomic_json
+    real_atomic_json = asr_stage.publish_snapshot
 
     def publish(path, value):
         assert not path.exists()
         destinations.append(path)
         real_atomic_json(path, value)
 
-    monkeypatch.setattr(asr_stage, "atomic_json", publish)
+    monkeypatch.setattr(asr_stage, "publish_snapshot", publish)
     payload = {"progress_path": str(base_path)}
     asr_stage._progress(payload, "transcription", 0, 2, stage_progress=0.1)
     first_path = progress_snapshot_path(base_path, 1)
     with first_path.open("r", encoding="utf-8") as first_snapshot:
         asr_stage._progress(payload, "transcription", 1, 2, stage_progress=0.5)
-        assert '"completed": 0' in first_snapshot.read()
+        assert json.load(first_snapshot)['completed'] == 0
 
     assert destinations == [
         progress_snapshot_path(base_path, 1),
@@ -79,7 +80,7 @@ def test_asr_progress_publish_failure_warns_once_and_does_not_abort(tmp_path, mo
     def fail_publish(_path, _value):
         raise PermissionError("simulated scanner lock")
 
-    monkeypatch.setattr(asr_stage, "atomic_json", fail_publish)
+    monkeypatch.setattr(asr_stage, "publish_snapshot", fail_publish)
     payload = {"progress_path": str(tmp_path / "transcription-progress.json")}
     asr_stage._progress(payload, "transcription", 0, 1)
     asr_stage._progress(payload, "transcription", 1, 1)
@@ -160,7 +161,7 @@ def test_asr_progress_cleanup_failure_does_not_repeat_callback(tmp_path, monkeyp
 
 def test_asr_run_stage_drains_final_progress_after_fast_exit(tmp_path, monkeypatch) -> None:
     def launch(args, **_kwargs):
-        atomic_json(progress_snapshot_path(tmp_path / "transcribe-progress.json", 1), {
+        atomic_json(progress_snapshot_path(tmp_path / ".progress" / "transcribe" / "progress.json", 1), {
             "stage": "transcription", "completed": 1, "total": 1,
         })
         atomic_json(tmp_path / "transcribe-output.json", {"chunks": []})
@@ -183,7 +184,7 @@ def test_asr_run_stage_drains_final_progress_after_fast_exit(tmp_path, monkeypat
 
     assert result == {"chunks": []}
     assert [item["completed"] for item in emitted] == [1]
-    assert progress_snapshot_paths(tmp_path / "transcribe-progress.json") == []
+    assert progress_snapshot_paths(tmp_path / ".progress" / "transcribe" / "progress.json") == []
 
 
 def test_single_task_acceleration_hardware_tiers() -> None:

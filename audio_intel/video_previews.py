@@ -243,11 +243,19 @@ class PreviewManager:
                 shutil.rmtree(path, ignore_errors=True)
 
     def drain(self, item: dict):
-        for path in sorted((item['folder'] / '.progress').glob('progress-*.json')):
+        paths = list((item['folder'] / '.progress').glob('progress-*.json'))
+        paths.extend(item['folder'].glob('progress-*.json'))  # Legacy child compatibility.
+        latest = item.get('_progress_sequence', 0)
+        for path in sorted(paths, reverse=True):
             try:
-                value = json.loads(path.read_text(encoding='utf-8'))
-                with self.lock:
-                    item['progress'] = value
+                sequence = int(path.stem.removeprefix('progress-'))
+                if sequence > latest:
+                    value = json.loads(path.read_text(encoding='utf-8'))
+                    if isinstance(value, dict) and {'phase', 'completed', 'total'} <= value.keys():
+                        with self.lock:
+                            item['progress'] = value
+                            item['_progress_sequence'] = sequence
+                        latest = sequence
                 path.unlink(missing_ok=True)
             except (OSError, ValueError):
                 pass  # Best-effort progress must never fail decoding.

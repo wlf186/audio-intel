@@ -123,8 +123,15 @@ class Budget:
                 self.peak_work = max(self.peak_work, used)
                 _, available = memory_capacity()
                 from .video_uploads import remaining_bytes
-                free = min(shutil.disk_usage(Path(self.policy[k]) if Path(self.policy[k]).exists() else Path(self.policy[k]).parent).free
-                           for k in ("work", "output")) - remaining_bytes()
+                volumes = {}
+                for key in ('work', 'output'):
+                    path = Path(self.policy[key])
+                    if not path.exists():
+                        path = path.parent
+                    device = path.stat().st_dev
+                    if device not in volumes:
+                        volumes[device] = shutil.disk_usage(path).free
+                free = min(volumes.values()) - remaining_bytes()
                 self._snapshot = rss, used, available, free
                 self._cache_snapshot = sum(x.memory_bytes for x in self.audio_stores)
                 self._write_snapshot = sum(x.stats['spilled_bytes'] + x.stats['normalized_written_bytes'] for x in self.audio_stores)
