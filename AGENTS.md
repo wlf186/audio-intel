@@ -23,9 +23,9 @@ A commit, GitHub Release, successful health probe, or idle executor recycle does
 - On native Windows 11, use `service.cmd` with the same background actions and targets except for the Linux-only `run`; successful starts wait for API/worker readiness and stops must remove complete process trees. See `docs/WINDOWS.md`.
 - `.runtime/api/bin/python -m pytest -q` runs backend tests.
 - `.runtime/api/bin/python scripts/lock_dependencies.py --check` verifies full and CPU-only Linux and Windows dependency locks.
-- `corepack pnpm@10.15.1 --dir frontend typecheck` checks TypeScript.
-- `corepack pnpm@10.15.1 --dir frontend build` creates the production UI in `frontend/dist/`.
-- `corepack pnpm@10.15.1 --dir frontend test:e2e` runs Playwright against the local service.
+- `corepack pnpm@10.34.5 --dir frontend typecheck` checks TypeScript.
+- `corepack pnpm@10.34.5 --dir frontend build` creates the production UI in `frontend/dist/`.
+- `corepack pnpm@10.34.5 --dir frontend test:e2e` runs Playwright against the local service.
 - `AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all` enables fast pipeline smoke testing without real inference.
 - `.runtime/api/bin/python -m pytest -q tests/test_service_script.py` checks isolated Linux foreground/background lifecycle behavior without touching the default service instance.
 - Native Windows CI runs `tests/test_service_windows.py` for isolated `start`/`restart`/`stop`, PID safety, and process-tree cleanup coverage.

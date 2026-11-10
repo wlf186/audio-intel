@@ -5,7 +5,7 @@ Validation used isolated Linux instances (real inference on port 20816, mock on 
 Automated checks:
 
 - `.runtime/api/bin/python -m pytest -q`: **241 passed, 6 skipped**. Includes migration compatibility, import parsing/failure/idempotency/auth, immutable voiceprint snapshots, replay after source-import deletion, exact text partitioning, restart/manual resume, complete executor-tree retirement before automatic resource retries, and original queue/API regressions.
-- `corepack pnpm@10.15.1 --dir frontend typecheck` and `build`: passed.
+- `corepack pnpm@10.34.5 --dir frontend typecheck` and `build`: passed.
 - Playwright suite against the isolated mock service: **52 passed**. Document upload → preview → change split rules → select sections → synthesis → single-player playback → native ZIP download passed. Desktop and 390 px overflow checks, minimum 44 px document controls, and console-error checks passed. Browser plugin was not available; repository Playwright with Chromium was used. Evidence screenshots: `/tmp/document-desktop.png`, `/tmp/document-mobile.png` (local, not committed).
 - `.runtime/api/bin/python scripts/lock_dependencies.py --check`: passed for Linux/Windows full and CPU locks.
 - A 1,000,000-character mock synthesis exercised thousands of model chunks while limiting tracked Python allocations below 80 MiB; no long WAV or export copy was written. This allocation check excludes model weight memory and is not a claim about total process RSS.

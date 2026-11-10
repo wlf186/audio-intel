@@ -19,7 +19,8 @@ def test_parallel_gate_rejects_failed_cancelled_skipped_or_missing_jobs(platform
     jobs = workflow["jobs"]
     assert "needs" not in jobs["backend"] and "needs" not in jobs["browser"]
     gate = jobs[platform]
-    assert set(gate["needs"]) == {"backend", "browser"}
+    names = ("backend", "browser", "security") if platform == "linux" else ("backend", "browser")
+    assert set(gate["needs"]) == set(names)
     assert gate["if"] == "always()"
     assert not gate.get("continue-on-error", False)
     script = gate["steps"][0]["with"]["script"]
@@ -28,9 +29,9 @@ def test_parallel_gate_rejects_failed_cancelled_skipped_or_missing_jobs(platform
     assert node, "Node is required by the documented API/frontend setup"
     cases = []
     states = ("success", "failure", "cancelled", "skipped", "pending", None)
-    for backend, browser in itertools.product(states, repeat=2):
-        results = {name: {"result": result} for name, result in zip(("backend", "browser"), (backend, browser)) if result is not None}
-        cases.append({"results": results, "accepted": backend == browser == "success"})
+    for combination in itertools.product(states, repeat=len(names)):
+        results = {name: {"result": result} for name, result in zip(names, combination) if result is not None}
+        cases.append({"results": results, "accepted": all(result == "success" for result in combination)})
     harness = """
 const vm = require('node:vm')
 const cases = JSON.parse(process.env.GATE_CASES)

@@ -183,9 +183,9 @@ English: From v0.1.36, no database or historical-file migration and no extra upg
 
 修复“任务与结果”中音频、视频任务反复切换后，旧视频缩略图和波形残留、重复叠加的问题。时间轴和图文阅读组件使用独立的任务标识，保留原有播放、定位及阅读位置逻辑。新增桌面和 390 px 手机端的缓存任务切换回归，覆盖音视频往返、不同视频互切、定位和阅读模式切换。
 
-按本页维护流程记录配置并等待空闲，停止原服务后更新源码，运行 `corepack pnpm@10.15.1 --dir frontend build` 重建前端，然后恢复原配置并验证 API、ASR/TTS supervisor、executor 和历史任务。依赖与模型未变化，无需重新下载模型或同步推理环境。刷新已打开的浏览器页面以加载修复。
+按本页维护流程记录配置并等待空闲，停止原服务后更新源码，运行 `corepack pnpm@10.34.5 --dir frontend build` 重建前端，然后恢复原配置并验证 API、ASR/TTS supervisor、executor 和历史任务。依赖与模型未变化，无需重新下载模型或同步推理环境。刷新已打开的浏览器页面以加载修复。
 
-English: From v0.1.35 there is no database or historical-file migration and no extra upgrade backup is required. Repeated switching between cached audio/video results now removes the previous timeline instead of retaining or duplicating thumbnails and waveforms. Playback, reader bookmarks and browser-storage lifetimes are unchanged. Desktop and 390 px regression tests cover audio/video and video/video switching, seeking and reading modes. Stop the recorded service after it becomes idle, update source, rebuild the frontend with `corepack pnpm@10.15.1 --dir frontend build`, and restore and verify the original API, supervisors and executors. Dependencies and models are unchanged. Refresh browser pages; earlier upgrades must cover intervening migration requirements.
+English: From v0.1.35 there is no database or historical-file migration and no extra upgrade backup is required. Repeated switching between cached audio/video results now removes the previous timeline instead of retaining or duplicating thumbnails and waveforms. Playback, reader bookmarks and browser-storage lifetimes are unchanged. Desktop and 390 px regression tests cover audio/video and video/video switching, seeking and reading modes. Stop the recorded service after it becomes idle, update source, rebuild the frontend with `corepack pnpm@10.34.5 --dir frontend build`, and restore and verify the original API, supervisors and executors. Dependencies and models are unchanged. Refresh browser pages; earlier upgrades must cover intervening migration requirements.
 
 ## v0.1.35 画面检测、阅读体验与 Word 导出
 
@@ -565,7 +565,7 @@ BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
 curl -fsS "$BASE_URL/api/v1/health"
 AUDIO_INTEL_URL="$BASE_URL" .runtime/api/bin/python scripts/smoke_test.py
 .runtime/api/bin/python -m pytest -q
-corepack pnpm@10.15.1 --dir frontend typecheck
+corepack pnpm@10.34.5 --dir frontend typecheck
 ```
 
 若真实模型、Torch、精度或设备路由发生变化，还必须执行真实 ASR、TTS 克隆和说话人分离回归，不能仅依赖 mock 测试。

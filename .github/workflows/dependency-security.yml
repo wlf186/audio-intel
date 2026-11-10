@@ -1,0 +1,42 @@
+name: Dependency security audit
+run-name: Dependency security audit · ${{ github.event_name }} · ${{ github.ref_name
+  }}
+'on':
+  workflow_call: null
+  workflow_dispatch: null
+  schedule:
+  - cron: 23 4 * * 1
+permissions:
+  contents: read
+concurrency:
+  group: audit-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      AUDIO_INTEL_LOAD_ENV: '0'
+      AUDIO_INTEL_MOCK_MODE: '1'
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+    - name: Install API runtime and build frontend
+      run: ./service.sh setup api
+    - name: Verify dependency locks
+      run: .runtime/api/bin/python scripts/lock_dependencies.py --check
+    - name: Audit every locked environment and tool
+      run: .runtime/bin/uv run --no-project --python .runtime/api/bin/python --with
+        pip-audit==2.10.1 python scripts/audit_dependencies.py
+    - name: Upload complete security report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: dependency-security-reports
+        path: tmp/dependency-audit.*
+        if-no-files-found: error
+        retention-days: 30

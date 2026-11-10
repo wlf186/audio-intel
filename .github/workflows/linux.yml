@@ -8,7 +8,7 @@ name: Linux quality gates
     - v*
   pull_request: null
   schedule:
-  - cron: 23 4 * * 1
+  - cron: 43 4 1 * *
   workflow_dispatch:
     inputs:
       stability_check:
@@ -41,35 +41,6 @@ jobs:
       run: .runtime/api/bin/python scripts/lock_dependencies.py --check
     - name: Backend checks
       run: .runtime/api/bin/python -m pytest -q --durations=20 --junitxml=logs/ci/backend.xml
-    - name: Dependency audits
-      run: |
-        corepack pnpm@10.15.1 --dir frontend audit --audit-level high
-        .runtime/bin/uv tool run pip-audit -r requirements-lock/linux/api.txt --disable-pip
-    - name: Audit model runtimes with documented VEX exclusions
-      if: github.event_name == 'schedule'
-      run: |
-        for runtime in asr tts aligner; do
-          .runtime/bin/uv tool run pip-audit -r "requirements-lock/linux/$runtime.txt" --disable-pip \
-            --vulnerability-service osv \
-            --ignore-vuln PYSEC-2026-3447 \
-            --ignore-vuln PYSEC-2025-194 \
-            --ignore-vuln PYSEC-2026-2288 \
-            --ignore-vuln PYSEC-2026-2289 \
-            --ignore-vuln PYSEC-2026-2290 \
-            --ignore-vuln PYSEC-2025-217 \
-            --ignore-vuln GHSA-p4wg-p73j-c528 \
-            --ignore-vuln GHSA-65qm-jvmh-6pqg \
-            --ignore-vuln GHSA-58r4-6rv3-gfh8 \
-            --ignore-vuln GHSA-pchr-8j38-3x4p \
-            --ignore-vuln GHSA-q45j-58j2-45rg \
-            --ignore-vuln GHSA-462x-pgg6-55fp \
-            --ignore-vuln GHSA-c6hw-5grf-ff96 \
-            --ignore-vuln GHSA-vx6w-vv9f-6gvg \
-            --ignore-vuln GHSA-8g5g-8vmr-9782 \
-            --ignore-vuln PYSEC-2026-3804 \
-            --ignore-vuln PYSEC-2026-4174 \
-            --ignore-vuln PYSEC-2026-3929
-        done
     - name: Upload test reports
       if: always()
       uses: actions/upload-artifact@v4
@@ -101,16 +72,21 @@ jobs:
     - name: Install API runtime and build frontend
       run: ./service.sh setup api
     - name: Start and exercise services
-      run: |
-        AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all
+      run: 'AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all
+
         .runtime/api/bin/python scripts/smoke_test.py
+
+        '
     - name: Install Chromium
-      run: corepack pnpm@10.15.1 --dir frontend exec playwright install --with-deps chromium
+      run: corepack pnpm@10.34.5 --dir frontend exec playwright install --with-deps
+        chromium
     - name: Browser checks
-      run: corepack pnpm@10.15.1 --dir frontend test:e2e
+      run: corepack pnpm@10.34.5 --dir frontend test:e2e
     - name: Repeat timing regressions
-      run: corepack pnpm@10.15.1 --dir frontend test:e2e --grep '@timing' --repeat-each=5 --output=../logs/playwright-stability
-      if: (github.event_name == 'workflow_dispatch' && inputs.stability_check) || startsWith(github.ref, 'refs/heads/ci/stability/')
+      run: corepack pnpm@10.34.5 --dir frontend test:e2e --grep '@timing' --repeat-each=5
+        --output=../logs/playwright-stability
+      if: (github.event_name == 'workflow_dispatch' && inputs.stability_check) ||
+        startsWith(github.ref, 'refs/heads/ci/stability/')
       env:
         PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../logs/ci/stability.xml
     - name: Stop services
@@ -134,6 +110,7 @@ jobs:
     needs:
     - backend
     - browser
+    - security
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -143,10 +120,11 @@ jobs:
       env:
         CHECK_RESULTS: ${{ toJSON(needs) }}
       with:
-        script: |
-          const results = JSON.parse(process.env.CHECK_RESULTS)
-          for (const name of ['backend', 'browser']) {
-            if (results[name]?.result !== 'success') {
-              core.setFailed(`${name}: ${results[name]?.result ?? 'missing'}`)
-            }
-          }
+        script: "const results = JSON.parse(process.env.CHECK_RESULTS)\nfor (const\
+          \ name of ['backend', 'browser', 'security']) {\n  if (results[name]?.result\
+          \ !== 'success') {\n    core.setFailed(`${name}: ${results[name]?.result\
+          \ ?? 'missing'}`)\n  }\n}\n"
+  security:
+    uses: ./.github/workflows/dependency-security.yml
+    permissions:
+      contents: read

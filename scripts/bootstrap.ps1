@@ -11,8 +11,8 @@ $ExtraArgs = @($ExtraArgs | Where-Object { -not [string]::IsNullOrWhiteSpace($_)
 
 $RootDir = Split-Path -Parent $PSScriptRoot
 $RuntimeDir = Join-Path $RootDir ".runtime"
-$UvVersion = "0.12.5"
-$UvWindowsSha256 = "4c4d49d8738847d9b71ba319e49a5688c93eac0fe6204b1df24e98528dddf39a"
+$UvVersion = "0.13.4"
+$UvWindowsSha256 = "ccec7508a07d9933d7cb1261880633efcf1f30d6e6eddab21823f1dae6f23225"
 $UvBin = Join-Path $RuntimeDir "bin\uv.exe"
 $ProfilePath = Join-Path $RuntimeDir "deployment-profile"
 
@@ -169,11 +169,11 @@ function Invoke-Pnpm {
     $corepack = Get-Command "corepack.cmd" -ErrorAction SilentlyContinue
     if ($null -eq $corepack) { $corepack = Get-Command "corepack" -ErrorAction SilentlyContinue }
     if ($null -ne $corepack) {
-        & $corepack.Source "pnpm@10.15.1" @Arguments
+        & $corepack.Source "pnpm@10.34.5" @Arguments
     } else {
         $npx = Get-Command "npx.cmd" -ErrorAction SilentlyContinue
         if ($null -eq $npx) { throw "Node.js with npm/npx is required to build the frontend" }
-        & $npx.Source --yes "corepack@0.35.0" "pnpm@10.15.1" @Arguments
+        & $npx.Source --yes "corepack@0.35.0" "pnpm@10.34.5" @Arguments
     }
 }
 

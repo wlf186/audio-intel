@@ -175,7 +175,7 @@ English: ASR waveform reduction has bounded extra memory since v0.1.43. Decoding
 
 ## 前端或服务无法访问
 
-- `corepack pnpm@10.15.1 --dir frontend build` 可重建前端。
+- `corepack pnpm@10.34.5 --dir frontend build` 可重建前端。
 - 页脚 `NET_LISTEN` 和受保护的 `/api/v1/system` 中 `bind` 字段会显示服务实际配置的监听地址与端口；`0.0.0.0` 表示监听所有网卡，不等同于必须通过该地址访问。
 - 默认端口可用 `ss -ltnp | grep 20810` 检查占用；若设置了 `AUDIO_INTEL_PORT`，请改查实际端口。
 - 查看 `logs/api.log`、`logs/asr.log`、`logs/tts.log`；PID 位于 `run/`。

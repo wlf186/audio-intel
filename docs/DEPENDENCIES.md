@@ -11,7 +11,7 @@
 
 qwen-tts 0.1.1 与 qwen-asr 0.0.6 精确要求不同 Transformers 版本，严禁同环境安装。Torch 2.11 要求 `setuptools<82`，因此模型环境固定到已修复已知旧版公告且满足该约束的 setuptools 81.0.0。
 
-前端固定 pnpm 10.15.1，支持 Node 22.20+，CI 和文档推荐 Node 24 LTS；当前锁定 React 19、TypeScript 5.9、Vite 7、i18next 26 和 react-i18next 17。TypeScript 6、Vite 8、lucide-react 1.x 以及 Torch/Qwen 大版本升级不属于例行补丁，应单独做兼容与真实模型验证。
+前端固定 pnpm 10.34.5，支持 Node 22.20+，CI 和文档推荐 Node 24 LTS；当前锁定 React 19、TypeScript 5.9、Vite 7、i18next 26 和 react-i18next 17。TypeScript 6、Vite 8、lucide-react 1.x 以及 Torch/Qwen 大版本升级不属于例行补丁，应单独做兼容与真实模型验证。
 
 ASR、TTS 和 aligner 各有 full 与 `-cpu` 两套哈希锁。full 使用固定 CUDA 13.0 Torch backend；CPU-only 使用官方 CPU wheel，锁中不得出现 `nvidia-*` 或 `triton`。API 环境共用同一套锁。运行 `scripts/lock_dependencies.py` 或 `--check` 会同时生成或校验 Linux、Windows 的两种推理配置。
 
@@ -48,7 +48,7 @@ GTCRN 50% remains the default. Neither optional denoiser is required for base AS
 .runtime/api/bin/python scripts/lock_dependencies.py --check
 ```
 
-`--check` 以已提交锁为解析基线，验证它们仍与直接依赖一致；不能与 `--upgrade` 同时使用。提交直接清单和两个平台的全部生成锁。CI 会以已提交锁为基线重新编译并拒绝差异。uv 本身固定为 0.12.5，Linux 和 Windows 下载均验证上游 SHA256。
+`--check` 以已提交锁为解析基线，验证它们仍与直接依赖一致；不能与 `--upgrade` 同时使用。提交直接清单和两个平台的全部生成锁。CI 会以已提交锁为基线重新编译并拒绝差异。uv 本身固定为 0.13.4，Linux 和 Windows 下载均验证上游 SHA256。
 
 ## 安全公告与 VEX
 
@@ -63,7 +63,7 @@ API 锁和前端锁要求审计无已知漏洞。Qwen/Torch 当前精确约束�
 
 本项目不使用 `torch.jit.script`、Trainer、LightGlue 或 X-CLIP，不接收用户提供的模型、checkpoint、配置或 Python 脚本；模型由受版本控制的 manifest 固定仓库和 revision，生产推理设置 Hugging Face/Transformers 离线模式并只加载项目本地目录。这是有边界的风险接受，不等于公告已修复。
 
-每周 CI 使用上述精确 allowlist；任何新增公告都必须先让流水线失败，再选择升级或新增带依据的 VEX。每次 Qwen 包发布时重新检查是否可解除 Transformers 固定版本与对应豁免。
+审计以 `dependency-exceptions.json` 为唯一机器可读例外来源，绑定公告、包版本、环境、模型 manifest 校验值与复查日期。新增或重新评估的例外最多有效 30 天；API、前端、工具不增加例外。上述说明与下方逐项 VEX 是证据说明，不能单独让流水线放行。任何未豁免公告均使审计失败。每次 Qwen 包发布时重新检查是否可解除 Transformers 固定版本与对应豁免。
 
 
 视频转写沿用 API/ASR 已固定的 PyAV 和 NumPy；API 显式依赖 Pillow 13.0.0，ASR/模型环境因 Gradio 约束保留 12.3.0（见下方 VEX）。简洁 PDF 在 API 环境使用 ReportLab 4.5.1 与仓库内 Noto Sans SC 字体，不依赖系统字体或在线服务。浏览器分片 SHA-256 使用 @noble/hashes 2.0.1，在 Web Worker 运行。字体来源与许可证见 [第三方说明](../THIRD_PARTY_NOTICES.md)。模型、Transformers、精度和既有推理批次保持不变。
@@ -118,3 +118,62 @@ The exceptions apply only to model runtimes constrained by Gradio, whose service
 - [PYSEC-2026-3929 / GHSA-xrqw-3rrv-vx5w](https://github.com/advisories/GHSA-xrqw-3rrv-vx5w)：恶意 chat_template 在 tokenizer/processor `save_pretrained()` 时写出目录；服务不导出 tokenizer/processor，也不接受用户模型配置。
 
 Full model-lock audits additionally update hydra-core to 1.3.7, urllib3 to 2.8.0 and Werkzeug to 3.1.9. The three exact exceptions above cover attacker-supplied checkpoint indexes, remote custom generation and tokenizer/processor saving. None is exposed by the manifest-only offline service. They are not package fixes; reassess on Qwen releases or changes to model provenance/loading/export, and retain failure for undeclared advisories.
+
+## CI 安全巡检与依赖更新
+
+`Dependency security audit` 每周一 04:23 UTC 独立执行，也由现有提交、PR、标签和手动 Linux 检查调用。完整功能回归按原有事件执行，并在每月 1 日 04:43 UTC 于 Linux 和原生 Windows 定时执行。GitHub 排队可能延迟实际启动。Linux 汇总要求 backend、browser、security 全部成功；安全失败不阻断独立的功能诊断。
+
+在已安装 API 运行时且 Node/Corepack 可用的环境执行：
+
+```bash
+.runtime/bin/uv run --no-project --python .runtime/api/bin/python --with pip-audit==2.10.1 python scripts/audit_dependencies.py
+```
+
+Windows 使用 `.runtime\bin\uv.exe`，并将 `--python` 指向 `.runtime\api\Scripts\python.exe`。无需安装模型或 CUDA wheels：工具只读取全部 14 份 Linux/Windows、full/CPU-only 运行锁，查询 OSV，并检查前端及 uv/pnpm。官方 Torch `+cu130`/`+cpu` 映射到同一上游版本；未知本地版本和遗漏包使检查失败。前端所有等级的未处理公告均失败。
+
+完整结果写入 `tmp/dependency-audit.json`，摘要为同名 `.md`，CI 始终上传报告并保存 30 天。摘要包含 UTC、触发类型、SHA 和受影响范围；别名仅在展示时归并，原始公告保留。各环境独立收集结果，最后汇总判定。查询故障与依赖告警分开记录；超时、429、5xx 最多尝试三次，失败不视为无漏洞。
+
+本轮定向更新 Brotli 1.2.1、filelock 4.2.1、hydra-core 1.3.8、msgpack 1.2.3，以及校验固定的 uv 0.13.4。Torch、Qwen、Transformers、CUDA、模型及推理参数保持固定。后续更新继续使用 `--upgrade-package`，提交所有平台/profile 锁；推理环境变化须完成真实 ASR、TTS、对齐验证。无数据库或历史文件迁移，无需额外复制媒体。仍需依照升级指南完成停服和收尾。
+
+### 本轮新增模型环境 VEX（复查：2026-12-09）
+
+以下结论仅适用于 JSON 中列出的 Pillow 12.3.0 模型环境，API 不适用。每条公告在结构化清单中保留原始 ID 与别名。API 已使用 Pillow 13.0.0。
+
+| 公告 | 未调用的受影响操作 |
+| --- | --- |
+| [CVE-2026-112390](https://osv.dev/vulnerability/CVE-2026-112390) | MIC/TIFF frame enumeration |
+| [CVE-2026-112391](https://osv.dev/vulnerability/CVE-2026-112391) | PDF page-tree parsing |
+| [CVE-2026-112392](https://osv.dev/vulnerability/CVE-2026-112392) | rank/median/min/max filtering |
+| [CVE-2026-112393](https://osv.dev/vulnerability/CVE-2026-112393) | TIFF encoding to memory |
+| [CVE-2026-112394](https://osv.dev/vulnerability/CVE-2026-112394) | P;2L/P;4L planar raw decoding |
+| [CVE-2026-112396](https://osv.dev/vulnerability/CVE-2026-112396) | TIFF-tag encoding error cleanup |
+| [CVE-2026-112398](https://osv.dev/vulnerability/CVE-2026-112398) | FlashPix JPEG tile decoding |
+| [CVE-2026-112399](https://osv.dev/vulnerability/CVE-2026-112399) | APNG background disposal |
+| [CVE-2026-112401](https://osv.dev/vulnerability/CVE-2026-112401) | GIF comment decoding |
+| [CVE-2026-112402](https://osv.dev/vulnerability/CVE-2026-112402) | NEAREST pure-scale/translation Image.transform error path |
+| [CVE-2026-112405](https://osv.dev/vulnerability/CVE-2026-112405) | Image.merge with integer/float first bands or IPTC decoding |
+| [CVE-2026-112406](https://osv.dev/vulnerability/CVE-2026-112406) | PDF page-tree rewriting |
+| [CVE-2026-112891](https://osv.dev/vulnerability/CVE-2026-112891) | GIF comment encoding |
+| [CVE-2026-112892](https://osv.dev/vulnerability/CVE-2026-112892) | MSP RLE decoding |
+| [CVE-2026-112893](https://osv.dev/vulnerability/CVE-2026-112893) | FreeType glyph stroking |
+| [CVE-2026-112894](https://osv.dev/vulnerability/CVE-2026-112894) | multi-page PDF encoding |
+| [CVE-2026-112898](https://osv.dev/vulnerability/CVE-2026-112898) | quantization with an empty palette |
+| [CVE-2026-112900](https://osv.dev/vulnerability/CVE-2026-112900) | EPS/Ghostscript invocation |
+| [CVE-2026-112901](https://osv.dev/vulnerability/CVE-2026-112901) | XBM header parsing |
+| [CVE-2026-112902](https://osv.dev/vulnerability/CVE-2026-112902) | TIFF-tag encoding |
+| [CVE-2026-114501](https://osv.dev/vulnerability/CVE-2026-114501) | Arrow buffer export with PILLOW_ALIGNMENT |
+| [CVE-2026-96636](https://osv.dev/vulnerability/CVE-2026-96636) | MPO/DCX frame seeking |
+| [CVE-2026-96637](https://osv.dev/vulnerability/CVE-2026-96637) | SPIDER frame seeking |
+| [CVE-2026-96638](https://osv.dev/vulnerability/CVE-2026-96638) | BMP RLE decoding |
+| [CVE-2026-96639](https://osv.dev/vulnerability/CVE-2026-96639) | multi-frame PSD/MPO/DCX/MIC decoding |
+| [CVE-2026-96640](https://osv.dev/vulnerability/CVE-2026-96640) | PDF append page-tree traversal |
+| [CVE-2026-96641](https://osv.dev/vulnerability/CVE-2026-96641) | PILfont negative-advance text measurement |
+| [CVE-2026-96642](https://osv.dev/vulnerability/CVE-2026-96642) | TarIO archive member traversal |
+| [CVE-2026-96643](https://osv.dev/vulnerability/CVE-2026-96643) | EXIF header parsing |
+| [CVE-2026-96644](https://osv.dev/vulnerability/CVE-2026-96644) | WMF/EMF rendering on Windows |
+| [CVE-2026-96778](https://osv.dev/vulnerability/CVE-2026-96778) | JPEG comment encoding after ICC metadata fills the buffer |
+| [GHSA-78g4-xqwv-q3g8](https://osv.dev/vulnerability/GHSA-78g4-xqwv-q3g8) | JPEG2000 decoding through bundled libopenjp2 |
+
+视频帧只来自 PyAV 的已解码 RGB 数组；缩放使用 BICUBIC/LANCZOS，JPEG 写出不携带 ICC/comment 元数据。没有受影响的 NEAREST 纯缩放/平移 transform、字体绘制、Arrow 导出或表中解码、过滤和格式操作。新增测试约束这些输入与编码边界，并在真实 ASR 环境执行。Qwen 的音频输入及不启动 Gradio 的边界继续适用；增加图片输入或相关调用立即使本评估失效。
+
+`GHSA-xmj3-9gf7-h52w` 仅豁免模型环境 setuptools 81.0.0：Windows 旧式 `Wheel.install_as_egg` 安装器路径不被服务或 bootstrap 调用，两平台均使用独立 uv 安装带哈希的锁，服务不接收或安装用户 wheel。Torch 的 `<82` 约束继续保留；不是对此漏洞的修复声明。pnpm 工具更新至 10.34.5，工具不使用豁免。

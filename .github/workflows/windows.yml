@@ -13,6 +13,8 @@ name: Native Windows smoke
         description: Repeat timing regressions five times after the full suite
         type: boolean
         default: false
+  schedule:
+  - cron: 43 4 1 * *
 permissions:
   contents: read
 concurrency:
@@ -41,21 +43,18 @@ jobs:
       run: service.cmd setup api
     - name: Verify cross-platform dependency locks
       shell: powershell
-      run: |
-        & .\.runtime\api\Scripts\python.exe scripts\lock_dependencies.py --check
+      run: '& .\.runtime\api\Scripts\python.exe scripts\lock_dependencies.py --check
+
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        '
     - name: Backend checks
       shell: powershell
-      run: |
-        & .\.runtime\api\Scripts\python.exe -m pytest -q --durations=20 --junitxml=logs/ci/backend.xml
+      run: '& .\.runtime\api\Scripts\python.exe -m pytest -q --durations=20 --junitxml=logs/ci/backend.xml
+
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    - name: Dependency audits
-      shell: powershell
-      run: |
-        & corepack.cmd pnpm@10.15.1 --dir frontend audit --audit-level high
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        & .\.runtime\bin\uv.exe tool run pip-audit -r requirements-lock\windows\api.txt --disable-pip
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        '
     - name: Upload test reports
       if: always()
       uses: actions/upload-artifact@v4
@@ -92,33 +91,51 @@ jobs:
       run: service.cmd setup api
     - name: Start and exercise native services
       shell: powershell
-      run: |
-        & .\service.cmd start all
+      run: '& .\service.cmd start all
+
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
         & .\service.cmd status
+
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
         & .\service.cmd restart all
+
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
         & .\service.cmd status
+
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
         & .\.runtime\api\Scripts\python.exe scripts\smoke_test.py
+
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        '
     - name: Install Chromium
       shell: powershell
-      run: |
-        & corepack.cmd pnpm@10.15.1 --dir frontend exec playwright install chromium
+      run: '& corepack.cmd pnpm@10.34.5 --dir frontend exec playwright install chromium
+
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        '
     - name: Browser checks
       shell: powershell
-      run: |
-        & corepack.cmd pnpm@10.15.1 --dir frontend test:e2e
+      run: '& corepack.cmd pnpm@10.34.5 --dir frontend test:e2e
+
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+        '
     - name: Repeat timing regressions
       shell: powershell
-      run: |
-        & corepack.cmd pnpm@10.15.1 --dir frontend test:e2e --grep '@timing' --repeat-each=5 --output=../logs/playwright-stability
+      run: '& corepack.cmd pnpm@10.34.5 --dir frontend test:e2e --grep ''@timing''
+        --repeat-each=5 --output=../logs/playwright-stability
+
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      if: (github.event_name == 'workflow_dispatch' && inputs.stability_check) || startsWith(github.ref, 'refs/heads/ci/stability/')
+
+        '
+      if: (github.event_name == 'workflow_dispatch' && inputs.stability_check) ||
+        startsWith(github.ref, 'refs/heads/ci/stability/')
       env:
         PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../logs/ci/stability.xml
     - name: Stop services
@@ -152,10 +169,7 @@ jobs:
       env:
         CHECK_RESULTS: ${{ toJSON(needs) }}
       with:
-        script: |
-          const results = JSON.parse(process.env.CHECK_RESULTS)
-          for (const name of ['backend', 'browser']) {
-            if (results[name]?.result !== 'success') {
-              core.setFailed(`${name}: ${results[name]?.result ?? 'missing'}`)
-            }
-          }
+        script: "const results = JSON.parse(process.env.CHECK_RESULTS)\nfor (const\
+          \ name of ['backend', 'browser']) {\n  if (results[name]?.result !== 'success')\
+          \ {\n    core.setFailed(`${name}: ${results[name]?.result ?? 'missing'}`)\n\
+          \  }\n}\n"

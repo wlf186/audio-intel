@@ -21,3 +21,5 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+# Local pnpm content store is runtime state, never source.
+/.pnpm-store/

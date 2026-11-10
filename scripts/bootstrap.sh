@@ -5,8 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${1:-all}"
 shift || true
 UV_BIN="$ROOT_DIR/.runtime/bin/uv"
-UV_VERSION="0.12.5"
-UV_LINUX_SHA256="68a509da24b06b4223a1c0175fb5eb5bc79342b76cbeff0cfe51ac3f5b17b6b2"
+UV_VERSION="0.13.4"
+UV_LINUX_SHA256="2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f"
 export UV_CACHE_DIR="$ROOT_DIR/cache/uv"
 export UV_PYTHON_INSTALL_DIR="$ROOT_DIR/.runtime/python"
 export PIP_CACHE_DIR="$ROOT_DIR/cache/pip"
@@ -123,7 +123,7 @@ if [[ "$TARGET" == "all" || "$TARGET" == "api" ]]; then
   create_env api requirements-api.txt
   if [[ -f "$ROOT_DIR/frontend/package.json" ]]; then
     echo "[setup] Building the local frontend..."
-    (cd "$ROOT_DIR/frontend" && retry 3 corepack pnpm@10.15.1 install --frozen-lockfile && corepack pnpm@10.15.1 build)
+    (cd "$ROOT_DIR/frontend" && retry 3 corepack pnpm@10.34.5 install --frozen-lockfile && corepack pnpm@10.34.5 build)
   fi
 fi
 

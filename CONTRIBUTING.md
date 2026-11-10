@@ -52,14 +52,14 @@ AUDIO_INTEL_DATA_DIR=tmp/test-suite/data AUDIO_INTEL_TEMP_DIR=tmp/test-suite/tmp
 AUDIO_INTEL_CACHE_DIR=tmp/test-suite/cache AUDIO_INTEL_LOG_DIR=tmp/test-suite/logs \
 AUDIO_INTEL_RUN_DIR=tmp/test-suite/run .runtime/api/bin/python -m pytest -q
 .runtime/api/bin/python scripts/lock_dependencies.py --check
-corepack pnpm@10.15.1 --dir frontend typecheck
-corepack pnpm@10.15.1 --dir frontend build
+corepack pnpm@10.34.5 --dir frontend typecheck
+corepack pnpm@10.34.5 --dir frontend build
 ```
 
 Run browser tests for UI or browser/API interaction changes:
 
 ```bash
-corepack pnpm@10.15.1 --dir frontend test:e2e
+corepack pnpm@10.34.5 --dir frontend test:e2e
 ```
 
 Run isolated Linux service lifecycle tests when changing startup, shutdown, readiness, PID handling, TLS, or process trees:
@@ -99,7 +99,7 @@ Exit-diagnostic tests that emulate another platform must also supply that platfo
 
 ### Parallel CI and early Windows feedback
 
-Linux and native Windows each run independent `backend` and `browser` jobs. Both jobs install the locked API runtime and build the frontend in separate runners. Backend jobs run the complete pytest suite, lock verification and dependency audits; browser jobs run service lifecycle/smoke checks and the complete Playwright suite. Linux retains its scheduled model-runtime audit. The stable `linux` and `windows` summary checks require **both** jobs to succeed: failure, cancellation, a skipped job or a missing result cannot pass. A backend failure does not prevent browser diagnostics.
+Linux and native Windows each run independent `backend` and `browser` jobs. Both jobs install the locked API runtime and build the frontend in separate runners. Backend jobs run the complete pytest suite and lock verification; browser jobs run service lifecycle/smoke checks and the complete Playwright suite. Linux also calls the independent dependency-security workflow for all runtime locks, frontend and tools. The stable `linux` and `windows` summary checks require all their dependencies to succeed (Linux: backend/browser/security; Windows: backend/browser): failure, cancellation, a skipped job or a missing result cannot pass. Backend, browser and security diagnostics execute independently. Weekly security runs Monday 04:23 UTC; monthly full Linux/Windows runs execute on day 1 at 04:43 UTC. Existing push, PR, tag and manual full checks remain.
 
 The complete workflows run for `main`, `v*` tags, pull requests, and `ci/**` development branches. Start native Windows feedback with the first reviewable development change, before release preparation. When PR creation is unavailable, pushing a `ci/**` branch provides the same full checks without changing token permissions. Prefer an ordinary feature branch for PR-only validation to avoid duplicate branch/PR runs. A temporary CI branch is an intermediate validation step for an authorized main delivery; follow [GitHub delivery](#github-delivery) through completion. All exact-SHA main and tag release gates remain required.
 
@@ -107,7 +107,7 @@ The optional **Run workflow → stability_check** input adds five executions of 
 
 ```bash
 # Against a separately started, isolated mock service; never the normal deployment.
-AUDIO_INTEL_TEST_BASE_URL=http://127.0.0.1:20961 corepack pnpm@10.15.1 --dir frontend test:e2e --grep '@timing' --repeat-each=5
+AUDIO_INTEL_TEST_BASE_URL=http://127.0.0.1:20961 corepack pnpm@10.34.5 --dir frontend test:e2e --grep '@timing' --repeat-each=5
 # Optional remote stability run, after committing the candidate:
 git push origin HEAD:ci/stability/my-change
 ```
@@ -157,7 +157,7 @@ The eight native asynchronous submission endpoints (ASR, video transcription, si
 
 ## Frontend changes
 
-- Add every user-visible translation key to both `frontend/src/i18n/locales/zh-CN.json` and `en-US.json`; do not reintroduce hard-coded user-facing copy. Run `corepack pnpm@10.15.1 --dir frontend check:i18n` (also included in typecheck and build) to verify key and interpolation parity.
+- Add every user-visible translation key to both `frontend/src/i18n/locales/zh-CN.json` and `en-US.json`; do not reintroduce hard-coded user-facing copy. Run `corepack pnpm@10.34.5 --dir frontend check:i18n` (also included in typecheck and build) to verify key and interpolation parity.
 - Do not mount protected business pages or request protected resources before browser-session authentication succeeds.
 - Model remote resources as distinct loading, ready, and error states with a retry path.
 - Use accessible in-app dialogs instead of `window.confirm` or `window.prompt`.
@@ -251,7 +251,7 @@ From an authenticated GitHub CLI session, inspect a failing run and download its
 gh run view RUN_ID --repo wlf186/audio-intel --log-failed
 gh run download RUN_ID --repo wlf186/audio-intel --name windows-browser-logs --dir tmp/ci-evidence
 # Current artifacts: linux-browser-logs / windows-browser-logs. Older runs used linux-logs / windows-logs.
-corepack pnpm@10.15.1 --dir frontend exec playwright show-trace ../tmp/ci-evidence/playwright/TEST_DIRECTORY/trace.zip
+corepack pnpm@10.34.5 --dir frontend exec playwright show-trace ../tmp/ci-evidence/playwright/TEST_DIRECTORY/trace.zip
 ```
 
 Use the actual downloaded test directory in the last command. Native Windows PowerShell accepts these same `gh` and `corepack` commands. Artifact retention may expire, so preserve a concise diagnosis and regression reference in the committed documentation rather than depending only on an external trace.
