@@ -1,5 +1,17 @@
 # 升级指南
 
+## v0.1.46：依赖安全维护与独立巡检
+
+从正式版 v0.1.45 升级：**无数据库迁移、历史文件改写或删除，无需额外升级备份**。SQLite v23、历史任务、媒体、声纹、热词和优化检查点保持兼容。更早版本跨越 v0.1.45 时，仍须按下方累计升级说明选择备份范围，不能将本版无迁移理解为所有跨版升级都无需备份。
+
+本版定向更新 Brotli 1.2.1、filelock 4.2.1、hydra-core 1.3.8、msgpack 1.2.3、uv 0.13.4 和 pnpm 10.34.5。Torch、CUDA、Qwen、Transformers、模型 revision、精度与推理参数不变。受上游约束的模型环境 Pillow/setuptools 继续采用[有版本、环境和复查期限的精确 VEX](DEPENDENCIES.md#安全公告与-vex)，不是所有依赖漏洞均已修复的声明。API、前端和工具没有新增豁免。
+
+按本页维护流程等待任务结束、记录配置并停服，然后执行 `./service.sh setup all` 同步全部受影响环境并重建前端；沿用原 full/cpu profile，不需要重新下载已完整安装的模型。Windows 使用 `service.cmd setup all`。最后恢复原先运行的组件，核验 API、supervisor、executor 的新进程身份、版本和历史数据；原先停止的组件保持停止。
+
+每周一 04:23 UTC 独立执行依赖审计，每月 1 日 04:43 UTC 执行完整 Linux/Windows 回归；提交、PR、标签与手动检查仍保留完整门禁。审计覆盖两平台和 full/CPU-only 的全部运行锁、前端及工具，报告区分未豁免公告与查询故障。新公告或例外到期会使检查失败，即使源码没有变化。详见[依赖维护](DEPENDENCIES.md#ci-安全巡检与依赖更新)。
+
+English: Upgrading released v0.1.45 to v0.1.46 requires no data migration, historical-file rewrite or additional upgrade backup. Synchronize affected runtime locks and rebuild the frontend with setup all while retaining the deployment profile; then restore and verify the originally running components. Model identities and inference settings remain fixed. Earlier starting versions must cover intervening migrations. Weekly dependency audits and monthly full regressions supplement the existing submission and release gates; bounded model-runtime VEX entries are risk assessments, not package fixes.
+
 ## v0.1.45：转写性能与存储维护
 
 从正式版 v0.1.44 升级：**数据迁移仅涉及数据库（SQLite v22→v23）**。增量迁移增加任务列表／worker 查询索引及持久化后台压缩状态，不重写历史任务、优化稿或媒体。升级前按下文流程停服并创建 SQLite-only 一致快照；完成全组件恢复和验收后清理临时备份。此版本也要求 v22 实例备份。任务删除不再同步 VACUUM，具体阈值和响应字段见 [API 文档](API.md#删除后的数据库维护--database-maintenance-after-deletion)。模型、精度、分块和推理参数不变。
