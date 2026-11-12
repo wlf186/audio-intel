@@ -20,6 +20,10 @@ API Key 通过密码框输入，存入服务端 SQLite 独立凭据表；网页�
 
 请求包按独立ID传输多个来源，正文生成后另发请求独立复核，同时可提炼该正文的小结；短任务可在第二次请求中完成复核、小结和画面标题。小结不是独立事实认证。引用无法定位时保留“未确定”提示。输出截断会在原输出上限内缩小请求包，不自动增大窗口；有效项先原子保存，再修复失败项。所有实际尝试均计入预算，暂停恢复不重新处理已保存内容。
 
+正文和小结还使用本次任务的内存来源索引：若草稿混入属于其他段落的长片段、中文来源引入多个仅见于其他段落的技术名词，或把原有命名组件改成新生成产物，则进入已有的有限修复与有标记兜底流程。索引不写磁盘、不跨任务缓存，不新增模型校验调用；实际触发的修复仍计入调用预算。这是有限的词汇检查，不能证明全部语义和说话人关系正确。
+
+A task-local in-memory source index rejects recognisable peer-passage contamination, multiple peer-only technical terms in CJK items, and limited changes from named components to generated artifacts before checkpointing model prose or insights. Existing bounded repair/fallback and call accounting still apply. The index adds no disk cache or model verification call and is not a semantic correctness certificate.
+
 转写已识别为英文时，纯英文请求使用英文示例，仍保留原有模式及来源约束。程序会拦截英文被翻译成中文、明显来源名称丢失，以及与本条没有实质词汇重合的正文，进入已有的有界修复流程；混合语种及其他拉丁字母语言不强制改成英文。这些词汇检查用于防止明显跨条目内容混用，不是完整的语义或事实认证。
 
 英文视频的画面边界可能切在半句话中，甚至跨越 ASR 片段。为防止跨画面挪词或擅自补全，每个阅读段的首句和末尾未完句保留字面内容，只把中间完整句子交给模型整理，再按原顺序拼回。没有完整中段时采用有标记的基础整理，不请求模型生成正文；原有小结、标题和全部来源仍正常处理。窗口和调用预算按实际需要生成的部分计算，不新增磁盘缓存或重复保存边界正文。

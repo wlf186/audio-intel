@@ -10,6 +10,7 @@ import difflib
 import hashlib
 import json
 import re
+import unicodedata
 
 from . import optimization_engine as e
 from . import optimization_policy as p
@@ -210,6 +211,82 @@ def checked_item(item: dict, value: str | dict, *, english: bool = False) -> str
         return edited
     return format_paragraphs(' '.join(part.strip() for part in
                                      (source[:start], edited, source[end:]) if part.strip()))
+
+
+class SourceOwnership:
+    """Reject recognisable peer-source contamination without calls or writes.
+
+    Long literal passages and multiple borrowed technical terms are evidence of
+    crossing an item boundary. This is a limited lexical check, not a semantic
+    correctness certificate. The index lives only for this task processor.
+    """
+
+    width = 32
+
+    def __init__(self, sources: list[str]):
+        self.phrases: set[str] = set()
+        self.terms: set[str] = set()
+        for source in sources:
+            normalized = self.normalize(source)
+            self.phrases.update(normalized[i:i + self.width]
+                                for i in range(len(normalized) - self.width + 1))
+            self.terms.update(self.technical_terms(source))
+
+    @staticmethod
+    def normalize(text: str) -> str:
+        return re.sub(r'[\W_]+', '', unicodedata.normalize('NFKC', text)).casefold()
+
+    @staticmethod
+    def technical_terms(text: str) -> set[str]:
+        return {word.casefold() for word in TERMS.findall(
+            unicodedata.normalize('NFKC', text))
+                if len(word) >= 4 and word.casefold() not in ENGLISH_COMMON}
+
+    @staticmethod
+    def creation_error(source: str, draft: str) -> str | None:
+        """Do not turn a named input/component into a newly generated artifact."""
+        if not re.search('[\u3400-\u9fff]', source):
+            return None
+        source = unicodedata.normalize('NFKC', source)
+        draft = unicodedata.normalize('NFKC', draft)
+        filler = r'(?:\s|了|出|成|的|一个|一套|一份|几个|多个|相应的|新的|这个|这些|那个|那些|该|一种|一版)*'
+        for term in TERMS.findall(source):
+            if len(term) < 4 or term.casefold() in ENGLISH_COMMON:
+                continue
+            name = r'(?<![A-Za-z0-9_])' + re.escape(term) + r'(?![A-Za-z0-9_])'
+            generated = (r'(?:生成|创建|新建)' + filler + name
+                         + r'(?!\s*(?:微调|训练|方案|流程|方法|任务|需求|工具|能力))'
+                         + r'(?=$|[，。！？、；,.;!?\s]|和|与|及|并)')
+            if not re.search(generated, draft, re.I):
+                continue
+            output = (r'(?:生成|创建|新建|输出|产出)' + filler
+                      + r'(?:包括|包含|有|为|是|[:：])?\s*' + name
+                      + '|' + name + r'\s*(?:的)?(?:输出|产出|结果|成稿)')
+            if not re.search(output, source, re.I):
+                return 'New artifact claim: retain each source component\'s own role'
+        return None
+
+    def error(self, source: str, draft: str) -> str | None:
+        own = self.normalize(source)
+        edited = self.normalize(draft)
+        if edited in own:
+            return None
+        if len(edited) >= self.width:
+            own_phrases = {own[i:i + self.width]
+                           for i in range(len(own) - self.width + 1)}
+            for i in range(len(edited) - self.width + 1):
+                phrase = edited[i:i + self.width]
+                if phrase in self.phrases and phrase not in own_phrases:
+                    return 'Foreign source passage: use only this id\'s own source'
+        # Ordinary English paraphrases may introduce words used by other items.
+        # In CJK sources, multiple peer-only technical spellings are distinctive.
+        if re.search('[\u3400-\u9fff]', source):
+            borrowed = ((self.technical_terms(draft) - self.technical_terms(source))
+                        & self.terms)
+            if len(borrowed) >= 2:
+                return 'Foreign source terms: use only this id\'s own source'
+        return self.creation_error(source, draft)
+
 
 def pack(items: list[dict], maxitems: int=8, maxchars: int=1400, cfg: dict | None=None, stage: str | None=None) -> list[list[dict]]:
     packets = []

@@ -69,6 +69,7 @@ class Processor:
         self.profile = {**self.run['config'], '_hotwords': self.run['hotwords'],
                         '_short': self.run['total_chars'] <= 120}
         self.auxiliary = auxiliary
+        self.ownership: policy.SourceOwnership
         self.last_attempts = 0
         self.insight_calls: dict[tuple[str, str], int] = {}
 
@@ -80,8 +81,15 @@ class Processor:
             if not texts:
                 raise ValueError('No useful literal source topic keywords')
             result = insight(item, kind, texts[0], **options)
-            return {**result, 'method': 'model_keywords', 'notice': 'keywords'}
-        return insight(item, kind, text, **options)
+            result = {**result, 'method': 'model_keywords', 'notice': 'keywords'}
+        else:
+            result = insight(item, kind, text, **options)
+        if not options.get('fallback'):
+            for value in result['texts']:
+                error = self.ownership.error(item['original_text'], value)
+                if error:
+                    raise ValueError(error)
+        return result
 
     async def request(self, node: dict, request: dict, *, request_limit: int = 3,
                       plain_id: str | None = None) -> dict:
@@ -143,6 +151,9 @@ class Processor:
             for item in remaining:
                 try:
                     text = policy.checked_item(item, values[item['id']], english=bool(self.profile.get('english_source')))
+                    error = self.ownership.error(item['original_text'], text)
+                    if error:
+                        raise ValueError(error)
                 except (engine.InvalidOutput, KeyError, TypeError, ValueError, AttributeError) as exc:
                     errors[item['id']] = str(exc)[:300]
                     rejected.append(item)
@@ -327,6 +338,8 @@ class Processor:
         nodes = checkpoints.nodes(self.run_id)
         if not self.auxiliary:
             units = store.units(self.run_id)
+            self.ownership = policy.SourceOwnership([
+                unit['original_text'] for unit in units])
             checkpoints.generation(self.run_id, [
                 (unit['ordinal'], policy.format_paragraphs(policy.literal_cleanup(unit['original_text']))
                  if policy.literal_frame(unit, english=bool(self.profile.get('english_source'))) else engine.basic_cleanup(unit['original_text']), 'basic_cleanup')
@@ -344,6 +357,9 @@ class Processor:
         else:
             checkpoints.begin_summaries(self.run_id, auxiliary=True)
         units = store.units(self.run_id)
+        if self.auxiliary:
+            self.ownership = policy.SourceOwnership([
+                unit['original_text'] for unit in units])
         # Local non-substantive items need no model call or fictional fact check.
         groups, scenes = policy.group_sources(units), policy.scene_sources(
             units, self.profile.get('summary_scene_ids', []))

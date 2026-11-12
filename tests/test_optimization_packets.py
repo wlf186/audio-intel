@@ -735,6 +735,7 @@ def test_fragmented_english_video_topics_only_accept_literal_source_phrases(kind
     processor = Processor.__new__(Processor)
     processor.profile = {'english_source': True, 'summary_scene_ids': ['frame']}
     item = {'id': '0', 'original_text': 'Alex said the model used Blender. The budget is four thousand, still unapproved.'}
+    processor.ownership = policy.SourceOwnership([item['original_text']])
     value = processor.resolve_insight(item, kind, {'keywords': ['Blender', 'foreign physics', 'unapproved']})
     assert value['method'] == 'model_keywords' and value['notice'] == 'keywords'
     assert value['texts'] == ['Blender · unapproved']
@@ -772,3 +773,99 @@ def test_literal_english_topics_reject_negation_and_word_substrings():
     source = 'The plan is unapproved. It was not approved. GPU4090 is available.'
     assert policy.topic_words(source, ['approved', '4090', 'GPU', 'available'], 'group') == ['available']
     assert policy.topic_words(source, ['unapproved', 'not approved', 'GPU4090'], 'group') == ['unapproved · not approved · GPU4090']
+
+
+def test_source_ownership_rejects_peer_passages_and_multiple_technical_names():
+    own = '请检查这份交付清单，保留负责人尚未确认这一条件，随后再提交复核。'
+    peer = '实验人员必须先检查电源接线，记录每台设备的运行状态，完成后关闭仪器并归还钥匙。'
+    index = policy.SourceOwnership([own, peer, '另一个方案比较 NebulaRunner 与 QuartzStore。'])
+    assert index.error(own, own + peer)
+    assert index.error(own, '请比较 NebulaRunner 和 QuartzStore 后提交复核。')
+    assert index.error(own, own) is None
+    assert index.error(own, '请核查交付清单，负责人仍未确认，之后再提交复核。') is None
+    assert index.error(own, '请在 NebulaRunner 中核查交付清单。') is None
+    assert index.error(peer, peer) is None
+
+
+def test_source_ownership_keeps_shared_sources_and_english_paraphrases():
+    shared = '共同的试验记录必须保持原始编号和状态，并在交付前核对所有设备的归还情况。'
+    own = shared + '负责人尚未确认。'
+    index = policy.SourceOwnership([own, shared, 'Please compare the old and new configuration.'])
+    assert index.error(own, '负责人尚未确认。' + shared) is None
+    assert index.error(shared, shared) is None  # Fine insight may share its parent source.
+    assert index.error('We should review this setup.', 'Please compare the configuration.') is None
+    assert index.error('请比较 NEBULARUNNER 和 ＱｕａｒｔｚＳｔｏｒｅ。',
+                       '请比较 NebulaRunner 与 QuartzStore。') is None
+
+
+def test_source_ownership_checks_insights_before_accepting_them():
+    from audio_intel.optimization_packets import Processor
+    own = '请核对交付清单并提交审批，负责人尚未确认。'
+    processor = object.__new__(Processor)
+    processor.profile = {}
+    processor.ownership = policy.SourceOwnership([
+        own, '请先评估 NebulaRunner 与 QuartzStore。'])
+    item = {'id': 'a', 'original_text': own}
+    with pytest.raises(ValueError, match='Foreign source terms'):
+        processor.resolve_insight(item, 'group', '比较 NebulaRunner 与 QuartzStore。')
+    assert processor.resolve_insight(item, 'group', None, fallback=True)['method'] == 'source_excerpt'
+
+
+def test_source_ownership_preserves_named_component_and_artifact_roles():
+    source = '把 NebulaRunner 当作处理组件，再生成一个 QuartzReport。'
+    index = policy.SourceOwnership([source])
+    assert index.error(source, '先生成一个 NebulaRunner，再生成 QuartzReport。')
+    assert index.error(source, '使用 NebulaRunner 处理，然后生成 QuartzReport。') is None
+    assert index.error(source, source) is None
+    outputs = '使用 QuartzStore 处理，最终是 NebulaRunner 的输出。'
+    assert policy.SourceOwnership([outputs]).error(outputs, '使用 QuartzStore，生成 NebulaRunner。') is None
+    source = '结合这个，先生成相应的那个 SpecFile 文件。'
+    assert policy.SourceOwnership([source]).error(source, '结合后生成相应的 SpecFile 文件。') is None
+    source = '缺陷生成，NebulaRunner 微调方案如下。'
+    assert policy.SourceOwnership([source]).error(source, '缺陷生成 NebulaRunner微调方案如下。') is None
+
+
+def test_packet_peer_contamination_repairs_only_the_rejected_item(packet_model, monkeypatch):
+    requests, completion = packet_model
+    first = '预算四千元，但是还没批准。请核对交付清单并保留负责人意见，完成复核以后再移交。' * 16
+    second = '预算四千元，尚未批准。实验人员必须先检查电源接线，记录每台设备的运行状态，完成后关闭仪器并归还钥匙。' * 13
+    data = transcript(2)
+    data['segments'][0]['text'] = first
+    data['segments'][1]['text'] = second
+    poisoned = False
+    async def contaminate(connection, body, activity=None):
+        nonlocal poisoned
+        # The fixture responds to source lists; retain the actual repair scope
+        # while excluding the appended assistant/error transcript from its stub.
+        messages = body['messages']
+        sources = [m for m in messages if m['role'] == 'user' and m['content'].startswith('[')]
+        stub = {**body, 'messages': [messages[0], sources[-1]]} if sources else body
+        value = await completion(connection, stub, activity)
+        source = json.loads(stub['messages'][-1]['content'])
+        if not poisoned and isinstance(source, list) and source and 'candidate' not in source[0]:
+            poisoned = True
+            values = json.loads(value)
+            item = next(item for item in source if item['source'] == first)
+            value = values[item['id']]
+            if isinstance(value, dict):
+                value['text'] += second
+            else:
+                values[item['id']] += second
+            return json.dumps(values, ensure_ascii=False)
+        # Repair requests add an error object after the original source list.
+        return value
+    monkeypatch.setattr(provider, 'completion', contaminate)
+    identifier = job(data)
+    with TestClient(api.create_app()) as client:
+        assert start(client, identifier).status_code == 202
+        run = wait(client, identifier, lambda v: bool(v['published']))['published']
+        result = client.get(url(identifier) + '/result', params={'run_id': run['id']}).json()
+        assert poisoned
+        assert result['paragraphs'][0]['text'] == policy.checked(first, first)
+        assert result['paragraphs'][1]['text'] == policy.checked(second, second)
+        assert calls.usage(run['id'])['stages']['generation'] == 2
+        generation = [items for items in requests
+                      if isinstance(items, list) and items and 'candidate' not in items[0]]
+        assert len(generation[0]) == 2
+        assert [item['source'] for item in generation[1]] == [first]
+        assert run['calls_used'] == 4  # Two generation attempts and two review packets.
