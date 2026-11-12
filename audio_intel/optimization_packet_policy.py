@@ -124,7 +124,9 @@ ENGLISH_COMMON = set(('a an the and or but so if then than that this these those
     'they them their to of in on at for from by with as into out up down over under '
     'not no do does did can could will would should may might have has had just '
     'really very more most much some any all each every other one two three four '
-    'five six seven eight nine ten first second third next here there right now '
+    'five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen '
+    'seventeen eighteen nineteen twenty thirty forty fifty sixty seventy eighty '
+    'ninety hundred thousand million billion point first second third next here there right now '
     'about what which who when where why how like also only still want going '
     'thing things something anything everything please look see know say said').split())
 
@@ -144,6 +146,13 @@ def english_body_error(source: str, draft: str) -> str | None:
         return None
     if re.search('[\u3400-\u9fff]', draft):
         return 'Keep this English source in English; do not translate it into Chinese'
+    source_words = {w.casefold() for w in ENGLISH_WORDS.findall(source)
+                    if len(w) >= 4 and w.casefold() not in ENGLISH_COMMON}
+    draft_words = {w.casefold() for w in ENGLISH_WORDS.findall(draft)}
+    if len(source_words) >= 2 and not source_words.intersection(draft_words):
+        return ('Wrong source item: the draft has no substantive source-word overlap. '
+                'Rewrite the complete passage from this item\'s own source; '
+                'do not add source names to the unrelated draft')
     compact = re.sub(r'\s+', '', draft).casefold()
     names = set()
     for match in ENGLISH_WORDS.finditer(source):
@@ -156,11 +165,6 @@ def english_body_error(source: str, draft: str) -> str | None:
     missing = sorted(word for word in names if word.casefold() not in compact)
     if missing:
         return 'Keep this item\'s source names and technical terms: ' + ', '.join(missing[:20])
-    source_words = {w.casefold() for w in ENGLISH_WORDS.findall(source)
-                    if len(w) >= 4 and w.casefold() not in ENGLISH_COMMON}
-    draft_words = {w.casefold() for w in ENGLISH_WORDS.findall(draft)}
-    if len(source_words) >= 2 and not source_words.intersection(draft_words):
-        return 'Return this item\'s own content; the draft has no substantive source-word overlap'
     return None
 
 def pack(items: list[dict], maxitems: int=8, maxchars: int=1400, cfg: dict | None=None, stage: str | None=None) -> list[list[dict]]:
