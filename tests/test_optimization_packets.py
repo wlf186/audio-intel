@@ -191,6 +191,8 @@ def test_packet_cleanup_removes_delimited_hesitations_without_touching_quoted_sp
     assert cleaned.count('？') == source.count('？')
     acknowledgement = '嗯。啊！' + '预算还没有批准。' * 20
     assert policy.literal_cleanup(acknowledgement).startswith('嗯。啊！')
+    lexical = '额定功率是10瓦。他说“确认参数”额定功率仍未批准；医生说“继续观察”呃逆尚未好转。' * 4
+    assert policy.literal_cleanup(lexical) == lexical
 
 
 def test_planned_editing_example_has_grounded_quotes_and_complete_edited_text():

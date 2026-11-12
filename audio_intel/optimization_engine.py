@@ -311,11 +311,12 @@ async def structured(config: dict, payload: dict, activity=None) -> dict:
     return value
 
 
-def basic_cleanup(text: str) -> str:
+def basic_cleanup(text: str, *, trim_leading: bool = True) -> str:
     """Literal disfluencies only: no invented facts or inferred word corrections."""
     pattern = r'(?P<word>不是特别|还没有|第一个|我们|你们|他们|这个|那个|然后|因为|所以|但是|就是|不是|还没|不止|我|你|他)(?:[\s，,、]*(?P=word))+'
     value = re.sub(pattern, lambda match: match['word'], text)
-    value = re.sub(r'^[\s，,]*(?:那个|呃|额)[，,\s]*', '', value)
+    if trim_leading:
+        value = re.sub(r'^[\s，,]*(?:那个|呃|额)[，,\s]*', '', value)
     value = re.sub(r'([，,。；;！？!?])\1+', r'\1', value).strip()
     return value or text.strip()
 

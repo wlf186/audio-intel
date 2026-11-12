@@ -220,7 +220,7 @@ def literal_cleanup(text: str) -> str:
     pieces = re.split(r'([“「].*?[”」]|"[^"\n]*")', text, flags=re.S)
     for index in range(0, len(pieces), 2):
         raw = pieces[index]
-        part = (re.match(r'^\s*', raw)[0] + e.basic_cleanup(raw)
+        part = (re.match(r'^\s*', raw)[0] + e.basic_cleanup(raw, trim_leading=False)
                 + re.search(r'\s*$', raw)[0]) if raw.strip() else raw
         part = re.sub(r'(^|[，,。；;：:\s])(?:呃+[，,\s]+)+', r'\1', part)
         part = re.sub(r'(^|[，,。；;：:\s])嗯+[，,\s]+(?=对|好的|是的)', r'\1', part)
