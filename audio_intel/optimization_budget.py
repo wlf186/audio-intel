@@ -188,7 +188,14 @@ def estimate(config: dict, units: list[dict], hotwords: list[str], *, used: int 
     else:
         breakdown = _legacy_breakdown(config, units, hotwords, pending_insights)
     expected = sum(breakdown.values())
-    recommended = math.ceil((used + expected + max(5, math.ceil(expected * .5))) / 10) * 10
+    recovery = math.ceil(expected * .5)
+    if config.get('packet_version') == 1:
+        # Each generation packet can need its existing second content attempt.
+        # Keep additional room for insight/transport recovery without reserving
+        # or spending calls, or changing the user's effective limit.
+        generation = breakdown['generation']
+        recovery = generation + math.ceil((expected - generation) * .5)
+    recommended = math.ceil((used + expected + max(5, recovery)) / 10) * 10
     return {'estimated_calls': expected, 'used_calls': used, 'minimum_limit': used + expected,
             'recommended_limit': recommended, 'max_llm_calls': limit, 'sufficient': limit >= recommended,
             'can_start': limit >= used + expected, 'breakdown': breakdown,

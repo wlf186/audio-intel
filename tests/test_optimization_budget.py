@@ -79,6 +79,30 @@ def test_estimate_and_temporary_limit_have_no_remote_side_effects(configured, mo
         assert client.post(root, json={'max_llm_calls': 26}, headers=headers).status_code == 409
 
 
+def test_packet_recommendation_covers_repair_overrun_without_raising_limit(local, monkeypatch):
+    from audio_intel import optimization_packet_store as packets
+    async def forbidden(*args, **kwargs):
+        raise AssertionError('budget planning must not call a model')
+    monkeypatch.setattr(engine, 'streamed_text', forbidden)
+    # A complete 20-request plan needed 31 actual attempts during validation.
+    plan = [('generation', ['0'])] * 10 + [('finalization', ['0'])] * 9 + [('group', ['0'])]
+    monkeypatch.setattr(packets, 'compile_plan', lambda *args: plan)
+    config = {**PROFILE, 'packet_version': 1, 'max_llm_calls': 30}
+    units = engine.prepare_units(source(1))
+    value = budget.estimate(config, units, [])
+    assert value['estimated_calls'] == value['minimum_limit'] == 20
+    assert value['recommended_limit'] >= 31
+    assert value['can_start'] and not value['sufficient']
+    assert value['max_llm_calls'] == config['max_llm_calls'] == 30
+    temporary = budget.estimate(config, units, [], limit=value['recommended_limit'])
+    assert temporary['sufficient'] and config['max_llm_calls'] == 30
+    assert temporary['fingerprint'] == value['fingerprint']
+    resumed = budget.estimate(config, units, [], used=7)
+    assert resumed['minimum_limit'] == 27 and resumed['recommended_limit'] >= 38
+    monkeypatch.setattr(budget, '_legacy_breakdown', lambda *args: {'generation': 10, 'review': 10})
+    assert budget.estimate({**config, 'packet_version': None}, units, [])['recommended_limit'] == 30
+
+
 def test_manager_pauses_on_budget_and_resume_does_not_reset_usage(configured, monkeypatch):
     from audio_intel import optimization_api as routes
     async def generate(config, parts, *args):
