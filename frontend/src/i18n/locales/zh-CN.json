@@ -94,6 +94,22 @@
     "example": "广东移动=gy"
   },
   "video": {
+    "unillustrated": "未配图内容",
+    "peekFrame": "查看画面",
+    "previewAt": "预览 {{time}} 的画面",
+    "temporaryPreview": "临时预览，未通过稳定截图筛选；不保存到截图目录或导出。",
+    "noPictures": "未保留稳定截图，正文仍可阅读",
+    "pictureCount": "画面目录（{{count}}）",
+    "emptyReading": "暂无可展示的截图或识别文字，可播放原音或查看逐句明细。",
+    "showTimeline": "展开时间轴",
+    "hideTimeline": "收起时间轴",
+    "savedPictures": "已保留截图",
+    "allSections": "全部检测分段",
+    "detectionCounts": "{{sections}} 个检测分段 · {{pictures}} 张截图 · {{missing}} 段未保留截图",
+    "section": "检测分段 {{number}}",
+    "readingCount": "已展示 {{visible}} / {{total}} 个内容区间",
+    "relatedText": "相关文字 {{time}}",
+
     "noStableFrame": "无稳定画面",
     "sceneCount": "已展示 {{visible}} / {{total}} 个画面",
     "enrollHelp": "选择本任务中 {{speaker}} 的原始语句，每条分别保存为一个声纹样本。",

@@ -67,7 +67,7 @@ def test_video_docx_visibility_cache_redaction_and_images(local):
             document = Document(io.BytesIO(response.content))
             assert len(document.inline_shapes) == 1
             content = text(response.content)
-            assert 'Picture hidden' in content and '此段无识别语音' in content
+            assert 'Picture hidden' in content and '此段无识别语音' not in content
             assert ('替换内容' if redact else '广东移动') in content
             with zipfile.ZipFile(io.BytesIO(response.content)) as package:
                 media = [package.read(name) for name in package.namelist() if name.startswith('word/media/')]

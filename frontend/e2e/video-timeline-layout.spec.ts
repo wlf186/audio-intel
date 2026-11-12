@@ -73,6 +73,7 @@ test.describe('video timeline with classic scrollbars',()=>{
   })
   await page.goto('/#asr')
   await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+  if(width===390)await page.getByRole('button',{name:'展开时间轴',exact:true}).click()
   await pending.arrived
   await expect(page.locator('.timeline-load-state[role=status]')).toBeVisible()
   pending.release()

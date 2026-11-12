@@ -53,3 +53,29 @@ def test_engine_uses_scene_scoped_sources_and_fingerprint():
     changed = deepcopy(result)
     changed['video']['scene_detection'] = {'min_stable_seconds': 5}
     assert source_hash(changed) != original
+
+
+from test_optimization import configured
+from test_voiceprint_groups_exports import local
+from test_video_reading_presentation import result_for
+
+def test_legacy_optimization_policy_survives_and_new_runs_snapshot_version(configured):
+    from fastapi.testclient import TestClient
+    from audio_intel.optimization_engine import source_hash, prepare_units
+    from audio_intel import api, optimization_store as store, optimization_engine as engine
+    from test_optimization import job, wait, url, start
+    result = result_for('Version 5.2 works.', ['Version', '52', 'works'])
+    identifier = job(result)
+    profile = {**store.settings(), 'prompt_version': engine.PROMPT_VERSION}
+    run, _ = store.create(identifier, 'legacy-mapping-run', False, profile,
+                           source_hash(result, source_assignment_version=1), ['Atlas'],
+                           prepare_units(result, source_assignment_version=1))
+    with TestClient(api.create_app()) as client:
+        wait(client, identifier, lambda s: bool(s['published']))
+        response = client.get(url(identifier) + '/result', params={'run_id': run})
+        assert response.status_code == 200, response.text
+        assert len(response.json()['paragraphs']) == 1
+        assert start(client, identifier, regenerate=True, key='new-mapping-run-0001').status_code == 202
+        published = wait(client, identifier, lambda s: bool(s['published']) and s['published']['id'] != run)['published']
+        assert store.get(published['id'])['config']['source_assignment_version'] == 2
+        assert len(store.units(published['id'])) == 3

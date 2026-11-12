@@ -94,6 +94,22 @@
     "example": "Company name=Company"
   },
   "video": {
+    "unillustrated": "Content without a picture",
+    "peekFrame": "View frame",
+    "previewAt": "Preview at {{time}}",
+    "temporaryPreview": "Temporary preview; not confirmed as stable. Not saved to the picture directory or exports.",
+    "noPictures": "No stable pictures retained; transcript text is still available",
+    "pictureCount": "Picture directory ({{count}})",
+    "emptyReading": "No pictures or recognized text to display. Play the audio or view segment details.",
+    "showTimeline": "Expand timeline",
+    "hideTimeline": "Collapse timeline",
+    "savedPictures": "Retained pictures",
+    "allSections": "All detection sections",
+    "detectionCounts": "{{sections}} detection sections · {{pictures}} pictures · {{missing}} without a picture",
+    "section": "Detection section {{number}}",
+    "readingCount": "Showing {{visible}} / {{total}} content intervals",
+    "relatedText": "Related text {{time}}",
+
     "noStableFrame": "No stable picture",
     "sceneCount": "Showing {{visible}} / {{total}} scenes",
     "enrollHelp": "Select original sentences by {{speaker}} in this task. Each sentence becomes a separate voiceprint sample.",

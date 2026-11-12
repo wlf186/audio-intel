@@ -71,7 +71,7 @@ def source_groups(result: dict[str, Any], *, pause_seconds: float = 15) -> list[
     return groups
 
 
-def scene_reading_groups(result: dict[str, Any]) -> list[dict[str, Any]]:
+def scene_reading_groups(result: dict[str, Any], *, source_assignment_version: int = 2) -> list[dict[str, Any]]:
     """Bounded reading sources for the scene-scoped workflow.
 
     Use the same lossless assignment as original illustrated reading. Never
@@ -82,7 +82,7 @@ def scene_reading_groups(result: dict[str, Any]) -> list[dict[str, Any]]:
     from .transcript import scene_transcripts
 
     if result.get('video', {}).get('scenes'):
-        sections = scene_transcripts(result, include_sources=True)
+        sections = scene_transcripts(result, include_sources=True, source_assignment_version=source_assignment_version)
         turns = []
         for scene in sections:
             for paragraph in scene['paragraphs']:

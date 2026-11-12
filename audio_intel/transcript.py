@@ -46,7 +46,28 @@ def paragraphs(segments: list[dict[str, Any]], *, include_sources: bool = False)
     return output
 
 
-def scene_transcripts(result: dict[str, Any], *, include_sources: bool = False) -> list[dict[str, Any]]:
+def formatted_positions(text: str, words: list[dict]) -> list[int]:
+    """Map formatting-equivalent tokens to original offsets, never fuzzy content."""
+    def retained(value: str) -> list[int]:
+        return [i for i, ch in enumerate(value) if not (
+            ch.isspace() or unicodedata.category(ch).startswith('P')
+            or (unicodedata.category(ch) == 'Sc' and (
+                i + 1 < len(value) and value[i + 1].isdigit()
+                or i > 0 and value[i - 1].isdigit())))]
+    indices = retained(text)
+    tokens = [''.join(value[i] for i in retained(value)) for value in
+              (str(word.get('text') or '') for word in words)]
+    if not indices or not tokens or not all(tokens) or ''.join(text[i] for i in indices) != ''.join(tokens):
+        return []
+    positions, cursor = [], 0
+    for token in tokens:
+        positions.append(indices[cursor])
+        cursor += len(token)
+    return positions
+
+
+def scene_transcripts(result: dict[str, Any], *, include_sources: bool = False,
+                      source_assignment_version: int = 2) -> list[dict[str, Any]]:
     scenes = result.get('video', {}).get('scenes', [])
     buckets: list[list[dict[str, Any]]] = [[] for _ in scenes]
     if not scenes:
@@ -85,6 +106,9 @@ def scene_transcripts(result: dict[str, Any], *, include_sources: bool = False) 
             positions.append(found)
             cursor = found + len(token)
         can_split = bool(positions) and punctuation_only(text[cursor:])
+        if not can_split and source_assignment_version >= 2:
+            positions = formatted_positions(text, words)
+            can_split = bool(positions)
         if not can_split:
             buckets[owner(segment['start'], segment['end'])].append(segment)
             continue
@@ -100,6 +124,29 @@ def scene_transcripts(result: dict[str, Any], *, include_sources: bool = False) 
             else:
                 target.append(part)
     return [{**scene, 'paragraphs': paragraphs(bucket, include_sources=include_sources)} for scene, bucket in zip(scenes, buckets)]
+
+
+def presentation_sections(sections: list[dict]) -> list[dict]:
+    """Presentation only: preserve identities, suppress empty blocks, number pictures."""
+    number = 0
+    output = []
+    for section in sections:
+        if section.get('image'):
+            number += 1
+        if (section.get('image') or section.get('paragraphs') or section.get('linked_paragraphs')
+                or (section.get('title_summary') or {}).get('title')):
+            related = next((p['start'] for other in sections if other is not section
+                            for p in other.get('paragraphs', [])
+                            if not section.get('paragraphs') and section.get('start', 0) < p['end']
+                            and section.get('end', 0) > p['start']), None) if section.get('image') and not section.get('paragraphs') else None
+            output.append({**section, 'frame_number': number if section.get('image') else None,
+                           'related_start': related})
+    numbers = {section['id']: section['frame_number'] for section in output}
+    for section in output:
+        section['linked_paragraphs'] = [
+            {**link, 'frame_number': numbers.get(sections[link['scene_number'] - 1]['id'])}
+            for link in section.get('linked_paragraphs', [])]
+    return output
 
 
 def reading_sections(result: dict[str, Any]) -> list[dict[str, Any]]:

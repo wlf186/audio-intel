@@ -1,3 +1,4 @@
+import {pictureNumbers} from '../lib/videoPresentation'
 import {useEffect,useRef,useState} from 'react'
 import {useTranslation} from 'react-i18next'
 import {createIdempotencyKey,formatTime,HttpError,request} from '../lib/api'
@@ -30,6 +31,7 @@ export function SceneDetection({jobId,result,capability,onClose,onUpdated}:{jobI
  const [current,setCurrent]=useState(true)
  const [confirmed,setConfirmed]=useState(false)
  const [visible,setVisible]=useState(12)
+ const [allSections,setAllSections]=useState(false)
  const [selected,setSelected]=useState<Set<string>>(()=>new Set())
  const alive=useRef(true)
  const previewId=useRef<string|undefined>(undefined)
@@ -46,7 +48,10 @@ export function SceneDetection({jobId,result,capability,onClose,onUpdated}:{jobI
  const valid=validDetection(values,capability)
  const hidden=new Set(video.export_hidden_scene_ids||[])
  const clearsHidden=hidden.size>0&&(!video.scene_detection||video.scene_detection.min_change_percent!==values.min_change_percent||video.scene_detection.min_stable_seconds!==values.min_stable_seconds)
- const scenes=current?video.scenes:preview?.scenes||[]
+ const resultsReady=current||Boolean(preview?.scenes)
+ const allScenes=current?video.scenes:preview?.scenes||[]
+ const numbers=pictureNumbers(allScenes)
+ const scenes=allSections?allScenes:allScenes.filter(scene=>scene.image)
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;clearTimeout(cooldown.current);if(previewId.current)void request(`${root}/${previewId.current}`,{method:'DELETE',keepalive:true}).catch(()=>{})}},[root])
  useEffect(()=>{
   const target=sentinel.current,element=scrollRoot.current
@@ -142,6 +147,8 @@ export function SceneDetection({jobId,result,capability,onClose,onUpdated}:{jobI
  return <Modal className="scene-detection-modal" title={t('sceneDetection.title')} closeLabel={t('common.actions.close')} onClose={()=>{if(!applying&&!saving)onClose()}}>
   <div className="scene-detection-body" ref={scrollRoot} tabIndex={0} aria-label={t('sceneDetection.gallery')}>
    <p>{t('sceneDetection.intro')}</p>
+   <p className="muted" role="status">{resultsReady?t('video.detectionCounts',{sections:allScenes.length,pictures:numbers.size,missing:allScenes.length-numbers.size}):t('video.loading')}</p>
+   <div className="scene-gallery-switch" role="group" aria-label={t('sceneDetection.gallery')}><button className="button" aria-pressed={!allSections} onClick={()=>{setAllSections(false);setVisible(12)}}>{t('video.savedPictures')}</button><button className="button" aria-pressed={allSections} onClick={()=>{setAllSections(true);setVisible(12)}}>{t('video.allSections')}</button></div>
    {!video.scene_detection?<p className="scene-detection-note">{t('sceneDetection.legacy')}</p>:video.contract_version===1?<p className="scene-detection-note">{t('sceneDetection.legacyScreenshots')}</p>:null}
    <div className="scene-detection-controls">{(['min_change_percent','min_stable_seconds'] as const).map(key=><label key={key}>
     <span>{t(`sceneDetection.${key}`)}</span>
@@ -162,12 +169,13 @@ export function SceneDetection({jobId,result,capability,onClose,onUpdated}:{jobI
    {preview?.scenes?<p className="scene-detection-count" role="status">{t('sceneDetection.count',{before:video.scenes.length,after:preview.scenes.length})}</p>:null}
    {preview?<div className="scene-detection-actions"><button className="button" aria-pressed={current} onClick={()=>switchView(true)}>{t('sceneDetection.current')}</button><button className="button" aria-pressed={!current} onClick={()=>switchView(false)}>{t('sceneDetection.candidate')}</button></div>:<h3>{t('sceneDetection.current')}</h3>}
    {current?<div className="scene-detection-actions"><button className="button" disabled={busy||stale} onClick={()=>setSelected(new Set(scenes.slice(0,visible).filter(s=>s.image).map(s=>s.id)))}>{t('sceneDetection.selectLoaded')}</button><button className="button" disabled={!selected.size||busy} onClick={()=>setSelected(new Set())}>{t('sceneDetection.clearSelection')}</button></div>:<p>{t('sceneDetection.applyBeforeHide')}</p>}
+   {resultsReady&&!allSections&&!numbers.size?<p className="muted">{t('video.noPictures')}</p>:null}
    <div className="scene-detection-grid">{scenes.slice(0,visible).map((scene,index)=><figure className={selected.has(scene.id)?'selected':''} key={`${current}:${scene.id}:${scene.image}`}>
-    {current?<label className="scene-detection-select"><input type="checkbox" checked={selected.has(scene.id)} disabled={busy||stale||!scene.image} onChange={()=>setSelected(previous=>{const next=new Set(previous);if(next.has(scene.id))next.delete(scene.id);else next.add(scene.id);return next})}/>{t('sceneDetection.selectPicture',{number:index+1})}</label>:null}
-    {scene.image?<PreviewImage url={current?`/api/v1/jobs/${jobId}/video-frames/${scene.image}`:(scene as VideoScene&{preview_url:string}).preview_url} label={t('video.scene',{number:index+1})}/>:<div className="video-no-frame">{t('video.noStableFrame')}</div>}
-    <figcaption>{t('video.scene',{number:index+1})}<span>{t('timeline.sceneRange')} {formatTime(scene.start,false)}–{formatTime(scene.end,false)}</span>{scene.frame_time!==null?<span>{t('timeline.frameTime')} {formatTime(scene.frame_time)}</span>:null}{current&&hidden.has(scene.id)?<span className="scene-hidden-badge">{t('sceneDetection.hidden')}</span>:null}</figcaption>
+    {current?<label className="scene-detection-select"><input type="checkbox" checked={selected.has(scene.id)} disabled={busy||stale||!scene.image} onChange={()=>setSelected(previous=>{const next=new Set(previous);if(next.has(scene.id))next.delete(scene.id);else next.add(scene.id);return next})}/>{scene.image?t('sceneDetection.selectPicture',{number:numbers.get(scene.id)}):t('video.section',{number:allScenes.indexOf(scene)+1})}</label>:null}
+    {scene.image?<PreviewImage url={current?`/api/v1/jobs/${jobId}/video-frames/${scene.image}`:(scene as VideoScene&{preview_url:string}).preview_url} label={scene.image?t('video.scene',{number:numbers.get(scene.id)}):t('video.section',{number:allScenes.indexOf(scene)+1})}/>:<div className="video-no-frame">{t('video.noStableFrame')}</div>}
+    <figcaption>{scene.image?t('video.scene',{number:numbers.get(scene.id)}):t('video.section',{number:allScenes.indexOf(scene)+1})}<span>{t('timeline.sceneRange')} {formatTime(scene.start,false)}–{formatTime(scene.end,false)}</span>{scene.frame_time!==null?<span>{t('timeline.frameTime')} {formatTime(scene.frame_time)}</span>:null}{current&&hidden.has(scene.id)?<span className="scene-hidden-badge">{t('sceneDetection.hidden')}</span>:null}</figcaption>
    </figure>)}</div>
-   <div className="scene-detection-sentinel" ref={sentinel}><span>{t('sceneDetection.loaded',{count:Math.min(visible,scenes.length),total:scenes.length})}</span>{visible<scenes.length&&typeof IntersectionObserver==='undefined'?<button className="button" onClick={()=>setVisible(value=>value+12)}>{t('asr.results.loadMore')}</button>:null}</div>
+   <div className="scene-detection-sentinel" ref={sentinel} hidden={!resultsReady}><span>{t('sceneDetection.loaded',{count:Math.min(visible,scenes.length),total:scenes.length})}</span>{visible<scenes.length&&typeof IntersectionObserver==='undefined'?<button className="button" onClick={()=>setVisible(value=>value+12)}>{t('asr.results.loadMore')}</button>:null}</div>
    {manual&&preview?<label className="scene-detection-confirm"><input type="checkbox" checked={confirmed} onChange={event=>setConfirmed(event.target.checked)}/>{t('sceneDetection.replaceEdits')}</label>:null}
   </div>
   <div className="scene-detection-footer">

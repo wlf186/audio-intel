@@ -447,7 +447,7 @@ def register(app: Any, api: Any) -> None:
         return Response(payload, media_type=MIME_TYPES[body.format], headers={'Content-Length': str(len(payload)), 'Content-Disposition': f"attachment; filename*=UTF-8''{filename}", 'Cache-Control': 'no-store'})
 
     @app.get('/api/v1/jobs/{job_id}/video-scenes', tags=tags, response_model=VideoScenesResponse, responses=errors,
-             description='按画面返回可阅读段落及当前修订号，完整原始分段仍在任务结果中。\n\n**English:** Read illustrated paragraphs and the current revision; original detailed segments remain in job results.',
+             description='按检测分段返回可阅读段落及当前修订号；格式等价的逐词结果可无损分配，完整原始分段仍在任务结果中。目录与阅读过滤不改变此接口的完整分段。\n\n**English:** Read lossless illustrated paragraphs and the current revision, including formatting-equivalent word alignment. Returns all detection sections regardless of reading filters. Original detailed segments remain in job results.',
               summary='读取画面与合并发言 / Read presentation sections and paragraphs')
     def scenes(job_id: str, _: None = auth) -> dict:
         job = completed(job_id, True)

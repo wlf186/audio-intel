@@ -324,7 +324,7 @@ class Manager:
             profile, hotwords = run['config'], run['hotwords']
             await self.retry_io(lambda: self.check_model(profile))
             job = parent(run['job_id'])
-            if engine.source_hash(job['result']) != run['source_hash']:
+            if engine.source_hash(job['result'], source_assignment_version=run['config'].get('source_assignment_version', 1)) != run['source_hash']:
                 raise ValueError('原文已变化，请重新生成 / Source changed; regenerate')
             await engine.ensure_context(profile, load=True)
             units = store.units(run_id)
@@ -355,7 +355,7 @@ class Manager:
                         chunks = store.parts(run_id, unit['ordinal'])
                 if not store.finish_unit(run_id, unit['ordinal']):
                     raise asyncio.CancelledError()
-            if engine.source_hash(parent(run['job_id'])['result']) != run['source_hash']:
+            if engine.source_hash(parent(run['job_id'])['result'], source_assignment_version=run['config'].get('source_assignment_version', 1)) != run['source_hash']:
                 raise ValueError('Source changed; regenerate / 原文已变化，请重新生成')
             await self.finish_review(run_id)
             await insights.process(run_id)
@@ -402,7 +402,7 @@ class Manager:
                         failures = store.record_review_connection(run_id, False)
                 if not store.checkpoint_review(run_id, unit['ordinal'], index, verdict):
                     raise asyncio.CancelledError()
-        if engine.source_hash(parent(run['job_id'])['result']) != run['source_hash']:
+        if engine.source_hash(parent(run['job_id'])['result'], source_assignment_version=run['config'].get('source_assignment_version', 1)) != run['source_hash']:
             raise ValueError('Source changed; regenerate / 原文已变化，请重新生成')
 
     async def run(self):
@@ -439,7 +439,7 @@ class Manager:
         try:
             run = store.get(run_id)
             await self.check_model(run['config'])
-            if engine.source_hash(parent(run['job_id'])['result']) != run['source_hash']:
+            if engine.source_hash(parent(run['job_id'])['result'], source_assignment_version=run['config'].get('source_assignment_version', 1)) != run['source_hash']:
                 raise ValueError('Source changed; regenerate')
             await insights.process(run_id)
         except asyncio.CancelledError:
@@ -583,7 +583,7 @@ def register(app, api):
                 response.status_code = 200
                 return public_status(job_id)
             config = {**store.settings(), 'prompt_version': engine.PROMPT_VERSION, 'rewrite_mode': body.rewrite_mode, 'summary_version': insights.VERSION,
-                      'request_policy_version': 2 if insights.VERSION == 2 else 1}
+                      'request_policy_version': 2 if insights.VERSION == 2 else 1, 'source_assignment_version': 2}
             if not config.get('enabled'):
                 raise HTTPException(409, '请在系统状态启用表达优化 / Enable expression optimization in System')
             candidate = store.status(job_id)['candidate']
@@ -625,7 +625,7 @@ def register(app, api):
                 await manager.check_model(item['config'])
             except Exception as exc:
                 raise HTTPException(409, error_message(exc)) from exc
-            if engine.source_hash(parent(job_id)['result']) != item['source_hash']:
+            if engine.source_hash(parent(job_id)['result'], source_assignment_version=item['config'].get('source_assignment_version', 1)) != item['source_hash']:
                 raise HTTPException(409, 'Source changed; regenerate')
             if item['published']:
                 raise HTTPException(409, 'Completed draft cannot be resumed')
@@ -660,7 +660,7 @@ def register(app, api):
             except Exception as exc:
                 raise HTTPException(409, error_message(exc)) from exc
             with reader_lease(job_id), speaker_update_lock(job_id):
-                if engine.source_hash(parent(job_id)['result']) != item['source_hash']:
+                if engine.source_hash(parent(job_id)['result'], source_assignment_version=item['config'].get('source_assignment_version', 1)) != item['source_hash']:
                     raise HTTPException(409, 'Source changed; regenerate')
                 queued = insights.retry(body.run_id, key, api.settings.min_free_disk_bytes)
             manager.wake.set()

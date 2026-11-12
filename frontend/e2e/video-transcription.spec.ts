@@ -109,6 +109,7 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  await page.getByRole('button',{name:'画面检测',exact:true}).click()
  await detection.getByRole('spinbutton').nth(1).fill('5')
  await detection.getByRole('button',{name:'预览检测',exact:true}).click()
+ await detection.getByRole('button',{name:'全部检测分段',exact:true}).click()
  await expect.poll(async()=>{
   await page.clock.runFor(500)
   return detection.locator('.video-no-frame').count()
@@ -117,7 +118,7 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  await detection.getByRole('button',{name:'应用预览',exact:true}).click()
  await expect(detection.getByRole('checkbox').first()).toBeDisabled()
  await page.keyboard.press('Escape')
- await expect(page.locator('.video-section .video-no-frame')).toHaveText('无稳定画面')
+ await expect(page.locator('.video-section .video-no-frame')).toHaveCount(0)
  await expect(page.locator('.video-section img')).toHaveCount(0)
  const strict=await (await page.request.get(`/api/v1/jobs/${job.id}`)).json()
  expect(strict.result.video.contract_version).toBe(2)

@@ -93,7 +93,7 @@ On Windows use `.runtime\api\Scripts\python.exe`. Optional `--device` overrides 
 
 ## 界面示例 / Interface examples
 
-以下使用两页合成测试视频与 mock 转写内容，展示图文阅读与编辑控件；不是实际会议数据。 / These screenshots use a two-slide synthetic test video and mock transcript, not a real meeting.
+以下使用合成截图与 mock 转写内容，展示独立的缺图正文、截图编号及桌面／手机阅读布局；不是实际会议数据。 / These screenshots use synthetic pictures and mock transcript text to demonstrate independent unillustrated prose and responsive reading, not a real meeting.
 
 ![桌面视频转写结果 / Desktop video transcript](assets/video-transcription/result-1440.png)
 
@@ -181,11 +181,11 @@ Audio processing is a compact status button beside downloads; its popover shows 
 
 在「任务与结果 → 图文阅读 → 画面检测」设置最小画面变化比例（默认 3%，0.5–50%）与新画面最短保持时间（默认 1 秒）。具体范围与默认值以 capabilities 为准。同页增量显示尽量合并。
 
-presentation-v3 将分段和截图确认分开：截图需要在同一分段内连续稳定达到用户配置的 `min_stable_seconds`，与音频、句子时长无关。截图使用独立的降噪容差（显著颜色变化面积低于 0.4%），小通知不能因低于分段面积阈值而绕过确认。多个合格区间采用最后一个区间的首个实际采样帧；短暂变化不覆盖已确认截图。无合格画面时 `image`、`frame_time` 和预览 `preview_url` 为 null，界面与 PDF/DOCX 显示“无稳定画面”，文字和时间段保留；这不是加载错误或导出隐藏。分段范围与截图时刻分别显示。
+presentation-v3 将分段和截图确认分开：截图需要在同一分段内连续稳定达到用户配置的 `min_stable_seconds`，与音频、句子时长无关。截图使用独立的降噪容差（显著颜色变化面积低于 0.4%），小通知不能因低于分段面积阈值而绕过确认。多个合格区间采用最后一个区间的首个实际采样帧；短暂变化不覆盖已确认截图。无合格画面时 `image`、`frame_time` 和预览 `preview_url` 为 null，阅读界面与 PDF/DOCX 保留独立的文字和时间段，不显示大幅缺图占位；画面目录只列保留截图，缺图空文字段默认省略展示，检测明细仍可查看“无稳定画面”；这不是加载错误或导出隐藏。分段范围与截图时刻分别显示。
 
 保持时间范围仍为 0.5–5 秒，输入步进 0.1 秒（如 0.6）；约每 0.5 秒抽样，按实际时间跨度确认，不提前、跨分段或在片尾补足时长，因此非抽样间隔整数倍的设置可能等到下一个抽样点。检测仍是有容差的视觉启发式，不进行 OCR/通知语义识别。自动截图遵守此规则；明确手工指定截图的 API 保留原有语义。
 
-Presentation-v3 separates sections from screenshot confirmation. Automatic pictures require a continuous sampled stable interval inside one section lasting at least the configured `min_stable_seconds`, independently of audio or sentence length. A separate noise tolerance (significant RGB changes over less than 0.4% of pixels) prevents section-area settings from bypassing screenshot confirmation. The first actual sample of the latest qualifying interval represents the section; brief changes cannot overwrite it. Without a qualifying picture, `image`, `frame_time` and preview `preview_url` are null. The reader, detection dialog, timeline and PDF/DOCX show No stable picture while preserving text, ranges and navigation; this is distinct from loading failure and export hiding. Section ranges and capture times are labeled separately.
+Presentation-v3 separates sections from screenshot confirmation. Automatic pictures require a continuous sampled stable interval inside one section lasting at least the configured `min_stable_seconds`, independently of audio or sentence length. A separate noise tolerance (significant RGB changes over less than 0.4% of pixels) prevents section-area settings from bypassing screenshot confirmation. The first actual sample of the latest qualifying interval represents the section; brief changes cannot overwrite it. Without a qualifying picture, `image`, `frame_time` and preview `preview_url` are null. The reader and PDF/DOCX preserve unillustrated prose without large placeholders or picture headings; empty content blocks are omitted. The picture directory numbers retained pictures only, while detection details can still show No stable picture; this is distinct from loading failure and export hiding. Section ranges and capture times are labeled separately.
 
 Duration remains 0.5–5 seconds with a 0.1-second input step, including 0.6. Sampling remains about 0.5 seconds. Confirmation uses observed elapsed time without early acceptance, crossing sections or padding EOF; fractional settings may wait until the next sample. This remains a noise-tolerant visual heuristic without OCR or notification recognition. Explicit manual frame selection retains its API semantics.
 
@@ -225,7 +225,7 @@ English: Picture detection immediately shows current pictures and export-hidden 
 
 DOCX 完全本地生成，复用已安装的 python-docx 1.2.0，无新增依赖或数据库迁移。中文使用文档字体样式而非嵌入字体，Word/WPS 的字体替代和分页可能不同于 PDF。
 
-English: Choose Word (DOCX) in Concise export, or in the mobile format selector (PDF remains the default). Editable documents preserve the same paragraphs, times and picture grouping as PDF. Hidden pictures use placeholders without embedding their original bytes; text remains, independently of text redaction. Existing completed jobs work without retranscription. Generation is offline using the already pinned python-docx library, with no new dependencies, migration or browser-storage policy. Fonts are not embedded, so Word/WPS pagination may differ from PDF.
+English: Choose Word (DOCX) in Concise export, or in the mobile format selector (PDF remains the default). Editable documents preserve the same paragraphs, times and picture grouping as PDF. Hidden pictures use brief notices without embedding their original bytes; text remains, independently of text redaction. Existing completed jobs work without retranscription. Generation is offline using the already pinned python-docx library, with no new dependencies, migration or browser-storage policy. Fonts are not embedded, so Word/WPS pagination may differ from PDF.
 
 ## 入库音轨 / Enrollment audio track
 
@@ -252,3 +252,13 @@ English: Existing local attempt diagnostics record peak cache allocation, cumula
 Each representative-image materialization reuses one source container, deduplicates target timestamps and reuses existing images. Backward seek, frame-time/EOF selection, ROI, rotation, JPEG output and scene ordering retain their existing rules. Single-frame preview does not persist images; scene-detection previews own temporary images and progress snapshots, while optional successful feature caches may survive. Applied/final representative images are task artifacts. These are distinct lifetimes, not a blanket promise of disk-free video processing.
 
 中文：每次代表帧物化复用一个源容器，重复目标去重并复用已有图片，逐目标向后 seek、时间／末尾选择、裁剪、旋转、JPEG 和场景顺序保持不变。单帧预览不持久化图片；画面检测预览拥有临时图片和进度文件，成功的可选特征缓存可保留；正式代表图属于任务产物。原音／增强音仍保存，转写与对齐默认按其 PCM16 区间读取。
+
+## 截图目录与独立正文 / Picture directory and independent text
+
+画面目录、缩略图和阅读编号只统计实际保留截图的出现次数，非相邻重复画面仍各自保留。缺图正文保持独立、通栏显示，不自动归入上一张图；截图过滤不代表话题没有变化。没有截图也没有当前版本正文、小结、标题或对照来源的区间不占阅读卡片或文档标题，原始分段及视频时间轴仍保留。图片加载失败提供重试，不按缺图处理。
+
+Word 每张截图只用一个主标题；缺图内容和其优化标题使用普通段落，不进入标题导航。PDF 使用相同规则。手动导出隐藏仍保留编号，以简短说明代替图片框。文字与逐词结果仅格式不一致（如 5.2/52、seven-day/sevenday、a.m./am、$5,000/5000）时，可在完整字符覆盖校验后分配到对应画面；字词和数字内容不一致时保持完整片段，不估计时间。原文、字幕和媒体不改写。
+
+缺图正文的“查看画面”仅点击后请求现有只读帧接口，在内存中解码为临时预览；不创建检测预览任务，不写图片或重写视频，不加入导出。关闭弹窗释放预览，失败可重试，繁忙时遵循 Retry-After。手机详细时间轴默认收起，展开状态仅在当前页面内存中保留，刷新恢复默认；原有阅读、筛选、导出和检测偏好寿命不变。
+
+English: The picture directory numbers retained picture occurrences only. Independent text without a picture remains chronological and is never implicitly assigned to the previous picture. Empty reading blocks are omitted while raw sections/timing remain intact. Word/PDF use one major heading per retained picture, with unillustrated prose and titles as ordinary paragraphs. Formatting-equivalent word alignment preserves original characters and offsets, falling back intact on content differences. Click-only frame previews decode into memory without media files or detection tasks. Mobile timeline expansion is page-memory-only and resets on reload; existing preference lifetimes are unchanged.

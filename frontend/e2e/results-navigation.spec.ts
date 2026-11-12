@@ -10,7 +10,9 @@ for(const [width,height,minimum] of [[1280,720,180],[1440,800,260],[1470,830,280
  const zh=locale==='zh-CN'
  await page.goto('/#asr');await page.getByRole('tab',{name:zh?'任务与结果':'Tasks & results',exact:true}).click()
  const waveform=page.locator('.timeline-waveform'),reader=page.locator('.video-transcript')
+ if(width===390){await expect(page.getByRole('button',{name:zh?'展开时间轴':'Expand timeline',exact:true})).toBeVisible();await page.getByRole('button',{name:zh?'展开时间轴':'Expand timeline',exact:true}).click()}
  await expect(waveform).toHaveAttribute('data-window-end','120')
+ if(width===390)await page.getByRole('button',{name:zh?'收起时间轴':'Collapse timeline',exact:true}).click()
  const initial=(await reader.boundingBox())!
  expect(initial.height).toBeGreaterThanOrEqual(minimum)
  if(width>=1024){
@@ -23,9 +25,10 @@ for(const [width,height,minimum] of [[1280,720,180],[1440,800,260],[1470,830,280
  await page.locator('.enhancement-summary button').click()
  await expect(page.locator('.enhancement-details-panel')).toContainText('160%')
  await page.keyboard.press('Escape')
+ if(width===390)await page.getByRole('button',{name:zh?'展开时间轴':'Expand timeline',exact:true}).click()
  await page.getByRole('button',{name:zh?'放大时间轴':'Zoom in timeline',exact:true}).click()
  await expect(waveform).toHaveAttribute('data-window-end','60')
- expect(Math.abs((await reader.boundingBox())!.height-initial.height)).toBeLessThanOrEqual(1)
+ if(width>=1024)expect(Math.abs((await reader.boundingBox())!.height-initial.height)).toBeLessThanOrEqual(1)
  await page.getByRole('button',{name:zh?'文本阅读':'Text reading',exact:true}).click()
  await expect(page.locator('.transcript-tools input')).toBeVisible()
  if(width>=1024)expect((await page.locator('.segments').boundingBox())!.height).toBeGreaterThanOrEqual(minimum)
@@ -112,6 +115,7 @@ test('horizontal touch browsing never seeks and waveform seeking preserves activ
  await page.setViewportSize({width:390,height:844})
  const {errors}=await uxFixture(page)
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+ await page.getByRole('button',{name:'展开时间轴',exact:true}).click()
  const waveform=page.locator('.timeline-waveform'),player=page.locator('.result-panel audio')
  await expect(waveform).toHaveAttribute('data-window-end','120')
  await page.getByRole('button',{name:'放大时间轴',exact:true}).click()

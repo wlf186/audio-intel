@@ -126,11 +126,11 @@ def test_empty_preview_apply_edit_restore_exports_and_schema(client, local):
     pdf = client.get(root + '/transcript.pdf')
     assert pdf.status_code == 200
     text = ''.join(p.extract_text() for p in PdfReader(io.BytesIO(pdf.content)).pages)
-    assert 'No stable picture' in text
+    assert 'No stable picture' not in text
     docx = client.post(root + '/transcript-export', json={'format': 'docx', 'redact': False})
     assert docx.status_code == 200, docx.text[:200]
     with zipfile.ZipFile(io.BytesIO(docx.content)) as archive:
-        assert 'No stable picture' in archive.read('word/document.xml').decode()
+        assert 'No stable picture' not in archive.read('word/document.xml').decode()
         assert not any(name.startswith('word/media/') for name in archive.namelist())
     exported = client.post(root + '/transcript-export', json={'format': 'json', 'redact': False})
     assert exported.json()['video']['scenes'][0]['image'] is None

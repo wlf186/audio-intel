@@ -10,7 +10,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from .transcript import comparison_source_text, reading_sections, insight_label
+from .transcript import comparison_source_text, reading_sections, insight_label, presentation_sections
 from .transcript_diff import text_changes
 from .utils import timecode
 
@@ -56,24 +56,27 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     document.add_heading(title, 0)
     hidden = set((result.get('video') or {}).get('export_hidden_scene_ids') or [])
     sections = reading_sections(result)
+    if result.get('video'):
+        sections = presentation_sections(sections)
     image_bytes = 0
     if result.get('review_notice'):
         document.add_paragraph(result['review_notice'])
     frame_root = (output_dir / 'frames').resolve()
     for index, item in enumerate(sections):
         if result.get('video'):
-            document.add_heading(f"画面 {index + 1} · {timecode(item['start'])} – {timecode(item['end'])}", 1)
-            if (item.get('title_summary') or {}).get('title'):
-                document.add_heading(item['title_summary']['title'], 1)
-                method = insight_label(item['title_summary'])
-                if method:
-                    document.add_paragraph(method)
-            if not item.get('image') or item['id'] in hidden:
-                cell = document.add_table(rows=1, cols=1).cell(0, 0)
-                cell.text = '无稳定画面 / No stable picture' if not item.get('image') else '画面已隐藏 / Picture hidden'
-                shade = OxmlElement('w:shd')
-                shade.set(qn('w:fill'), 'F0F2F4')
-                cell._tc.get_or_add_tcPr().append(shade)
+            title = (item.get('title_summary') or {}).get('title')
+            if item.get('image'):
+                document.add_heading(f"画面 {item['frame_number']}" + (f" · {title}" if title else ''), 1)
+            elif title:
+                document.add_paragraph().add_run(title).bold = True
+            document.add_paragraph(f"{timecode(item['start'])} – {timecode(item['end'])}")
+            method = insight_label(item.get('title_summary') or {})
+            if method:
+                document.add_paragraph(method)
+            if not item.get('image'):
+                pass
+            elif item['id'] in hidden:
+                document.add_paragraph('画面已隐藏 / Picture hidden')
             else:
                 name = item['image']
                 path = (frame_root / name).resolve()
@@ -88,6 +91,8 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                 scale = min(int(section.page_width - section.left_margin - section.right_margin) / picture.width, int(Mm(100)) / picture.height)
                 stream.seek(0)
                 document.add_picture(stream, width=int(picture.width * scale), height=int(picture.height * scale))
+        if item.get('related_start') is not None:
+            document.add_paragraph(f"相关文字 / Related text: {timecode(item['related_start'])}")
         for paragraph in item['paragraphs']:
             label = document.add_paragraph()
             label.paragraph_format.keep_with_next = True
@@ -137,9 +142,8 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                     run.font.size = Pt(10)
                     run.font.color.rgb = RGBColor.from_string('667085')
         for link in item.get('linked_paragraphs', []):
-            document.add_paragraph(f"本画面文字已并入画面 {link['scene_number']} 的成稿（{timecode(link['start'])}） / Text included in the earlier group")
-        if not item['paragraphs'] and not item.get('linked_paragraphs'):
-            document.add_paragraph(('此段无优化正文 / No optimized text in this section' if result.get('_optimized') else '此段无识别语音 / No recognized speech'))
+            document.add_paragraph(f"本段文字已并入 {('画面 ' + str(link['frame_number'])) if link.get('frame_number') else '相关段落'} 的成稿（{timecode(link['start'])}） / Text included in the earlier group")
+
     stream = io.BytesIO()
     document.save(stream)
     return stream.getvalue()

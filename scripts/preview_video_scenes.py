@@ -38,7 +38,8 @@ def main() -> None:
                 item = call('GET', url)
             if item['state'] != 'ready':
                 raise RuntimeError(item.get('error') or item['state'])
-            print('Sections:', len(item['scenes']))
+            print('Detection sections:', len(item['scenes']))
+            print('Retained pictures:', sum(bool(scene['image']) for scene in item['scenes']))
             print('Without stable pictures:', sum(scene['image'] is None for scene in item['scenes']))
             if args.apply:
                 saved = call('PATCH', root + '/video-scenes',

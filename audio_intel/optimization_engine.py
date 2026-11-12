@@ -127,10 +127,10 @@ async def verify(config: dict) -> dict:
     return profile
 
 
-def source_hash(result: dict) -> str:
+def source_hash(result: dict, *, source_assignment_version: int = 2) -> str:
     # Text ownership changes invalidate prose; display names and pictures do not.
     from .optimization_sources import scene_reading_groups
-    groups = scene_reading_groups(result)
+    groups = scene_reading_groups(result, source_assignment_version=source_assignment_version)
     video = result.get('video') or {}
     return store.digest({
         'groups': [{key: group[key] for key in ('speaker', 'sources', 'scene_ids')} for group in groups],
@@ -139,9 +139,9 @@ def source_hash(result: dict) -> str:
     })
 
 
-def prepare_units(result: dict) -> list[dict]:
+def prepare_units(result: dict, *, source_assignment_version: int = 2) -> list[dict]:
     from .optimization_sources import scene_reading_groups
-    units = scene_reading_groups(result)
+    units = scene_reading_groups(result, source_assignment_version=source_assignment_version)
     if not units:
         raise ValueError('任务没有可优化的文字 / No transcript text to optimize')
     return units
@@ -498,7 +498,7 @@ def reading_result(result: dict, run_id: str, *, complete: bool = False) -> dict
     insights = run['insights']
     if not run['published']:
         raise ValueError('请等待优化完成后导出 / Export requires a completed draft')
-    if source_hash(result) != run['source_hash']:
+    if source_hash(result, source_assignment_version=run['config'].get('source_assignment_version', 1)) != run['source_hash']:
         raise ValueError('原文已变化，请重新优化 / Source text changed; regenerate the draft')
     current = {s['id']: s for s in result.get('segments', [])}
     scenes = deepcopy(result.get('video', {}).get('scenes', []))

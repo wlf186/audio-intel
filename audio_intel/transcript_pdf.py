@@ -11,7 +11,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from .transcript import comparison_source_text, reading_sections, insight_label
+from .transcript import comparison_source_text, reading_sections, insight_label, presentation_sections
 from .transcript_diff import text_changes
 from .utils import timecode
 
@@ -32,7 +32,7 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Flowable, Table, TableStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
 
     if sum(len(segment.get('text', '')) + len(segment.get('original_text', '')) for segment in result.get('segments', [])) > _max_text_chars:
         raise ValueError('Transcript exceeds PDF text budget; split the source')
@@ -51,37 +51,29 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     heading = ParagraphStyle('heading', parent=body, fontSize=17, leading=24, spaceAfter=18)
     label = ParagraphStyle('label', parent=body, fontSize=9, leading=14,
                            textColor=colors.HexColor('#4c5967'), spaceAfter=4, keepWithNext=True)
-    class HiddenPicture(Flowable):
-        def __init__(self, text='画面已隐藏 / Picture hidden'):
-            super().__init__()
-            self.width, self.height = doc.width, 120
-            self.text = text
-
-        def draw(self):
-            self.canv.setFillColor(colors.HexColor('#f0f2f4'))
-            self.canv.rect(0, 0, self.width, self.height, stroke=0, fill=1)
-            self.canv.setFillColor(colors.HexColor('#4c5967'))
-            self.canv.setFont('Transcript', 12)
-            self.canv.drawCentredString(self.width / 2, self.height / 2, self.text)
-
     hidden = set((result.get('video') or {}).get('export_hidden_scene_ids') or [])
     story: list[Any] = [Paragraph(html.escape(title), heading)]
     if result.get('review_notice'):
         story.append(Paragraph(html.escape(result['review_notice']), original_style))
     sections = reading_sections(result)
+    if result.get('video'):
+        sections = presentation_sections(sections)
     for index, section in enumerate(sections):
         if result.get('video'):
             story.append(Spacer(1, 14))
-            story.append(Paragraph(f"画面 {index + 1} · {timecode(section['start'])} – {timecode(section['end'])}", label))
-            if (section.get('title_summary') or {}).get('title'):
-                story.append(Paragraph(html.escape(section['title_summary']['title']), heading))
-                method = insight_label(section['title_summary'])
-                if method:
-                    story.append(Paragraph(html.escape(method), original_style))
+            title = (section.get('title_summary') or {}).get('title')
+            if section.get('image'):
+                story.append(Paragraph(html.escape(f"画面 {section['frame_number']}" + (f" · {title}" if title else '')), label))
+            elif title:
+                story.append(Paragraph(html.escape(title), body))
+            story.append(Paragraph(f"{timecode(section['start'])} – {timecode(section['end'])}", label))
+            method = insight_label(section.get('title_summary') or {})
+            if method:
+                story.append(Paragraph(html.escape(method), original_style))
             if not section.get('image'):
-                story.extend([HiddenPicture('无稳定画面 / No stable picture'), Spacer(1, 12)])
+                pass
             elif section['id'] in hidden:
-                story.extend([HiddenPicture(), Spacer(1, 12)])
+                story.append(Paragraph('画面已隐藏 / Picture hidden', original_style))
             else:
                 name = section['image']
                 if Path(name).name != name:
@@ -97,6 +89,8 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                 picture.drawWidth = picture.imageWidth * scale
                 picture.drawHeight = picture.imageHeight * scale
                 story.extend([picture, Spacer(1, 12)])
+        if section.get('related_start') is not None:
+            story.append(Paragraph(f"相关文字 / Related text: {timecode(section['related_start'])}", label))
         for paragraph in section['paragraphs']:
             identity = html.escape(str(paragraph.get('speaker_label') or paragraph['speaker']))
             story.append(Paragraph(f"{identity}　{timecode(paragraph['start'])} – {timecode(paragraph['end'])}", label))
@@ -133,9 +127,8 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                 text = '小结 / Summary' + (f' · {method}' if method else '') + '：' + ' '.join(summary.get('sentences', []))
                 story.append(Paragraph(html.escape(text), original_style))
         for link in section.get('linked_paragraphs', []):
-            story.append(Paragraph(f"本画面文字已并入画面 {link['scene_number']} 的成稿（{timecode(link['start'])}） / Text included in the earlier group", original_style))
-        if not section['paragraphs'] and not section.get('linked_paragraphs'):
-            story.append(Paragraph(('此段无优化正文 / No optimized text in this section' if result.get('_optimized') else '此段无识别语音 / No recognized speech'), body))
+            story.append(Paragraph(f"本段文字已并入 {('画面 ' + str(link['frame_number'])) if link.get('frame_number') else '相关段落'} 的成稿（{timecode(link['start'])}） / Text included in the earlier group", original_style))
+
 
     def page_number(canvas: Any, document: Any) -> None:
         canvas.setFont('Transcript', 8)

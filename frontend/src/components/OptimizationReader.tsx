@@ -1,3 +1,5 @@
+import {hasReadingContent,pictureNumbers,relatedTextStart} from '../lib/videoPresentation'
+import {VideoFramePreview} from './VideoFramePreview'
 import {memo,useDeferredValue,useLayoutEffect,useMemo,useRef,useState} from 'react'
 import {useTranslation} from 'react-i18next'
 import type {Job} from '../lib/types'
@@ -45,6 +47,7 @@ export function OptimizationReader({job,controller,query,speaker,onSeek,onModeCh
  const root=useRef<HTMLDivElement>(null)
  const {result,resultError}=controller
  useReaderBookmark(key,root,{active:true,ready:Boolean(result),revision:result?.revision,visibleCount:visible,query:deferred,speakerFilter:speaker})
+ const numbers=useMemo(()=>pictureNumbers(result?.scenes||[]),[result?.scenes])
  const sceneTitles=useMemo(()=>new Map(result?.scenes.map(scene=>[scene.id,scene.title_summary?.title||''])),[result?.scenes])
  const filtered=useMemo(()=>result?.paragraphs.filter(p=>{
   if((!compare&&p.omitted)||(speaker!=='all'&&p.speaker!==speaker)||(compare&&filter!=='all'&&!(filter==='review'?p.review_outcome==='fact':p.text!==null&&p.text!==p.original_text)))return false
@@ -99,9 +102,11 @@ export function OptimizationReader({job,controller,query,speaker,onSeek,onModeCh
    {!result?!resultError?<p role="status">{t('optimization.loading')}</p>:null:<>
     {result.scenes.length?result.scenes.map((scene,index)=>{
      const owned=byScene.get(scene.id)||[]
+     const related=owned.length?undefined:relatedTextStart(scene,filtered)
+     if(!hasReadingContent({...scene,paragraphs:filteredByScene.get(scene.id)}))return null
      if(!owned.length&&(speaker!=='all'||filter!=='all'||deferred.trim()&&!(sceneTitles.get(scene.id)||'').toLocaleLowerCase().includes(deferred.trim().toLocaleLowerCase())))return null
      if(!owned.length&&filteredByScene.has(scene.id))return null
-     return <section key={scene.id} className="optimization-scene" data-scene-id={scene.id}><h3 className="optimization-scene-meta">{t('video.scene',{number:index+1})} <small>{formatTime(scene.start,false)}–{formatTime(scene.end,false)}</small></h3>{scene.title_summary?.title?<h4 className="optimization-scene-title" data-search-owner={`scene-title:${scene.id}`}>{highlightText(scene.title_summary.title,deferred)}{scene.title_summary.generation_method==='model_keywords'||scene.title_summary.generation_method==='source_excerpt'?<small className="optimization-insight-method">{t(scene.title_summary.generation_method==='model_keywords'?'optimization.keywordInsight':'optimization.sourceInsight')}</small>:null}</h4>:null}<div className={illustrated?'optimization-scene-columns':'optimization-scene-text'}>{illustrated?<div className="optimization-scene-picture"><Frame jobId={job.id} scene={scene}/></div>:null}<div className="optimization-scene-prose">{owned.length?owned.map(pair):<p className="muted">{t('optimization.noSceneText')}</p>}</div></div></section>
+     return <section key={scene.id} className={`optimization-scene${scene.image?'':' video-text-only'}`} data-scene-id={scene.id}><h3 className="optimization-scene-meta">{scene.image?t('video.scene',{number:numbers.get(scene.id)}):t('video.unillustrated')} <small>{formatTime(scene.start,false)}–{formatTime(scene.end,false)}</small></h3>{scene.title_summary?.title?<h4 className="optimization-scene-title" data-search-owner={`scene-title:${scene.id}`}>{highlightText(scene.title_summary.title,deferred)}{scene.title_summary.generation_method==='model_keywords'||scene.title_summary.generation_method==='source_excerpt'?<small className="optimization-insight-method">{t(scene.title_summary.generation_method==='model_keywords'?'optimization.keywordInsight':'optimization.sourceInsight')}</small>:null}</h4>:null}<div className={illustrated&&scene.image?'optimization-scene-columns':'optimization-scene-text'}>{illustrated&&scene.image?<div className="optimization-scene-picture"><Frame jobId={job.id} scene={scene}/></div>:null}<div className="optimization-scene-prose">{owned.length?owned.map(pair):related!==undefined?<button className="button" onClick={()=>onSeek(related)}>{t('video.relatedText',{time:formatTime(related,false)})}</button>:null}</div></div>{illustrated&&!scene.image?<VideoFramePreview jobId={job.id} time={scene.start}/>:null}</section>
     }):shown.map(pair)}
     {result.scenes.length?(byScene.get('')||[]).map(pair):null}
     {!filtered.length&&!searchEntries.some(entry=>entry.texts.some(text=>deferred.trim()&&text.toLocaleLowerCase().includes(deferred.trim().toLocaleLowerCase())))?<p>{t('asr.results.noMatches')}{filter!=='all'?<button className="button" onClick={()=>setFilter('all')}>{t('optimization.filterAll')}</button>:null}</p>:null}

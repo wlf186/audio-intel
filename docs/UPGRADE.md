@@ -1,5 +1,15 @@
 # 升级指南
 
+## v0.1.47：视频阅读、截图目录与导出体验
+
+从正式版 v0.1.46 升级：**无数据库迁移、历史媒体改写或删除，无需额外升级备份**。SQLite v23、原始转写、视频分段 ID／时间轴、已有优化正文及检查点保持兼容。更早版本须覆盖中间版本要求；从 v0.1.44 或更早版本跨越 v0.1.45，仍需完成该版规定的 SQLite 一致性备份。
+
+画面目录与 Word/PDF 画面标题仅对保留截图编号；缺图正文独立展示，空内容区间不再生成占位和大标题。派生阅读修复格式等价的词语分配，新建表达优化记录来源策略版本，历史任务继续沿用原策略。按需画面预览仅点击后在内存解码，不写预览图片或触发重新检测。手机时间轴默认收起，结果工具区更紧凑；展开和临时预览仅保存在当前页面内存，既有浏览器偏好期限不变。
+
+依赖、模型、精度、推理调用与稳定截图检测阈值不变。按下方维护流程记录配置并停服，重建前端（`corepack pnpm@10.34.5 --dir frontend build`），无需重新安装模型环境；恢复原有 API、ASR/TTS supervisor 与 executor 并核验版本、进程身份、历史任务及优化稿的阅读／导出。Windows 可使用 `service.cmd setup api` 重建 API／前端后恢复服务。详见[视频阅读](VIDEO_TRANSCRIPTION.md#截图目录与独立正文--picture-directory-and-independent-text)及[优化兼容](EXPRESSION_OPTIMIZATION.md#阅读展示与来源策略兼容--reading-and-source-compatibility)。
+
+English: From v0.1.46, no database migration, historical media rewrite/deletion or extra upgrade backup is required. Earlier starting versions must cover intervening requirements, including the v0.1.45 SQLite backup when applicable. Picture directories and document headings number retained picture occurrences only; unillustrated prose stays independent and empty blocks are omitted. New optimizer runs snapshot formatting-aware source assignment while historical drafts/checkpoints keep their saved policy. Click-only frame previews decode into memory without image files or redetection. Rebuild the frontend and refresh all originally running service components through the maintenance procedure. Dependencies, models and inference behavior remain unchanged.
+
 ## v0.1.46：依赖安全维护与独立巡检
 
 从正式版 v0.1.45 升级：**无数据库迁移、历史文件改写或删除，无需额外升级备份**。SQLite v23、历史任务、媒体、声纹、热词和优化检查点保持兼容。更早版本跨越 v0.1.45 时，仍须按下方累计升级说明选择备份范围，不能将本版无迁移理解为所有跨版升级都无需备份。
@@ -644,3 +654,9 @@ SQLite v18 → v19 **包含一次性数据清理**：删除全部旧音频及视
 浏览器长期档位及导出偏好不变。来源明细开关新增为每任务会话偏好，刷新保留、退出登录清理；默认显示差异，尊重已有关闭选择。升级后刷新浏览器。
 
 English: Schema v19 deletes all pre-upgrade optimization drafts and checkpoints once, but preserves original jobs/media and settings. Use a stopped-service SQLite-only backup, rebuild, restore the recorded components and verify final process identities and historical data before cleanup. New drafts publish only after generation and bounded checks finish; previous drafts remain readable during regeneration under unchanged scene boundaries.
+
+## 视频阅读展示更新 / Video reading presentation update
+
+当前 v23 实例升级本次改动无数据库迁移、历史媒体或优化稿批量改写，无需额外升级备份。派生图文阅读修复格式等价的词语分配；旧表达优化任务使用原来源策略及检查点，新任务记录新策略版本。目录仅列实际截图，缺图独立正文不再产生大占位和文档大标题，空内容区间默认不展示。重建前端并按本页维护流程刷新 API、supervisor 和 executor，核对历史阅读／导出。手机时间轴展开和临时帧预览仅保存在当前页面内存；其他浏览器偏好期限不变。
+
+English: No migration or historical media/draft rewrite is required on v23; no additional upgrade backup is needed. Rebuild the frontend and refresh all recorded service components. Verify historical access and exports. New optimization runs snapshot the new source mapping; old runs retain their policy/checkpoints.
