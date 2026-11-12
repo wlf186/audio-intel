@@ -879,7 +879,7 @@
     "serviceNotice": "ⓘ Expression optimization sends transcript text, context and hotwords to this service. Make sure you trust it. Verification uses only built-in sample text.",
     "verifying": "Verifying generation. Initial model loading may take a while; intermittent format errors are retried automatically…",
     "verified": "Model verified. Save and enable when ready.",
-    "contextLength": "Context budget (tokens)",
+    "contextLength": "Total context budget (K tokens)",
     "contextHelp": "Minimum 16384 tokens including input and output. A client budget, not a server window setting. Verify again after editing.",
     "requestedWindow": "Requested window {{value}}K.",
     "window": "Last verified allocation {{actual}} · Native model maximum {{maximum}}K",
@@ -937,6 +937,27 @@
     "filterReview": "Needs review",
     "changeSummary": "{{changed}} edited · {{omitted}} omitted · {{unchanged}} unchanged",
     "oldPolicy": "This candidate uses an older editing policy. Regenerate from Optimization options; the completed draft is retained.",
-    "exportPending": "This draft is incomplete. Export the original, or view the completed draft to export the previous version."
+    "exportPending": "This draft is incomplete. Export the original, or view the completed draft to export the previous version.",
+    "outputLength": "Maximum output per call (K tokens)",
+      "defaultCallLimit": "Maximum LLM calls per optimization",
+      "outputHelp": "1K = 1024 tokens. Context includes input and output. Output capacity limits batch size. Changing the call limit does not require model verification.",
+      "callBudget": "Call budget",
+      "estimating": "Estimating the full workflow and recovery allowance…",
+      "estimateError": "Call estimate unavailable; please retry",
+      "estimateSummary": "Expected {{count}} calls; recommended limit with recovery allowance: {{recommended}}.",
+      "runCallLimit": "Total call limit for this run",
+      "temporaryLimit": "Applies to this run only. System defaults stay unchanged. Resume and summary retries share its remaining allowance.",
+      "lowCallBudget": "Below the recommended limit; repairs or retries may require pausing to add allowance.",
+      "usageDetails": "Call usage details",
+      "usageSummary": "Used {{used}} / {{limit}} calls; {{remaining}} remaining.",
+      "failedCalls": "Includes {{count}} failed or interrupted attempts; remote outcomes after interruption may be unknown.",
+      "usageUnrecorded": "Call usage was not recorded for this historical draft.",
+      "callStages": {
+        "generation": "Prose editing",
+        "review": "Content checks",
+        "group": "Group summaries",
+        "scene": "Scene titles",
+        "seam": "Boundary editing"
+      }
   }
 }

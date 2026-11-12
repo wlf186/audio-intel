@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import json
 import re
 import shutil
@@ -160,15 +161,18 @@ def pause(run_id: str) -> None:
         c.commit()
 
 
-def replay(job_id: str, run_id: str, key: str) -> bool:
+def replay(job_id: str, run_id: str, key: str, max_llm_calls: int | None = None) -> bool:
     with db.connect() as c:
         receipt = c.execute('SELECT run_id FROM optimization_summary_retries WHERE job_id=? AND key_hash=?', (job_id, store.digest(key))).fetchone()
+        override = c.execute('SELECT max_calls FROM optimization_budget_retries WHERE job_id=? AND key_hash=?', (job_id, store.digest(key))).fetchone()
+    if override and override[0] != max_llm_calls:
+        raise HTTPException(409, 'Idempotency key conflict')
     if receipt and receipt[0] != run_id:
         raise HTTPException(409, 'Idempotency key conflict')
     return bool(receipt)
 
 
-def retry(run_id: str, key: str, minimum_free: int) -> bool:
+def retry(run_id: str, key: str, minimum_free: int, *, max_llm_calls: int | None = None) -> bool:
     with db.connect() as c:
         c.execute('BEGIN IMMEDIATE')
         run = c.execute('SELECT * FROM transcript_optimizations WHERE id=?', (run_id,)).fetchone()
@@ -176,6 +180,9 @@ def retry(run_id: str, key: str, minimum_free: int) -> bool:
             raise HTTPException(404, 'Optimization not found')
         receipt = c.execute('SELECT run_id FROM optimization_summary_retries WHERE job_id=? AND key_hash=?', (run['job_id'], store.digest(key))).fetchone()
         if receipt:
+            override = c.execute('SELECT max_calls FROM optimization_budget_retries WHERE job_id=? AND key_hash=?', (run['job_id'], store.digest(key))).fetchone()
+            if override and override[0] != max_llm_calls:
+                raise HTTPException(409, 'Idempotency key conflict')
             if receipt[0] != run_id:
                 raise HTTPException(409, 'Idempotency key conflict')
             return False
@@ -187,7 +194,10 @@ def retry(run_id: str, key: str, minimum_free: int) -> bool:
             raise HTTPException(429, 'Optimization queue full', headers={'Retry-After': '5'})
         if shutil.disk_usage(db.settings.data_dir).free < minimum_free:
             raise HTTPException(429, 'Insufficient disk space', headers={'Retry-After': '30'})
+        from .optimization_budget import raise_limit
+        raise_limit(c, run_id, max_llm_calls)
         c.execute('INSERT INTO optimization_summary_retries VALUES(?,?,?)', (run['job_id'], store.digest(key), run_id))
+        c.execute('INSERT INTO optimization_budget_retries VALUES(?,?,?,?)', (run['job_id'], store.digest(key), run_id, max_llm_calls))
         count = c.execute("UPDATE optimization_summaries SET state='pending',error=NULL WHERE run_id=? AND state IN ('unavailable','pending','running')", (run_id,)).rowcount
         update_counts(c, run_id, 'queued' if count else 'completed')
         c.execute('UPDATE transcript_optimizations SET summary_requested_at=? WHERE id=?', (db.utcnow(), run_id))
@@ -376,13 +386,48 @@ async def process(run_id: str) -> None:
     failures, stop_reason = 0, None
     from . import optimization_summary_policy as policy
     circuit = policy.Circuit()
+    from . import optimization_budget as calls, optimization_batch as batching
+    cached, attempted = {}, set()
     try:
-        for kind, item_id in items:
+        for position, (kind, item_id) in enumerate(items):
             source = units[int(item_id)]['original_text'] if kind == 'group' else '\n'.join(u['original_text'] for u in units if item_id in u.get('scene_ids', []))
             if run['summary_version'] == 2:
+                if run['config'].get('batch_max_items', 1) > 1 and not circuit.reason and (kind, item_id) not in attempted:
+                    candidates = []
+                    for next_kind, next_id in items[position:]:
+                        if next_kind != kind:
+                            break
+                        next_source = units[int(next_id)]['original_text'] if kind == 'group' else '\n'.join(u['original_text'] for u in units if next_id in u.get('scene_ids', []))
+                        if not policy.meaningful(next_source) or not engine.request_fits(run['config'], policy.request(run['config'], next_source, kind)):
+                            break
+                        candidates.append({'id': next_id, 'original_text': next_source})
+                        if len(candidates) == run['config']['batch_max_items']:
+                            break
+                    packets = batching.pack(run['config'], kind, candidates, [])
+                    packet = packets[0] if packets else []
+                    if len(packet) > 1:
+                        started = time.monotonic()
+                        try:
+                            with calls.scope(run_id, kind):
+                                approved = await batching.request(run['config'], kind, packet, [])
+                            circuit.failures = 0
+                        except (engine.InvalidOutput, engine.ContextWindowError, httpx.HTTPError, TimeoutError) as exc:
+                            if isinstance(exc, (httpx.HTTPError, TimeoutError)):
+                                circuit.failed('model connection or timeout failure')
+                            approved = {}
+                        for part in packet:
+                            attempted.add((kind, part['id']))
+                            await record_attempt(run_id, kind, part['id'], 'generate', 'accepted' if part['id'] in approved else 'rejected', None, None, int((time.monotonic()-started)*1000))
+                            if part['id'] in approved:
+                                cached[kind, part['id']] = approved[part['id']]
+                                accepted = approved[part['id']]
+                                checkpoint(run_id, kind, part['id'], accepted.texts, method=accepted.method)
+                if (kind, item_id) in cached:
+                    continue
                 async def record(phase, outcome, candidate, error, elapsed_ms):
                     await record_attempt(run_id, kind, item_id, phase, outcome, candidate, error, elapsed_ms)
-                value = await (policy.generate(run['config'], source, kind, circuit, record) if kind == 'group' else scene_title_v2(run_id, run['config'], source, circuit, record))
+                with calls.scope(run_id, kind):
+                    value = await (policy.generate(run['config'], source, kind, circuit, record, policy.Budget(calls=1) if (kind, item_id) in attempted else None) if kind == 'group' or (kind, item_id) in attempted else scene_title_v2(run_id, run['config'], source, circuit, record))
                 error = 'No bounded source excerpt available' if not value.texts and not value.skip_reason else None
                 checkpoint(run_id, kind, item_id, value.texts, error, method=value.method, quality_notice=value.quality_notice, skip_reason=value.skip_reason)
                 continue
@@ -411,6 +456,9 @@ async def process(run_id: str) -> None:
             failed = c.execute("SELECT 1 FROM optimization_summaries WHERE run_id=? AND state='unavailable'", (run_id,)).fetchone()
             update_counts(c, run_id, 'partial' if failed else 'completed')
             c.commit()
+    except calls.BudgetExhausted:
+        pause(run_id)
+        raise
     except asyncio.CancelledError:
         pause(run_id)
         raise

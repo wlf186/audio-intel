@@ -66,6 +66,10 @@ def request_body(config: dict, payload: dict) -> dict:
     if 'max_completion_tokens' in extra:
         body.pop('max_tokens')
     body.update(extra)
+    if config.get('budget_policy_version') or 'max_output_tokens' in config:
+        field = 'max_completion_tokens' if 'max_completion_tokens' in extra else 'max_tokens'
+        body.pop('max_tokens' if field == 'max_completion_tokens' else 'max_completion_tokens', None)
+        body[field] = min(options.get('num_predict', 4096), config.get('max_output_tokens', 4096))
     if body.get('temperature') is None:
         body.pop('temperature', None)
     schema = payload.get('format')
@@ -75,7 +79,10 @@ def request_body(config: dict, payload: dict) -> dict:
             body['response_format'] = {'type': 'json_schema', 'json_schema': {'name': 'optimization', 'strict': True, 'schema': schema}}
         else:
             # JSON mode alone does not communicate the required fields to the model.
-            body['messages'][0]['content'] += '\nReturn only JSON matching this schema: ' + json.dumps(schema, ensure_ascii=False)
+            if payload.get('response_example'):
+                body['messages'][0]['content'] += '\nReturn actual results in this JSON shape; replace angle-bracket placeholders. Never return a JSON schema: ' + json.dumps(payload['response_example'], ensure_ascii=False)
+            else:
+                body['messages'][0]['content'] += '\nReturn only JSON matching this schema: ' + json.dumps(schema, ensure_ascii=False)
             if mode == 'json_object':
                 body['response_format'] = {'type': 'json_object'}
     return body

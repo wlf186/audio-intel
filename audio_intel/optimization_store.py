@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from . import db
 from .optimization_policy import PROMPT_VERSION, DEFAULT_MODE
 
-SUMMARY = "COALESCE(json_extract(config_json, '$.prompt_version'), 1) AS prompt_version,json_extract(config_json, '$.rewrite_mode') AS rewrite_mode," + 'id,job_id,state,phase,review_failures,reviewed_parts,total_parts,published,model,total_chars,completed_chars,completed_units,total_units,needs_review_units,review_state,reviewed_units,uncertain_units,unavailable_units,basic_cleanup_units,review_error,activity_chars,error,revision,created_at,updated_at,summary_version,summary_state,summary_counts_json,summary_revision'
+SUMMARY = 'calls_limit,calls_used,budget_error,' + "COALESCE(json_extract(config_json, '$.prompt_version'), 1) AS prompt_version,json_extract(config_json, '$.rewrite_mode') AS rewrite_mode," + 'id,job_id,state,phase,review_failures,reviewed_parts,total_parts,published,model,total_chars,completed_chars,completed_units,total_units,needs_review_units,review_state,reviewed_units,uncertain_units,unavailable_units,basic_cleanup_units,review_error,activity_chars,error,revision,created_at,updated_at,summary_version,summary_state,summary_counts_json,summary_revision'
 ACTIVE = ('queued', 'running', 'pausing')
 
 
@@ -94,11 +94,19 @@ def migrate(connection: sqlite3.Connection) -> None:
             connection.execute("UPDATE transcript_optimizations SET summary_state='paused',summary_revision=summary_revision+1 WHERE summary_state IN ('queued','running')")
             connection.execute('UPDATE schema_meta SET version=22')
 
+    from . import optimization_budget
+    with connection:
+        optimization_budget.migrate(connection)
+
 
 def settings() -> dict:
     with db.connect() as connection:
         row = connection.execute('SELECT value_json FROM optimization_settings WHERE singleton=1').fetchone()
-    return json.loads(row[0]) if row else {'base_url': '', 'model': '', 'use_proxy': False, 'enabled': False, 'context_length': 16384, 'protocol': 'openai_chat_completions', 'extra_body': {}}
+    if row:
+        value = json.loads(row[0])
+        advanced = value.get('extra_body', {})
+        return {'max_llm_calls': 300, 'max_output_tokens': advanced.get('max_completion_tokens', advanced.get('max_tokens', 4096)), **value}
+    return {'base_url': '', 'model': '', 'use_proxy': False, 'enabled': False, 'max_llm_calls': 300, 'max_output_tokens': 4096, 'context_length': 16384, 'protocol': 'openai_chat_completions', 'extra_body': {}}
 
 
 def credential(config: dict) -> str:
@@ -139,6 +147,8 @@ def summary(row: Any) -> dict:
     item['summary_status'] = insight_status(item)
     for key in ('summary_version','summary_state','summary_counts_json','summary_revision'):
         item.pop(key, None)
+    if item.get('calls_limit') is None:
+        item['calls_used'] = None
     item['published'] = bool(item['published'])
     version = item.pop('prompt_version')
     item['requires_regeneration'] = not item['published'] and version != PROMPT_VERSION
@@ -203,13 +213,14 @@ def snapshot(run_id: str) -> tuple[dict, list[dict]]:
         return run, _units(connection, run_id)
 
 
-def replay(job_id: str, key: str, regenerate: bool, rewrite_mode: str | None = None) -> bool:
+def replay(job_id: str, key: str, regenerate: bool, rewrite_mode: str | None = None, max_llm_calls: int | None = None) -> bool:
     with db.connect() as connection:
         row = connection.execute('SELECT fingerprint FROM transcript_optimizations WHERE job_id=? AND key_hash=?', (job_id, digest(key))).fetchone()
     if row is None:
         return False
-    fingerprints = [digest({'regenerate': regenerate, 'rewrite_mode': rewrite_mode or DEFAULT_MODE})]
-    if rewrite_mode is None:
+    override = {'max_llm_calls': max_llm_calls} if max_llm_calls is not None else {}
+    fingerprints = [digest({'regenerate': regenerate, 'rewrite_mode': rewrite_mode or DEFAULT_MODE, **override})]
+    if rewrite_mode is None and max_llm_calls is None:
         fingerprints.append(digest({'regenerate': regenerate}))
     if row['fingerprint'] not in fingerprints:
         raise HTTPException(409, 'Idempotency key conflict')
@@ -220,7 +231,7 @@ def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: s
     import shutil
     if '_api_key' in config or 'api_key' in config:
         raise ValueError('Task snapshots cannot contain credentials')
-    fingerprint = digest({'regenerate': regenerate, **({'rewrite_mode': config['rewrite_mode']} if 'rewrite_mode' in config else {})})
+    fingerprint = digest({'regenerate': regenerate, **({'rewrite_mode': config['rewrite_mode']} if 'rewrite_mode' in config else {}), **({'max_llm_calls': config['call_limit_override']} if config.get('call_limit_override') is not None else {})})
     key_hash = digest(key)
     with db.connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
@@ -248,6 +259,8 @@ def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: s
             VALUES(?,?,?,?,'queued',?,?,?,?,?,?,?,?)''',
             (identifier, job_id, key_hash, fingerprint, config['model'], encode(config), encode(hotwords), source_hash,
              sum(len(p['original_text']) for p in paragraphs), len(paragraphs), now, now))
+        if config.get('budget_policy_version'):
+            connection.execute('UPDATE transcript_optimizations SET calls_limit=?,estimate_json=? WHERE id=?', (config['max_llm_calls'], encode(config['call_estimate']), identifier))
         connection.executemany('INSERT INTO optimization_units(run_id,ordinal,source_json) VALUES(?,?,?)', [(identifier, i, encode({k: v for k, v in p.items() if k != '_parts'})) for i, p in enumerate(paragraphs)])
         if config.get('prompt_version', 1) >= 6:
             from .optimization_engine import prepare_parts
@@ -267,9 +280,11 @@ def transition(run_id: str, state: str, allowed: tuple[str, ...], error: str | N
     return cursor.rowcount == 1
 
 
-def resume(run_id: str) -> None:
+def resume(run_id: str, max_llm_calls: int | None = None) -> None:
     with db.connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
+        from .optimization_budget import raise_limit
+        raise_limit(connection, run_id, max_llm_calls)
         row = connection.execute('SELECT state FROM transcript_optimizations WHERE id=?', (run_id,)).fetchone()
         if not row:
             raise HTTPException(404, 'Optimization not found')

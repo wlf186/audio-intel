@@ -170,3 +170,41 @@ English: Configure a Chat Completions base URL, optional model-service API key a
 新建／重新优化使用格式兼容的来源分配策略，并在内部配置快照记录版本；缺少该版本的历史任务沿用原精确匹配策略。来源校验、暂停恢复、阅读、导出及补试小结均使用原快照。已有正文与检查点不自动重写或失效，幂等重放沿用原任务。无数据库迁移。
 
 English: New optimization runs snapshot the formatting-aware source-assignment policy. Historical runs without this marker retain exact matching for source validation, resume, reading, export and summary retries. Display filtering does not invalidate drafts, change scene boundaries or introduce semantic chapters/model requests.
+
+
+## 调用预算与用量 / Call budget and usage
+
+系统状态可配置每次新优化的调用上限，默认300次。一次优化的正文、复核、分组小结、画面标题、接缝与失败尝试共用额度；暂停继续和补试小结沿用余额，重新优化重新计数。连接验证不属于任务调用，预估本身不调用模型。该额度限制请求尝试次数，不代表 tokens 或费用上限。
+
+表达优化对话框先按全文、热词、窗口和输出上限预估正常需求，并增加50%恢复余量（至少5次，再向上取整至10次）。建议值不是完成保证；持续连接故障仍可能消耗额度。预算不足时可直接修改一次性建议值，不改变系统默认值。耗尽会保留检查点并暂停，调高本次总上限后继续，不重跑已保存内容，也不因额度不足跳过检查。
+
+完成后仅在表达优化入口内查看“本次用量详情”，没有自动通知。阶段统计之和为总调用，失败／中断是其中的子集；无法确认远端结果的中断尝试仍计入额度。历史未记录稿显示“未记录”。临时输入不保存到浏览器长期偏好；任务接受后的额度由服务端持久保存。
+
+总上下文与单次最大输出使用 K tokens，1K=1024 tokens，默认16K与4K；API仍使用整数 tokens。总窗口包含输入、输出和安全余量，仅是客户端预算，不证明服务端实际分配。高级参数中的输出值须与显式配置一致。输出达到上限的截断响应不发布为完整正文。
+
+支持带独立ID的小包请求，保留来源及原有分段；逐条检查并保存有效内容，只修复失败条目。合并大小同时受质量验证、总窗口和单次输出限制；请求数减少不等于耗时或费用按比例下降。不通过质量验证的策略保留单条执行。
+
+新增接口（前缀 `/api/v1/jobs/{job_id}/transcript-optimization`）：`POST /estimate`只读预估，`GET /usage?run_id=...`读取用量。创建支持`max_llm_calls`一次性上限及可选`estimate_fingerprint`预估绑定；来源或模型配置变更返回`optimization_estimate_stale`并附最新预估。继续与小结补试支持调高该运行上限。预算不足返回409问题响应，`code=optimization_budget_insufficient`并附`estimate`；队列和磁盘限制仍返回429。SQLite v24为增量数据库迁移，保留历史任务及快照，升级仅需SQLite一致性备份。
+
+```python
+# client is an authenticated httpx.Client; job_id names a completed transcription.
+root = f"/api/v1/jobs/{job_id}/transcript-optimization"
+plan = client.post(root + "/estimate", json={"rewrite_mode": "rewrite"})
+plan.raise_for_status()
+limit = plan.json()["recommended_limit"]  # Let the user edit this value before accepting.
+accepted = client.post(root, json={"rewrite_mode": "rewrite", "max_llm_calls": limit},
+                       headers={"Idempotency-Key": optimization_key})
+accepted.raise_for_status()
+run_id = accepted.json()["candidate"]["id"]
+usage = client.get(root + "/usage", params={"run_id": run_id})
+usage.raise_for_status()
+```
+
+Real-model batch comparisons can be reproduced with `scripts/evaluate_optimization.py --batch-max-items 1|2|4` and the fixed baseline/long corpora. Compare facts and readability independently; JSON validity alone is not a quality gate.
+
+
+### 本次合并策略验收
+
+当前 `qwen3.5:9b` 的2条合并未通过启用门槛，因此默认保持单条，不承诺本次有调用减少或提速。60项固定语料的16K客户端预算对照中，单条复核识别17/20项预置事实变化，2条合并为16/20；合并复核另有4项未返回可接受结果。小结与标题分别有6项和8项需拆回单条恢复；仅合并首轮的小结/标题耗时也高于单条。12组长稿首轮还观察到跨条重复及名称关系误写，不能因输出JSON合法就视作质量合格。该记录不是一般模型准确率或服务性能保证。
+
+预算、预估、用量与继续执行功能不依赖合并启用。批量代码保留用于隔离对照评测；后续只有通过事实保留、可读性、复核能力及实际耗时门槛，才提高默认每包条数。较小包已发现回归后结束本轮启用评估，不把未完成的64K对照或未运行的4条方案记为通过。

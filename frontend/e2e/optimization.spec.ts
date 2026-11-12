@@ -65,6 +65,7 @@ test('optimization create pause resume and delete',async({page})=>{
  const paths:string[]=[]
  await page.route('**/transcript-optimization**',async route=>{
   const request=route.request(),path=new URL(request.url()).pathname
+  if(path.endsWith('/estimate')||path.endsWith('/usage')){await route.fallback();return}
   if(request.method()==='POST'){
    paths.push(path)
    if(path.endsWith('/pause'))candidate={...candidate,state:'paused'}

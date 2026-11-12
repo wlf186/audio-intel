@@ -284,8 +284,17 @@ async def streamed_text(config: dict, payload: dict, activity=None) -> str:
         if budget.remaining <= 0:
             raise InvalidOutput('Model request budget exhausted')
         budget.remaining -= 1
-    async with asyncio.timeout(120), client(config) as connection:
-        return await provider.completion(connection, provider.request_body(config, payload), activity)
+    from . import optimization_budget as calls
+    call_id = calls.reserve()
+    failure = None
+    try:
+        async with asyncio.timeout(120), client(config) as connection:
+            return await provider.completion(connection, provider.request_body(config, payload), activity)
+    except BaseException as exc:
+        failure = exc
+        raise
+    finally:
+        calls.finish(call_id, failure)
 
 
 async def structured(config: dict, payload: dict, activity=None) -> dict:

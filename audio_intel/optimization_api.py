@@ -16,6 +16,7 @@ from fastapi import Depends, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from . import optimization_provider as provider
+from . import optimization_budget as calls, optimization_batch as batching
 from . import db, optimization_engine as engine, optimization_store as store, optimization_summaries as insights
 from .asr_speakers import speaker_update_lock
 from .document_download import reader_lease, deletion_guard
@@ -45,10 +46,12 @@ class ModelConnection(Connection):
     def extra(cls, value):
         return provider.validate_extra(value)
 
+    max_output_tokens: int | None = Field(None, strict=True, ge=1024, description='单次最大输出 tokens，默认4096；与总窗口共同校验 / Per-call output ceiling, default 4096')
     context_length: int | None = Field(None, strict=True, ge=engine.MINIMUM_CONTEXT, description='客户端输入加输出预算（tokens），不设置或证明服务端窗口；默认16K / Client input plus output budget, not a server allocation; default 16K.')
 
 
 class SaveConfiguration(ModelConnection):
+    max_llm_calls: int = Field(300, strict=True, ge=1, le=2147483647, description='每次新优化的调用总上限，包含失败重试 / Per-run call cap including failed attempts')
     enabled: bool = Field(False, description="启用需匹配已验证连接；关闭会暂停未完成优化 / Enabling requires a matching verified connection; disabling pauses unfinished optimization")
     verification_token: str | None = Field(None, description="验证接口返回的凭证，10分钟内有效，API重启失效；未变更的已保存验证配置可省略 / Token from verification, valid for ten minutes and invalidated by API restart; unchanged saved verified profiles may omit it")
 
@@ -62,6 +65,8 @@ class OptimizationModelsResponse(BaseModel):
 
 
 class ConfigurationResponse(BaseModel):
+    max_llm_calls: int = Field(300, description='新建优化默认调用上限，包含失败尝试 / Default per-run call cap, including failed attempts')
+    max_output_tokens: int = Field(4096, description='单次最大输出tokens，受总上下文限制 / Per-call output ceiling in tokens, constrained by total context')
     protocol: Literal['openai_chat_completions'] = Field('openai_chat_completions', description='只读协议标识 / Read-only protocol identifier')
     has_api_key: bool = Field(False, description='仅表示服务端是否已保存密钥，不返回密钥 / Whether a key is stored server-side; never the key itself')
     extra_body: dict[str, Any] = Field(default_factory=dict, description='已生效或本次验证使用的额外请求参数 / Effective or just-verified extra request parameters')
@@ -132,6 +137,9 @@ class OptimizationSummary(BaseModel):
     summary_status: SummaryStatus | None = None
     id: str
     job_id: str
+    calls_limit: int | None = None
+    calls_used: int | None = None
+    budget_error: str | None = None
     state: Literal['queued', 'running', 'pausing', 'paused', 'failed', 'succeeded', 'deleting']
     published: bool
     phase: Literal['generation', 'review', 'summaries', 'complete'] = 'generation'
@@ -167,6 +175,8 @@ class OptimizationStatus(BaseModel):
 
 class CreateRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
+    max_llm_calls: int | None = Field(None, strict=True, ge=1, le=2147483647, description='仅本次生效的总上限 / One-run total cap override')
+    estimate_fingerprint: str | None = Field(None, pattern=r'^[a-f0-9]{64}$', description='预估绑定，来源或模型配置变化时要求刷新 / Optional preflight binding; refresh if source or model configuration changes')
     regenerate: bool = False
     rewrite_mode: Literal['polish', 'rewrite', 'editorial'] = Field('rewrite', description='自然润色 / polish; 流畅重写 / rewrite (default); 深度成稿 / editorial. Saved per run; resume retains it.')
 
@@ -175,6 +185,37 @@ class RunRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     run_id: str = Field(pattern=r'^[a-f0-9]{32}$')
     phase: Literal['workflow', 'generation', 'review'] = Field('workflow', description='控制整个流程；旧值为兼容别名 / Controls the whole workflow; legacy values are aliases')
+
+
+class ResumeRequest(RunRequest):
+    max_llm_calls: int | None = Field(None, strict=True, ge=1, le=2147483647)
+
+
+class EstimateRequest(CreateRequest):
+    run_id: str | None = Field(None, pattern=r'^[a-f0-9]{32}$')
+
+
+class CallEstimate(BaseModel):
+    estimated_calls: int
+    used_calls: int
+    minimum_limit: int
+    recommended_limit: int
+    max_llm_calls: int
+    sufficient: bool
+    can_start: bool
+    breakdown: dict[str, int]
+    fingerprint: str
+
+
+class CallUsage(BaseModel):
+    run_id: str
+    recorded: bool
+    max_llm_calls: int | None
+    calls_used: int | None
+    remaining_calls: int | None
+    estimate: dict[str, Any] | None
+    stages: dict[str, int]
+    failed_or_interrupted: int
 
 
 class SourceSpan(BaseModel):
@@ -318,6 +359,7 @@ class Manager:
                         raise
                     await asyncio.sleep(2 ** attempt)
 
+    @calls.tracked('generation')
     async def execute(self, run_id: str):
         try:
             run = store.get(run_id)
@@ -332,24 +374,35 @@ class Manager:
                 if unit['text'] is not None:
                     continue
                 chunks = store.parts(run_id, unit['ordinal'])
-                for part in chunks:
-                    if part['text'] is not None:
-                        continue
-                    source = part['source']
-                    batch = [{**source, 'ordinal': unit['ordinal']}]
-                    try:
-                        output = await self.retry_io(lambda: engine.generate(profile, batch, hotwords, '', '', lambda count: store.activity(run_id, count)), request_limit=3 if profile.get('request_policy_version') == 2 else None)
-                        text = output[0][1]
-                        method = getattr(output, 'method', 'model')
-                    except (engine.InvalidOutput, engine.ReviewFailed, json.JSONDecodeError):
-                        text, method = engine.basic_cleanup(source['original_text']), 'basic_cleanup'
-                    if not store.checkpoint_part(run_id, unit['ordinal'], part['part_ordinal'], text, method):
-                        raise asyncio.CancelledError()
+                pending = [{**p['source'], 'id': str(p['part_ordinal'])} for p in chunks if p['text'] is None]
+                for packet in batching.pack(profile, 'generation', pending, hotwords):
+                    approved = {}
+                    if len(packet) > 1:
+                        try:
+                            approved = await self.retry_io(lambda: batching.request(profile, 'generation', packet, hotwords), request_limit=1)
+                        except (engine.InvalidOutput, engine.ContextWindowError, httpx.HTTPError, TimeoutError):
+                            pass
+                    # Persist every valid item before repairing any failed item.
+                    for part in packet:
+                        if part['id'] in approved and not store.checkpoint_part(run_id, unit['ordinal'], int(part['id']), approved[part['id']], 'model'):
+                            raise asyncio.CancelledError()
+                    for part in packet:
+                        if part['id'] in approved:
+                            continue
+                        batch = [{**part, 'ordinal': unit['ordinal']}]
+                        try:
+                            output = await self.retry_io(lambda: engine.generate(profile, batch, hotwords, '', '', lambda count: store.activity(run_id, count)), request_limit=(2 if len(packet) > 1 else 3) if profile.get('request_policy_version') == 2 else None)
+                            text, method = output[0][1], getattr(output, 'method', 'model')
+                        except (engine.InvalidOutput, engine.ReviewFailed, json.JSONDecodeError):
+                            text, method = engine.basic_cleanup(part['original_text']), 'basic_cleanup'
+                        if not store.checkpoint_part(run_id, unit['ordinal'], int(part['id']), text, method):
+                            raise asyncio.CancelledError()
                 # Only forced, non-sentence boundaries need a bounded seam pass.
                 chunks = store.parts(run_id, unit['ordinal'])
                 for i in range(len(chunks) - 1):
                     if chunks[i]['source']['forced_after'] and not chunks[i]['seam_done']:
-                        texts = await self.retry_io(lambda: engine.repair_seam(profile, chunks[i], chunks[i + 1], hotwords))
+                        with calls.scope(run_id, 'seam'):
+                            texts = await self.retry_io(lambda: engine.repair_seam(profile, chunks[i], chunks[i + 1], hotwords))
                         if not store.checkpoint_seam(run_id, unit['ordinal'], i, texts):
                             raise asyncio.CancelledError()
                         chunks = store.parts(run_id, unit['ordinal'])
@@ -361,6 +414,8 @@ class Manager:
             await insights.process(run_id)
             if store.publish(run_id):
                 store.clear_export_caches()
+        except calls.BudgetExhausted:
+            calls.pause(run_id)
         except asyncio.CancelledError:
             store.transition(run_id, 'paused', ('running', 'pausing'), '已暂停 / Paused')
             raise
@@ -372,6 +427,7 @@ class Manager:
         except Exception as exc:
             store.transition(run_id, 'failed', ('running',), error_message(exc))
 
+    @calls.tracked('review')
     async def finish_review(self, run_id: str):
         if not store.begin_review(run_id):
             raise asyncio.CancelledError()
@@ -380,28 +436,42 @@ class Manager:
         unavailable = {'outcome': 'unavailable', 'details': {'stage': 'review', 'issues': []}}
         for unit in store.units(run_id):
             chunks = store.parts(run_id, unit['ordinal'])
+            pending = []
             for index, part in enumerate(chunks):
                 if part['review_outcome'] is not None:
                     continue
                 left = index - 1 if index and chunks[index - 1]['source']['forced_after'] else index
                 right = index + 2 if part['source']['forced_after'] else index + 1
                 window = chunks[left:right]
-                original = ''.join(p['source']['original_text'] for p in window)
-                candidate = '\n\n'.join(p['text'] for p in window if p['text'])
-                verdict = unavailable
-                if failures < 3:
+                pending.append({'id': str(index), 'original_text': ''.join(p['source']['original_text'] for p in window),
+                                'candidate': '\n\n'.join(p['text'] for p in window if p['text'])})
+            for packet in batching.pack(run['config'], 'review', pending, run['hotwords']):
+                approved = {}
+                if len(packet) > 1 and failures < 3:
                     try:
-                        if run['config'].get('request_policy_version') == 2:
-                            verdict = await self.retry_io(lambda: engine.review(run['config'], original, candidate, run['hotwords']), request_limit=2)
-                        else:
-                            verdict = await engine.review(run['config'], original, candidate, run['hotwords'])
-                        failures = store.record_review_connection(run_id, False)
-                    except (httpx.HTTPError, TimeoutError):
-                        failures = store.record_review_connection(run_id, True)
-                    except (engine.InvalidOutput, ValueError):
-                        failures = store.record_review_connection(run_id, False)
-                if not store.checkpoint_review(run_id, unit['ordinal'], index, verdict):
-                    raise asyncio.CancelledError()
+                        approved = await self.retry_io(lambda: batching.request(run['config'], 'review', packet, run['hotwords']), request_limit=1)
+                    except (engine.InvalidOutput, engine.ContextWindowError, httpx.HTTPError, TimeoutError):
+                        pass
+                for part in packet:
+                    if part['id'] in approved and not store.checkpoint_review(run_id, unit['ordinal'], int(part['id']), approved[part['id']]):
+                        raise asyncio.CancelledError()
+                for part in packet:
+                    if part['id'] in approved:
+                        continue
+                    verdict = unavailable
+                    if part['id'] not in approved and failures < 3:
+                        try:
+                            if run['config'].get('request_policy_version') == 2:
+                                verdict = await self.retry_io(lambda: engine.review(run['config'], part['original_text'], part['candidate'], run['hotwords']), request_limit=1 if len(packet) > 1 else 2)
+                            else:
+                                verdict = await engine.review(run['config'], part['original_text'], part['candidate'], run['hotwords'])
+                            failures = store.record_review_connection(run_id, False)
+                        except (httpx.HTTPError, TimeoutError):
+                            failures = store.record_review_connection(run_id, True)
+                        except (engine.InvalidOutput, ValueError):
+                            failures = store.record_review_connection(run_id, False)
+                    if not store.checkpoint_review(run_id, unit['ordinal'], int(part['id']), verdict):
+                        raise asyncio.CancelledError()
         if engine.source_hash(parent(run['job_id'])['result'], source_assignment_version=run['config'].get('source_assignment_version', 1)) != run['source_hash']:
             raise ValueError('Source changed; regenerate / 原文已变化，请重新生成')
 
@@ -435,6 +505,7 @@ class Manager:
                 self.current.cancel()
                 await asyncio.gather(self.current, return_exceptions=True)
 
+    @calls.tracked('group')
     async def execute_summaries(self, run_id):
         try:
             run = store.get(run_id)
@@ -445,6 +516,8 @@ class Manager:
         except asyncio.CancelledError:
             insights.pause(run_id)
             raise
+        except calls.BudgetExhausted:
+            calls.pause(run_id)
         except Exception:
             insights.pause(run_id)
 
@@ -474,11 +547,20 @@ def connection_input(body: Connection, current: dict) -> dict:
     if isinstance(body, ModelConnection):
         matching = same and current.get('model') == value['model'] and current.get('use_proxy') == value['use_proxy']
         value.setdefault('context_length', current.get('context_length', engine.DEFAULT_CONTEXT) if matching else engine.DEFAULT_CONTEXT)
+        advanced = value.get('extra_body', {})
+        advanced_output = advanced.get('max_completion_tokens', advanced.get('max_tokens'))
+        explicit = value.get('max_output_tokens')
+        if explicit is not None and advanced_output is not None and explicit != advanced_output:
+            raise HTTPException(422, '输出上限与高级参数冲突 / Output ceiling conflicts with extra parameters')
+        value['max_output_tokens'] = explicit if explicit is not None else advanced_output if advanced_output is not None else current.get('max_output_tokens', 4096) if matching else 4096
+        if value['max_output_tokens'] + 1024 >= value['context_length']:
+            raise HTTPException(422, '总窗口必须为输入和输出保留空间 / Context must leave room for input and output')
     return value
 
 
 def connection_identity(value: dict) -> dict:
-    return {key: value.get(key) for key in ('base_url', 'model', 'use_proxy', 'context_length', 'extra_body', '_api_key')}
+    value = {**value, 'max_output_tokens': value.get('max_output_tokens', value.get('extra_body', {}).get('max_completion_tokens', value.get('extra_body', {}).get('max_tokens', 4096)))}
+    return {key: value.get(key) for key in ('base_url', 'model', 'use_proxy', 'context_length', 'max_output_tokens', 'extra_body', '_api_key')}
 
 
 def register(app, api):
@@ -556,7 +638,7 @@ def register(app, api):
             verified = connection_identity(candidate) == connection_identity(expected) and profile.get('verified_at')
             if body.enabled and not verified:
                 raise HTTPException(409, '请先验证所选模型 / Verify the selected model first')
-            value = {**(profile if verified else candidate), '_api_key': candidate['_api_key'], 'enabled': body.enabled}
+            value = {**(profile if verified else candidate), '_api_key': candidate['_api_key'], 'enabled': body.enabled, 'max_llm_calls': body.max_llm_calls if 'max_llm_calls' in body.model_fields_set else current.get('max_llm_calls', 300), 'max_output_tokens': candidate['max_output_tokens']}
             store.save_settings(value)
             manager.wake.set()
             if not body.enabled:
@@ -575,15 +657,42 @@ def register(app, api):
         response.headers['Cache-Control'] = 'no-store'
         return value
 
+    def remaining_estimate(item, limit=None):
+        units = store.units(item['id'])
+        for unit in units:
+            unit['_parts'] = store.parts(item['id'], unit['ordinal'])
+        with db.connect() as c:
+            pending = {(r[0], r[1]) for r in c.execute("SELECT kind,item_id FROM optimization_summaries WHERE run_id=? AND state IN ('pending','running','unavailable')", (item['id'],))}
+        return calls.estimate(item['config'], units, item['hotwords'], used=item['calls_used'],
+                              limit=limit if limit is not None else item['calls_limit'] or 300, pending_insights=pending)
+
+    @app.post(jobs + '/estimate', response_model=CallEstimate, tags=[TAG], operation_id='estimateOptimizationCalls', responses=errors, description=api.bilingual('本地计算完整流程与恢复余量，不调用模型。', 'Estimate the workflow and recovery allowance locally without model calls.'), summary='预估本次调用预算 / Estimate call budget')
+    def estimate_calls(job_id: str, body: EstimateRequest, _: None = auth):
+        job = parent(job_id)
+        if body.run_id:
+            item = owned(job_id, body.run_id)
+            return remaining_estimate(item, body.max_llm_calls)
+        config = {**store.settings(), 'rewrite_mode': body.rewrite_mode, 'summary_version': insights.VERSION,
+                  'summary_scene_ids': [s['id'] for s in (job['result'].get('video') or {}).get('scenes', [])]}
+        hotwords = list(dict.fromkeys(t for h in job['request'].get('hotword_lists', []) for t in h.get('terms', [])))
+        return calls.estimate(config, engine.prepare_units(job['result']), hotwords, limit=body.max_llm_calls)
+
+    @app.get(jobs + '/usage', response_model=CallUsage, tags=[TAG], operation_id='getOptimizationCallUsage', responses=errors, description=api.bilingual('读取持久调用计数与阶段分布；历史未知为null。', 'Read durable call counts and stage totals; historical unknown usage is null.'), summary='读取本次预算用量 / Read call usage')
+    def usage(job_id: str, run_id: str = Query(..., pattern=r'^[a-f0-9]{32}$'), _: None = auth):
+        owned(job_id, run_id)
+        return calls.usage(run_id)
+
     @app.post(jobs, summary='创建优化任务 / Create optimization', description=api.bilingual('要求 Idempotency-Key；档位默认 rewrite 并保存快照。首次 202、重放 200、冲突 409、队列满 429。', 'Requires Idempotency-Key. rewrite_mode selects polish/rewrite/editorial (default rewrite), saved in the run snapshot and idempotency fingerprint. Returns 202 on creation, 200 on replay, 409 on conflict and 429 at queue capacity.'), operation_id='createTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, status_code=202, responses=errors)
     async def create(job_id: str, body: CreateRequest, response: Response, idempotency_key: str = Header(..., alias='Idempotency-Key'), _: None = auth):
         key = api.validate_idempotency_key(idempotency_key)
         async with manager.gate:
-            if store.replay(job_id, key, body.regenerate, body.rewrite_mode if 'rewrite_mode' in body.model_fields_set else None):
+            if store.replay(job_id, key, body.regenerate, body.rewrite_mode if 'rewrite_mode' in body.model_fields_set else None, body.max_llm_calls):
                 response.status_code = 200
                 return public_status(job_id)
             config = {**store.settings(), 'prompt_version': engine.PROMPT_VERSION, 'rewrite_mode': body.rewrite_mode, 'summary_version': insights.VERSION,
-                      'request_policy_version': 2 if insights.VERSION == 2 else 1, 'source_assignment_version': 2}
+                      'request_policy_version': 2 if insights.VERSION == 2 else 1, 'source_assignment_version': 2, 'budget_policy_version': 1, 'batch_max_items': store.settings().get('batch_max_items', batching.DEFAULT_MAX_ITEMS), 'call_limit_override': body.max_llm_calls}
+            if body.max_llm_calls is not None:
+                config['max_llm_calls'] = body.max_llm_calls
             if not config.get('enabled'):
                 raise HTTPException(409, '请在系统状态启用表达优化 / Enable expression optimization in System')
             candidate = store.status(job_id)['candidate']
@@ -596,6 +705,10 @@ def register(app, api):
                     units = engine.prepare_units(job['result'])
                     hotwords = list(dict.fromkeys(term for item in job['request'].get('hotword_lists', []) for term in item.get('terms', [])))
                     engine.validate_budget(config, units, hotwords)
+                    config['call_estimate'] = calls.estimate(config, units, hotwords)
+                    if body.estimate_fingerprint and body.estimate_fingerprint != config['call_estimate']['fingerprint']:
+                        raise api.ApiProblem(409, 'optimization_estimate_stale', '来源或配置已变化，请刷新预估 / Source or configuration changed; refresh estimate', extras={'estimate': config['call_estimate']})
+                    calls.admit(config['call_estimate'])
                     return store.create(job_id, key, body.regenerate, config, engine.source_hash(job['result']), hotwords, units, api.settings.min_free_disk_bytes)
             try:
                 _, replayed = await asyncio.to_thread(prepare)
@@ -616,7 +729,7 @@ def register(app, api):
             return public_status(job_id)
 
     @app.post(jobs + '/resume', summary='继续优化 / Resume optimization', description=api.bilingual('校验策略、凭据和来源后继续整个流程，复用检查点；已发布稿不能恢复，旧策略候选需要重新生成（409）。', 'Resume the complete optimization workflow after policy, credential and source verification, preserving generation and check progress. Published results cannot be resumed. Obsolete policy candidates require regeneration (409).'), operation_id='resumeTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, responses=errors)
-    async def resume(job_id: str, body: RunRequest, _: None = auth):
+    async def resume(job_id: str, body: ResumeRequest, _: None = auth):
         async with manager.gate:
             if not store.settings().get('enabled'):
                 raise HTTPException(409, '表达优化已关闭 / Optimization is disabled')
@@ -629,7 +742,9 @@ def register(app, api):
                 raise HTTPException(409, 'Source changed; regenerate')
             if item['published']:
                 raise HTTPException(409, 'Completed draft cannot be resumed')
-            store.resume(body.run_id)
+            if item['calls_limit'] is not None:
+                calls.admit(remaining_estimate(item, body.max_llm_calls))
+            store.resume(body.run_id, body.max_llm_calls)
             manager.wake.set()
             return public_status(job_id)
 
@@ -644,11 +759,11 @@ def register(app, api):
         return value
 
     @app.post(jobs + '/summaries/retry', summary='补试未生成小结 / Retry missing summaries', description=api.bilingual('仅补试已发布稿中未生成的小结，保留正文与成功项。要求 Idempotency-Key；首次入队 202、重放或无工作 200、冲突或旧稿 409、队列或磁盘限制 429。使用原模型、来源和窗口快照。', 'Retry missing insights of a published draft, preserving prose and successful items. Requires Idempotency-Key: 202 queued, 200 replay/no work, 409 conflict/legacy, 429 queue/disk limit. Uses original model, source and context snapshots.'), operation_id='retryOptimizationSummaries', tags=[TAG], response_model=OptimizationStatus, status_code=202, responses=errors)
-    async def retry_summaries(job_id: str, body: RunRequest, response: Response, idempotency_key: str = Header(..., alias='Idempotency-Key'), _: None = auth):
+    async def retry_summaries(job_id: str, body: ResumeRequest, response: Response, idempotency_key: str = Header(..., alias='Idempotency-Key'), _: None = auth):
         key = api.validate_idempotency_key(idempotency_key)
         async with manager.gate:
             item = owned(job_id, body.run_id)
-            if insights.replay(job_id, body.run_id, key):
+            if insights.replay(job_id, body.run_id, key, body.max_llm_calls):
                 response.status_code = 200
                 return public_status(job_id)
             if not store.settings().get('enabled'):
@@ -662,7 +777,9 @@ def register(app, api):
             with reader_lease(job_id), speaker_update_lock(job_id):
                 if engine.source_hash(parent(job_id)['result'], source_assignment_version=item['config'].get('source_assignment_version', 1)) != item['source_hash']:
                     raise HTTPException(409, 'Source changed; regenerate')
-                queued = insights.retry(body.run_id, key, api.settings.min_free_disk_bytes)
+                if item['calls_limit'] is not None:
+                    calls.admit(remaining_estimate(item, body.max_llm_calls))
+                queued = insights.retry(body.run_id, key, api.settings.min_free_disk_bytes, max_llm_calls=body.max_llm_calls)
             manager.wake.set()
             if not queued:
                 response.status_code = 200

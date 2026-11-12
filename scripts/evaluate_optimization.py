@@ -91,13 +91,26 @@ def load_corpus(path: Path = CORPUS) -> dict:
 async def generate_prepared(engine, config: dict, group: dict, hotwords: list[str]) -> dict:
     """Use the service's partition/generation/seam/assembly path without its DB."""
     chunks = []
-    for part in engine.prepare_parts(config, group, hotwords):
-        try:
-            output = await engine.generate(config, [{**part, 'ordinal': 0}], hotwords, '', '', None)
-            text, method = output[0][1], getattr(output, 'method', 'unknown')
-        except (engine.InvalidOutput, engine.ReviewFailed, json.JSONDecodeError):
-            text, method = engine.basic_cleanup(part['original_text']), 'basic_cleanup'
-        chunks.append({'source': part, 'text': text, 'generation_method': method})
+    from audio_intel import optimization_batch as batching
+    parts = engine.prepare_parts(config, group, hotwords)
+    items = [{**part, 'id': str(i)} for i, part in enumerate(parts)]
+    for packet in batching.pack(config, 'generation', items, hotwords):
+        approved = {}
+        if len(packet) > 1:
+            try:
+                approved = await batching.request(config, 'generation', packet, hotwords)
+            except (engine.InvalidOutput, engine.ContextWindowError):
+                pass
+        for part in packet:
+            if part['id'] in approved:
+                text, method = approved[part['id']], 'model'
+            else:
+                try:
+                    output = await engine.generate(config, [{**part, 'ordinal': 0}], hotwords, '', '', None)
+                    text, method = output[0][1], getattr(output, 'method', 'unknown')
+                except (engine.InvalidOutput, engine.ReviewFailed, json.JSONDecodeError):
+                    text, method = engine.basic_cleanup(part['original_text']), 'basic_cleanup'
+            chunks.append({'source': part, 'text': text, 'generation_method': method})
     for index in range(len(chunks) - 1):
         if chunks[index]['source']['forced_after']:
             chunks[index]['text'], chunks[index + 1]['text'] = await engine.repair_seam(config, chunks[index], chunks[index + 1], hotwords)
@@ -193,10 +206,11 @@ async def evaluate(arguments) -> None:
                 'context_length': arguments.context, 'split': arguments.split,
                 'operation': arguments.operation, 'repeats': arguments.repeats,
                 'corpus_kind': corpus.get('kind', 'baseline'),
-                'generation_pipeline': 'prepared_parts_forced_seams_assembly_v1',
+                'generation_pipeline': 'prepared_parts_forced_seams_assembly_v1', 'batch_max_items': arguments.batch_max_items,
                 'review_pipeline': 'whole_fixed_source_and_candidate_v1',
-                'policy_sha256': hashlib.sha256((ROOT/'audio_intel/optimization_policy.py').read_bytes() + (ROOT/'audio_intel/optimization_engine.py').read_bytes()).hexdigest()}
+                'policy_sha256': hashlib.sha256((ROOT/'audio_intel/optimization_policy.py').read_bytes() + (ROOT/'audio_intel/optimization_engine.py').read_bytes() + (ROOT/'audio_intel/optimization_batch.py').read_bytes()).hexdigest()}
     config = await engine.verify(config)
+    config['batch_max_items'] = arguments.batch_max_items
     remote = {}
     identity['structured_output_mode'] = config['structured_output_mode']
     identity['extra_body'] = config['extra_body']
@@ -210,6 +224,12 @@ async def evaluate(arguments) -> None:
         report = {'identity': identity, 'service_version': remote.get('version'),
                   'created_at': datetime.now(timezone.utc).isoformat(),
                   'client_platform': platform.platform(), 'results': []}
+    call_count = [0]
+    original_stream = engine.streamed_text
+    async def counted_stream(*args, **kwargs):
+        call_count[0] += 1
+        return await original_stream(*args, **kwargs)
+    engine.streamed_text = counted_stream
     operations = ('generation', 'review') if arguments.operation == 'both' else (arguments.operation,)
     completed = {(row['case_id'], row['repeat'], row['operation']) for row in report['results']}
     for repeat in range(1, arguments.repeats + 1):
@@ -230,6 +250,7 @@ async def evaluate(arguments) -> None:
                        'source_characters': len(source), 'required_facts': case['required_facts'],
                        'requires_rewrite': case['requires_rewrite'],
                        'expected_review': case['expected_review']}
+                before_calls = call_count[0]
                 started = time.monotonic()
                 try:
                     if operation == 'generation':
@@ -239,6 +260,7 @@ async def evaluate(arguments) -> None:
                         row.update(candidate=case['review_candidate'], review_scope='whole_fixture_source_and_candidate', **output)
                 except Exception as exc:
                     row.update(outcome='error', error_type=type(exc).__name__, error=str(exc)[:500])
+                row['model_calls'] = call_count[0] - before_calls
                 row['seconds'] = round(time.monotonic() - started, 3)
                 report['results'].append(row)
                 save_report(arguments.output, report)
@@ -254,6 +276,7 @@ def main() -> None:
     parser.add_argument('--base-url')
     parser.add_argument('--model', choices=('qwen3.5:4b', 'qwen3.5:9b'))
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--batch-max-items', type=int, choices=(1, 2, 4), default=1)
     parser.add_argument('--context', type=int, default=32768)
     parser.add_argument('--rewrite-mode', choices=('polish', 'rewrite', 'editorial'), default='editorial')
     parser.add_argument('--split', choices=('development', 'holdout', 'challenge', 'all'), default='all')

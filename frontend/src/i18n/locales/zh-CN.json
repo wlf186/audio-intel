@@ -869,7 +869,7 @@
     "serviceNotice": "ⓘ 进行表达优化时，转写正文、上下文和热词将发送到此服务，请确认服务可信。验证仅使用内置示例文本。",
     "verifying": "正在验证生成能力，首次加载模型可能较慢；偶发格式问题会自动重试…",
     "verified": "模型验证通过，可以保存并启用。",
-    "contextLength": "上下文预算（tokens）",
+    "contextLength": "总上下文预算（K tokens）",
     "contextHelp": "最低 16384 tokens，包含输入与输出；仅为客户端预算，不设置服务端窗口。修改后须重新验证。",
     "requestedWindow": "请求窗口 {{value}}K。",
     "window": "最近验证实际窗口 {{actual}} · 模型原生上限 {{maximum}}K",
@@ -927,6 +927,27 @@
     "filterReview": "待核对",
     "changeSummary": "调整 {{changed}} 段 · 省略 {{omitted}} 段 · 未改动 {{unchanged}} 段",
     "oldPolicy": "此候选使用旧版整理规则，请在优化选项中重新优化。已完成稿会保留。",
-    "exportPending": "当前稿尚未完成，可先导出原文；查看已完成稿后可导出上一版。"
+    "exportPending": "当前稿尚未完成，可先导出原文；查看已完成稿后可导出上一版。",
+    "outputLength": "单次最大输出（K tokens）",
+      "defaultCallLimit": "每次优化最多调用 LLM 次数",
+      "outputHelp": "1K = 1024 tokens。总窗口包含输入和输出；单次输出上限会影响合并条数。调用次数预算修改后保存即可，无需重新验证。",
+      "callBudget": "调用预算",
+      "estimating": "正在评估全文和恢复余量…",
+      "estimateError": "预算预估暂不可用，请重试",
+      "estimateSummary": "正常执行预计 {{count}} 次，含恢复余量建议 {{recommended}} 次。",
+      "runCallLimit": "本次总调用上限",
+      "temporaryLimit": "只对本次优化生效；不会修改系统默认值。暂停继续和补试小结沿用本次余额。",
+      "lowCallBudget": "低于建议预算；异常修复或重试可能需要暂停加额。",
+      "usageDetails": "本次用量详情",
+      "usageSummary": "已使用 {{used}}／{{limit}} 次，剩余 {{remaining}} 次。",
+      "failedCalls": "其中失败或中断 {{count}} 次（已包含在总用量内；中断后的远端结果可能无法确认）。",
+      "usageUnrecorded": "历史稿未记录调用用量。",
+      "callStages": {
+        "generation": "整理正文",
+        "review": "检查内容",
+        "group": "分组小结",
+        "scene": "画面标题",
+        "seam": "分批接缝整理"
+      }
   }
 }

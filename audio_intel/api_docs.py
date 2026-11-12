@@ -1356,7 +1356,7 @@ def _capabilities_example() -> dict[str, Any]:
         "deployment": {"profile": "full", "default_compute_device": "gpu", "gpu_runtime_installed": True},
         "asr": {
             "transcript_optimization": {
-                "supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096,
+                "supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096, "batching": {"supported": True, "enabled": False, "max_items": 1, "reason": "quality_gate"}, "call_budget": {"supported": True, "default_limit": 300, "counts_failed_attempts": True, "temporary_override": True},
                 "text_versions": ["original", "optimized", "comparison"],
                 "rewrite_modes": ["polish", "rewrite", "editorial"], "default_rewrite_mode": "rewrite",
                 "summaries": {"version": 2, "automatic_fallback": True, "max_model_calls_per_node": 3,
@@ -1849,4 +1849,18 @@ with httpx.Client(base_url=base_url, headers=headers, timeout=120) as client:
 段落 ID 必须替换为任务中同一说话人且未入库的原始段落 ID；增强音缺失 404，不自动回退，重复来源 409，非法音轨 422。省略 audio_track 使用原音。此同步入库接口不要求 Idempotency-Key。
 
 Use actual original segment IDs belonging to one speaker. Missing enhanced audio returns 404 without fallback, duplicates 409, and invalid tracks 422. Omitting audio_track selects original. This synchronous enrollment endpoint does not require an Idempotency-Key.
+"""
+
+API_DESCRIPTION += """
+
+## 调用预算 / LLM call budget
+
+系统默认每次优化最多300次调用，所有阶段及失败尝试共用，暂停继续和补试小结不重置。
+`POST /api/v1/jobs/{job_id}/transcript-optimization/estimate` 不调用模型，返回正常预估、最小及建议总上限。
+创建支持 `max_llm_calls` 一次性覆盖；继续与小结补试允许调高当前总上限，额度耗尽保留检查点并暂停。
+`GET .../usage?run_id=...` 返回实际尝试次数及阶段分布，历史未记录用量为null。
+预算不足返回409：`code=optimization_budget_insufficient`，附 `estimate`。队列／磁盘不足仍为429。
+配置 `max_output_tokens` 控制单次最大输出，默认4096；`context_length` 是输入加输出的客户端总预算。
+UI用K tokens（1K=1024），API用整数tokens；高级输出参数不得与显式上限冲突。
+表达优化入口提供用量详情，不自动弹窗。完整可执行预算示例见仓库 docs/EXPRESSION_OPTIMIZATION.md。
 """
