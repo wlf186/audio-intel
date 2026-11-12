@@ -104,6 +104,65 @@ PLANNED_EXAMPLE = [EXAMPLE[0], {'role': 'assistant', 'content': json.dumps({
           'text': json.loads(EXAMPLE[1]['content'])['b']},
 }, ensure_ascii=False)}]
 
+ENGLISH_EXAMPLE = [
+    {'role': 'user', 'content': '[{"id":"a","source":"Um, the budget was three thousand, no, four thousand, but it has not been approved. Can you check tomorrow?"},{"id":"b","source":"I think it may not be ready. We should only try it for two days. Who will give the demo? Can the host hear me?"}]'},
+    {'role': 'assistant', 'content': '{"a":"The budget is four thousand, but it has not been approved. Can you check tomorrow?","b":"I think it may not be ready. We should only try it for two days. Who will give the demo? Can the host hear me?"}'},
+]
+ENGLISH_PLANNED_EXAMPLE = [ENGLISH_EXAMPLE[0], {'role': 'assistant', 'content': json.dumps({
+    'a': {'facts': [{'quote': 'four thousand, but it has not been approved.'},
+                    {'quote': 'Can you check tomorrow?'}],
+          'text': json.loads(ENGLISH_EXAMPLE[1]['content'])['a']},
+    'b': {'facts': [{'quote': 'I think it may not be ready.'},
+                    {'quote': 'We should only try it for two days.'},
+                    {'quote': 'Who will give the demo?'},
+                    {'quote': 'Can the host hear me?'}],
+          'text': json.loads(ENGLISH_EXAMPLE[1]['content'])['b']},
+})}]
+ENGLISH_WORDS = re.compile(r"[A-Za-z]+(?:['-][A-Za-z]+)*")
+ENGLISH_COMMON = set(('a an the and or but so if then than that this these those '
+    'it its is are was were be been being i me my we us our you your he him his she her '
+    'they them their to of in on at for from by with as into out up down over under '
+    'not no do does did can could will would should may might have has had just '
+    'really very more most much some any all each every other one two three four '
+    'five six seven eight nine ten first second third next here there right now '
+    'about what which who when where why how like also only still want going '
+    'thing things something anything everything please look see know say said').split())
+
+
+def english_source(text: str) -> bool:
+    return bool(ENGLISH_WORDS.search(text) and not re.search('[\u3400-\u9fff]', text))
+
+
+def english_body_error(source: str, draft: str) -> str | None:
+    """Reject an obvious language switch or foreign item's body, without I/O.
+
+    This is a deliberately limited lexical check, not a semantic fact review.
+    Proper names inside sentences and distinctive technical spellings remain
+    source anchors; ordinary wording can still be reorganized or paraphrased.
+    """
+    if not english_source(source):
+        return None
+    if re.search('[\u3400-\u9fff]', draft):
+        return 'Keep this English source in English; do not translate it into Chinese'
+    compact = re.sub(r'\s+', '', draft).casefold()
+    names = set()
+    for match in ENGLISH_WORDS.finditer(source):
+        word = match[0].split("'")[0]
+        distinctive = (len(word) > 1 and word.isupper()
+                       or any(char.isupper() for char in word[1:]))
+        inside_sentence = not re.search(r'(?:^|[.!?\n:]|,\s*["\u201c])\s*["\u201c(]*$', source[:match.start()])
+        if (distinctive or word[0].isupper() and inside_sentence) and word.casefold() not in ENGLISH_COMMON:
+            names.add(word)
+    missing = sorted(word for word in names if word.casefold() not in compact)
+    if missing:
+        return 'Keep this item\'s source names and technical terms: ' + ', '.join(missing[:20])
+    source_words = {w.casefold() for w in ENGLISH_WORDS.findall(source)
+                    if len(w) >= 4 and w.casefold() not in ENGLISH_COMMON}
+    draft_words = {w.casefold() for w in ENGLISH_WORDS.findall(draft)}
+    if len(source_words) >= 2 and not source_words.intersection(draft_words):
+        return 'Return this item\'s own content; the draft has no substantive source-word overlap'
+    return None
+
 def pack(items: list[dict], maxitems: int=8, maxchars: int=1400, cfg: dict | None=None, stage: str | None=None) -> list[list[dict]]:
     packets = []
     pending = []
@@ -141,6 +200,14 @@ def payload(cfg: dict, items: list[dict], stage: str) -> dict:
             system = '先为每条列出需保留的全部独立信息和问题，facts中的quote逐字引用本条source。随后在text中写完整成稿；facts不能替代text的内容。每个问题仍保留为问题。facts只是编辑前信息清单，不是审查或摘要。不要把原文含糊词解释成系统显示、地点或具体经历。\n' + system
             schema = {i: {'type': 'object', 'properties': {'facts': {'type': 'array', 'items': {'type': 'object', 'properties': {'quote': {'type': 'string', 'maxLength': 200}}, 'required': ['quote'], 'additionalProperties': False}, 'maxItems': 18}, 'text': {'type': 'string'}}, 'required': ['facts', 'text'], 'additionalProperties': False} for i in ids}
             examples = PLANNED_EXAMPLE
+        if all(english_source(item['original_text']) for item in items):
+            system = ('Edit each independent English source into English prose. '
+                      'Do not translate any part into Chinese. Each id owns only its source: '
+                      'never copy another id\'s content or complete a fragment from another item. '
+                      'Retain source names, technical terms, every independent point, question '
+                      'and qualification. A faithful fragment may remain a fragment. '
+                      'Return the requested JSON only.\n' + system)
+            examples = ENGLISH_PLANNED_EXAMPLE if planned else ENGLISH_EXAMPLE
         messages = [{'role': 'system', 'content': system}, *examples, {'role': 'user', 'content': json.dumps(data, ensure_ascii=False)}]
     elif stage in ('review', 'finalization'):
         system = p.REVIEW_SYSTEM + '\n逐条核查，每个id只核查自身source与candidate，不评价其他条目。检查全部数字、主客体、未完成、否定、条件和疑问；不接受由谁来做被写成某人负责。只返回JSON，每个id为键，其值是核查对象。pass时三个说明字段为空字符串。'
@@ -181,6 +248,9 @@ def checked(original: str, text: str | dict) -> str:
     if isinstance(text, dict):
         text = text['text']
     text = restore_plus(original, literal_cleanup(e.clean_output(text, original)))
+    language_error = english_body_error(original, text)
+    if language_error:
+        raise ValueError(language_error)
     if META_OUTPUT.fullmatch(' '.join(text.strip(' \t\n。.!！').split())):
         if re.sub(r'[\W_]+', '', text).casefold() != re.sub(r'[\W_]+', '', original).casefold():
             raise ValueError('Return this source item in full; a cross-item shortcut is not edited prose')

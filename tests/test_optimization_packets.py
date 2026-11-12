@@ -386,6 +386,51 @@ def test_cross_item_shortcut_is_not_a_completed_body():
     assert policy.checked('同上。', '同上。') == '同上。'
 
 
+@pytest.mark.parametrize(('source', 'draft', 'message'), [
+    ('The next topic is how we build small applications.',
+     'Lighting and realistic movement make the game fun.', 'source-word overlap'),
+    ('We use Blender to render a short product video.',
+     'Lighting and realistic movement make the game fun.', 'source names'),
+    ('The project manager checks the work at each desk.',
+     'We can render a video and play the game.', 'source-word overlap'),
+    ('We can create shapes on this board and edit them.',
+     'They feel realistic and are fun to play.', 'source-word overlap'),
+    ('The API is not ready yet.', 'API 尚未就绪。', 'English source in English'),
+    ('Please ask Mira whether the Atlas build is ready.',
+     'Please ask Nora whether the Cedar build is ready.', 'source names'),
+])
+def test_english_body_rejects_translation_foreign_content_and_changed_names(source, draft, message):
+    with pytest.raises(ValueError, match=message):
+        policy.checked(source, draft)
+
+
+@pytest.mark.parametrize(('source', 'draft'), [
+    ('I have used the API, but it is not ready yet.',
+     'The API is not ready yet, although I have used it.'),
+    ("I've asked Mira to check the Atlas build.",
+     'I have asked Mira to review the Atlas build.'),
+    ('Do the rollout steps still need review?',
+     'Are the deployment steps still awaiting review?'),
+    ('a short fragment about the board,', 'a short fragment about the board,'),
+    ('这是 API 的英文示例。', '这是 API 的英文示例。'),
+])
+def test_english_body_keeps_paraphrasing_fragments_and_mixed_language(source, draft):
+    assert policy.english_body_error(source, draft) is None
+    assert policy.checked(source, draft) == draft
+
+
+def test_english_generation_examples_preserve_language_without_changing_cjk_requests():
+    config = {**PROFILE, 'rewrite_mode': 'rewrite'}
+    english = policy.payload(config, [{'id': '0', 'original_text': 'We should review the build.'}], 'generation')
+    assert 'English prose' in english['messages'][0]['content']
+    assert english['messages'][1:3] == policy.ENGLISH_EXAMPLE
+    planned = policy.payload(config, [{'id': '0', 'original_text': 'Who will review it? Is it ready?'}], 'generation')
+    assert planned['messages'][1:3] == policy.ENGLISH_PLANNED_EXAMPLE
+    chinese = policy.payload(config, [{'id': '0', 'original_text': '请检查这份报告。'}], 'generation')
+    assert 'English prose' not in chinese['messages'][0]['content']
+    assert chinese['messages'][1:3] == policy.EXAMPLE
+
+
 def test_insights_keep_explicit_restarts_without_promoting_the_retracted_value():
     assert policy.insight_error('预算三千，不，是四千，尚未审批。', '预算四千，尚未审批。', 'group') is None
     assert policy.insight_error('预算三千，不，是四千，尚未审批。', '预算三千已审批。', 'group')
