@@ -710,3 +710,18 @@ def test_resume_after_co_review_only_repairs_pending_insight(packet_model, monke
         assert calls.usage(run)['calls_used'] == used + 1
         assert len(requests[before:]) == 1
         assert all('candidate' not in item for item in requests[-1])
+
+
+@pytest.mark.parametrize('stage', ['group', 'scene'])
+def test_english_insights_use_language_specific_instructions(stage):
+    item = {'id': '0', 'original_text': 'The Atlas report needs more review before approval.'}
+    config = {**PROFILE, 'rewrite_mode': 'rewrite', 'english_source': True}
+    request = policy.payload(config, [item], stage)
+    system = request['messages'][0]['content']
+    assert 'English' in system and 'cut-off fragment' in system
+    assert 'refusal' in system and 'attribution' in system
+    assert not re.search('[\u3400-\u9fff]', system)
+    assert json.loads(request['messages'][-1]['content']) == [{'id': '0', 'source': item['original_text']}]
+    assert request['format']['properties']['0'] == {'type': 'string'}
+    config.pop('english_source')
+    assert policy.payload(config, [item], stage)['messages'][0]['content'] != system
