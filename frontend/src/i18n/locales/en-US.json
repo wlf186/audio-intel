@@ -761,6 +761,8 @@
     }
   },
   "optimization": {
+    "viewOmittedSources": "View omitted source text",
+
     "budgetNotice": "Verification checks synthetic text and JSON generation, not the allocated context. Configure the actual Ollama context on its server.",
 
     "apiKey": "Model service API key",

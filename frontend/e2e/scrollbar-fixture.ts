@@ -5,6 +5,9 @@ export async function openTimeline(page:Page){
  const fixture=await uxFixture(page)
  await page.goto('/#asr')
  await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+ const toggle=page.locator('.timeline-toggle')
+ await expect(toggle).toBeVisible()
+ if(await toggle.getAttribute('aria-expanded')==='false')await toggle.click()
  await expect(page.locator('.timeline-waveform')).toHaveAttribute('data-window-end','120')
  return fixture
 }

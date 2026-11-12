@@ -160,7 +160,7 @@ for(const width of [1440,390])test(`current pictures auto-load and persist expor
  await modal.getByRole('button',{name:'导出时隐藏',exact:true}).click()
  await expect(modal.locator('.scene-hidden-badge')).toHaveCount(2)
  expect(state.job.result!.video!.export_hidden_scene_ids).toEqual(state.job.result!.video!.scenes.slice(0,2).map(scene=>scene.id))
- await expect(modal.getByRole('status')).toContainText('已保存')
+ await expect(modal.locator('.scene-detection-footer').getByRole('status')).toContainText('已保存')
  await page.keyboard.press('Escape')
  await expect(page.locator('.video-section .video-frame img').first()).toBeVisible()
  await expect(page.locator('.video-section .scene-hidden-badge')).toHaveCount(2)

@@ -49,7 +49,7 @@ for(const width of [1440,390])test(`visibility save waits for refreshed scenes b
  const held=Promise.withResolvers<void>();f.state.sceneDelay=held.promise
  try{
   await page.getByRole('dialog').getByRole('button',{name:'导出时隐藏',exact:true}).click()
-  await expect(page.getByRole('dialog').getByRole('status')).toContainText('已保存');await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog').locator('.scene-detection-footer').getByRole('status')).toContainText('已保存');await page.keyboard.press('Escape')
   await expect.poll(()=>f.state.sceneReads).toBeGreaterThanOrEqual(2)
   const restore=page.getByRole('button',{name:'画面检测',exact:true})
   await expect(restore).toBeDisabled()

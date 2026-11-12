@@ -751,6 +751,8 @@
     }
   },
   "optimization": {
+    "viewOmittedSources": "查看省略内容的原文",
+
     "budgetNotice": "验证仅确认合成文本与 JSON 生成可用，不证明服务端实际窗口。Ollama 实际窗口请在服务端设置。",
 
     "apiKey": "模型服务 API Key",

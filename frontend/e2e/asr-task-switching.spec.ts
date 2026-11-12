@@ -38,6 +38,8 @@ for(const width of [1440,390])test(`cached ASR task switching removes previous m
    await expect(page.locator('.video-timeline')).toHaveCount(1)
    await expect(page.locator('.timeline-scenes')).toHaveCount(1)
    await expect(page.locator('.timeline-waveform')).toHaveCount(1)
+   const expand=page.getByRole('button',{name:'展开时间轴',exact:true})
+   if(await expand.isVisible())await expand.click()
    await expect(page.locator('.timeline-waveform')).toHaveAttribute('data-window-end','120')
    await expect(page.locator('.wave-area')).toHaveCount(0)
    const frames=page.locator('.timeline-tiles img')

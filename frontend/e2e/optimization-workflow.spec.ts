@@ -16,6 +16,7 @@ for(const width of [1366,1440,1920,390])test(`scene-scoped unified reading ${wid
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  const detection=page.getByRole('button',{name:'画面检测',exact:true})
  await expect(detection).toBeEnabled()
+ if(width===390)await page.getByRole('button',{name:'展开时间轴',exact:true}).click()
  await expect(page.locator('.timeline-load-state')).toHaveCount(0)
  const initial=await detection.boundingBox()
  const enhancement=page.locator('.enhancement-summary')

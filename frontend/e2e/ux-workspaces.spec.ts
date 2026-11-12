@@ -33,7 +33,7 @@ for(const width of [1440,390]){
   const gate=responseGate();state.sceneHold=gate.hold
   try{
    await page.getByRole('dialog').getByRole('button',{name:'导出时隐藏',exact:true}).click();await gate.arrived
-   await expect(page.getByRole('dialog').getByRole('status')).toContainText('已保存');await page.keyboard.press('Escape')
+   await expect(page.getByRole('dialog').locator('.scene-detection-footer').getByRole('status')).toContainText('已保存');await page.keyboard.press('Escape')
    await expect(root.getByRole('status')).toContainText('正在读取图文分段');await expect(page.locator('.video-section')).toHaveCount(40)
    gate.release();await expect(root).toHaveAttribute('aria-busy','false')
    await expect.poll(async()=>Math.abs((await target.boundingBox())!.y-before!.y)).toBeLessThanOrEqual(2)

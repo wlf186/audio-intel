@@ -284,3 +284,17 @@ def test_current_transcription_documentation_matches_public_entrypoints():
     assert '25 GiB' in guide and '4 GiB' in guide
     assert 'job_id' in guide and 'Retry-After' in guide
     assert 'transcription-ci-lessons' in (ROOT / 'docs/TROUBLESHOOTING.md').read_text(encoding='utf-8')
+
+
+def test_locale_objects_have_unique_keys() -> None:
+    import json
+
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            assert key not in value, f"Duplicate translation key: {key}"
+            value[key] = item
+        return value
+
+    for path in (ROOT / 'frontend/src/i18n/locales').glob('*.json'):
+        json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=unique_object)
