@@ -257,12 +257,30 @@ def format_paragraphs(text: str) -> str:
         chunks.append(text[start:].strip())
     return '\n\n'.join(chunks)
 
+def reading_ceiling(text: str, ceiling: int) -> int:
+    """Keep dense questions/disfluencies in the original fine editing units.
+
+    Transport packets still combine these independent units. A larger prose
+    obligation offers little call saving when fine insights remain mandatory.
+    """
+    hesitations = len(re.findall(r'那个|然后|嗯|呃|\b(?:uh|um)\b', text, re.I))
+    questions = len(re.findall(r'[？?]', text))
+    dense = any(count >= 4 and count * 100 >= len(text)
+                for count in (hesitations, questions))
+    return min(400, ceiling) if dense else ceiling
+
+
 def semantic_units(result: dict, *, ceiling: int = 2400, **kwargs: object) -> list[dict]:
     from .transcript import join_text
     original = e.prepare_units(result, **kwargs)
     output = []
     for u in original:
-        if output and output[-1]['speaker'] == u['speaker'] and (output[-1]['scene_ids'] == u['scene_ids']) and (u['start'] - output[-1]['end'] <= 15) and (len(output[-1]['original_text']) + len(u['original_text']) <= ceiling):
+        previous = output[-1] if output else None
+        combined = previous['original_text'] + u['original_text'] if previous else ''
+        if (previous and previous['speaker'] == u['speaker']
+                and previous['scene_ids'] == u['scene_ids']
+                and u['start'] - previous['end'] <= 15
+                and len(combined) <= reading_ceiling(combined, ceiling)):
             target = output[-1]
             target['_detail_sources'].append(u)
             for span in u['sources']:

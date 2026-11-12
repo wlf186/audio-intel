@@ -204,6 +204,23 @@ def test_planned_editing_example_has_grounded_quotes_and_complete_edited_text():
         assert result['text'] == json.loads(policy.EXAMPLE[1]['content'])[item['id']]
 
 
+def test_dense_dialogue_keeps_fine_editing_boundaries_and_fluent_prose_can_merge():
+    def transcript(text):
+        return {'segments': [{'id': 's1', 'start': 0, 'end': 180,
+                              'speaker': 'a', 'text': text}]}
+    noisy = transcript(('嗯，那个预算还没批准。然后是谁去问？是不是只能先试？' * 30))
+    original = engine.prepare_units(noisy, source_assignment_version=2)
+    units = policy.semantic_units(noisy, source_assignment_version=2)
+    assert len(units) > 1
+    assert all(len(unit['original_text']) <= 400 for unit in units)
+    fine = [source for unit in units for source in unit.get('_detail_sources', [unit])]
+    assert [source['sources'] for source in fine] == [source['sources'] for source in original]
+    assert sum(unit['original_text'].count('？') for unit in units) == noisy['segments'][0]['text'].count('？')
+    fluent = transcript('预算尚未批准，负责人将在会议后继续核实。' * 35)
+    assert any(len(unit['original_text']) > 400
+               for unit in policy.semantic_units(fluent, source_assignment_version=2))
+
+
 def test_summary_cannot_be_replaced_with_an_editing_review_or_dismissal():
     source = '小林来了吗？明天的产品交流和演示是谁去？主持人能听到吗？'
     assert policy.insight_error(source, '原文为不确定询问，候选改为肯定陈述。', 'group')
@@ -408,6 +425,7 @@ def test_every_fine_insight_is_delivered_and_exported_with_redaction(packet_mode
     data = transcript(5, length=6)
     for item in data['segments']:
         item['speaker'] = 'same'
+        item['text'] = '预算四千元，但是还没批准。请明天向负责人核实。' * 6
     old = engine.prepare_units(data)
     identifier = job(data)
     with TestClient(api.create_app()) as client:
@@ -508,6 +526,7 @@ def test_auxiliary_retry_preserves_body_reviews_and_every_successful_fine_item(p
     data = transcript(5, length=6)
     for item in data['segments']:
         item['speaker'] = 'same'
+        item['text'] = '预算四千元，但是还没批准。请明天向负责人核实。' * 6
     identifier = job(data)
     with TestClient(api.create_app()) as client:
         assert start(client, identifier).status_code == 202
