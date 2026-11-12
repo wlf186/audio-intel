@@ -86,7 +86,7 @@ def test_keeper_has_no_transaction_and_connections_remain_independent(local):
     with db.connect() as connection:
         names = {row[1] for row in connection.execute('PRAGMA index_list(workers)')}
         assert 'idx_workers_latest' in names
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 24
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 25
 
 
 def test_writer_interrupt_is_scoped_to_database(local):

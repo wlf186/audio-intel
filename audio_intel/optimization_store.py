@@ -8,7 +8,7 @@ import uuid
 from typing import Any
 
 from fastapi import HTTPException
-from . import db
+from . import db, transcript_docx, transcript_pdf
 from .optimization_policy import PROMPT_VERSION, DEFAULT_MODE
 
 SUMMARY = 'calls_limit,calls_used,budget_error,' + "COALESCE(json_extract(config_json, '$.prompt_version'), 1) AS prompt_version,json_extract(config_json, '$.rewrite_mode') AS rewrite_mode," + 'id,job_id,state,phase,review_failures,reviewed_parts,total_parts,published,model,total_chars,completed_chars,completed_units,total_units,needs_review_units,review_state,reviewed_units,uncertain_units,unavailable_units,basic_cleanup_units,review_error,activity_chars,error,revision,created_at,updated_at,summary_version,summary_state,summary_counts_json,summary_revision'
@@ -97,6 +97,8 @@ def migrate(connection: sqlite3.Connection) -> None:
     from . import optimization_budget
     with connection:
         optimization_budget.migrate(connection)
+        from . import optimization_packet_store
+        optimization_packet_store.migrate(connection)
 
 
 def settings() -> dict:
@@ -270,6 +272,9 @@ def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: s
                     [(identifier, ordinal, i, encode(part)) for i, part in enumerate(parts)])
         from .optimization_summaries import initialize
         initialize(connection, identifier, config, paragraphs)
+        if config.get('packet_version') == 1:
+            from . import optimization_packet_store
+            optimization_packet_store.initialize(connection, identifier, config, paragraphs, hotwords)
         connection.commit()
     return identifier, False
 
@@ -348,7 +353,6 @@ def delete(job_id: str) -> None:
 
 
 def clear_export_caches() -> None:
-    from . import transcript_docx, transcript_pdf
     for module in (transcript_docx, transcript_pdf):
         with module._lock:
             module._cache_generation += 1

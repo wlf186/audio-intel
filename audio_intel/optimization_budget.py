@@ -13,7 +13,7 @@ from . import db
 
 DEFAULT_LIMIT = 300
 DEFAULT_OUTPUT = 4096
-_scope: ContextVar[tuple[str, str] | None] = ContextVar('optimization_call_scope', default=None)
+_scope: ContextVar[tuple[str, str, str | None] | None] = ContextVar('optimization_call_scope', default=None)
 
 
 class BudgetExhausted(Exception):
@@ -38,8 +38,8 @@ def migrate(c):
 
 
 @contextmanager
-def scope(run_id: str, stage: str):
-    token = _scope.set((run_id, stage))
+def scope(run_id: str, stage: str, node_key: str | None = None):
+    token = _scope.set((run_id, stage, node_key))
     try:
         yield
     finally:
@@ -60,7 +60,7 @@ def reserve() -> int | None:
     value = _scope.get()
     if value is None:
         return None
-    run_id, stage = value
+    run_id, stage, node_key = value
     with db.connect() as c:
         c.execute('BEGIN IMMEDIATE')
         row = c.execute('SELECT calls_limit,calls_used,state,summary_state FROM transcript_optimizations WHERE id=?', (run_id,)).fetchone()
@@ -73,7 +73,10 @@ def reserve() -> int | None:
         if row['calls_used'] >= row['calls_limit']:
             raise BudgetExhausted('本次调用预算已用完，请调高本次总预算后继续 / Call budget exhausted; raise this run limit and resume')
         c.execute('UPDATE transcript_optimizations SET calls_used=calls_used+1,revision=revision+1,updated_at=? WHERE id=?', (db.utcnow(), run_id))
-        call_id = c.execute("INSERT INTO optimization_calls(run_id,stage,state,created_at) VALUES(?,?,'started',?)", (run_id, stage, db.utcnow())).lastrowid
+        if node_key is None:
+            call_id = c.execute("INSERT INTO optimization_calls(run_id,stage,state,created_at) VALUES(?,?,'started',?)", (run_id, stage, db.utcnow())).lastrowid
+        else:
+            call_id = c.execute("INSERT INTO optimization_calls(run_id,stage,node_key,state,created_at) VALUES(?,?,?,'started',?)", (run_id, stage, node_key, db.utcnow())).lastrowid
         c.commit()
     return call_id
 
@@ -104,10 +107,8 @@ def usage(run_id: str) -> dict:
             'stages': stages, 'failed_or_interrupted': failures}
 
 
-def estimate(config: dict, units: list[dict], hotwords: list[str], *, used: int = 0, limit: int | None = None, pending_insights: set[tuple[str, str]] | None = None) -> dict:
-    from . import optimization_engine as engine, optimization_store as store
-    from . import optimization_batch as batching, optimization_summary_policy as policy
-    limit = limit if limit is not None else config.get('max_llm_calls', DEFAULT_LIMIT)
+def _legacy_breakdown(config: dict, units: list[dict], hotwords: list[str], pending_insights) -> dict:
+    from . import optimization_engine as engine, optimization_batch as batching, optimization_summary_policy as policy
     generation = review = seams = 0
     for unit in units:
         try:
@@ -141,12 +142,57 @@ def estimate(config: dict, units: list[dict], hotwords: list[str], *, used: int 
             source = reduced
         scene_calls += 1
     breakdown = {'generation': generation, 'review': review, 'seam': seams, 'group': group_calls, 'scene': scene_calls}
+    return breakdown
+
+
+def estimate(config: dict, units: list[dict], hotwords: list[str], *, used: int = 0, limit: int | None = None, pending_insights: set[tuple[str, str]] | None = None) -> dict:
+    from . import optimization_engine as engine, optimization_store as store
+    from . import optimization_batch as batching, optimization_summary_policy as policy
+    limit = limit if limit is not None else config.get('max_llm_calls', DEFAULT_LIMIT)
+    breakdown = {}
+    if config.get('packet_version') == 1:
+        from . import optimization_packet_policy as packets, optimization_packet_store as packet_store
+        breakdown = {key: 0 for key in ('generation', 'finalization', 'joint', 'group', 'scene')}
+        body = {str(i): unit for i, unit in enumerate(units)}
+        for stage, identifiers in packet_store.compile_plan(config, units, hotwords):
+            if stage == 'generation':
+                needed = any(body[key].get('text') is None for key in identifiers)
+            elif stage in ('finalization', 'joint'):
+                needed = any(body[key].get('review_outcome') in (None, 'pending') for key in identifiers)
+                if pending_insights is None:
+                    needed = True
+                elif stage == 'joint':
+                    needed |= bool(pending_insights)
+                else:
+                    needed |= any(('group', key) in pending_insights for key in identifiers)
+            else:
+                kind = 'scene' if stage == 'scene_reduction' else stage
+                needed = pending_insights is None or any((kind, key) in pending_insights for key in identifiers)
+            if not needed:
+                continue
+            if stage == 'scene_reduction':
+                source = packets.scene_sources(units, identifiers)[0]['original_text']
+                count = 1
+                for _ in range(8):
+                    if engine.request_fits(config, policy.request(config, source, 'scene')):
+                        break
+                    fragments = math.ceil(len(source) / 800)
+                    count += fragments
+                    reduced = '文' * (fragments * 102)
+                    if len(reduced) >= len(source):
+                        break
+                    source = reduced
+                breakdown['scene'] += count
+            else:
+                breakdown[stage] += 1
+    else:
+        breakdown = _legacy_breakdown(config, units, hotwords, pending_insights)
     expected = sum(breakdown.values())
     recommended = math.ceil((used + expected + max(5, math.ceil(expected * .5))) / 10) * 10
     return {'estimated_calls': expected, 'used_calls': used, 'minimum_limit': used + expected,
             'recommended_limit': recommended, 'max_llm_calls': limit, 'sufficient': limit >= recommended,
             'can_start': limit >= used + expected, 'breakdown': breakdown,
-            'fingerprint': store.digest({'configuration': {k: config.get(k) for k in ('base_url', 'model', 'use_proxy', 'context_length', 'max_output_tokens', 'extra_body', 'structured_output_mode', 'rewrite_mode', 'summary_version')}, 'batch_max_items': config.get('batch_max_items', 1), 'hotwords': hotwords, 'sources': [{k: u.get(k) for k in ('original_text', 'speaker', 'sources', 'scene_ids')} for u in units]})}
+            'fingerprint': store.digest({'configuration': {k: config.get(k) for k in ('base_url', 'model', 'use_proxy', 'context_length', 'max_output_tokens', 'extra_body', 'structured_output_mode', 'rewrite_mode', 'summary_version', 'packet_version', 'packet_joint', 'packet_presence_penalty')}, 'batch_max_items': config.get('batch_max_items', 1), 'hotwords': hotwords, 'sources': [{k: u.get(k) for k in ('original_text', 'speaker', 'sources', 'scene_ids', '_detail_sources')} for u in units]})}
 
 
 def admit(value: dict):

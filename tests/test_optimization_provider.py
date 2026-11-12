@@ -53,16 +53,22 @@ def test_incomplete_streams_are_rejected(body,error):
     with pytest.raises(error):asyncio.run(run())
 
 
-def test_verify_negotiates_only_explicit_format_failures(monkeypatch):
+@pytest.mark.parametrize('model', ['test', 'qwen3.5:4b', 'qwen3.5:9b'])
+def test_verify_negotiates_only_explicit_format_failures(monkeypatch, model):
     calls=[]
     def handle(request):
         calls.append(request.url.path)
         body=json.loads(request.content)
+        if model == 'qwen3.5:9b':
+            assert body['presence_penalty'] == 0
+        else:
+            assert 'presence_penalty' not in body
         if body.get('response_format',{}).get('type')=='json_schema':
             return httpx.Response(400,json={'error':'unsupported response_format json_schema'})
         return httpx.Response(200,text=stream('{"ok":true}' if body.get('response_format') else '预算15万元，不是50万元。这个暂时还没有确认。'))
     monkeypatch.setattr(engine,'client',lambda c:httpx.AsyncClient(base_url=CONFIG['base_url']+'/',transport=httpx.MockTransport(handle)))
-    value=asyncio.run(engine.verify(CONFIG))
+    # Switching away from an eligible model must also discard its internal marker.
+    value=asyncio.run(engine.verify({**CONFIG, 'model': model, 'packet_presence_penalty': 0}))
     assert value['structured_output_mode']=='json_object'
     assert value['observed_context_length'] is None and value['model_digest'] is None
     assert calls==['/gateway/v1/chat/completions']*3
@@ -120,7 +126,7 @@ def test_v21_upgrade_retains_historical_snapshots(local):
     assert db.get_job(job['id'])['state']=='succeeded'
     assert store.get(run)['config'] == snapshot and store.parts(run, 0) == before
     assert store.get(run)['state'] == 'paused'
-    with db.connect() as c:assert c.execute('SELECT version FROM schema_meta').fetchone()[0]==24
+    with db.connect() as c:assert c.execute('SELECT version FROM schema_meta').fetchone()[0]== 25
 
 
 def test_stream_cancellation_closes_response():

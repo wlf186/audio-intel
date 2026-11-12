@@ -779,6 +779,8 @@
     "sourceInsight": "Source excerpt",
     "summaryFallbackCount": "Keywords {{keywords}} · Source excerpts {{source}}",
     "groupSummary": "Group summary",
+    "detailSummaries": "Segment summaries ({{count}})",
+    "noSubstantiveInsight": "No substantive content; insight skipped",
     "summaryMissing": "Summary unavailable; retry missing summaries above",
     "summarizing": "Creating summaries",
     "summaryProgress": "Insights {{done}} / {{total}} · Unavailable {{failed}}",
@@ -953,6 +955,8 @@
       "failedCalls": "Includes {{count}} failed or interrupted attempts; remote outcomes after interruption may be unknown.",
       "usageUnrecorded": "Call usage was not recorded for this historical draft.",
       "callStages": {
+        "finalization": "Checks and prose summaries",
+        "joint": "Checks, summaries and scene titles",
         "generation": "Prose editing",
         "review": "Content checks",
         "group": "Group summaries",

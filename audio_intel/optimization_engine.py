@@ -16,6 +16,7 @@ import httpx
 
 from . import optimization_store as store
 from .transcript import paragraphs, scene_transcripts
+from .optimization_sources import scene_reading_groups, scene_index, matching_scenes
 
 from .optimization_policy import PROMPT_VERSION, SYSTEM, SCHEMA, REVIEW_SYSTEM, REVIEW_SCHEMA, REVIEW_EXAMPLES, DEFAULT_MODE, MODE_INSTRUCTIONS, omission_candidate, remaining_repetition
 
@@ -98,9 +99,14 @@ async def discover(config: dict) -> dict:
 
 
 async def verify(config: dict) -> dict:
+    from .optimization_packet_policy import ELIGIBLE_MODELS
+
     await ensure_context(config)
     profile = {**config, 'protocol': provider.PROTOCOL, 'prompt_version': PROMPT_VERSION,
                'model_context_length': None, 'observed_context_length': None, 'model_digest': None}
+    profile.pop('packet_presence_penalty', None)
+    if config['model'] in ELIGIBLE_MODELS:
+        profile['packet_presence_penalty'] = 0
     sample = [{'id': 'p1', 'ordinal': 0, 'speaker': 'speaker1', 'original_text': '那个那个预算是15万元，不是50万元。这个暂时还没有确认。'}]
     for attempt in range(3):
         try:
@@ -129,7 +135,6 @@ async def verify(config: dict) -> dict:
 
 def source_hash(result: dict, *, source_assignment_version: int = 2) -> str:
     # Text ownership changes invalidate prose; display names and pictures do not.
-    from .optimization_sources import scene_reading_groups
     groups = scene_reading_groups(result, source_assignment_version=source_assignment_version)
     video = result.get('video') or {}
     return store.digest({
@@ -140,7 +145,6 @@ def source_hash(result: dict, *, source_assignment_version: int = 2) -> str:
 
 
 def prepare_units(result: dict, *, source_assignment_version: int = 2) -> list[dict]:
-    from .optimization_sources import scene_reading_groups
     units = scene_reading_groups(result, source_assignment_version=source_assignment_version)
     if not units:
         raise ValueError('任务没有可优化的文字 / No transcript text to optimize')
@@ -514,7 +518,6 @@ def reading_result(result: dict, run_id: str, *, complete: bool = False) -> dict
     for scene in scenes:
         scene['paragraphs'] = []
         scene['title_summary'] = insights['scenes'].get(scene['id'])
-    from .optimization_sources import scene_index, matching_scenes
     indexed_scenes = scene_index(scenes)
     scene_positions = {scene['id']: i for i, scene in enumerate(scenes)}
     values = []
@@ -526,6 +529,12 @@ def reading_result(result: dict, run_id: str, *, complete: bool = False) -> dict
                  'speaker_label': first.get('speaker_label', unit.get('speaker_label')),
                  'merged_source_count': len(set(unit['segment_ids'])), 'scene_ids': related}
         value['group_summary'] = insights['groups'].get(str(unit['ordinal']))
+        if unit.get('_detail_sources') and value['group_summary']:
+            value['group_summary'] = {**value['group_summary'], 'subgroups': [
+                {**insights['groups']['d:' + detail['id']], 'id': 'd:' + detail['id'],
+                 'start': detail['start'], 'end': detail['end']}
+                for detail in unit['_detail_sources']]}
+        value.pop('_detail_sources', None)
         values.append(value)
         if scenes:
             if run['config'].get('prompt_version', 1) >= 6:

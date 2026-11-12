@@ -17,10 +17,17 @@ import './optimization.css'
 function changedText(parts:TextChange[],side:'original'|'edited',query:string){
  return parts.map((part,index)=>part.changed?side==='original'?<del key={index}>{highlightText(part.text,query)}</del>:<ins key={index}>{highlightText(part.text,query)}</ins>:<span key={index}>{highlightText(part.text,query)}</span>)
 }
+function insightTexts(paragraph:OptimizationParagraph){
+ return [paragraph.group_summary,...paragraph.group_summary?.subgroups||[]].flatMap(summary=>summary?.state==='ready'?summary.sentences:[])
+}
 const Pair=memo(function Pair({paragraph,compare,showChanges,showSources,query,onSeek,onCompare}:{paragraph:OptimizationParagraph;compare:boolean;showChanges:boolean;showSources:boolean;query:string;onSeek:(time:number)=>void;onCompare:()=>void}){
  const {t}=useTranslation()
  const [detailed,setDetailed]=useState(false)
  const [selectedSource,setSelectedSource]=useState<number>()
+ const [expandedInsights,setExpandedInsights]=useState(false)
+ const details=paragraph.group_summary?.subgroups||[]
+ const insightMatch=Boolean(query.trim()&&details.some(detail=>detail.state==='ready'&&detail.sentences.some(text=>text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))))
+ const showInsights=expandedInsights||insightMatch
  const diff=useMemo(()=>compare&&showChanges&&paragraph.text!==null?transcriptDiff(paragraph.original_text,paragraph.text):null,[compare,showChanges,paragraph.original_text,paragraph.text])
  const wholeRewrite=Boolean(diff&&(diff.edited.reduce((n,p)=>n+(p.changed?p.text.length:0),0)>Math.max(1,paragraph.text?.length||0)*.6||diff.original.reduce((n,p)=>n+(p.changed?p.text.length:0),0)>Math.max(1,paragraph.original_text.length)*.6))
  const showDiff=diff&&(!wholeRewrite||detailed)&&!query.trim()
@@ -31,6 +38,13 @@ const Pair=memo(function Pair({paragraph,compare,showChanges,showSources,query,o
   {compare?<div className="optimization-pair-columns"><div><small>{t('optimization.original')}</small><p>{showDiff?changedText(diff!.original,'original',query):highlightText(paragraph.original_text,query)}</p></div><div><small>{t('optimization.draft')}</small><p>{paragraph.omitted?t('optimization.omitted'):showDiff?changedText(diff!.edited,'edited',query):highlightText(paragraph.text||'',query)}</p></div></div>:<><p>{highlightText(paragraph.text||'',query)}</p><button className="button optimization-compare-paragraph" onClick={event=>{event.currentTarget.closest('article')?.scrollIntoView({block:'start'});checkpointWorkspace();onCompare()}}>{t('optimization.compareParagraph')}</button></>}
   {paragraph.group_summary?.state==='ready'?<aside className="optimization-group-summary" aria-label={t('optimization.groupSummary')}><small>{t('optimization.groupSummary')}{paragraph.group_summary.generation_method==='model_keywords'||paragraph.group_summary.generation_method==='source_excerpt'?` · ${t(paragraph.group_summary.generation_method==='model_keywords'?'optimization.keywordInsight':'optimization.sourceInsight')}`:''}</small><div>{paragraph.group_summary.sentences.map((text,index)=><p key={index}>{highlightText(text,query)}</p>)}</div></aside>:paragraph.group_summary?.state==='unavailable'?<p className="optimization-summary-missing">{t('optimization.summaryMissing')}</p>:null}
   {showSources?<div className="optimization-sources" aria-label={t('optimization.sourceDetails')}>{paragraph.sources?.map(source=><div className="optimization-source" key={`${source.segment_id}:${source.start_offset}`} data-source-id={source.segment_id} data-source-time={source.start}><button className="optimization-time" onClick={()=>{setSelectedSource(source.segment_id);onSeek(source.start)}} aria-label={t('optimization.listenSource',{time:formatTime(source.start,false)})}>{formatTime(source.start,false)}</button><p>{source.text}</p></div>)}</div>:null}
+  {details.length?<section className="optimization-fine-insights">
+   <button className="button" aria-expanded={showInsights} aria-controls={'insights-'+paragraph.id} onClick={()=>setExpandedInsights(value=>!value)}>{t('optimization.detailSummaries',{count:details.length})}</button>
+   {showInsights?<div id={'insights-'+paragraph.id}>{details.map(detail=><div className="optimization-fine-insight" key={detail.id}>
+    <button className="optimization-time" onClick={()=>onSeek(detail.start)}>{formatTime(detail.start,false)}–{formatTime(detail.end,false)}</button>
+    <div>{detail.state==='ready'?<>{detail.sentences.map((text,index)=><p key={index}>{highlightText(text,query)}</p>)}{detail.quality_notice?<small>{t(detail.quality_notice==='keywords'?'optimization.keywordInsight':'optimization.sourceInsight')}</small>:null}</>:<p>{t(detail.state==='not_applicable'?'optimization.noSubstantiveInsight':detail.state==='unavailable'?'optimization.summaryMissing':'optimization.loading')}</p>}</div>
+   </div>)}</div>:null}
+  </section>:null}
   {hasReview?<details className="optimization-review-details"><summary>{t('optimization.checkDetails')}</summary><p>{paragraph.review_outcome==='fact'?paragraph.review_details?.issues?.map(issue=>issue.reason).join('；')||t('optimization.factConcern'):t(paragraph.review_outcome==='uncertain'?'optimization.uncertainReviewHelp':'optimization.unavailableReviewHelp')}</p></details>:null}
  </article>
 })
@@ -52,7 +66,7 @@ export function OptimizationReader({job,controller,query,speaker,onSeek,onModeCh
  const filtered=useMemo(()=>result?.paragraphs.filter(p=>{
   if((!compare&&p.omitted)||(speaker!=='all'&&p.speaker!==speaker)||(compare&&filter!=='all'&&!(filter==='review'?p.review_outcome==='fact':p.text!==null&&p.text!==p.original_text)))return false
   const needle=deferred.trim().toLocaleLowerCase()
-  return !needle||[...(compare?[p.original_text,p.text||'']:[p.text||'']),...(p.group_summary?.state==='ready'?p.group_summary.sentences:[]),sceneTitles.get(p.scene_ids?.[0]||'')||''].some(text=>text.toLocaleLowerCase().includes(needle))
+  return !needle||[...(compare?[p.original_text,p.text||'']:[p.text||'']),...insightTexts(p),sceneTitles.get(p.scene_ids?.[0]||'')||''].some(text=>text.toLocaleLowerCase().includes(needle))
  })||[],[result,speaker,deferred,compare,filter,sceneTitles])
  const filteredByScene=useMemo(()=>{
   const map=new Map<string,OptimizationParagraph[]>()
@@ -60,7 +74,7 @@ export function OptimizationReader({job,controller,query,speaker,onSeek,onModeCh
   return map
  },[filtered])
  const searchEntries=useMemo(()=>{
-  const entry=(p:OptimizationParagraph)=>({id:p.id,texts:[...(compare?[p.original_text,p.text||'']:[p.text||'']),...(p.group_summary?.state==='ready'?p.group_summary.sentences:[])]})
+  const entry=(p:OptimizationParagraph)=>({id:p.id,texts:[...(compare?[p.original_text,p.text||'']:[p.text||'']),...insightTexts(p)]})
   if(!result?.scenes.length)return filtered.map(entry)
   return result.scenes.flatMap(scene=>[
    ...((speaker==='all'&&filter==='all'||filteredByScene.has(scene.id))?[{id:`scene-title:${scene.id}`,texts:[sceneTitles.get(scene.id)||'']}]:[]),

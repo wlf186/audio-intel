@@ -103,7 +103,10 @@ export function useOptimization(jobId:string|undefined,active:boolean,sourceVers
  const readingResult=useMemo(()=>{
   if(!result||result.run_id!==runId)return undefined
   if(!currentInsights)return result
-  const paragraph=(p:OptimizationResult['paragraphs'][number])=>({...p,group_summary:currentInsights.groups[String(p.ordinal)]})
+  const paragraph=(p:OptimizationResult['paragraphs'][number])=>{
+   const summary=currentInsights.groups[String(p.ordinal)]||p.group_summary
+   return {...p,group_summary:summary?{...summary,subgroups:p.group_summary?.subgroups?.map(detail=>({...detail,...currentInsights.groups[detail.id]}))}:summary}
+  }
   return {...result,summary_status:currentInsights.summary_status,paragraphs:result.paragraphs.map(paragraph),scenes:result.scenes.map(scene=>({...scene,title_summary:currentInsights.scenes[scene.id],paragraphs:scene.paragraphs.map(paragraph)}))}
  },[result,runId,currentInsights])
  return{jobId,insights:currentInsights,insightsError,invalidate,paragraphFilter,setParagraphFilter,status,error,busy,mode,setMode,view,setOptimized,compare,setCompare,action,selected,result:readingResult,resultError,retry:()=>{setReload(n=>n+1);setResultReload(n=>n+1)}}

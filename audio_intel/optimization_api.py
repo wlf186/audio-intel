@@ -17,7 +17,9 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from . import optimization_provider as provider
 from . import optimization_budget as calls, optimization_batch as batching
+from . import optimization_packet_policy as packet_policy
 from . import db, optimization_engine as engine, optimization_store as store, optimization_summaries as insights
+from .optimization_packets import Processor as PacketProcessor
 from .asr_speakers import speaker_update_lock
 from .document_download import reader_lease, deletion_guard
 
@@ -114,10 +116,20 @@ class InsightMetadata(BaseModel):
     skip_reason: Literal['no_substantive_content'] | None = Field(None, description='仅无实质内容时为 no_substantive_content；其余为 null / no_substantive_content only for genuinely empty/non-substantive input; otherwise null')
 
 
-class GroupSummary(InsightMetadata):
+class GroupInsight(InsightMetadata):
     state: Literal['pending', 'running', 'ready', 'not_applicable', 'unavailable'] = Field(description='ready 包含有用的关键词／原文要点；not_applicable 无实质内容；unavailable 未交付 / ready includes usable keywords/excerpts; not_applicable means no substantive content; unavailable means no delivery')
     sentences: list[str] = Field(default_factory=list, description='最多两句小结，每句中文50字或英文30词；关键词或原文要点也在此返回，混合语种按比例预算 / At most two summary sentences, each within 50 Chinese characters or 30 words; also carries keywords/excerpts, with proportional mixed-script budgets')
     error: str | None = None
+
+
+class GroupDetail(GroupInsight):
+    id: str = Field(description='不可变细分来源 ID，以 d: 为前缀 / Immutable fine-source ID prefixed with d:')
+    start: float = Field(description='细分来源起点秒数 / Fine source start in seconds')
+    end: float = Field(description='细分来源终点秒数 / Fine source end in seconds')
+
+
+class GroupSummary(GroupInsight):
+    subgroups: list[GroupDetail] = Field(default_factory=list, description='合并正文保留的全部原细分小结，按来源顺序；旧稿为空 / All original fine insights retained by merged prose, in source order; empty for legacy drafts')
 
 
 class SceneSummary(InsightMetadata):
@@ -129,7 +141,7 @@ class SceneSummary(InsightMetadata):
 class SummariesResponse(BaseModel):
     run_id: str
     summary_status: SummaryStatus
-    groups: dict[str, GroupSummary] = Field(description='以分组 ordinal 的十进制字符串为键 / Indexed by the decimal string of each group ordinal')
+    groups: dict[str, GroupSummary] = Field(description='正文小结键为 ordinal 十进制字符串；细分来源键为 d: 加来源 ID / Decimal body ordinals and d: prefixed fine-source IDs')
     scenes: dict[str, SceneSummary] = Field(description='以不可变来源快照的画面 ID 为键 / Indexed by scene IDs from the immutable source snapshot')
 
 
@@ -369,6 +381,14 @@ class Manager:
             if engine.source_hash(job['result'], source_assignment_version=run['config'].get('source_assignment_version', 1)) != run['source_hash']:
                 raise ValueError('原文已变化，请重新生成 / Source changed; regenerate')
             await engine.ensure_context(profile, load=True)
+            if profile.get('packet_version') == 1:
+                await PacketProcessor(self, run_id).execute()
+                if engine.source_hash(parent(run['job_id'])['result'], source_assignment_version=profile.get('source_assignment_version', 1)) != run['source_hash']:
+                    raise ValueError('Source changed; regenerate / 原文已变化，请重新生成')
+                if not store.publish(run_id):
+                    raise ValueError('Optimization publication checks incomplete')
+                store.clear_export_caches()
+                return
             units = store.units(run_id)
             for index, unit in enumerate(units):
                 if unit['text'] is not None:
@@ -512,7 +532,10 @@ class Manager:
             await self.check_model(run['config'])
             if engine.source_hash(parent(run['job_id'])['result'], source_assignment_version=run['config'].get('source_assignment_version', 1)) != run['source_hash']:
                 raise ValueError('Source changed; regenerate')
-            await insights.process(run_id)
+            if run['config'].get('packet_version') == 1:
+                await PacketProcessor(self, run_id, auxiliary=True).execute()
+            else:
+                await insights.process(run_id)
         except asyncio.CancelledError:
             insights.pause(run_id)
             raise
@@ -673,9 +696,13 @@ def register(app, api):
             item = owned(job_id, body.run_id)
             return remaining_estimate(item, body.max_llm_calls)
         config = {**store.settings(), 'rewrite_mode': body.rewrite_mode, 'summary_version': insights.VERSION,
+                  'packet_version': packet_policy.VERSION, 'source_assignment_version': 2,
                   'summary_scene_ids': [s['id'] for s in (job['result'].get('video') or {}).get('scenes', [])]}
+        packet_policy.configure(config)
         hotwords = list(dict.fromkeys(t for h in job['request'].get('hotword_lists', []) for t in h.get('terms', [])))
-        return calls.estimate(config, engine.prepare_units(job['result']), hotwords, limit=body.max_llm_calls)
+        units = (packet_policy.prepare(config, job['result'], hotwords) if config.get('packet_version')
+                 else engine.prepare_units(job['result']))
+        return calls.estimate(config, units, hotwords, limit=body.max_llm_calls)
 
     @app.get(jobs + '/usage', response_model=CallUsage, tags=[TAG], operation_id='getOptimizationCallUsage', responses=errors, description=api.bilingual('读取持久调用计数与阶段分布；历史未知为null。', 'Read durable call counts and stage totals; historical unknown usage is null.'), summary='读取本次预算用量 / Read call usage')
     def usage(job_id: str, run_id: str = Query(..., pattern=r'^[a-f0-9]{32}$'), _: None = auth):
@@ -690,7 +717,8 @@ def register(app, api):
                 response.status_code = 200
                 return public_status(job_id)
             config = {**store.settings(), 'prompt_version': engine.PROMPT_VERSION, 'rewrite_mode': body.rewrite_mode, 'summary_version': insights.VERSION,
-                      'request_policy_version': 2 if insights.VERSION == 2 else 1, 'source_assignment_version': 2, 'budget_policy_version': 1, 'batch_max_items': store.settings().get('batch_max_items', batching.DEFAULT_MAX_ITEMS), 'call_limit_override': body.max_llm_calls}
+                      'request_policy_version': 2 if insights.VERSION == 2 else 1, 'source_assignment_version': 2, 'budget_policy_version': 1, 'packet_version': packet_policy.VERSION, 'batch_max_items': store.settings().get('batch_max_items', batching.DEFAULT_MAX_ITEMS), 'call_limit_override': body.max_llm_calls}
+            packet_policy.configure(config)
             if body.max_llm_calls is not None:
                 config['max_llm_calls'] = body.max_llm_calls
             if not config.get('enabled'):
@@ -702,9 +730,12 @@ def register(app, api):
                 with reader_lease(job_id), speaker_update_lock(job_id):
                     job = parent(job_id)
                     config['summary_scene_ids'] = [s['id'] for s in (job['result'].get('video') or {}).get('scenes', [])]
-                    units = engine.prepare_units(job['result'])
                     hotwords = list(dict.fromkeys(term for item in job['request'].get('hotword_lists', []) for term in item.get('terms', [])))
-                    engine.validate_budget(config, units, hotwords)
+                    if config.get('packet_version'):
+                        units = packet_policy.prepare(config, job['result'], hotwords)
+                    else:
+                        units = engine.prepare_units(job['result'])
+                        engine.validate_budget(config, units, hotwords)
                     config['call_estimate'] = calls.estimate(config, units, hotwords)
                     if body.estimate_fingerprint and body.estimate_fingerprint != config['call_estimate']['fingerprint']:
                         raise api.ApiProblem(409, 'optimization_estimate_stale', '来源或配置已变化，请刷新预估 / Source or configuration changed; refresh estimate', extras={'estimate': config['call_estimate']})

@@ -10,7 +10,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from .transcript import comparison_source_text, reading_sections, insight_label, presentation_sections
+from .transcript import comparison_source_text, reading_sections, insight_label, presentation_sections, group_insight_lines
 from .transcript_diff import text_changes
 from .utils import timecode
 
@@ -133,10 +133,8 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                 document.add_paragraph().paragraph_format.space_after = Pt(4)
             else:
                 document.add_paragraph(paragraph['text'])
-            summary = paragraph.get('group_summary') or {}
-            if summary.get('state') == 'ready':
-                method = insight_label(summary)
-                content = document.add_paragraph('小结 / Summary' + (f' · {method}' if method else '') + '：' + ' '.join(summary.get('sentences', [])))
+            for text in group_insight_lines(paragraph.get('group_summary') or {}):
+                content = document.add_paragraph(text)
                 content.paragraph_format.left_indent = Mm(3)
                 for run in content.runs:
                     run.font.size = Pt(10)

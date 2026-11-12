@@ -17,6 +17,10 @@ class ContextWindowError(Exception):
     """Capacity failures bypass prose and auxiliary-review fallbacks."""
 
 
+class OutputLimitError(ContextWindowError):
+    """The packet can be retried at a smaller size without changing the cap."""
+
+
 class InvalidOutput(ValueError):
     pass
 
@@ -62,6 +66,8 @@ def request_body(config: dict, payload: dict) -> dict:
     options = payload.get('options', {})
     body = {'model': config['model'], 'messages': deepcopy(payload['messages']), 'stream': True,
             'temperature': options.get('temperature', 0), 'max_tokens': options.get('num_predict', 4096)}
+    if 'packet_presence_penalty' in config:
+        body['presence_penalty'] = config['packet_presence_penalty']
     extra = validate_extra(config.get('extra_body', {}))
     if 'max_completion_tokens' in extra:
         body.pop('max_tokens')
@@ -72,6 +78,8 @@ def request_body(config: dict, payload: dict) -> dict:
         body[field] = min(options.get('num_predict', 4096), config.get('max_output_tokens', 4096))
     if body.get('temperature') is None:
         body.pop('temperature', None)
+    if body.get('presence_penalty') is None:
+        body.pop('presence_penalty', None)
     schema = payload.get('format')
     if schema:
         mode = config.get('structured_output_mode', 'json_object')
@@ -184,7 +192,7 @@ async def completion(connection: httpx.AsyncClient, body: dict, activity=None) -
             else:
                 await event()
     if finish == 'length':
-        raise ContextWindowError('输出达到 token 上限，请调整输出上限与上下文预算 / Output token limit reached')
+        raise OutputLimitError('输出达到 token 上限，请调整输出上限与上下文预算 / Output token limit reached')
     if finish != 'stop' or not text.strip():
         raise InvalidOutput('输出为空或未正常结束 / Empty or incomplete model output')
     return text

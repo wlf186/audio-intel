@@ -1,5 +1,11 @@
 # 升级指南
 
+## 未发布：表达优化请求包
+
+SQLite v24→v25 仅增加不可变请求计划表，以及调用记录的请求节点关联；保留所有历史正文、来源、小结、调用计数和检查点。历史运行继续使用其原策略，新建／重新优化使用按来源归属合并的正文与完整细分小结。停服后只需 SQLite 一致快照，不复制媒体；验收后清理临时升级备份。依赖和语音模型不变，重建前端并刷新原 API、supervisor、executor。分段小结的展开状态仅在组件内存中保存，不改变浏览器偏好的期限。 现有9b连接通过新版本重新验证并保存后，新建运行采用请求包；其他模型和旧验证沿用原流程。不改变已有调用额度与窗口。
+
+English: The additive SQLite v24→v25 migration preserves historical drafts, checkpoints and call counts. Take a SQLite-only backup while stopped, rebuild the UI, restore all original service processes and remove the temporary backup after acceptance. No media rewrite or dependency/model change. Fine-insight expansion is component memory only.
+
 ## 未发布：表达优化调用预算
 
 数据迁移仅涉及数据库：SQLite v23→v24增量增加优化调用额度、实际计数、预估和调用记录，保留已有稿件、来源及检查点。不改写或删除媒体；按下文仅备份实际SQLite数据库。历史运行保留原策略，未记录的调用用量显示未知；新建或重新优化默认上限300次。验收包含额度耗尽后恢复、用量读取、窗口配置及全部服务来自最终源码，完成后清理本次临时备份。见[表达优化](EXPRESSION_OPTIMIZATION.md#调用预算与用量--call-budget-and-usage)。

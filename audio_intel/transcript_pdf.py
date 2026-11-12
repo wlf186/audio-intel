@@ -11,7 +11,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from .transcript import comparison_source_text, reading_sections, insight_label, presentation_sections
+from .transcript import comparison_source_text, reading_sections, insight_label, presentation_sections, group_insight_lines
 from .transcript_diff import text_changes
 from .utils import timecode
 
@@ -121,10 +121,7 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                 story.extend([table, Spacer(1, 12)])
             else:
                 story.append(Paragraph(html.escape(paragraph['text']).replace('\n', '<br/>'), body))
-            summary = paragraph.get('group_summary') or {}
-            if summary.get('state') == 'ready':
-                method = insight_label(summary)
-                text = '小结 / Summary' + (f' · {method}' if method else '') + '：' + ' '.join(summary.get('sentences', []))
+            for text in group_insight_lines(paragraph.get('group_summary') or {}):
                 story.append(Paragraph(html.escape(text), original_style))
         for link in section.get('linked_paragraphs', []):
             story.append(Paragraph(f"本段文字已并入 {('画面 ' + str(link['frame_number'])) if link.get('frame_number') else '相关段落'} 的成稿（{timecode(link['start'])}） / Text included in the earlier group", original_style))

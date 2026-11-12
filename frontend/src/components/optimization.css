@@ -156,3 +156,10 @@
 .optimization-budget p{margin:0;overflow-wrap:anywhere}
 .optimization-budget label{display:grid;gap:6px}
 .optimization-budget input{width:100%;min-height:44px;min-width:0}
+.optimization-fine-insights{margin-top:12px;min-width:0}
+.optimization-fine-insights>.button{min-height:44px;max-width:100%;white-space:normal}
+.optimization-fine-insight{display:flex;align-items:flex-start;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);min-width:0}
+.optimization-fine-insight>.optimization-time{min-height:44px;flex-shrink:0}
+.optimization-fine-insight>div{min-width:0;overflow-wrap:anywhere}
+.optimization-fine-insight p{margin:8px 0}
+@media(max-width:600px){.optimization-fine-insight{display:block}.optimization-fine-insight>.optimization-time{max-width:100%}}

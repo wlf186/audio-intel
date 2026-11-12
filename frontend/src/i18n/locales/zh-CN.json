@@ -769,6 +769,8 @@
     "sourceInsight": "原文要点",
     "summaryFallbackCount": "关键词{{keywords}} · 原文要点{{source}}",
     "groupSummary": "分组小结",
+    "detailSummaries": "分段小结（{{count}}）",
+    "noSubstantiveInsight": "无实质内容，已跳过小结",
     "summaryMissing": "小结未生成，可在上方补试",
     "summarizing": "正在提炼小结",
     "summaryProgress": "小结 {{done}} / {{total}} · 未生成 {{failed}}",
@@ -943,6 +945,8 @@
       "failedCalls": "其中失败或中断 {{count}} 次（已包含在总用量内；中断后的远端结果可能无法确认）。",
       "usageUnrecorded": "历史稿未记录调用用量。",
       "callStages": {
+        "finalization": "复核与正文小结",
+        "joint": "复核、小结与画面标题",
         "generation": "整理正文",
         "review": "检查内容",
         "group": "分组小结",

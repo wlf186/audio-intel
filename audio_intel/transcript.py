@@ -10,6 +10,20 @@ def insight_label(summary: dict) -> str:
     return {'model_keywords': '关键词 / Keywords', 'source_excerpt': '原文要点 / Source excerpt'}.get(summary.get('generation_method'), '')
 
 
+def group_insight_lines(summary: dict) -> list[str]:
+    """Render every retained fine insight, including its delivery-method label."""
+    from .utils import timecode
+    lines = []
+    for index, item in enumerate([summary, *summary.get('subgroups', [])]):
+        if item.get('state') != 'ready':
+            continue
+        title = ('小结 / Summary' if index == 0 else
+                 f"分段小结 / Segment summary [{timecode(item['start'])} – {timecode(item['end'])}]")
+        method = insight_label(item)
+        lines.append(title + (f' · {method}' if method else '') + '：' + ' '.join(item.get('sentences', [])))
+    return lines
+
+
 def join_text(left: str, right: str) -> str:
     if not left:
         return right

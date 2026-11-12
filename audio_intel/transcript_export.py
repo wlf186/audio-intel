@@ -145,6 +145,8 @@ def export_result(result: dict[str, Any], policy: TranscriptExportRequest) -> di
     # Unknown historical metadata can contain source text, identities or file paths.
     safe_fields = ("_optimized", "text_version", "optimization_policy", "review_notice", "language", "duration", "timestamp_precision", "diarization_mode", "model", "model_name", "model_revision", "compute_device", "compute_device_name", "precision", "quantized")
     exported = {key: deepcopy(result[key]) for key in safe_fields if key in result}
+    if result.get('optimization_packet_version') == 1:
+        exported['optimization_packet_version'] = 1
     identities = list(result.get("speakers", []))
     known = {speaker["id"] for speaker in identities}
     for segment in result.get("segments", []):
@@ -182,6 +184,12 @@ def export_result(result: dict[str, Any], policy: TranscriptExportRequest) -> di
             item['group_summary'] = {'state': summary['state'], 'sentences': [replacer.text(text) for text in summary.get('sentences', [])]}
             if summary.get('generation_method') in ('model', 'model_repair', 'model_keywords', 'source_excerpt'):
                 item['group_summary']['generation_method'] = summary['generation_method']
+            if summary.get('subgroups'):
+                item['group_summary']['subgroups'] = [{
+                    **{key: detail[key] for key in ('id', 'start', 'end', 'state')},
+                    'sentences': [replacer.text(text) for text in detail.get('sentences', [])],
+                    'generation_method': detail.get('generation_method')}
+                    for detail in summary['subgroups']]
         for key in ('scene_ids', 'merged_source_count', 'generation_method', 'review_outcome'):
             if key in segment:
                 item[key] = deepcopy(segment[key])
@@ -212,10 +220,14 @@ def format_transcript(result: dict[str, Any], format: str) -> str:
     if format == "json":
         return json.dumps({key: value for key, value in result.items() if key != "artifacts"}, ensure_ascii=False, indent=2)
     if format == "txt":
+        from .transcript import group_insight_lines
         lines = [result['review_notice']] if result.get('review_notice') else []
-        lines.extend(('【待核对 / Needs review】' if x.get('review_status') == 'needs_review' else '') +
+        for x in segments:
+            lines.append(('【待核对 / Needs review】' if x.get('review_status') == 'needs_review' else '') +
                      ('【基础整理 / Basic cleanup】' if x.get('generation_method') in ('basic_cleanup', 'mixed') else '') +
-                     f"[{timecode(x['start'])} - {timecode(x['end'])}] {x['speaker_label']}: {x['text']}" for x in segments)
+                     f"[{timecode(x['start'])} - {timecode(x['end'])}] {x['speaker_label']}: {x['text']}")
+            if result.get('optimization_packet_version') == 1:
+                lines.extend(group_insight_lines(x.get('group_summary') or {}))
         return "\n".join(lines)
     if format == "srt":
         return "\n\n".join(f"{i}\n{timecode(x['start'], ',')} --> {timecode(x['end'], ',')}\n{x['speaker_label']}: {x['text']}" for i, x in enumerate(segments, 1))
@@ -239,6 +251,8 @@ def optimized_export_result(job: dict, policy: TranscriptExportRequest) -> dict:
     result = deepcopy(job['result'])
     version = draft.get('prompt_version', run['config'].get('prompt_version', 1))
     result.update(_optimized=True, text_version=policy.text_version, optimization_policy=version)
+    if run['config'].get('packet_version'):
+        result['optimization_packet_version'] = run['config']['packet_version']
     if result.get('video'):
         titles = {scene['id']: scene.get('title_summary') for scene in draft.get('scenes', [])}
         for scene in result['video'].get('scenes', []):

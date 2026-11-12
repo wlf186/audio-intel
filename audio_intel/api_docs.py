@@ -1356,7 +1356,7 @@ def _capabilities_example() -> dict[str, Any]:
         "deployment": {"profile": "full", "default_compute_device": "gpu", "gpu_runtime_installed": True},
         "asr": {
             "transcript_optimization": {
-                "supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096, "batching": {"supported": True, "enabled": False, "max_items": 1, "reason": "quality_gate"}, "call_budget": {"supported": True, "default_limit": 300, "counts_failed_attempts": True, "temporary_override": True},
+                "supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096, "batching": {"supported": True, "enabled": True, "max_items": 12, "reason": "source_packets", "eligible_models": ["qwen3.5:9b"], "packet_version": 1, "retains_fine_insights": True, "independent_prose_review": True}, "call_budget": {"supported": True, "default_limit": 300, "counts_failed_attempts": True, "temporary_override": True},
                 "text_versions": ["original", "optimized", "comparison"],
                 "rewrite_modes": ["polish", "rewrite", "editorial"], "default_rewrite_mode": "rewrite",
                 "summaries": {"version": 2, "automatic_fallback": True, "max_model_calls_per_node": 3,
@@ -1495,6 +1495,42 @@ JOB_EXAMPLES["video_queued"] = {"summary": "视频任务排队 / Queued video ta
 }}
 
 
+API_DESCRIPTION += '''
+
+## 合并正文与细分小结 / Merged prose and fine insights
+
+qwen3.5:9b 新稿可将同说话人、同画面的相邻来源组合为较长正文，保留全部原细分小结。其他模型沿用原策略。
+结果中 group_summary.subgroups 按来源顺序提供 id、start、end、小结和交付方式；
+小结轻量接口的 groups 仍使用正文 ordinal，并增加 d: 前缀的细分来源键。
+历史稿的 subgroups 为空，不重写旧稿。正文改写与独立复核是不同的模型请求；
+同一次复核可顺便提炼小结，但这不构成对小结的独立事实认证。
+所有请求、自动修复和失败尝试仍计入同一运行的预算；暂停继续使用原来源和请求计划。
+
+New qwen3.5:9b drafts retain every original fine insight when adjacent prose is merged. Other models retain their previous policy.
+group_summary.subgroups carries ordered source IDs, times and insight metadata.
+The lightweight groups map adds d: prefixed fine IDs alongside body ordinals.
+Legacy drafts remain unchanged. Generation and independent prose review use separate
+requests; producing an insight in a review request does not independently certify it.
+All attempts still consume the same durable run allowance.
+
+```python
+import os
+import httpx
+
+api_key = os.environ.get("AUDIO_INTEL_API_KEY", "")
+headers = {"Authorization": "Bearer " + api_key} if api_key else {}
+job_id = os.environ["OPTIMIZATION_JOB_ID"]
+run_id = os.environ["OPTIMIZATION_RUN_ID"]
+with httpx.Client(base_url=os.environ["AUDIO_INTEL_BASE_URL"], headers=headers) as client:
+    response = client.get(f"/api/v1/jobs/{job_id}/transcript-optimization/result",
+                          params={"run_id": run_id})
+    response.raise_for_status()
+    for paragraph in response.json()["paragraphs"]:
+        for detail in (paragraph.get("group_summary") or {}).get("subgroups", []):
+            print(detail["id"], detail["start"], detail["end"], detail["sentences"])
+```
+'''
+
 _OPTIMIZATION_CONNECTION = {'base_url': 'http://localhost:11434/v1', 'use_proxy': False,
     'model': 'qwen3.5:9b', 'context_length': 16384, 'extra_body': {'reasoning_effort': 'none'}}
 _OPTIMIZATION_VERIFIED = {**_OPTIMIZATION_CONNECTION, 'protocol': 'openai_chat_completions',
@@ -1579,7 +1615,9 @@ def _optimization_examples() -> dict[str, dict[str, Any]]:
     auxiliary_paused = deepcopy(auxiliary)
     auxiliary_paused['summary_status']['state'] = 'paused'
     return {
-        'SummaryCounts': counts['group'], 'SummaryStatus': status, 'GroupSummary': groups['2'], 'SceneSummary': scene,
+        'SummaryCounts': counts['group'], 'SummaryStatus': status, 'GroupSummary': groups['2'],
+        'GroupInsight': groups['2'], 'GroupDetail': {**groups['2'], 'id': 'd:g3', 'start': 4., 'end': 6.},
+        'SceneSummary': scene,
         'ReviewDetails': {'stage': 'review', 'issues': [], 'diagnostic': 'Review evidence is not uniquely grounded'},
         'OptimizationSummary': published, 'OptimizationStatus': {'enabled': True, 'published': published, 'candidate': None},
         '_queued': {'enabled': True, 'published': None, 'candidate': queued},
