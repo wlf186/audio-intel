@@ -30,14 +30,15 @@ def compile_plan(config: dict, units: list[dict], hotwords: list[str]) -> list[t
     body = [{**unit, 'id': str(i)} for i, unit in enumerate(units)]
     groups = policy.group_sources(units)
     scenes = policy.scene_sources(units, config.get('summary_scene_ids', []))
-    generation = [unit for unit in body if policy.meaningful(unit['original_text'])]
+    substantive = [unit for unit in body if policy.meaningful(unit['original_text'])]
+    generation = [unit for unit in substantive if not policy.literal_frame(unit, english=bool(config.get('english_source')))]
     nodes = [('generation', [item['id'] for item in packet]) for packet in
              policy.pack(generation, maxitems=12, cfg=profile, stage='generation')]
     if config.get('packet_joint') and (generation or any(policy.meaningful(s['original_text']) for s in scenes)):
         nodes.append(('joint', [unit['id'] for unit in body]))
         return nodes
     checks = [{**unit, 'candidate': '文' * (len(unit['original_text']) * 2 + 64)}
-              for unit in generation]
+              for unit in substantive]
     nodes.extend(('finalization', [item['id'] for item in packet]) for packet in
                  policy.pack(checks, maxitems=12, maxchars=2000, cfg=profile, stage='finalization'))
     details = [group for group in groups if group['id'].startswith('d:') and policy.meaningful(group['original_text'])]

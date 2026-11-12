@@ -131,7 +131,7 @@ class Processor:
             errors = {}
             for item in remaining:
                 try:
-                    text = policy.checked(item['original_text'], values[item['id']])
+                    text = policy.checked_item(item, values[item['id']], english=bool(self.profile.get('english_source')))
                 except (engine.InvalidOutput, KeyError, TypeError, ValueError, AttributeError) as exc:
                     errors[item['id']] = str(exc)[:300]
                     rejected.append(item)
@@ -317,8 +317,10 @@ class Processor:
         if not self.auxiliary:
             units = store.units(self.run_id)
             checkpoints.generation(self.run_id, [
-                (unit['ordinal'], engine.basic_cleanup(unit['original_text']), 'basic_cleanup')
-                for unit in units if unit['text'] is None and not policy.meaningful(unit['original_text'])])
+                (unit['ordinal'], policy.format_paragraphs(policy.literal_cleanup(unit['original_text']))
+                 if policy.literal_frame(unit, english=bool(self.profile.get('english_source'))) else engine.basic_cleanup(unit['original_text']), 'basic_cleanup')
+                for unit in units if unit['text'] is None and
+                (not policy.meaningful(unit['original_text']) or policy.literal_frame(unit, english=bool(self.profile.get('english_source'))))])
             for node in nodes:
                 if node['stage'] != 'generation':
                     continue

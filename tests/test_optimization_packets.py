@@ -401,7 +401,7 @@ def test_cross_item_shortcut_is_not_a_completed_body():
 ])
 def test_english_body_rejects_translation_foreign_content_and_changed_names(source, draft, message):
     with pytest.raises(ValueError, match=message):
-        policy.checked(source, draft)
+        policy.checked_item({'original_text': source, 'scene_ids': []}, draft, english=True)
 
 
 @pytest.mark.parametrize(('source', 'draft'), [
@@ -418,11 +418,11 @@ def test_english_body_rejects_translation_foreign_content_and_changed_names(sour
 ])
 def test_english_body_keeps_paraphrasing_fragments_and_mixed_language(source, draft):
     assert policy.english_body_error(source, draft) is None
-    assert policy.checked(source, draft) == draft
+    assert policy.checked_item({'original_text': source, 'scene_ids': []}, draft, english=True) == draft
 
 
 def test_english_generation_examples_preserve_language_without_changing_cjk_requests():
-    config = {**PROFILE, 'rewrite_mode': 'rewrite'}
+    config = {**PROFILE, 'rewrite_mode': 'rewrite', 'english_source': True}
     english = policy.payload(config, [{'id': '0', 'original_text': 'We should review the build.'}], 'generation')
     assert 'English prose' in english['messages'][0]['content']
     assert english['messages'][1:3] == policy.ENGLISH_EXAMPLE
@@ -431,6 +431,90 @@ def test_english_generation_examples_preserve_language_without_changing_cjk_requ
     chinese = policy.payload(config, [{'id': '0', 'original_text': '请检查这份报告。'}], 'generation')
     assert 'English prose' not in chinese['messages'][0]['content']
     assert chinese['messages'][1:3] == policy.EXAMPLE
+
+
+def test_english_video_edits_only_complete_interior_sentences():
+    item = {'id': '0', 'scene_ids': ['scene'], 'original_text':
+            'continued from the previous scene. Please review the Atlas build. And then'}
+    assert policy.generation_source(item, english=True).strip() == 'Please review the Atlas build.'
+    assert not policy.literal_frame(item, english=True)
+    assert policy.checked_item(item, 'Please check the Atlas build.', english=True) == (
+        'continued from the previous scene. Please check the Atlas build. And then')
+    request = policy.payload({**PROFILE, 'rewrite_mode': 'rewrite', 'english_source': True}, [item], 'generation')
+    data = json.loads(request['messages'][-1]['content'])
+    assert data[0]['source'].strip() == 'Please review the Atlas build.'
+    assert 'previous scene' not in data[0]['source'] and 'And then' not in data[0]['source']
+    with pytest.raises(ValueError, match='only claim'):
+        policy.checked_item(item, 'Please only review the Atlas build.', english=True)
+
+
+def test_english_video_boundary_fragments_are_literal_and_audio_keeps_full_editing():
+    fragment = {'id': '0', 'scene_ids': ['scene'],
+                'original_text': 'video in three dimensions. So not'}
+    assert policy.literal_frame(fragment, english=True) and not policy.generation_source(fragment, english=True)
+    audio = {**fragment, 'scene_ids': []}
+    assert not policy.literal_frame(audio, english=True)
+    assert policy.generation_source(audio, english=True) == audio['original_text']
+    chinese = {**fragment, 'original_text': '这句话延续上一个画面。请检查。然后'}
+    assert not policy.literal_frame(chinese, english=True)
+    assert policy.generation_source(chinese, english=True) == chinese['original_text']
+    abbreviation = {**fragment, 'original_text': 'Dr. Mira arrived. Please review the Atlas build. And then'}
+    assert policy.generation_source(abbreviation, english=True).strip() == 'Please review the Atlas build.'
+
+
+def test_english_rules_require_the_transcription_language_and_do_not_force_latin_languages():
+    config = {**PROFILE, 'rewrite_mode': 'rewrite'}
+    result = transcript(video=True)
+    result['language'] = 'Spanish'
+    result['segments'][0]['text'] = 'Este es el primer tema. Debemos revisar el informe. Y después'
+    units = policy.prepare(config, result, [])
+    assert 'english_source' not in config
+    assert not policy.literal_frame(units[0])
+    request = policy.payload(config, [units[0]], 'generation')
+    assert 'English prose' not in request['messages'][0]['content']
+    assert json.loads(request['messages'][-1]['content'])[0]['source'] == units[0]['original_text']
+    result['language'] = 'English'
+    result['segments'][0]['text'] = 'The first topic. Please review the Atlas build. And then'
+    units = policy.prepare(config, result, [])
+    assert config['english_source']
+    assert policy.generation_source(units[0], english=True).strip() == 'Please review the Atlas build.'
+
+
+@pytest.mark.parametrize('has_interior', [False, True])
+def test_english_video_keeps_boundaries_insights_and_actual_budget(packet_model, monkeypatch, has_interior):
+    async def completion(connection, body, activity=None):
+        data = json.loads(body['messages'][-1]['content'])
+        if isinstance(data, list):
+            assert has_interior
+            assert data[0]['source'].strip() == 'Please review the Atlas build.'
+            return json.dumps({v['id']: v['source'].replace('review', 'check') for v in data})
+        assert isinstance(data, dict) and data['units']
+        return json.dumps({
+            'reviews': {u['id']: {'verdict': 'pass', 'source_quote': '',
+                                'candidate_quote': '', 'reason': ''} for u in data['units']},
+            'groups': {g['id']: 'Atlas build review.' if has_interior else 'A video rendered in Blender.' for g in data['groups']},
+            'scenes': {s['id']: 'Atlas build' if has_interior else 'Blender video' for s in data['scenes']}})
+    monkeypatch.setattr(provider, 'completion', completion)
+    result = transcript(video=True)
+    result['language'] = 'English'
+    result['segments'][0]['text'] = ('continued from another scene. Please review the Atlas build. And then'
+                                   if has_interior else 'video rendered in Blender. So not')
+    identifier = job(result)
+    with TestClient(api.create_app()) as client:
+        estimate = client.post(url(identifier) + '/estimate', json={}).json()
+        assert estimate['breakdown']['generation'] == int(has_interior)
+        assert estimate['estimated_calls'] == 1 + int(has_interior)
+        assert start(client, identifier).status_code == 202
+        run = wait(client, identifier, lambda value: bool(value['published']))['published']
+        value = client.get(url(identifier) + '/result', params={'run_id': run['id']}).json()
+        assert run['calls_used'] == 1 + int(has_interior)
+        assert value['basic_cleanup_units'] == int(not has_interior)
+        assert value['paragraphs'][0]['text'] == (result['segments'][0]['text'].replace('review', 'check')
+                                                if has_interior else result['segments'][0]['text'])
+        assert value['paragraphs'][0]['group_summary']['state'] == 'ready'
+        assert value['scenes'][0]['title_summary']['state'] == 'ready'
+        assert calls.usage(run['id'])['stages'] == ({'generation': 1, 'joint': 1}
+                                                 if has_interior else {'joint': 1})
 
 
 def test_insights_keep_explicit_restarts_without_promoting_the_retracted_value():

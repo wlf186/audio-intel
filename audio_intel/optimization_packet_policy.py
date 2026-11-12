@@ -146,6 +146,8 @@ def english_body_error(source: str, draft: str) -> str | None:
         return None
     if re.search('[\u3400-\u9fff]', draft):
         return 'Keep this English source in English; do not translate it into Chinese'
+    if not re.search(r'\bonly\b', source, re.I) and re.search(r'\bonly\b', draft, re.I):
+        return 'Do not introduce an exclusive only claim absent from this source'
     source_words = {w.casefold() for w in ENGLISH_WORDS.findall(source)
                     if len(w) >= 4 and w.casefold() not in ENGLISH_COMMON}
     draft_words = {w.casefold() for w in ENGLISH_WORDS.findall(draft)}
@@ -166,6 +168,48 @@ def english_body_error(source: str, draft: str) -> str | None:
     if missing:
         return 'Keep this item\'s source names and technical terms: ' + ', '.join(missing[:20])
     return None
+
+
+FRAME_SENTENCE_END = re.compile(
+    r'(?<!\bMr)(?<!\bMrs)(?<!\bMs)(?<!\bDr)(?<!\bProf)(?<!\bvs)'
+    r'[.!?]["\u201d\u2019)\]]*(?=\s|$)', re.I)
+
+
+def frame_editing_range(item: dict, *, english: bool = False) -> tuple[int, int]:
+    """English visual cuts can continue a sentence across ASR segments too.
+
+    Keep the first sentence and unfinished final clause literally in their
+    original visual source. Only complete interior sentences are model input.
+    Offsets are reconstructed from immutable text; no duplicate text is stored.
+    """
+    source = item['original_text']
+    if not english or not item.get('scene_ids') or not english_source(source):
+        return 0, len(source)
+    ends = [match.end() for match in FRAME_SENTENCE_END.finditer(source)]
+    return (ends[0], ends[-1]) if len(ends) > 1 else (len(source), len(source))
+
+
+def generation_source(item: dict, *, english: bool = False) -> str:
+    start, end = frame_editing_range(item, english=english)
+    return item['original_text'][start:end]
+
+
+def literal_frame(item: dict, *, english: bool = False) -> bool:
+    return bool(english and item.get('scene_ids') and english_source(item['original_text'])
+                and not generation_source(item, english=english).strip())
+
+
+def checked_item(item: dict, value: str | dict, *, english: bool = False) -> str:
+    source = item['original_text']
+    start, end = frame_editing_range(item, english=english)
+    edited = checked(source[start:end], value)
+    error = english_body_error(source[start:end], edited) if english else None
+    if error:
+        raise ValueError(error)
+    if (start, end) == (0, len(source)):
+        return edited
+    return format_paragraphs(' '.join(part.strip() for part in
+                                     (source[:start], edited, source[end:]) if part.strip()))
 
 def pack(items: list[dict], maxitems: int=8, maxchars: int=1400, cfg: dict | None=None, stage: str | None=None) -> list[list[dict]]:
     packets = []
@@ -189,6 +233,8 @@ def pack(items: list[dict], maxitems: int=8, maxchars: int=1400, cfg: dict | Non
 
 def payload(cfg: dict, items: list[dict], stage: str) -> dict:
     items = sorted(items, key=lambda i: hashlib.sha256(i['original_text'].encode()).hexdigest())
+    if stage == 'generation' and cfg.get('english_source') and any(item.get('scene_ids') and english_source(item['original_text']) for item in items):
+        items = [{**item, 'original_text': generation_source(item, english=True)} for item in items]
     ids = [i['id'] for i in items]
     if stage == 'generation':
         system = SYSTEM + '\n档位要求：' + p.MODE_INSTRUCTIONS[cfg['rewrite_mode']] + '\n标准热词：' + json.dumps(cfg.get('_hotwords', []), ensure_ascii=False)
@@ -204,7 +250,7 @@ def payload(cfg: dict, items: list[dict], stage: str) -> dict:
             system = '先为每条列出需保留的全部独立信息和问题，facts中的quote逐字引用本条source。随后在text中写完整成稿；facts不能替代text的内容。每个问题仍保留为问题。facts只是编辑前信息清单，不是审查或摘要。不要把原文含糊词解释成系统显示、地点或具体经历。\n' + system
             schema = {i: {'type': 'object', 'properties': {'facts': {'type': 'array', 'items': {'type': 'object', 'properties': {'quote': {'type': 'string', 'maxLength': 200}}, 'required': ['quote'], 'additionalProperties': False}, 'maxItems': 18}, 'text': {'type': 'string'}}, 'required': ['facts', 'text'], 'additionalProperties': False} for i in ids}
             examples = PLANNED_EXAMPLE
-        if all(english_source(item['original_text']) for item in items):
+        if cfg.get('english_source') and all(english_source(item['original_text']) for item in items):
             system = ('Edit each independent English source into English prose. '
                       'Do not translate any part into Chinese. Each id owns only its source: '
                       'never copy another id\'s content or complete a fragment from another item. '
@@ -252,9 +298,6 @@ def checked(original: str, text: str | dict) -> str:
     if isinstance(text, dict):
         text = text['text']
     text = restore_plus(original, literal_cleanup(e.clean_output(text, original)))
-    language_error = english_body_error(original, text)
-    if language_error:
-        raise ValueError(language_error)
     if META_OUTPUT.fullmatch(' '.join(text.strip(' \t\n。.!！').split())):
         if re.sub(r'[\W_]+', '', text).casefold() != re.sub(r'[\W_]+', '', original).casefold():
             raise ValueError('Return this source item in full; a cross-item shortcut is not edited prose')
@@ -435,6 +478,10 @@ def joint_payload(cfg: dict, units: list[dict], groups: list[dict], scenes: list
 
 def prepare(cfg: dict, result: dict, hotwords: list[str]) -> list[dict]:
     """Freeze reading/source partitions before accepting or spending any calls."""
+    if str(result.get('language', '')).casefold() in ('en', 'english'):
+        cfg['english_source'] = True
+    else:
+        cfg.pop('english_source', None)
     ceiling = min(2400, max(400, cfg.get('max_output_tokens', 4096) * 2400 // 4096))
     profile = {**cfg, '_hotwords': hotwords}
     while True:

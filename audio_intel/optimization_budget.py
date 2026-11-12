@@ -199,7 +199,7 @@ def estimate(config: dict, units: list[dict], hotwords: list[str], *, used: int 
     return {'estimated_calls': expected, 'used_calls': used, 'minimum_limit': used + expected,
             'recommended_limit': recommended, 'max_llm_calls': limit, 'sufficient': limit >= recommended,
             'can_start': limit >= used + expected, 'breakdown': breakdown,
-            'fingerprint': store.digest({'configuration': {k: config.get(k) for k in ('base_url', 'model', 'use_proxy', 'context_length', 'max_output_tokens', 'extra_body', 'structured_output_mode', 'rewrite_mode', 'summary_version', 'packet_version', 'packet_joint', 'packet_presence_penalty')}, 'batch_max_items': config.get('batch_max_items', 1), 'hotwords': hotwords, 'sources': [{k: u.get(k) for k in ('original_text', 'speaker', 'sources', 'scene_ids', '_detail_sources')} for u in units]})}
+            'fingerprint': store.digest({'configuration': {**{k: config.get(k) for k in ('base_url', 'model', 'use_proxy', 'context_length', 'max_output_tokens', 'extra_body', 'structured_output_mode', 'rewrite_mode', 'summary_version', 'packet_version', 'packet_joint', 'packet_presence_penalty')}, **({'english_source': True} if config.get('english_source') else {})}, 'batch_max_items': config.get('batch_max_items', 1), 'hotwords': hotwords, 'sources': [{k: u.get(k) for k in ('original_text', 'speaker', 'sources', 'scene_ids', '_detail_sources')} for u in units]})}
 
 
 def admit(value: dict):
