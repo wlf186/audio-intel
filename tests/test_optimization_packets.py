@@ -492,8 +492,8 @@ def test_english_video_keeps_boundaries_insights_and_actual_budget(packet_model,
         return json.dumps({
             'reviews': {u['id']: {'verdict': 'pass', 'source_quote': '',
                                 'candidate_quote': '', 'reason': ''} for u in data['units']},
-            'groups': {g['id']: 'Atlas build review.' if has_interior else 'A video rendered in Blender.' for g in data['groups']},
-            'scenes': {s['id']: 'Atlas build' if has_interior else 'Blender video' for s in data['scenes']}})
+            'groups': {g['id']: {'keywords': ['Atlas', 'build'] if has_interior else ['Blender', 'video']} for g in data['groups']},
+            'scenes': {s['id']: {'keywords': ['Atlas', 'build'] if has_interior else ['Blender', 'video']} for s in data['scenes']}})
     monkeypatch.setattr(provider, 'completion', completion)
     result = transcript(video=True)
     result['language'] = 'English'
@@ -513,6 +513,8 @@ def test_english_video_keeps_boundaries_insights_and_actual_budget(packet_model,
                                                 if has_interior else result['segments'][0]['text'])
         assert value['paragraphs'][0]['group_summary']['state'] == 'ready'
         assert value['scenes'][0]['title_summary']['state'] == 'ready'
+        assert value['paragraphs'][0]['group_summary']['generation_method'] == 'model_keywords'
+        assert value['scenes'][0]['title_summary']['generation_method'] == 'model_keywords'
         assert calls.usage(run['id'])['stages'] == ({'generation': 1, 'joint': 1}
                                                  if has_interior else {'joint': 1})
 
@@ -725,3 +727,48 @@ def test_english_insights_use_language_specific_instructions(stage):
     assert request['format']['properties']['0'] == {'type': 'string'}
     config.pop('english_source')
     assert policy.payload(config, [item], stage)['messages'][0]['content'] != system
+
+
+@pytest.mark.parametrize('kind', ['group', 'scene'])
+def test_fragmented_english_video_topics_only_accept_literal_source_phrases(kind):
+    from audio_intel.optimization_packets import Processor
+    processor = Processor.__new__(Processor)
+    processor.profile = {'english_source': True, 'summary_scene_ids': ['frame']}
+    item = {'id': '0', 'original_text': 'Alex said the model used Blender. The budget is four thousand, still unapproved.'}
+    value = processor.resolve_insight(item, kind, {'keywords': ['Blender', 'foreign physics', 'unapproved']})
+    assert value['method'] == 'model_keywords' and value['notice'] == 'keywords'
+    assert value['texts'] == ['Blender · unapproved']
+    with pytest.raises(ValueError):
+        processor.resolve_insight(item, kind, {'keywords': ['Alex created the video', 'approved budget']})
+    with pytest.raises(ValueError):
+        processor.resolve_insight(item, kind, 'Alex created the video.')
+    fallback = processor.resolve_insight(item, kind, None, fallback=True)
+    assert fallback['method'] == 'source_excerpt'
+    processor.profile = {'english_source': True, 'summary_scene_ids': []}
+    assert processor.resolve_insight(item, kind, 'Blender')['method'] == 'model'
+    processor.profile = {'summary_scene_ids': ['frame']}
+    with pytest.raises(ValueError):
+        processor.resolve_insight(item, kind, {'keywords': ['Blender']})
+
+
+def test_english_video_topic_schema_covers_parent_details_titles_and_joint():
+    cfg = {**PROFILE, 'rewrite_mode': 'rewrite', 'english_source': True, 'summary_scene_ids': ['frame']}
+    item = {'id': '0', 'original_text': 'Alex said the model used Blender.', 'candidate': 'Alex said the model used Blender.'}
+    for stage in ['group', 'scene']:
+        request = policy.payload(cfg, [item], stage)
+        assert request['format']['properties']['0']['required'] == ['keywords']
+        assert 'VERBATIM' in request['messages'][0]['content']
+    request = policy.payload(cfg, [item], 'finalization')
+    assert request['format']['properties']['0']['properties']['summary']['required'] == ['keywords']
+    request = policy.joint_payload(cfg, [item], [item], [item])
+    for key in ['groups', 'scenes']:
+        assert request['format']['properties'][key]['properties']['0']['required'] == ['keywords']
+    assert policy.REVIEW_SCHEMA['properties'].get('summary') is None
+    cfg.pop('english_source')
+    assert policy.payload(cfg, [item], 'group')['format']['properties']['0'] == {'type': 'string'}
+
+
+def test_literal_english_topics_reject_negation_and_word_substrings():
+    source = 'The plan is unapproved. It was not approved. GPU4090 is available.'
+    assert policy.topic_words(source, ['approved', '4090', 'GPU', 'available'], 'group') == ['available']
+    assert policy.topic_words(source, ['unapproved', 'not approved', 'GPU4090'], 'group') == ['unapproved · not approved · GPU4090']

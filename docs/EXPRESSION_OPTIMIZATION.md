@@ -24,6 +24,10 @@ API Key 通过密码框输入，存入服务端 SQLite 独立凭据表；网页�
 
 英文视频的画面边界可能切在半句话中，甚至跨越 ASR 片段。为防止跨画面挪词或擅自补全，每个阅读段的首句和末尾未完句保留字面内容，只把中间完整句子交给模型整理，再按原顺序拼回。没有完整中段时采用有标记的基础整理，不请求模型生成正文；原有小结、标题和全部来源仍正常处理。窗口和调用预算按实际需要生成的部分计算，不新增磁盘缓存或重复保存边界正文。
 
+英文视频的小结与画面标题采用模型提炼的原文主题词：从各自来源中选取重点词组，程序检查完整词语、数字边界及直接否定前缀，再标为“关键词”。这用于减少片段来源被自由补全为人物分工、因果或已完成结果的情况；关键词不等同于完整句摘要，也不是事实认证。未通过时保留有标记的原文要点，全部原细分项仍保留。其他语言以及英文纯音频继续使用原有小结形式。
+
+English video insights and scene titles use model-selected literal topic phrases, validated against their own source with whole-word and number boundaries. They are labeled Keywords, not presented as full-sentence summaries or factual certification. Every original fine insight remains available; bounded fallback is labeled Source excerpt. Other languages and English audio keep their existing insight format.
+
 较长正文额外用本地规则清理明确停顿及部分重复口头词，在完整句末分开密集段落，不增加模型请求。含糊的业务词、责任关系和未回答问题仍保留，不通过猜测补成确定结论。原文不含相关内容时，小结若误写成编辑复核说明或无意义评价，会进入原有的有界修复与原文摘取流程。
 
 单组不超过120字且无画面的短稿采用固定两步，计划从不可变来源和配置恢复，不额外写计划行。首轮仍实际调用模型整理正文；若结果与原文或字面清理完全一致，则程序核对来源即可，第二次请求只提炼小结，不伪称已由模型独立复核。正文有其他变化时，第二次请求仍独立复核并提炼小结。

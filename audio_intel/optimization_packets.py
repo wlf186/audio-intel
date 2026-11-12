@@ -72,6 +72,17 @@ class Processor:
         self.last_attempts = 0
         self.insight_calls: dict[tuple[str, str], int] = {}
 
+    def resolve_insight(self, item: dict, kind: str, text: object, **options: bool) -> dict:
+        if policy.literal_topics(self.profile, item) and not options.get('fallback') and policy.meaningful(item['original_text']):
+            if not isinstance(text, dict):
+                raise ValueError('Expected literal topic keywords')
+            texts = policy.topic_words(item['original_text'], text.get('keywords'), kind)
+            if not texts:
+                raise ValueError('No useful literal source topic keywords')
+            result = insight(item, kind, texts[0], **options)
+            return {**result, 'method': 'model_keywords', 'notice': 'keywords'}
+        return insight(item, kind, text, **options)
+
     async def request(self, node: dict, request: dict, *, request_limit: int = 3,
                       plain_id: str | None = None) -> dict:
         # Actual HTTP attempts, including transport retries, all enter the ledger.
@@ -152,7 +163,7 @@ class Processor:
             exhausted = [item for item in remaining
                          if self.insight_calls.get((kind, item['id']), 0) >= 3]
             if exhausted:
-                self.commit(summaries=[insight(item, kind, None, fallback=True) for item in exhausted])
+                self.commit(summaries=[self.resolve_insight(item, kind, None, fallback=True) for item in exhausted])
                 remaining = [item for item in remaining if item not in exhausted]
             if not remaining:
                 return
@@ -189,7 +200,7 @@ class Processor:
             finished, rejected, records = [], [], []
             for item in remaining:
                 try:
-                    result = insight(item, kind, values.get(item['id']),
+                    result = self.resolve_insight(item, kind, values.get(item['id']),
                                      repaired=bool(attempt or repair_only))
                 except ValueError as exc:
                     rejected.append(item)
@@ -201,7 +212,7 @@ class Processor:
                 records.extend(self.attempts([item], kind, values, started, outcome, error))
             self.commit(summaries=finished, attempts=records)
             remaining = rejected
-        self.commit(summaries=[insight(item, kind, None, fallback=True) for item in remaining])
+        self.commit(summaries=[self.resolve_insight(item, kind, None, fallback=True) for item in remaining])
 
     def attempts(self, items, kind, values, started, outcome, error=None):
         if not self.last_attempts:
@@ -291,7 +302,7 @@ class Processor:
             responses = responses if isinstance(responses, dict) else {}
             for item in sources:
                 try:
-                    result = insight(item, kind, responses.get(item['id']))
+                    result = self.resolve_insight(item, kind, responses.get(item['id']))
                 except ValueError as exc:
                     records.extend(self.attempts([item], kind, responses, started,
                                                  'rejected', str(exc)))
@@ -305,7 +316,7 @@ class Processor:
         for kind in ('group', 'scene'):
             sources = [item for k, item in rejected if k == kind]
             if joint:
-                self.commit(summaries=[insight(item, kind, None, fallback=True)
+                self.commit(summaries=[self.resolve_insight(item, kind, None, fallback=True)
                                        for item in sources])
             elif sources:
                 await self.summarize(node, sources, kind, repair_only=True)
@@ -337,7 +348,7 @@ class Processor:
         groups, scenes = policy.group_sources(units), policy.scene_sources(
             units, self.profile.get('summary_scene_ids', []))
         pending = checkpoints.pending(self.run_id)
-        local_summaries = [insight(item, kind, None) for kind, items in
+        local_summaries = [self.resolve_insight(item, kind, None) for kind, items in
                            (('group', groups), ('scene', scenes)) for item in items
                            if (kind, item['id']) in pending and not policy.meaningful(item['original_text'])]
         local_reviews = [] if self.auxiliary else [
