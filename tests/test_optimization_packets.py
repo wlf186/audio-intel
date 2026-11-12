@@ -180,6 +180,28 @@ def test_medium_dense_prose_is_split_without_changing_facts():
     assert ''.join(formatted.split()) == ''.join(source.split())
 
 
+def test_packet_cleanup_removes_delimited_hesitations_without_touching_quoted_speech():
+    source = ('这这个方案啊，嗯，我们需要需要提前准备。这里这里的 API 1.7 还没批；'
+              '你呢？预算不是三千，是四千。只能先试两天，仍然可能不行。'
+              '他说 "我我觉得，嗯，不能发布" 然后问“你你批准了吗？”。' * 3)
+    cleaned = policy.literal_cleanup(source)
+    assert '这个方案，我们需要提前准备。这里的 API 1.7 还没批；' in cleaned
+    assert '你呢？预算不是三千，是四千。只能先试两天，仍然可能不行。' in cleaned
+    assert '他说 "我我觉得，嗯，不能发布" 然后问“你你批准了吗？”。' in cleaned
+    assert cleaned.count('？') == source.count('？')
+    acknowledgement = '嗯。啊！' + '预算还没有批准。' * 20
+    assert policy.literal_cleanup(acknowledgement).startswith('嗯。啊！')
+
+
+def test_planned_editing_example_has_grounded_quotes_and_complete_edited_text():
+    source = json.loads(policy.PLANNED_EXAMPLE[0]['content'])
+    output = json.loads(policy.PLANNED_EXAMPLE[1]['content'])
+    for item in source:
+        result = output[item['id']]
+        assert all(fact['quote'] in item['source'] for fact in result['facts'])
+        assert result['text'] == json.loads(policy.EXAMPLE[1]['content'])[item['id']]
+
+
 def test_summary_cannot_be_replaced_with_an_editing_review_or_dismissal():
     source = '小林来了吗？明天的产品交流和演示是谁去？主持人能听到吗？'
     assert policy.insight_error(source, '原文为不确定询问，候选改为肯定陈述。', 'group')

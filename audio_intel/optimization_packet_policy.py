@@ -94,6 +94,15 @@ def restore_plus(source: str, draft: str) -> str:
 SYSTEM = p.SYSTEM.replace('只输出成稿正文，不输出JSON、标题、解释或说话人标签。', '').replace('target/source_segments', '每条source') + '\n每个id是独立任务，条目故意乱序。只返回JSON，每个id为键，该条完整成稿为值。每条都整理，不照抄口头重复，不做摘要或纪要。所有原有问题即使是自问自答或修辞提问，仍须保留为以？或?结尾的问句，不能改成“探讨如何”“仍是难题”等陈述。数字后的加、多、余、左右以及数字前的约、至少、超过等限定，绝不能删除或加强。前文说有三点但本条只有一点时，不补另外两点，不使用其他id的来源；id是来源边界，不是可以自由安排的段落编号。来源中的英文技术名词和缩写均须保留，允许大小写规范化，不得遗漏或替换为泛称。长正文按主题分自然段，用双换行分隔，不添加标题或新事实。'
 SYSTEM += '\n不要先写摘要或纪要，再附抄原文来保留问题。每个问题直接放在成稿的对应语义位置，不重复抄录。含糊的人名、业务词和责任关系保留原词及疑问，不能解释成确定的分工。'
 EXAMPLE = [{'role': 'user', 'content': '[{"id":"a","source":"嗯，那个预算三千，不，是四千，但是还没批。你你明天问一下，好吗？"},{"id":"b","source":"我我觉得可能还不够成熟，只能先试两天。问一下这个交流和演示是谁去呀？主持人能听到吗？"}]'}, {'role': 'assistant', 'content': '{"a":"预算是四千，但还没批准。你明天问一下，好吗？","b":"我觉得可能还不够成熟，只能先试两天。这次交流和演示由谁去？主持人能听到吗？"}'}]
+PLANNED_EXAMPLE = [EXAMPLE[0], {'role': 'assistant', 'content': json.dumps({
+    'a': {'facts': [{'quote': '三千，不，是四千，但是还没批。'},
+                    {'quote': '你你明天问一下，好吗？'}],
+          'text': json.loads(EXAMPLE[1]['content'])['a']},
+    'b': {'facts': [{'quote': '我我觉得可能还不够成熟，只能先试两天。'},
+                    {'quote': '问一下这个交流和演示是谁去呀？'},
+                    {'quote': '主持人能听到吗？'}],
+          'text': json.loads(EXAMPLE[1]['content'])['b']},
+}, ensure_ascii=False)}]
 
 def pack(items: list[dict], maxitems: int=8, maxchars: int=1400, cfg: dict | None=None, stage: str | None=None) -> list[list[dict]]:
     packets = []
@@ -131,7 +140,7 @@ def payload(cfg: dict, items: list[dict], stage: str) -> dict:
         if planned:
             system = '先为每条列出需保留的全部独立信息和问题，facts中的quote逐字引用本条source。随后在text中写完整成稿；facts不能替代text的内容。每个问题仍保留为问题。facts只是编辑前信息清单，不是审查或摘要。不要把原文含糊词解释成系统显示、地点或具体经历。\n' + system
             schema = {i: {'type': 'object', 'properties': {'facts': {'type': 'array', 'items': {'type': 'object', 'properties': {'quote': {'type': 'string', 'maxLength': 200}}, 'required': ['quote'], 'additionalProperties': False}, 'maxItems': 18}, 'text': {'type': 'string'}}, 'required': ['facts', 'text'], 'additionalProperties': False} for i in ids}
-            examples = []
+            examples = PLANNED_EXAMPLE
         messages = [{'role': 'system', 'content': system}, *examples, {'role': 'user', 'content': json.dumps(data, ensure_ascii=False)}]
     elif stage in ('review', 'finalization'):
         system = p.REVIEW_SYSTEM + '\n逐条核查，每个id只核查自身source与candidate，不评价其他条目。检查全部数字、主客体、未完成、否定、条件和疑问；不接受由谁来做被写成某人负责。只返回JSON，每个id为键，其值是核查对象。pass时三个说明字段为空字符串。'
@@ -206,24 +215,30 @@ def literal_cleanup(text: str) -> str:
     Keep quoted utterances, acknowledgements, questions, negation and quantities.
     Tiny tasks retain their verified two-call editing contract.
     """
-    value = e.basic_cleanup(text)
     if len(text) <= 120:
-        return value
-    pieces = re.split(r'([“「].*?[”」]|"[^"\n]*")', value, flags=re.S)
+        return e.basic_cleanup(text)
+    pieces = re.split(r'([“「].*?[”」]|"[^"\n]*")', text, flags=re.S)
     for index in range(0, len(pieces), 2):
-        part = pieces[index]
+        raw = pieces[index]
+        part = (re.match(r'^\s*', raw)[0] + e.basic_cleanup(raw)
+                + re.search(r'\s*$', raw)[0]) if raw.strip() else raw
         part = re.sub(r'(^|[，,。；;：:\s])(?:呃+[，,\s]+)+', r'\1', part)
         part = re.sub(r'(^|[，,。；;：:\s])嗯+[，,\s]+(?=对|好的|是的)', r'\1', part)
+        # Strip only punctuation-delimited hesitation/particles, never whole
+        # acknowledgements or question endings such as “你呢？”.
+        part = re.sub(r'(?<=[\u3400-\u9fffA-Za-z0-9])[啊呀呢](?=[，,；;：:])', '', part)
+        part = re.sub(r'(^|[，,。；;：:])(?:嗯|呃|额)[，,\s]+(?=[\u3400-\u9fffA-Za-z0-9])', r'\1', part)
         part = re.sub(
-            r'(?P<word>需要|已经|可能|准备|提前|现在|其实|对应|相应|进行|具体|整个|这些|这种)'
+            r'(?P<word>需要|已经|可能|准备|提前|现在|其实|对应|相应|进行|具体|整个|这些|这种|这样|这里|那里|自己|包括|上面|下面|里面|一些|什么|怎么)'
             r'(?:[\s，,、]*(?P=word))+', lambda match: match['word'], part)
+        part = re.sub(r'这(?=这个|这些|这种|这样)|那(?=那个|那些|那种|那样)', '', part)
         part = re.sub(r'([更最都要这那把到去再先能])\1{2,}', r'\1', part)
         part = re.sub(
             r'(^|[，,。！？!?；;\s])(?P<reply>好的|对|好)'
             r'(?:[，,\s]*(?P=reply))+(?=$|[，,。！？!?；;\s])',
             lambda match: match[1] + match['reply'], part)
         pieces[index] = part
-    return ''.join(pieces).strip() or value
+    return ''.join(pieces).strip() or text.strip()
 
 
 def format_paragraphs(text: str) -> str:
