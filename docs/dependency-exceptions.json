@@ -1333,5 +1333,75 @@
       "tts/pipeline.py"
     ],
     "model_manifest_sha256": "a8e56359ca76d108ff0a8af24c6d4cdac3167d2a3f0b74eea0a9436a180c724b"
+  },
+  {
+    "package": "pillow",
+    "version": "12.3.0",
+    "ids": [
+      "CVE-2026-128066",
+      "GHSA-wqgw-9xfh-qf2g"
+    ],
+    "scopes": [
+      "requirements-lock/linux/aligner-cpu.txt",
+      "requirements-lock/linux/aligner.txt",
+      "requirements-lock/linux/asr-cpu.txt",
+      "requirements-lock/linux/asr.txt",
+      "requirements-lock/linux/tts-cpu.txt",
+      "requirements-lock/linux/tts.txt",
+      "requirements-lock/windows/aligner-cpu.txt",
+      "requirements-lock/windows/aligner.txt",
+      "requirements-lock/windows/asr-cpu.txt",
+      "requirements-lock/windows/asr.txt",
+      "requirements-lock/windows/tts-cpu.txt",
+      "requirements-lock/windows/tts.txt"
+    ],
+    "reviewed_at": "2026-11-13",
+    "review_after": "2026-12-09",
+    "reason": "TIFF/EXIF overlapping-tag IFD parsing is unreachable in these model runtimes: ASR/aligner/TTS accept local audio, Gradio is not served, and video paths consume PyAV-decoded RGB pixels without Pillow Image.open/getexif/EXIF parsing. JPEG output carries no EXIF/tiffinfo metadata. API image readers already use patched Pillow 13.0.0. This is a bounded non-reachability assessment, not a Pillow package fix.",
+    "evidence": [
+      "docs/DEPENDENCIES.md",
+      "audio_intel/model_manifest.json",
+      "audio_intel/video_frames.py",
+      "audio_intel/video_detection.py",
+      "asr/stage.py",
+      "tts/pipeline.py",
+      "tests/test_video_detection.py"
+    ],
+    "model_manifest_sha256": "a8e56359ca76d108ff0a8af24c6d4cdac3167d2a3f0b74eea0a9436a180c724b"
+  },
+  {
+    "package": "pillow",
+    "version": "12.3.0",
+    "ids": [
+      "CVE-2026-128067",
+      "GHSA-xcvg-w56q-r89m"
+    ],
+    "scopes": [
+      "requirements-lock/linux/aligner-cpu.txt",
+      "requirements-lock/linux/aligner.txt",
+      "requirements-lock/linux/asr-cpu.txt",
+      "requirements-lock/linux/asr.txt",
+      "requirements-lock/linux/tts-cpu.txt",
+      "requirements-lock/linux/tts.txt",
+      "requirements-lock/windows/aligner-cpu.txt",
+      "requirements-lock/windows/aligner.txt",
+      "requirements-lock/windows/asr-cpu.txt",
+      "requirements-lock/windows/asr.txt",
+      "requirements-lock/windows/tts-cpu.txt",
+      "requirements-lock/windows/tts.txt"
+    ],
+    "reviewed_at": "2026-11-13",
+    "review_after": "2026-12-09",
+    "reason": "libtiff TIFF encoding with inherited or caller-supplied image geometry/EXIF tags is unreachable in these model runtimes: video output is only JPEG from decoded RGB pixels without exif/tiffinfo/ICC/comment metadata, audio inference receives no images, and Gradio is not served. API already uses patched Pillow 13.0.0. The image/EXIF parsing and JPEG-only metadata boundaries are regression-tested. This is not a Pillow package fix.",
+    "evidence": [
+      "docs/DEPENDENCIES.md",
+      "audio_intel/model_manifest.json",
+      "audio_intel/video_frames.py",
+      "audio_intel/video_detection.py",
+      "asr/stage.py",
+      "tts/pipeline.py",
+      "tests/test_video_detection.py"
+    ],
+    "model_manifest_sha256": "a8e56359ca76d108ff0a8af24c6d4cdac3167d2a3f0b74eea0a9436a180c724b"
   }
 ]

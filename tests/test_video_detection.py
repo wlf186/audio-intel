@@ -374,13 +374,18 @@ def test_video_frames_do_not_decode_images_with_pillow(tmp_path, monkeypatch, de
         pytest.fail("Model video processing must consume decoded pixels, not Pillow image files")
 
     monkeypatch.setattr(Image, "open", reject_file_decode)
+    monkeypatch.setattr(Image.Image, "getexif", reject_file_decode)
+    monkeypatch.setattr(Image.Exif, "load", reject_file_decode)
+    monkeypatch.setattr(Image.Exif, "load_from_fp", reject_file_decode)
     original_save = Image.Image.save
     original_transform = Image.Image.transform
 
     def metadata_free_jpeg(picture, stream, format=None, **parameters):
         assert format == "JPEG"
         assert not picture.info.get("icc_profile") and not picture.info.get("comment")
+        assert not picture.info.get("exif") and not picture.info.get("tiffinfo")
         assert "icc_profile" not in parameters and "comment" not in parameters
+        assert "exif" not in parameters and "tiffinfo" not in parameters
         return original_save(picture, stream, format=format, **parameters)
 
     def reject_nearest_scale(picture, size, method, data=None, resample=Image.Resampling.NEAREST, **kwargs):

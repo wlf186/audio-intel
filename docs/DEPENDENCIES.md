@@ -110,6 +110,17 @@ ASR/aligner 仅向 Qwen 提供本地音频路径或数组，TTS 使用文本与�
 
 The exceptions apply only to model runtimes constrained by Gradio, whose service paths consume audio or decoded pixel arrays. Pillow file decoding, PDF append, TIFF encoding, GIF seeking, morphology and EPS rendering are not used there. API image readers use the patched version. These are bounded non-reachability assessments, not fixes to Pillow 12.3.0; new advisories still fail audits, and new image inputs or Gradio serving invalidate this assessment.
 
+2026-11-13 逐条复核新增公告，以下记录同样只适用于固定 Pillow 12.3.0 的12份模型环境锁，复查日期为2026-12-09；API不使用这些例外，依赖版本保持不变：
+
+| 公告 | 本服务中不可达的入口 |
+| --- | --- |
+| [CVE-2026-128066 / GHSA-wqgw-9xfh-qf2g](https://github.com/python-pillow/Pillow/security/advisories/GHSA-wqgw-9xfh-qf2g) | TIFF/EXIF IFD overlapping-tag parsing through `Image.open()`, `getexif()` or EXIF transpose |
+| [CVE-2026-128067 / GHSA-xcvg-w56q-r89m](https://github.com/python-pillow/Pillow/security/advisories/GHSA-xcvg-w56q-r89m) | libtiff TIFF encoding with inherited or caller-supplied geometry/EXIF tags |
+
+视频帧仍由PyAV解码为RGB像素，只写JPEG；编码不传入EXIF、tiffinfo、ICC或comment。边界回归现同时拒绝Pillow图片打开和EXIF解析，并断言写出格式及元数据参数，在API与实际ASR环境执行。ASR/aligner/TTS的音频输入及不启动Gradio的路径不变。这是有限范围的不可达判断，不是修复模型环境中的Pillow；新增图片输入、EXIF操作、TIFF写出或Gradio服务必须重新评估。
+
+The two additional advisories were reviewed individually on 2026-11-13, with review due on 2026-12-09. Exceptions cover only the twelve model-runtime locks pinned to Pillow 12.3.0. API uses patched Pillow 13.0.0. Decoded-pixel video paths write only metadata-free JPEG and do not call Pillow file opening or EXIF parsing; regression coverage exercises those boundaries in the API and actual ASR environments. This is bounded non-reachability, not a package fix; new image/EXIF/TIFF inputs or Gradio serving invalidate it. Undeclared advisories continue to fail the audit.
+
 
 同轮完整模型锁审计还发现旧间接依赖公告：hydra-core 升至 1.3.7、urllib3 至 2.8.0、Werkzeug 至 3.1.9。Qwen 精确固定的 Accelerate/Transformers 暂保留，以下新增例外仅限固定 manifest、本地离线推理：
 
