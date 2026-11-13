@@ -172,6 +172,37 @@ def test_literal_cleanup_preserves_conditions_questions_quotes_and_technical_wor
     assert 'Literal-only cleanup' in reviewed['details']['diagnostic']
 
 
+def test_reading_layout_changes_only_whitespace_and_preserves_quotes():
+    source = ('预算尚未批准。请保留 API 1.7 和 2.6M 的原值。'
+              '他说“第一句。第二句？这段直接引语应保持连续”。'
+              '当前仍是待确认的问题，不能改成已经完成的结论。' * 5)
+    formatted = policy.reading_layout(source)
+    assert '\n\n' in formatted
+    assert re.sub(r'\s', '', formatted) == re.sub(r'\s', '', source)
+    assert '“第一句。第二句？这段直接引语应保持连续”' in formatted
+    assert policy.reading_layout(formatted) == formatted
+    assert policy.reading_layout('Dr. Smith keeps API 1.7 unchanged.') == 'Dr. Smith keeps API 1.7 unchanged.'
+
+
+def test_reading_layout_is_a_new_run_view_without_checkpoint_writes(packet_model, monkeypatch):
+    identifier = job(transcript(1, length=9))
+    with TestClient(api.create_app()) as client:
+        assert start(client, identifier).status_code == 202
+        run = wait(client, identifier, lambda value: bool(value['published']))['published']
+        snapshot, original_units = store.snapshot(run['id'])
+        assert snapshot['config']['packet_layout_version'] == 1
+        calls_before = calls.usage(run['id'])['calls_used']
+        result = db.get_job(identifier)['result']
+        view = engine.reading_result(result, run['id'])
+        assert '\n\n' in view['paragraphs'][0]['text']
+        assert re.sub(r'\s', '', view['paragraphs'][0]['text']) == re.sub(r'\s', '', original_units[0]['text'])
+        assert store.units(run['id'])[0]['text'] == original_units[0]['text']
+        assert calls.usage(run['id'])['calls_used'] == calls_before
+        legacy = {**snapshot, 'config': {k: v for k, v in snapshot['config'].items() if k != 'packet_layout_version'}}
+        monkeypatch.setattr(store, 'snapshot', lambda _: (legacy, original_units))
+        assert engine.reading_result(result, run['id'])['paragraphs'][0]['text'] == original_units[0]['text']
+
+
 def test_medium_dense_prose_is_split_without_changing_facts():
     source = '预算尚未批准。' + ('这里保留业务判断、责任归属和原有问题，不增加新结论。' * 16)
     assert 360 < len(source) < 800
@@ -862,8 +893,9 @@ def test_packet_peer_contamination_repairs_only_the_rejected_item(packet_model, 
         run = wait(client, identifier, lambda v: bool(v['published']))['published']
         result = client.get(url(identifier) + '/result', params={'run_id': run['id']}).json()
         assert poisoned
-        assert result['paragraphs'][0]['text'] == policy.checked(first, first)
-        assert result['paragraphs'][1]['text'] == policy.checked(second, second)
+        assert result['paragraphs'][0]['text'] == policy.reading_layout(policy.checked(first, first))
+        assert result['paragraphs'][1]['text'] == policy.reading_layout(policy.checked(second, second))
+        assert [u['text'] for u in store.units(run['id'])] == [policy.checked(first, first), policy.checked(second, second)]
         assert calls.usage(run['id'])['stages']['generation'] == 2
         generation = [items for items in requests
                       if isinstance(items, list) and items and 'candidate' not in items[0]]

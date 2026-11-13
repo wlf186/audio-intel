@@ -529,6 +529,9 @@ def reading_result(result: dict, run_id: str, *, complete: bool = False) -> dict
         value = {**unit, 'omitted': unit['text'] == '', 'speaker': first.get('speaker', unit.get('speaker')),
                  'speaker_label': first.get('speaker_label', unit.get('speaker_label')),
                  'merged_source_count': len(set(unit['segment_ids'])), 'scene_ids': related}
+        if run['config'].get('packet_layout_version') == 1 and value['text']:
+            from .optimization_packet_policy import reading_layout
+            value['text'] = reading_layout(value['text'])
         value['group_summary'] = insights['groups'].get(str(unit['ordinal']))
         if unit.get('_detail_sources') and value['group_summary']:
             value['group_summary'] = {**value['group_summary'], 'subgroups': [

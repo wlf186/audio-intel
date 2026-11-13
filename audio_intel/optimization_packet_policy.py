@@ -24,6 +24,10 @@ def configure(config: dict) -> None:
     """Keep unvalidated models on their existing request policy."""
     verified = config.get('packet_presence_penalty') == 0
     config['packet_version'] = VERSION if verified and config.get('model') in ELIGIBLE_MODELS else None
+    if config['packet_version']:
+        config['packet_layout_version'] = 1
+    else:
+        config.pop('packet_layout_version', None)
 
 
 def capabilities(config: dict) -> dict:
@@ -507,6 +511,31 @@ def format_paragraphs(text: str) -> str:
     if start < len(text):
         chunks.append(text[start:].strip())
     return '\n\n'.join(chunks)
+
+
+def reading_layout(text: str) -> str:
+    """Wrap dense reading blocks at sentence ends, changing whitespace only.
+
+    This runs on the returned reading/export view, after model work and checks.
+    Stored drafts, review requests and checkpoint writes are untouched.
+    """
+    paragraphs = []
+    for block in text.split('\n\n'):
+        if len(block) <= 180:
+            paragraphs.append(block)
+            continue
+        quoted = [(m.start(), m.end()) for m in re.finditer(
+            r'[“「].*?[”」]|"[^"\n]*"', block, re.S)]
+        ends = [m.end() for m in re.finditer(
+            r'[。！？!?][”’」』）)\]"]*|(?<!\bMr)(?<!\bMrs)(?<!\bMs)(?<!\bDr)(?<!\bProf)\.(?=\s+[A-Z])', block)
+            if not any(left < m.start() < right for left, right in quoted)]
+        start = 0
+        for end in ends:
+            if end - start >= 90 and len(block) - end >= 50:
+                paragraphs.append(block[start:end].strip())
+                start = end
+        paragraphs.append(block[start:].strip())
+    return '\n\n'.join(paragraphs)
 
 def reading_ceiling(text: str, ceiling: int) -> int:
     """Keep dense questions/disfluencies in the original fine editing units.

@@ -165,6 +165,8 @@ English: Choose the smallest necessary upgrade backup scope: no extra backup wit
 
 ## Local development and deployment
 
+New expression-optimization packet runs may snapshot `packet_layout_version=1` for whitespace-only reading/export paragraph breaks. This does not rewrite historical text, add a database migration, or change browser-storage lifetime; older runs without the marker keep their prior layout. 请求包新运行的只读段落版式不回写历史正文，不新增数据库迁移或浏览器持久偏好。
+
 ### 单目录工作约定
 
 本机开发期间可以停止日常服务；继续使用同一份源码、运行环境和模型，无需创建第二套部署。以下流程适用于本机代码更新和开发/发版收尾，纯只读检查不触发启停。

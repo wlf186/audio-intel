@@ -34,6 +34,10 @@ English video insights and scene titles use model-selected literal topic phrases
 
 较长正文额外用本地规则清理明确停顿及部分重复口头词，在完整句末分开密集段落，不增加模型请求。含糊的业务词、责任关系和未回答问题仍保留，不通过猜测补成确定结论。原文不含相关内容时，小结若误写成编辑复核说明或无意义评价，会进入原有的有界修复与原文摘取流程。
 
+新请求包运行还快照只读阅读版式：读取或导出时，在完整句末拆开过密的文字块，只插入空白，不修改字词、数字、问题或引用，也不回写成稿。该步骤发生在模型处理和复核之后，不增加模型调用、请求内容或检查点写入；没有该快照的历史运行保持原版式。版式整理不能消除原文听写歧义或保证语句流畅。
+
+New packet runs snapshot a read-only reading/export layout. It inserts whitespace at complete sentence ends without changing words or stored drafts. It runs after model work and review, adds no model request or checkpoint write, and leaves historical runs without this snapshot unchanged. Layout cannot resolve transcription ambiguity or guarantee fluent wording.
+
 单组不超过120字且无画面的短稿采用固定两步，计划从不可变来源和配置恢复，不额外写计划行。首轮仍实际调用模型整理正文；若结果与原文或字面清理完全一致，则程序核对来源即可，第二次请求只提炼小结，不伪称已由模型独立复核。正文有其他变化时，第二次请求仍独立复核并提炼小结。
 
 请求计划单独存入不可变SQLite表，不把全文计划反复写入进度行；诊断每项最多保留12条、每条候选预览600字，不记录编辑前信息清单、不新增逐token日志或磁盘缓存。v25只增加表和可空字段；历史任务保留原策略及快照。新验证配置明确发送 presence_penalty=0，高级参数可显式覆盖或以null省略，已有历史配置的采样行为不变。实际降幅、速度及质量须以完整任务对照验收为准。
