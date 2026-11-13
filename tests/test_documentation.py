@@ -18,6 +18,7 @@ PUBLIC_DOCS = (
     ROOT / "docs" / "API.md",
     ROOT / "docs" / "EXPRESSION_OPTIMIZATION.md",
     ROOT / "docs" / "EXPRESSION_OPTIMIZATION_VALIDATION.md",
+    ROOT / "docs" / "EXPRESSION_OPTIMIZATION_PACKETS_VALIDATION.md",
     ROOT / "docs" / "ASR_ENHANCEMENT.md",
     ROOT / "docs" / "LIBRARY.md",
     ROOT / "docs" / "WORKSPACES.md",
