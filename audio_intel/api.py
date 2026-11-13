@@ -1293,7 +1293,7 @@ def create_app() -> FastAPI:
         operation_id="getCapabilities", responses={**AUTH_RESPONSES},
     )
     def capabilities(_: None = Depends(require_api_key)) -> CapabilitiesResponse:
-        from . import optimization_packet_policy, optimization_store
+        from . import optimization_budget, optimization_packet_policy, optimization_store
         optimization_batching = optimization_packet_policy.capabilities(optimization_store.settings())
         model_capabilities = asr_model_capabilities()
         default_model = default_asr_model()
@@ -1309,7 +1309,7 @@ def create_app() -> FastAPI:
                 "default_model": default_model["public_id"],
                 "models": model_capabilities,
                 "diarization": "CAM++ single-active-speaker",
-                "transcript_optimization": {"supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096, "batching": optimization_batching, "call_budget": {"supported": True, "default_limit": 300, "counts_failed_attempts": True, "temporary_override": True}, "text_versions": ["original", "optimized", "comparison"], "rewrite_modes": ["polish", "rewrite", "editorial"], "default_rewrite_mode": "rewrite", "summaries": {"version": 2, "automatic_fallback": True, "max_model_calls_per_node": 3, "node_timeout_seconds": 60, "group_sentences": 2, "continuous_script_chars": 50, "word_script_words": 30, "scene_title_chars": 20, "scene_title_words": 10, "retry_missing": True}},
+                "transcript_optimization": {"supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096, "batching": optimization_batching, "call_budget": {"supported": True, "default_limit": optimization_budget.DEFAULT_LIMIT, "counts_failed_attempts": True, "temporary_override": True}, "text_versions": ["original", "optimized", "comparison"], "rewrite_modes": ["polish", "rewrite", "editorial"], "default_rewrite_mode": "rewrite", "summaries": {"version": 2, "automatic_fallback": True, "max_model_calls_per_node": 3, "node_timeout_seconds": 60, "group_sentences": 2, "continuous_script_chars": 50, "word_script_words": 30, "scene_title_chars": 20, "scene_title_words": 10, "retry_missing": True}},
                 "speaker_count": {"min": 1, "max": 15, "default": "auto"},
                 "voiceprint_library": True,
                 "languages": ASR_LANGUAGES,

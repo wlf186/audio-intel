@@ -53,7 +53,7 @@ class ModelConnection(Connection):
 
 
 class SaveConfiguration(ModelConnection):
-    max_llm_calls: int = Field(300, strict=True, ge=1, le=2147483647, description='每次新优化的调用总上限，包含失败重试 / Per-run call cap including failed attempts')
+    max_llm_calls: int = Field(calls.DEFAULT_LIMIT, strict=True, ge=1, le=2147483647, description='每次新优化的调用总上限，包含失败重试；省略保留已存值，新配置默认100 / Per-run call cap including failed attempts; omission preserves saved value, new profiles default to 100')
     enabled: bool = Field(False, description="启用需匹配已验证连接；关闭会暂停未完成优化 / Enabling requires a matching verified connection; disabling pauses unfinished optimization")
     verification_token: str | None = Field(None, description="验证接口返回的凭证，10分钟内有效，API重启失效；未变更的已保存验证配置可省略 / Token from verification, valid for ten minutes and invalidated by API restart; unchanged saved verified profiles may omit it")
 
@@ -67,7 +67,7 @@ class OptimizationModelsResponse(BaseModel):
 
 
 class ConfigurationResponse(BaseModel):
-    max_llm_calls: int = Field(300, description='新建优化默认调用上限，包含失败尝试 / Default per-run call cap, including failed attempts')
+    max_llm_calls: int = Field(calls.DEFAULT_LIMIT, description='新建优化默认调用上限，包含失败尝试 / Default per-run call cap, including failed attempts')
     max_output_tokens: int = Field(4096, description='单次最大输出tokens，受总上下文限制 / Per-call output ceiling in tokens, constrained by total context')
     protocol: Literal['openai_chat_completions'] = Field('openai_chat_completions', description='只读协议标识 / Read-only protocol identifier')
     has_api_key: bool = Field(False, description='仅表示服务端是否已保存密钥，不返回密钥 / Whether a key is stored server-side; never the key itself')
@@ -661,7 +661,7 @@ def register(app, api):
             verified = connection_identity(candidate) == connection_identity(expected) and profile.get('verified_at')
             if body.enabled and not verified:
                 raise HTTPException(409, '请先验证所选模型 / Verify the selected model first')
-            value = {**(profile if verified else candidate), '_api_key': candidate['_api_key'], 'enabled': body.enabled, 'max_llm_calls': body.max_llm_calls if 'max_llm_calls' in body.model_fields_set else current.get('max_llm_calls', 300), 'max_output_tokens': candidate['max_output_tokens']}
+            value = {**(profile if verified else candidate), '_api_key': candidate['_api_key'], 'enabled': body.enabled, 'max_llm_calls': body.max_llm_calls if 'max_llm_calls' in body.model_fields_set else current.get('max_llm_calls', calls.DEFAULT_LIMIT), 'max_output_tokens': candidate['max_output_tokens']}
             store.save_settings(value)
             manager.wake.set()
             if not body.enabled:
@@ -687,7 +687,7 @@ def register(app, api):
         with db.connect() as c:
             pending = {(r[0], r[1]) for r in c.execute("SELECT kind,item_id FROM optimization_summaries WHERE run_id=? AND state IN ('pending','running','unavailable')", (item['id'],))}
         return calls.estimate(item['config'], units, item['hotwords'], used=item['calls_used'],
-                              limit=limit if limit is not None else item['calls_limit'] or 300, pending_insights=pending)
+                              limit=limit if limit is not None else item['calls_limit'] or calls.LEGACY_LIMIT, pending_insights=pending)
 
     @app.post(jobs + '/estimate', response_model=CallEstimate, tags=[TAG], operation_id='estimateOptimizationCalls', responses=errors, description=api.bilingual('本地计算完整流程与恢复余量，不调用模型。', 'Estimate the workflow and recovery allowance locally without model calls.'), summary='预估本次调用预算 / Estimate call budget')
     def estimate_calls(job_id: str, body: EstimateRequest, _: None = auth):

@@ -45,6 +45,7 @@ for(const width of [1440,390])test(`K token settings and independent call limit 
  })
  await page.goto('/#system')
  const panel=page.locator('.optimization-settings')
+ await expect(panel.getByLabel('每次优化最多调用 LLM 次数')).toHaveValue('300')
  await expect(panel.getByLabel('总上下文预算（K tokens）')).toHaveValue('32')
  await expect(panel.getByLabel('单次最大输出（K tokens）')).toHaveValue('4')
  await panel.getByLabel('每次优化最多调用 LLM 次数').fill('500')
@@ -53,5 +54,25 @@ for(const width of [1440,390])test(`K token settings and independent call limit 
  await expect(panel).toContainText('配置已保存')
  expect(config.max_llm_calls).toBe(500);expect(config.context_length).toBe(32768);expect(config.max_output_tokens).toBe(4096)
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()
+ expect(errors).toEqual([])
+})
+
+for(const width of [1440,390])test(`new settings call default is 100 ${width}`,async({page},info)=>{
+ await page.setViewportSize({width,height:900})
+ const {errors}=await uxFixture(page)
+ let calls:number|undefined
+ await page.route('**/settings/transcript-optimization',async route=>{
+  const config={base_url:'http://localhost:11434/v1',model:'test',enabled:false,use_proxy:false,context_length:16384,max_output_tokens:4096}
+  if(route.request().method()==='PUT')calls=route.request().postDataJSON().max_llm_calls
+  await route.fulfill({json:{...config,...(calls===undefined?{}:{max_llm_calls:calls})}})
+ })
+ await page.goto('/#system')
+ const panel=page.locator('.optimization-settings')
+ await expect(panel.getByLabel('每次优化最多调用 LLM 次数')).toHaveValue('100')
+ await panel.getByRole('button',{name:'保存配置',exact:true}).click()
+ await expect(panel).toContainText('配置已保存')
+ expect(calls).toBe(100)
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy()
+ await page.screenshot({path:info.outputPath('default-call-limit.png'),fullPage:true})
  expect(errors).toEqual([])
 })

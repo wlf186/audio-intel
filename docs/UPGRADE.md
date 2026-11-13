@@ -163,6 +163,12 @@ if ($LASTEXITCODE -ne 0) { throw "Backup cleanup failed; resolve before closing 
 
 English: Choose the smallest necessary upgrade backup scope: no extra backup without persistent migration, a consistent SQLite-only snapshot for database changes, and affected files only for file migrations. Do not copy large media merely because the schema changes. Use `scripts/upgrade_backup.py create --data-dir <actual-directory> --scope database|full` after stopping all users of that directory. If the old checkout lacks this tool, first pull only the new source, then back up before setup, startup or any migration; pulling source does not migrate data. Record its exact output path. After complete local deployment acceptance—including database integrity, history/files, functionality, and final API/supervisor/executor identities—**promptly remove every temporary backup from this upgrade**, including failed attempts, using `cleanup <recorded-directory> --verified`. Failed or incomplete acceptance retains rollback material. The tool validates purpose/path markers and refuses root, outside and symlink directories. Daily and library-replacement backups remain separately managed. Resolve cleanup failures before closing maintenance.
 
+## 表达优化默认调用预算 / Default optimization call cap
+
+新配置及缺少调用预算字段的配置默认上限改为100次，已有显式设置（包括300次）和历史任务额度、用量、检查点保持原值。保存配置时省略预算字段仍保留当前值。仅改调用上限无需重新验证；长期预算由用户在系统状态修改。此次默认值及文档更新没有数据库迁移、历史文件重写或额外升级备份需求。此前实测中的300次正式配置及10000次隔离试验上限是当时记录，不追改。
+
+English: New/missing-field configurations default to 100 calls. Explicit saved limits, including 300, and historical run budgets/usage/checkpoints remain unchanged; omitting the field on save preserves the current value. Call-cap-only edits need no re-verification. Long-term settings remain user-controlled. This default/documentation change needs no schema migration, historical-file rewrite or extra upgrade backup. Historical benchmark settings remain as recorded.
+
 ## Local development and deployment
 
 New expression-optimization packet runs may snapshot `packet_layout_version=1` for whitespace-only reading/export paragraph breaks. This does not rewrite historical text, add a database migration, or change browser-storage lifetime; older runs without the marker keep their prior layout. 请求包新运行的只读段落版式不回写历史正文，不新增数据库迁移或浏览器持久偏好。

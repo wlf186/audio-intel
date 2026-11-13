@@ -577,7 +577,7 @@ def test_budget_exhaustion_is_a_pause_and_resume_keeps_all_failed_attempts(packe
         done = wait(client, identifier, lambda value: bool(value['published']))['published']
         assert done['id'] == run and done['calls_used'] == 4
         assert calls.usage(run)['failed_or_interrupted'] == 2
-        assert store.settings()['max_llm_calls'] == 300
+        assert store.settings()['max_llm_calls'] == 100
 
 
 def test_every_fine_insight_is_delivered_and_exported_with_redaction(packet_model):

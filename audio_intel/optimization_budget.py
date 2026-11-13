@@ -11,7 +11,9 @@ from fastapi import HTTPException
 
 from . import db
 
-DEFAULT_LIMIT = 300
+DEFAULT_LIMIT = 100
+# Only unrecorded historical runs retain the old estimate fallback.
+LEGACY_LIMIT = 300
 DEFAULT_OUTPUT = 4096
 _scope: ContextVar[tuple[str, str, str | None] | None] = ContextVar('optimization_call_scope', default=None)
 

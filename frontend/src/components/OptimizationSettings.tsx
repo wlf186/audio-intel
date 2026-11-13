@@ -1,7 +1,7 @@
 import {useEffect,useRef,useState} from 'react'
 import {useTranslation} from 'react-i18next'
 import {request} from '../lib/api'
-import {optimizationSettingsPath as root,needsServiceNotice,type OptimizationConfiguration} from '../lib/optimization'
+import {DEFAULT_CALL_LIMIT,optimizationSettingsPath as root,needsServiceNotice,type OptimizationConfiguration} from '../lib/optimization'
 import './optimization.css'
 
 export function OptimizationSettings(){
@@ -20,7 +20,7 @@ export function OptimizationSettings(){
  const controller=useRef<AbortController|undefined>(undefined)
  useEffect(()=>{
   const active=new AbortController();controller.current=active
-  void request<OptimizationConfiguration>(root,{signal:active.signal}).then(value=>{setConfig({...value,context_length:value.context_length??16384,max_llm_calls:value.max_llm_calls??300,max_output_tokens:value.max_output_tokens??4096});setSaved(value);setApiKey('');setKeyChanged(false);setExtraText(JSON.stringify(value.extra_body||{},null,2));setDirty(false);setModels(value.model?[value.model]:[]);setError('')}).catch(cause=>{if(!active.signal.aborted)setError((cause as Error).message)})
+  void request<OptimizationConfiguration>(root,{signal:active.signal}).then(value=>{setConfig({...value,context_length:value.context_length??16384,max_llm_calls:value.max_llm_calls??DEFAULT_CALL_LIMIT,max_output_tokens:value.max_output_tokens??4096});setSaved(value);setApiKey('');setKeyChanged(false);setExtraText(JSON.stringify(value.extra_body||{},null,2));setDirty(false);setModels(value.model?[value.model]:[]);setError('')}).catch(cause=>{if(!active.signal.aborted)setError((cause as Error).message)})
   return()=>controller.current?.abort()
  },[reload])
  const edit=(value:Partial<OptimizationConfiguration>)=>{controller.current?.abort();setBusy('');setConfig(current=>current?{...current,...value,verified_at:undefined,verification_token:undefined,observed_context_length:undefined}:current);setDirty(true);if(value.base_url!==undefined||value.use_proxy!==undefined)setModels([]);setNotice('');setError('')}
@@ -43,7 +43,7 @@ export function OptimizationSettings(){
     if(!active.signal.aborted){setModels(value.models.map(m=>m.name));setNotice(t(value.models.length?'optimization.connected':'optimization.noModels'))}
    }else if(kind==='verify'){
     const value=await request<OptimizationConfiguration>(root+'/verify',{method:'POST',signal:active.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({base_url:next.base_url,use_proxy:next.use_proxy,...credentials,model:next.model,context_length:next.context_length,max_output_tokens:next.max_output_tokens,extra_body:next.extra_body})})
-    if(!active.signal.aborted){setConfig({...value,enabled:next.enabled,max_llm_calls:next.max_llm_calls??300,max_output_tokens:value.max_output_tokens??next.max_output_tokens??4096});setDirty(true);setNotice(t('optimization.verified'))}
+    if(!active.signal.aborted){setConfig({...value,enabled:next.enabled,max_llm_calls:next.max_llm_calls??DEFAULT_CALL_LIMIT,max_output_tokens:value.max_output_tokens??next.max_output_tokens??4096});setDirty(true);setNotice(t('optimization.verified'))}
    }else{
     const value=await request<OptimizationConfiguration>(root,{method:'PUT',signal:active.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({base_url:next.base_url,use_proxy:next.use_proxy,...credentials,model:next.model,context_length:next.context_length,max_output_tokens:next.max_output_tokens,max_llm_calls:next.max_llm_calls,extra_body:next.extra_body,enabled:next.enabled,verification_token:next.verification_token})})
     if(!active.signal.aborted){setConfig(value);setSaved(value);setApiKey('');setKeyChanged(false);setDirty(false);setNotice(t('optimization.saved'))}

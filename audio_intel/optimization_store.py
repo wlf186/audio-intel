@@ -102,13 +102,14 @@ def migrate(connection: sqlite3.Connection) -> None:
 
 
 def settings() -> dict:
+    from .optimization_budget import DEFAULT_LIMIT
     with db.connect() as connection:
         row = connection.execute('SELECT value_json FROM optimization_settings WHERE singleton=1').fetchone()
     if row:
         value = json.loads(row[0])
         advanced = value.get('extra_body', {})
-        return {'max_llm_calls': 300, 'max_output_tokens': advanced.get('max_completion_tokens', advanced.get('max_tokens', 4096)), **value}
-    return {'base_url': '', 'model': '', 'use_proxy': False, 'enabled': False, 'max_llm_calls': 300, 'max_output_tokens': 4096, 'context_length': 16384, 'protocol': 'openai_chat_completions', 'extra_body': {}}
+        return {'max_llm_calls': DEFAULT_LIMIT, 'max_output_tokens': advanced.get('max_completion_tokens', advanced.get('max_tokens', 4096)), **value}
+    return {'base_url': '', 'model': '', 'use_proxy': False, 'enabled': False, 'max_llm_calls': DEFAULT_LIMIT, 'max_output_tokens': 4096, 'context_length': 16384, 'protocol': 'openai_chat_completions', 'extra_body': {}}
 
 
 def credential(config: dict) -> str:

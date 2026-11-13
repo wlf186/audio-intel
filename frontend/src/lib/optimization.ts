@@ -1,3 +1,6 @@
+export const DEFAULT_CALL_LIMIT=100
+export const LEGACY_CALL_LIMIT=300
+
 export type RewriteMode='polish'|'rewrite'|'editorial'
 export const rewriteModes:RewriteMode[]=['polish','rewrite','editorial']
 const preferenceKey='audio-intel:optimization-preferences:v1'

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 import ast
 import re
 import subprocess
@@ -726,24 +727,32 @@ def test_speech_enhancement_openapi_contract_and_examples(tmp_path, monkeypatch)
     assert JobResultResponse.model_validate(historical).model_dump(exclude_unset=True) == historical
 
 
-def test_optimization_documented_examples_wait_for_publication(tmp_path, monkeypatch):
+@pytest.mark.parametrize('documentation', ['runtime', 'markdown'])
+def test_optimization_documented_examples_wait_for_publication(tmp_path, monkeypatch, documentation):
     """Execute the published examples against a transport, without remote LLM I/O."""
     import httpx
     import json
     from audio_intel.api_docs import API_DESCRIPTION
 
-    section = API_DESCRIPTION.split('## 优化与入库示例 / Optimization and enrollment examples', 1)[1]
+    text = API_DESCRIPTION if documentation == 'runtime' else (Path(__file__).resolve().parents[1] / 'docs/API.md').read_text(encoding='utf-8')
+    section = text.split('## 优化与入库示例 / Optimization and enrollment examples', 1)[1].split('## ', 1)[0]
+    monkeypatch.delenv('OPTIMIZATION_CALL_LIMIT', raising=False)
     blocks = re.findall(r'```python\n(.*?)```', section, re.S)
     calls = []
     run = {'id': 'a' * 32, 'state': 'running'}
 
     def handle(request):
         calls.append(request)
+        if request.url.path.endswith('/estimate'):
+            return httpx.Response(200, json={'max_llm_calls': 100, 'minimum_limit': 20, 'recommended_limit': 40, 'fingerprint': 'b' * 64})
+        if request.url.path.endswith('/usage'):
+            assert request.url.params['run_id'] == run['id']
+            return httpx.Response(200, json={'calls_used': 25, 'max_llm_calls': 100})
         if request.url.path.endswith('/samples/from-asr'):
             assert json.loads(request.content)['audio_track'] == 'enhanced'
             return httpx.Response(201, json={'items': []})
         if request.url.path.endswith('/transcript-export'):
-            assert len(calls) == 4  # create -> poll -> result -> export
+            assert len(calls) == 6  # estimate -> create -> poll -> result -> usage -> export
             assert json.loads(request.content)['optimization_id'] == run['id']
             return httpx.Response(200, content=b'published draft')
         if request.url.path.endswith('/result'):
@@ -751,6 +760,8 @@ def test_optimization_documented_examples_wait_for_publication(tmp_path, monkeyp
             return httpx.Response(200, json={'complete': True})
         if request.method == 'POST':
             assert request.headers['Idempotency-Key'] == 'example-key'
+            assert json.loads(request.content)['max_llm_calls'] == 100
+            assert json.loads(request.content)['estimate_fingerprint'] == 'b' * 64
             return httpx.Response(202, json={'candidate': run, 'published': None})
         return httpx.Response(200, json={'candidate': None, 'published': {**run, 'state': 'succeeded'}})
 
@@ -764,7 +775,7 @@ def test_optimization_documented_examples_wait_for_publication(tmp_path, monkeyp
     for block in blocks:
         exec(compile(block, '<documented-example>', 'exec'), {})
     assert (tmp_path / 'optimized.txt').read_bytes() == b'published draft'
-    assert len(calls) == 5
+    assert len(calls) == 7
 
 
 def test_chat_completions_configuration_examples_match_public_contract(tmp_path, monkeypatch):
@@ -825,3 +836,25 @@ def test_documented_configuration_preserves_omitted_model_key(monkeypatch, model
     monkeypatch.setattr(httpx,'Client',lambda **kwargs:original(transport=httpx.MockTransport(respond),**kwargs))
     exec(compile(example,'<configuration-example>','exec'),{})
     assert len(calls)==2
+
+
+@pytest.mark.parametrize('documentation', ['runtime', 'markdown'])
+def test_optimization_example_stops_before_creation_when_budget_is_insufficient(monkeypatch, documentation):
+    from audio_intel.api_docs import API_DESCRIPTION
+    import httpx
+    text = API_DESCRIPTION if documentation == 'runtime' else (Path(__file__).resolve().parents[1] / 'docs/API.md').read_text(encoding='utf-8')
+    section = text.split('## 优化与入库示例 / Optimization and enrollment examples', 1)[1]
+    block = re.findall(r'```python\n(.*?)```', section, re.S)[0]
+    seen = []
+    def handle(request):
+        seen.append(request.url.path)
+        assert request.url.path.endswith('/estimate')
+        return httpx.Response(200, json={'max_llm_calls': 100, 'minimum_limit': 120, 'recommended_limit': 180})
+    original = httpx.Client
+    monkeypatch.setattr(httpx, 'Client', lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs))
+    monkeypatch.setenv('JOB_ID', 'example-job')
+    monkeypatch.setenv('OPTIMIZATION_KEY', 'example-key')
+    monkeypatch.delenv('OPTIMIZATION_CALL_LIMIT', raising=False)
+    with pytest.raises(SystemExit, match='suggested limit 180'):
+        exec(compile(block, '<budget-example>', 'exec'), {})
+    assert len(seen) == 1

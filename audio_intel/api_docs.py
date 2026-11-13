@@ -5,6 +5,7 @@ from typing import Any
 
 from .model_registry import asr_enhancement_model, asr_models, tts_models
 from .asr_enhancement import strength_capabilities
+from .optimization_budget import DEFAULT_LIMIT
 
 
 API_DESCRIPTION = r"""
@@ -1356,7 +1357,7 @@ def _capabilities_example() -> dict[str, Any]:
         "deployment": {"profile": "full", "default_compute_device": "gpu", "gpu_runtime_installed": True},
         "asr": {
             "transcript_optimization": {
-                "supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096, "batching": {"supported": True, "enabled": True, "max_items": 12, "reason": "source_packets", "eligible_models": ["qwen3.5:9b"], "packet_version": 1, "retains_fine_insights": True, "independent_prose_review": True}, "call_budget": {"supported": True, "default_limit": 300, "counts_failed_attempts": True, "temporary_override": True},
+                "supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096, "batching": {"supported": True, "enabled": True, "max_items": 12, "reason": "source_packets", "eligible_models": ["qwen3.5:9b"], "packet_version": 1, "retains_fine_insights": True, "independent_prose_review": True}, "call_budget": {"supported": True, "default_limit": DEFAULT_LIMIT, "counts_failed_attempts": True, "temporary_override": True},
                 "text_versions": ["original", "optimized", "comparison"],
                 "rewrite_modes": ["polish", "rewrite", "editorial"], "default_rewrite_mode": "rewrite",
                 "summaries": {"version": 2, "automatic_fallback": True, "max_model_calls_per_node": 3,
@@ -1534,7 +1535,7 @@ with httpx.Client(base_url=os.environ["AUDIO_INTEL_BASE_URL"], headers=headers) 
 _OPTIMIZATION_CONNECTION = {'base_url': 'http://localhost:11434/v1', 'use_proxy': False,
     'model': 'qwen3.5:9b', 'context_length': 16384, 'extra_body': {'reasoning_effort': 'none'}}
 _OPTIMIZATION_VERIFIED = {**_OPTIMIZATION_CONNECTION, 'protocol': 'openai_chat_completions',
-    'has_api_key': False, 'enabled': True, 'structured_output_mode': 'json_schema',
+    'has_api_key': False, 'enabled': True, 'max_llm_calls': DEFAULT_LIMIT, 'max_output_tokens': 4096, 'structured_output_mode': 'json_schema',
     'verified_at': '2026-11-03T00:00:00+00:00', 'prompt_version': 7,
     'model_context_length': None, 'observed_context_length': None, 'model_digest': None}
 _OPTIMIZATION_SETTINGS_PATH = '/api/v1/settings/transcript-optimization'
@@ -1545,7 +1546,7 @@ REQUEST_EXAMPLES.update({
     (_OPTIMIZATION_SETTINGS_PATH + '/verify', 'post'): {
         'local_ollama': {'summary': '验证已安装模型 / Verify an installed model', 'value': deepcopy(_OPTIMIZATION_CONNECTION)}},
     (_OPTIMIZATION_SETTINGS_PATH, 'put'): {
-        'verified_connection': {'summary': '使用本次验证返回的真实凭证 / Use the live token returned by verification', 'value': {**_OPTIMIZATION_CONNECTION, 'enabled': True, 'verification_token': 'replace-with-verification-response-token'}}},
+        'verified_connection': {'summary': '使用本次验证返回的真实凭证 / Use the live token returned by verification', 'value': {**_OPTIMIZATION_CONNECTION, 'enabled': True, 'max_llm_calls': DEFAULT_LIMIT, 'max_output_tokens': 4096, 'verification_token': 'replace-with-verification-response-token'}}},
 })
 
 
@@ -1839,8 +1840,16 @@ api_key = os.getenv("AUDIO_INTEL_API_KEY")
 headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 root = f"/api/v1/jobs/{job_id}/transcript-optimization"
 with httpx.Client(base_url=base_url, headers=headers, timeout=120) as client:
+    response = client.post(root + "/estimate", json={"rewrite_mode": "rewrite"})
+    response.raise_for_status()
+    estimate = response.json()
+    # Optional user-selected override, effective for this run only.
+    limit = int(os.getenv("OPTIMIZATION_CALL_LIMIT", str(estimate["max_llm_calls"])))
+    if limit < estimate["minimum_limit"]:
+        raise SystemExit(f"Review suggested limit {estimate['recommended_limit']} and set OPTIMIZATION_CALL_LIMIT")
     response = client.post(root, headers={"Idempotency-Key": key},
-                           json={"regenerate": False, "rewrite_mode": "rewrite"})
+                           json={"regenerate": False, "rewrite_mode": "rewrite",
+                                 "max_llm_calls": limit, "estimate_fingerprint": estimate["fingerprint"]})
     response.raise_for_status()
     status = response.json()
     run = status["candidate"] or status["published"]
@@ -1859,6 +1868,9 @@ with httpx.Client(base_url=base_url, headers=headers, timeout=120) as client:
     response = client.get(root + "/result", params={"run_id": run_id})
     response.raise_for_status()
     assert response.json()["complete"]
+    response = client.get(root + "/usage", params={"run_id": run_id})
+    response.raise_for_status()
+    print(response.json())
     response = client.post(f"/api/v1/jobs/{job_id}/transcript-export",
                            json={"format": "txt", "text_version": "optimized",
                                  "optimization_id": run_id, "redact": True})
@@ -1891,14 +1903,21 @@ Use actual original segment IDs belonging to one speaker. Missing enhanced audio
 
 API_DESCRIPTION += """
 
+## 来源请求包 / Source packets
+
+重新验证后的 `qwen3.5:9b` 新运行支持来源请求包；其他模型与历史运行保留其策略。按说话人、画面和停顿边界组合约2400字以内的语义段，密集口语及小窗口缩小。正文生成与复核使用独立请求，复核可同时提炼小结；合并正文的全部原细分小结保存在 `group_summary.subgroups`。有效项先保存，只修失败项；输出截断可缩包，不自动提高窗口或输出上限。英文视频的小结和标题使用有标记的原文关键词。新运行的阅读/导出版式只改变空白，不回写存稿。SQLite v25保留历史数据。
+
+Newly reverified `qwen3.5:9b` profiles enable source packets for new runs; other models and historical runs retain their policy. Same-speaker, same-scene passages are bounded at about 2400 characters, reduced for dense speech or smaller windows. Generation and review remain separate requests; review may also produce insights, with merged paragraphs retaining all fine insights in `group_summary.subgroups`. Accepted items are checkpointed before local repairs; truncation may split packets without raising input/output limits. English video insights use labelled source keywords. New-run reading/export layout changes whitespace only. SQLite v25 preserves historical data. Measured scope and quality limitations are recorded in docs/EXPRESSION_OPTIMIZATION_PACKETS_VALIDATION.md; arbitrary-length linear time, constant memory and lower crash probability are not established.
+
 ## 调用预算 / LLM call budget
 
-系统默认每次优化最多300次调用，所有阶段及失败尝试共用，暂停继续和补试小结不重置。
+新配置默认每次优化最多100次调用；已有显式配置和任务快照保持原值。上限不是消耗目标，所有阶段及失败尝试共用，暂停继续和补试小结不重置。仅改调用上限不需重新验证。
 `POST /api/v1/jobs/{job_id}/transcript-optimization/estimate` 不调用模型，返回正常预估、最小及建议总上限。
 创建支持 `max_llm_calls` 一次性覆盖；继续与小结补试允许调高当前总上限，额度耗尽保留检查点并暂停。
 `GET .../usage?run_id=...` 返回实际尝试次数及阶段分布，历史未记录用量为null。
 预算不足返回409：`code=optimization_budget_insufficient`，附 `estimate`。队列／磁盘不足仍为429。
 配置 `max_output_tokens` 控制单次最大输出，默认4096；`context_length` 是输入加输出的客户端总预算。
 UI用K tokens（1K=1024），API用整数tokens；高级输出参数不得与显式上限冲突。
-表达优化入口提供用量详情，不自动弹窗。完整可执行预算示例见仓库 docs/EXPRESSION_OPTIMIZATION.md。
+表达优化入口提供用量详情，不自动弹窗。新验证9B配置启用请求包，保留全部细分小结；其他模型和旧稿保留原策略。
+New configurations default to 100 calls; explicit saved limits and run snapshots are preserved. The cap is not a spending target. All stages and failed attempts count, resume keeps usage, and temporary overrides never change System settings. Call-limit-only edits need no model re-verification. Context includes input, output and safety allowance; UI uses K tokens while API fields use integer tokens. Estimate/usage endpoints and the executable example above show one-run overrides. Newly reverified 9B profiles enable source packets; other models and historical runs retain their policy.
 """

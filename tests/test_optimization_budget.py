@@ -74,7 +74,7 @@ def test_estimate_and_temporary_limit_have_no_remote_side_effects(configured, mo
         accepted = client.post(root, json={'max_llm_calls': 25}, headers=headers)
         assert accepted.status_code == 202
         assert accepted.json()['candidate']['calls_limit'] == 25
-        assert store.settings()['max_llm_calls'] == 300
+        assert store.settings()['max_llm_calls'] == 100
         assert client.post(root, json={'max_llm_calls': 25}, headers=headers).status_code == 200
         assert client.post(root, json={'max_llm_calls': 26}, headers=headers).status_code == 409
 
@@ -238,3 +238,44 @@ def test_preflight_binding_rechecks_configuration_without_consuming_key(configur
         assert accepted.status_code == 202, accepted.text
         store.save_settings({**store.settings(), 'context_length': 16384})
         assert client.post(root, json=body, headers=headers).status_code == 200
+
+
+def test_factory_default_preserves_explicit_settings_and_omitted_saves(local):
+    with TestClient(api.create_app()) as client:
+        root = '/api/v1/settings/transcript-optimization'
+        assert client.get(root).json()['max_llm_calls'] == 100
+        assert client.get('/api/v1/capabilities').json()['asr']['transcript_optimization']['call_budget']['default_limit'] == 100
+        schema = client.get('/openapi.json').json()
+        for name in ['SaveConfiguration', 'ConfigurationResponse']:
+            assert schema['components']['schemas'][name]['properties']['max_llm_calls']['default'] == 100
+        store.save_settings({**PROFILE, 'max_llm_calls': 300})
+        body = {k: PROFILE[k] for k in ['base_url', 'model', 'use_proxy', 'context_length']}
+        body['enabled'] = True
+        response = client.put(root, json=body)
+        assert response.status_code == 200, response.text
+        assert response.json()['max_llm_calls'] == 300
+        response = client.put(root, json={**body, 'max_llm_calls': 100})
+        assert response.status_code == 200, response.text
+        assert response.json()['max_llm_calls'] == 100
+
+
+def test_historical_budget_snapshot_and_unrecorded_usage_keep_their_policy(local):
+    data = source(1)
+    units = engine.prepare_units(data)
+    config = {**PROFILE, 'budget_policy_version': 1, 'max_llm_calls': 300, 'call_estimate': {}}
+    run, _ = store.create(job(data), 'preserve-existing-300', False, config, engine.source_hash(data), [], units)
+    store.save_settings({**PROFILE, 'max_llm_calls': 100})
+    assert store.get(run)['calls_limit'] == 300
+    assert store.get(run)['config']['max_llm_calls'] == 300
+    with TestClient(api.create_app()) as client:
+        response = client.post(url(store.get(run)['job_id']) + '/estimate', json={'run_id': run})
+        assert response.status_code == 200
+        assert response.json()['max_llm_calls'] == 300
+    legacy_job = job(data)
+    legacy, _ = store.create(legacy_job, 'preserve-unrecorded-budget', False, PROFILE, engine.source_hash(data), [], units)
+    assert budget.usage(legacy)['recorded'] is False
+    assert budget.usage(legacy)['calls_used'] is None
+    with TestClient(api.create_app()) as client:
+        response = client.post(url(legacy_job) + '/estimate', json={'run_id': legacy})
+        assert response.status_code == 200
+        assert response.json()['max_llm_calls'] == 300
