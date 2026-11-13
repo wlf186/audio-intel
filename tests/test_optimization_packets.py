@@ -823,6 +823,7 @@ def test_source_ownership_preserves_named_component_and_artifact_roles():
     assert policy.SourceOwnership([source]).error(source, '结合后生成相应的 SpecFile 文件。') is None
     source = '缺陷生成，NebulaRunner 微调方案如下。'
     assert policy.SourceOwnership([source]).error(source, '缺陷生成 NebulaRunner微调方案如下。') is None
+    assert policy.SourceOwnership([source]).error(source, '缺陷生成 NebulaRunner 微调方案如下。') is None
 
 
 def test_packet_peer_contamination_repairs_only_the_rejected_item(packet_model, monkeypatch):
