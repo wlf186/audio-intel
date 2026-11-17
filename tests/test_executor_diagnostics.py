@@ -57,7 +57,8 @@ def test_unavailable_sampling_and_failed_write_do_not_break_recovery(tmp_path, m
     assert probe.last_rss is None
 
 
-def test_native_executor_crash_records_evidence_and_next_job_proceeds(tmp_path, monkeypatch):
+@pytest.mark.parametrize("poll_disconnect", [False, True])
+def test_native_executor_crash_records_evidence_and_next_job_proceeds(tmp_path, monkeypatch, poll_disconnect):
     local = replace(settings, data_dir=tmp_path/'data', temp_dir=tmp_path/'tmp',
                     cache_dir=tmp_path/'cache', log_dir=tmp_path/'logs', run_dir=tmp_path/'run', mock_mode=True)
     monkeypatch.setattr(db, 'settings', local)
@@ -76,7 +77,25 @@ worker._processor=lambda kind:processor
 if __name__=='__main__':
     worker.run('asr')
 ''', encoding='utf-8')
-    env = {**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[1]),
+    if poll_disconnect:
+        script.write_text(script.read_text(encoding='utf-8').replace("if __name__=='__main__':", """original_spawn = worker._spawn_executor
+class Pipe:
+    def __init__(self, connection):
+        self.connection = connection
+        self.first = True
+    def poll(self, timeout=0):
+        if self.first:
+            self.first = False
+            raise BrokenPipeError('simulated Windows poll disconnect')
+        return self.connection.poll(timeout)
+    def __getattr__(self, name):
+        return getattr(self.connection, name)
+def spawn(*args):
+    process, connection = original_spawn(*args)
+    return process, Pipe(connection)
+worker._spawn_executor = spawn
+if __name__=='__main__':"""), encoding='utf-8')
+    env = {**os.environ, 'PYTHONPATH' : str(Path(__file__).resolve().parents[1]),
            'AUDIO_INTEL_LOAD_ENV': '0', 'AUDIO_INTEL_MOCK_MODE': '1', 'AUDIO_INTEL_WORKER_POLL_SECONDS': '.03'}
     for key, folder in [('DATA','data'),('TEMP','tmp'),('CACHE','cache'),('LOG','logs'),('RUN','run')]:
         env['AUDIO_INTEL_'+key+'_DIR'] = str(tmp_path/folder)
@@ -104,3 +123,25 @@ def test_sampling_unexpected_probe_errors_are_optional(monkeypatch):
     monkeypatch.setattr(diagnostics.psutil, 'Process', unavailable)
     probe = diagnostics.ExecutorDiagnostics(123)
     assert probe.last_rss is None
+
+
+@pytest.mark.parametrize('operation', ['poll', 'recv'])
+@pytest.mark.parametrize('error', [EOFError, BrokenPipeError])
+def test_executor_pipe_disconnect_is_observed_by_supervisor(operation, error):
+    class Connection:
+        def poll(self, timeout):
+            assert timeout == .1
+            if operation == 'poll':
+                raise error('closed pipe')
+            return True
+        def recv(self):
+            raise error('closed pipe')
+    assert worker._receive_executor_message(Connection(), .1) is None
+
+
+def test_executor_pipe_unrelated_errors_are_not_hidden():
+    class Connection:
+        def poll(self, timeout):
+            raise ValueError('invalid handle')
+    with pytest.raises(ValueError, match='invalid handle'):
+        worker._receive_executor_message(Connection())

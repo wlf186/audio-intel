@@ -193,6 +193,15 @@ def _executor_main(kind: str, worker_id: str, worker_pid: int, connection: Any) 
         connection.close()
 
 
+def _receive_executor_message(connection: Any, timeout: float = 0.0) -> Any:
+    try:
+        return connection.recv() if connection.poll(timeout) else None
+    except (EOFError, BrokenPipeError):
+        # Windows can report a closed pipe from poll(), before is_alive()
+        # observes the executor exit. The supervisor owns exit/cleanup recovery.
+        return None
+
+
 def _executor_metadata_path(kind: str) -> Path:
     return settings.run_dir / f"{kind}-executor.json"
 
@@ -468,11 +477,8 @@ def _run(kind: str) -> None:
                 connection.send(current_job["id"])
                 next_heartbeat = 0.0
 
-            if connection.poll():
-                try:
-                    completed = connection.recv()
-                except EOFError:
-                    continue
+            completed = _receive_executor_message(connection)
+            if completed is not None:
                 if completed.get("job_id") == current_job["id"]:
                     if completed.get("state") == "resource_limited":
                         _complete_resource_failure(kind, process, connection, current_job, completed['error_message'])
@@ -582,11 +588,8 @@ def _run(kind: str) -> None:
             cooperative_deadline = time.monotonic() + max(0.0, settings.cancel_grace_seconds)
             cooperative_cancelled = False
             while time.monotonic() < cooperative_deadline and process.is_alive():
-                if connection.poll(WORKER_MONITOR_SECONDS):
-                    try:
-                        completed = connection.recv()
-                    except EOFError:
-                        break
+                completed = _receive_executor_message(connection, WORKER_MONITOR_SECONDS)
+                if completed is not None:
                     if completed.get("job_id") == current["id"]:
                         cooperative_cancelled = completed.get("state") == "cancelled"
                         if not cooperative_cancelled:

@@ -287,3 +287,5 @@ docs(readme): add product overview and screenshots
 ```
 
 Pull requests should explain behavior changes, list verification commands and results, call out database/API compatibility, and include before/after screenshots for UI work. Link relevant issues and keep unrelated formatting changes out of the patch.
+
+The v0.1.48 pending tag at `4d02dd1` failed native Windows executor-crash recovery ([run](https://github.com/wlf186/audio-intel/actions/runs/44078921959)): `PeekNamedPipe` raised `BrokenPipeError` from `poll()` outside the receive guard. Guard poll and receive together; retain process-exit diagnostics, cleanup and supervisor reuse. Native crash coverage also injects a poll disconnect deterministically, and unit cases cover EOF/broken-pipe errors in both operations without hiding unrelated errors. Original test deadlines and exit-code assertions remain unchanged.
