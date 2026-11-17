@@ -1,3 +1,5 @@
+import {showMediaStatus} from './reader-helpers'
+import {showAudioTimeline} from './asr-helpers'
 import {openSampleForm} from './ux-helpers'
 import {expandAsrAdvanced,expandAsrSettings,showAsrResults} from './asr-helpers'
 import {expandTtsSettings} from './tts-helpers'
@@ -466,6 +468,7 @@ test('ASR playback, seek and transcript search are interactive',async({page})=>{
  const paused=await page.locator('audio').evaluate((element:HTMLAudioElement)=>element.paused)
  expect(paused).toBe(true)
  await expect(clock).not.toHaveText('00:00:00.000')
+ await showAudioTimeline(page)
  const waveform=page.locator('.wave-area canvas')
  await expect(waveform).toHaveAttribute('role','slider')
  const duration=await page.locator('audio').evaluate((element:HTMLAudioElement)=>element.duration)
@@ -731,6 +734,7 @@ test('Auto-detected languages outside the aligner list explain segment-only time
  await page.route('**/api/v1/jobs/asr-auto-arabic/source',route=>route.fulfill({contentType:'audio/wav',body:wav}))
  await page.goto('/#asr')
  await showAsrResults(page)
+ await showMediaStatus(page)
  const alignmentNote=page.getByRole('note').filter({hasText:'自动检测为 Arabic'})
  await expect(alignmentNote).toContainText('自动检测为 Arabic')
  await expect(alignmentNote).toContainText('已返回句段级时间戳')

@@ -1,3 +1,4 @@
+import {closeOptimizationDetails,closeReadingOptions,showOptimizationDetails,showReadingOptions} from './reader-helpers'
 import {test,expect} from './fixtures'
 import {uxFixture} from './ux-fixtures'
 
@@ -20,7 +21,9 @@ for(const [width,height] of [[1280,900],[1366,768],[1440,900],[1920,1080],[390,8
  await expect(page.locator('[data-reader-id="v2g0"] .optimization-group-summary small')).toHaveText('分组小结 · 关键词')
  await expect(page.locator('[data-reader-id="v2g1"] .optimization-group-summary small')).toHaveText('分组小结 · 原文要点')
  await expect(page.locator('.optimization-scene-title').first()).toContainText('关键词')
+ await showOptimizationDetails(page)
  await expect(page.locator('.optimization-status-summary')).toContainText('关键词2 · 原文要点2')
+ await closeOptimizationDetails(page)
  await expect(page.getByRole('button',{name:'补试未生成小结',exact:true})).toHaveCount(0)
  const search=page.getByPlaceholder('搜索两侧内容')
  await search.fill('三千元')
@@ -87,7 +90,9 @@ for(const [width,height] of [[1280,900],[1366,768],[1440,900],[1920,1080],[390,8
  await expect(page.locator('.optimization-reader .video-frame')).toHaveCount(0)
  await expect(page.locator('.optimization-scene-title')).toHaveCount(2)
  const previousRequests=bodyRequests
+ await showOptimizationDetails(page)
  await page.getByRole('button',{name:'补试未生成小结',exact:true}).click()
+ await closeOptimizationDetails(page)
  await expect(page.locator('[data-reader-id="g1"] .optimization-group-summary')).toContainText('周五通过测试后再上线。')
  expect(bodyRequests).toBe(previousRequests)
  await expect(page.getByRole('button',{name:'对照',exact:true})).toHaveAttribute('aria-pressed','true')
@@ -115,15 +120,21 @@ test('summary refresh preserves filters and the scrolled group without reloading
  const search=page.getByPlaceholder('搜索两侧内容')
  await search.fill('完整优化正文')
  await expect(page.locator('[data-reader-id="g30"]')).toContainText('完整优化正文')
+ await showReadingOptions(page)
  await page.getByLabel('段落筛选',{exact:true}).selectOption('changed')
+ await closeReadingOptions(page)
  const root=page.locator('.optimization-reader')
  await root.evaluate(node=>{node.querySelectorAll<HTMLElement>('[data-reader-id]').forEach(row=>row.style.contentVisibility='visible');const group=node.querySelector<HTMLElement>('[data-reader-id="g30"]')!;node.scrollTop+=group.getBoundingClientRect().top-node.getBoundingClientRect().top})
  const anchor=await root.evaluate(node=>{const top=node.getBoundingClientRect().top;const row=[...node.querySelectorAll<HTMLElement>('[data-reader-id]')].find(row=>row.getBoundingClientRect().bottom>top+1)!;return{id:row.dataset.readerId,offset:row.getBoundingClientRect().top-top}})
  const previousRequests=bodyRequests
+ await showOptimizationDetails(page)
  await page.getByRole('button',{name:'补试未生成小结',exact:true}).click()
+ await closeOptimizationDetails(page)
  await expect(page.getByRole('button',{name:'补试未生成小结',exact:true})).toHaveCount(0)
  await expect(search).toHaveValue('完整优化正文')
+ await showReadingOptions(page)
  await expect(page.getByLabel('段落筛选',{exact:true})).toHaveValue('changed')
+ await closeReadingOptions(page)
  await expect.poll(()=>root.evaluate((node,anchor)=>{const row=node.querySelector<HTMLElement>(`[data-reader-id="${anchor.id}"]`)!;return Math.abs(row.getBoundingClientRect().top-node.getBoundingClientRect().top-anchor.offset)},anchor)).toBeLessThan(3)
  expect(bodyRequests).toBe(previousRequests)
  expect(errors).toEqual([])

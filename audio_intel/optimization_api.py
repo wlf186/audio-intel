@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from fastapi import Depends, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
+from . import optimization_topics as topics
 from . import optimization_provider as provider
 from . import optimization_budget as calls, optimization_batch as batching
 from . import optimization_packet_policy as packet_policy
@@ -139,6 +140,7 @@ class SceneSummary(InsightMetadata):
 
 
 class SummariesResponse(BaseModel):
+    blocks: dict[str, SceneSummary] = Field(default_factory=dict, description='阅读计划v2的片段标题，键为reading_block_id；不额外识图 / Source-bound fragment titles indexed by reading_block_id; no additional vision inference')
     run_id: str
     summary_status: SummaryStatus
     groups: dict[str, GroupSummary] = Field(description='正文小结键为 ordinal 十进制字符串；细分来源键为 d: 加来源 ID / Decimal body ordinals and d: prefixed fine-source IDs')
@@ -146,6 +148,11 @@ class SummariesResponse(BaseModel):
 
 
 class OptimizationSummary(BaseModel):
+    reading_plan_version: int = 1
+    topic_state: str = "not_requested"
+    topic_revision: int = 0
+    topic_completed_nodes: int = 0
+    topic_total_nodes: int = 0
     summary_status: SummaryStatus | None = None
     id: str
     job_id: str
@@ -154,7 +161,7 @@ class OptimizationSummary(BaseModel):
     budget_error: str | None = None
     state: Literal['queued', 'running', 'pausing', 'paused', 'failed', 'succeeded', 'deleting']
     published: bool
-    phase: Literal['generation', 'review', 'summaries', 'complete'] = 'generation'
+    phase: Literal['generation', 'review', 'summaries', 'topics', 'complete'] = 'generation'
     reviewed_parts: int = 0
     total_parts: int = 0
     requires_regeneration: bool = False
@@ -186,6 +193,7 @@ class OptimizationStatus(BaseModel):
 
 
 class CreateRequest(BaseModel):
+    analyze_topics: bool = Field(False, strict=True, description='识别全片主要议题，正文与议题统一发布 / Discover source-bound recording topics before publication')
     model_config = ConfigDict(extra='forbid')
     max_llm_calls: int | None = Field(None, strict=True, ge=1, le=2147483647, description='仅本次生效的总上限 / One-run total cap override')
     estimate_fingerprint: str | None = Field(None, pattern=r'^[a-f0-9]{64}$', description='预估绑定，来源或模型配置变化时要求刷新 / Optional preflight binding; refresh if source or model configuration changes')
@@ -220,6 +228,7 @@ class CallEstimate(BaseModel):
 
 
 class CallUsage(BaseModel):
+    token_usage: dict[str, int | None] = Field(default_factory=dict, description="Provider-reported tokens and coverage; missing usage is unknown. Byte counts are not token estimates.")
     run_id: str
     recorded: bool
     max_llm_calls: int | None
@@ -252,6 +261,9 @@ class ReviewDetails(BaseModel):
 
 
 class OptimizedParagraph(BaseModel):
+    reading_block_id: str | None = None
+    reading_topic_id: str | None = None
+    occurrence_id: str | None = None
     group_summary: GroupSummary | None = None
     id: str
     ordinal: int
@@ -275,6 +287,8 @@ class OptimizedParagraph(BaseModel):
 
 
 class OptimizedResult(BaseModel):
+    reading_blocks: list[dict] = Field(default_factory=list)
+    reading_plan_version: int = 1
     summary_status: SummaryStatus | None = None
     prompt_version: int = 1
     run_id: str
@@ -342,6 +356,7 @@ class Manager:
             if item is None:
                 continue
             insights.pause(item['id'])
+            topics.pause(item['id'])
             if not deleting and name == 'published':
                 if self.current_id == item['id'] and self.current:
                     self.current.cancel()
@@ -381,10 +396,22 @@ class Manager:
             if engine.source_hash(job['result'], source_assignment_version=run['config'].get('source_assignment_version', 1)) != run['source_hash']:
                 raise ValueError('原文已变化，请重新生成 / Source changed; regenerate')
             await engine.ensure_context(profile, load=True)
+            if profile.get('reading_plan_version') == 2 and not profile.get('reading_plan_ready'):
+                from .reading_plan import freeze
+                await topics.process(run_id, job['result'])
+                freeze(run_id, job['result'])
+                run = store.get(run_id)
+                profile = run['config']
+            if run['phase'] == 'topics' and profile.get('reading_plan_version') != 2:
+                await topics.process(run_id, job['result'])
+                if store.publish(run_id): store.clear_export_caches()
+                return
             if profile.get('packet_version') == 1:
                 await PacketProcessor(self, run_id).execute()
                 if engine.source_hash(parent(run['job_id'])['result'], source_assignment_version=profile.get('source_assignment_version', 1)) != run['source_hash']:
                     raise ValueError('Source changed; regenerate / 原文已变化，请重新生成')
+                if profile.get('analyze_topics'):
+                    await topics.process(run_id, parent(run['job_id'])['result'])
                 if not store.publish(run_id):
                     raise ValueError('Optimization publication checks incomplete')
                 store.clear_export_caches()
@@ -432,6 +459,8 @@ class Manager:
                 raise ValueError('Source changed; regenerate / 原文已变化，请重新生成')
             await self.finish_review(run_id)
             await insights.process(run_id)
+            if profile.get('analyze_topics'):
+                await topics.process(run_id, parent(run['job_id'])['result'])
             if store.publish(run_id):
                 store.clear_export_caches()
         except calls.BudgetExhausted:
@@ -439,12 +468,13 @@ class Manager:
         except asyncio.CancelledError:
             store.transition(run_id, 'paused', ('running', 'pausing'), '已暂停 / Paused')
             raise
-        except engine.ContextWindowError as exc:
+        except (engine.ContextWindowError, engine.InvalidOutput) as exc:
             store.transition(run_id, 'paused', ('running',), error_message(exc))
         except (httpx.TransportError, httpx.HTTPStatusError, TimeoutError) as exc:
             recoverable = not isinstance(exc, httpx.HTTPStatusError) or exc.response.status_code == 429 or exc.response.status_code >= 500
             store.transition(run_id, 'paused' if recoverable else 'failed', ('running',), error_message(exc))
         except Exception as exc:
+            topics.pause(run_id)
             store.transition(run_id, 'failed', ('running',), error_message(exc))
 
     @calls.tracked('review')
@@ -500,6 +530,7 @@ class Manager:
         with db.connect() as connection:
             connection.execute("UPDATE transcript_optimizations SET summary_state='paused',summary_revision=summary_revision+1,revision=revision+1,updated_at=? WHERE summary_state IN ('queued','running')", (db.utcnow(),))
             connection.execute("UPDATE transcript_optimizations SET state='paused',error='服务中断 / Service interrupted',revision=revision+1,updated_at=? WHERE state IN ('running','pausing')", (db.utcnow(),))
+            connection.execute("UPDATE transcript_optimizations SET topic_state='paused',topic_revision=topic_revision+1 WHERE topic_state IN ('queued','running')")
             interrupted_deletions = [row[0] for row in connection.execute("SELECT DISTINCT job_id FROM transcript_optimizations WHERE state='deleting'")]
         for job_id in interrupted_deletions:
             store.delete(job_id)
@@ -508,13 +539,13 @@ class Manager:
                 self.wake.clear()
                 if store.settings().get('enabled') and not self.gate.locked():
                     with db.connect() as connection:
-                        generation = connection.execute("SELECT id,state FROM transcript_optimizations WHERE state='queued' OR (published=1 AND summary_state='queued') ORDER BY COALESCE(summary_requested_at,created_at),id LIMIT 1").fetchone()
+                        generation = connection.execute("SELECT id,state FROM transcript_optimizations WHERE state='queued' OR (published=1 AND (summary_state='queued' OR topic_state='queued')) ORDER BY COALESCE(summary_requested_at,created_at),id LIMIT 1").fetchone()
                     identifier = generation[0] if generation else None
                     auxiliary = generation and generation['state'] == 'succeeded'
                     claimed = identifier and (auxiliary or store.transition(identifier, 'running', ('queued',)))
                     if claimed:
                         self.current_id = identifier
-                        self.current = asyncio.create_task(self.execute_summaries(identifier) if auxiliary else self.execute(identifier))
+                        self.current = asyncio.create_task(self.execute_topics(identifier) if auxiliary and store.get(identifier)['topic_state']=='queued' else self.execute_summaries(identifier) if auxiliary else self.execute(identifier))
                         await asyncio.gather(self.current, return_exceptions=True)
                         self.current_id, self.current = None, None
                         continue
@@ -524,6 +555,22 @@ class Manager:
             if self.current:
                 self.current.cancel()
                 await asyncio.gather(self.current, return_exceptions=True)
+
+    async def execute_topics(self, run_id):
+        try:
+            run = store.get(run_id)
+            await self.check_model(run['config'])
+            job = parent(run['job_id'])
+            if engine.source_hash(job['result'], source_assignment_version=run['config'].get('source_assignment_version', 1)) != run['source_hash']:
+                raise ValueError('Source changed; regenerate')
+            await topics.process(run_id, job['result'])
+        except calls.BudgetExhausted:
+            calls.pause(run_id)
+        except asyncio.CancelledError:
+            topics.pause(run_id)
+            raise
+        except Exception:
+            topics.pause(run_id)
 
     @calls.tracked('group')
     async def execute_summaries(self, run_id):
@@ -687,7 +734,7 @@ def register(app, api):
         with db.connect() as c:
             pending = {(r[0], r[1]) for r in c.execute("SELECT kind,item_id FROM optimization_summaries WHERE run_id=? AND state IN ('pending','running','unavailable')", (item['id'],))}
         return calls.estimate(item['config'], units, item['hotwords'], used=item['calls_used'],
-                              limit=limit if limit is not None else item['calls_limit'] or calls.LEGACY_LIMIT, pending_insights=pending)
+                              limit=limit if limit is not None else item['calls_limit'] or calls.LEGACY_LIMIT, pending_insights=pending, topic_atoms=topics.sources(parent(item['job_id'])['result']) if item['topic_state'] not in ('not_requested','completed') else None, topic_run_id=item['id'])
 
     @app.post(jobs + '/estimate', response_model=CallEstimate, tags=[TAG], operation_id='estimateOptimizationCalls', responses=errors, description=api.bilingual('本地计算完整流程与恢复余量，不调用模型。', 'Estimate the workflow and recovery allowance locally without model calls.'), summary='预估本次调用预算 / Estimate call budget')
     def estimate_calls(job_id: str, body: EstimateRequest, _: None = auth):
@@ -696,13 +743,13 @@ def register(app, api):
             item = owned(job_id, body.run_id)
             return remaining_estimate(item, body.max_llm_calls)
         config = {**store.settings(), 'rewrite_mode': body.rewrite_mode, 'summary_version': insights.VERSION,
-                  'packet_version': packet_policy.VERSION, 'source_assignment_version': 2,
+                  'analyze_topics': body.analyze_topics, 'reading_plan_version': 2 if body.analyze_topics else 1, 'packet_version': packet_policy.VERSION, 'source_assignment_version': 2,
                   'summary_scene_ids': [s['id'] for s in (job['result'].get('video') or {}).get('scenes', [])]}
         packet_policy.configure(config)
         hotwords = list(dict.fromkeys(t for h in job['request'].get('hotword_lists', []) for t in h.get('terms', [])))
         units = (packet_policy.prepare(config, job['result'], hotwords) if config.get('packet_version')
                  else engine.prepare_units(job['result']))
-        return calls.estimate(config, units, hotwords, limit=body.max_llm_calls)
+        return calls.estimate(config, units, hotwords, limit=body.max_llm_calls, topic_atoms=topics.sources(job['result']) if body.analyze_topics else None)
 
     @app.get(jobs + '/usage', response_model=CallUsage, tags=[TAG], operation_id='getOptimizationCallUsage', responses=errors, description=api.bilingual('读取持久调用计数与阶段分布；历史未知为null。', 'Read durable call counts and stage totals; historical unknown usage is null.'), summary='读取本次预算用量 / Read call usage')
     def usage(job_id: str, run_id: str = Query(..., pattern=r'^[a-f0-9]{32}$'), _: None = auth):
@@ -713,11 +760,11 @@ def register(app, api):
     async def create(job_id: str, body: CreateRequest, response: Response, idempotency_key: str = Header(..., alias='Idempotency-Key'), _: None = auth):
         key = api.validate_idempotency_key(idempotency_key)
         async with manager.gate:
-            if store.replay(job_id, key, body.regenerate, body.rewrite_mode if 'rewrite_mode' in body.model_fields_set else None, body.max_llm_calls):
+            if store.replay(job_id, key, body.regenerate, body.rewrite_mode if 'rewrite_mode' in body.model_fields_set else None, body.max_llm_calls, body.analyze_topics):
                 response.status_code = 200
                 return public_status(job_id)
             config = {**store.settings(), 'prompt_version': engine.PROMPT_VERSION, 'rewrite_mode': body.rewrite_mode, 'summary_version': insights.VERSION,
-                      'request_policy_version': 2 if insights.VERSION == 2 else 1, 'source_assignment_version': 2, 'budget_policy_version': 1, 'packet_version': packet_policy.VERSION, 'batch_max_items': store.settings().get('batch_max_items', batching.DEFAULT_MAX_ITEMS), 'call_limit_override': body.max_llm_calls}
+                      'analyze_topics': body.analyze_topics, 'reading_plan_version': 2 if body.analyze_topics else 1, 'request_policy_version': 2 if insights.VERSION == 2 else 1, 'source_assignment_version': 2, 'budget_policy_version': 1, 'packet_version': packet_policy.VERSION, 'batch_max_items': store.settings().get('batch_max_items', batching.DEFAULT_MAX_ITEMS), 'call_limit_override': body.max_llm_calls}
             packet_policy.configure(config)
             if body.max_llm_calls is not None:
                 config['max_llm_calls'] = body.max_llm_calls
@@ -736,11 +783,11 @@ def register(app, api):
                     else:
                         units = engine.prepare_units(job['result'])
                         engine.validate_budget(config, units, hotwords)
-                    config['call_estimate'] = calls.estimate(config, units, hotwords)
+                    config['call_estimate'] = calls.estimate(config, units, hotwords, topic_atoms=topics.sources(job['result']) if body.analyze_topics else None)
                     if body.estimate_fingerprint and body.estimate_fingerprint != config['call_estimate']['fingerprint']:
                         raise api.ApiProblem(409, 'optimization_estimate_stale', '来源或配置已变化，请刷新预估 / Source or configuration changed; refresh estimate', extras={'estimate': config['call_estimate']})
                     calls.admit(config['call_estimate'])
-                    return store.create(job_id, key, body.regenerate, config, engine.source_hash(job['result']), hotwords, units, api.settings.min_free_disk_bytes)
+                    return store.create(job_id, key, body.regenerate, config, engine.source_hash(job['result']), hotwords, units, api.settings.min_free_disk_bytes, topic_result=job['result'] if body.analyze_topics else None)
             try:
                 _, replayed = await asyncio.to_thread(prepare)
             except (ValueError, FileNotFoundError) as exc:
@@ -779,6 +826,9 @@ def register(app, api):
             manager.wake.set()
             return public_status(job_id)
 
+    from .optimization_topics_api import install as install_topics
+    install_topics(app, jobs, auth, manager, owned, parent, public_status, errors)
+
     @app.get(jobs + '/summaries', summary='读取分组与画面小结 / Read group summaries and scene titles', description=api.bilingual('按任务读取小结附加数据，不载入完整正文。v2 包含生成方式、尝试次数、关键词／原文要点标记及分类计数，ready 包括有效兜底。兼容旧稿 not_requested；支持 ETag。', 'Read per-job insights without transcript prose. V2 includes generation method, attempt count, keyword/source-excerpt notices and separate counters; ready includes meaningful fallback. Legacy drafts return not_requested. Supports ETag.'), operation_id='getOptimizationSummaries', tags=[TAG], response_model=SummariesResponse, responses=errors)
     def summaries(job_id: str, request: Request, response: Response, run_id: str = Query(..., pattern=r'^[a-f0-9]{32}$'), _: None = auth):
         owned(job_id, run_id)
@@ -799,6 +849,8 @@ def register(app, api):
                 return public_status(job_id)
             if not store.settings().get('enabled'):
                 raise HTTPException(409, '表达优化已关闭 / Optimization is disabled')
+            if item['topic_state'] in ('queued', 'running'):
+                raise HTTPException(409, 'Wait for active topic discovery / 请等待议题处理完成')
             if not item['published'] or not item['summary_version']:
                 raise HTTPException(409, '请重新优化旧稿 / Regenerate to add summaries to a legacy draft')
             try:
@@ -823,12 +875,12 @@ def register(app, api):
             if not item['published']:
                 raise HTTPException(409, 'Pause the optimization workflow instead')
             insights.pause(body.run_id)
-            if manager.current_id == body.run_id and manager.current:
+            if item['summary_state'] == 'running' and manager.current_id == body.run_id and manager.current:
                 manager.current.cancel()
                 await asyncio.gather(manager.current, return_exceptions=True)
             return public_status(job_id)
 
-    @app.get(jobs + '/result', summary='读取优化稿 / Read optimized transcript', description=api.bilingual('读取已完成、按画面组织的正文和不可变来源。生成、检查及首轮小结尝试结束才可读和导出，未发布候选返回 409；检查提示不撤销正文。', 'Read completed scene-scoped prose and source spans in one SQLite snapshot. Generation, bounded checks and initial summary attempts must finish before publication; candidates return 409. complete means readable and exportable. Check warnings never retract prose. Video paragraphs belong to one scene. Paragraph generation_method identifies model/basic_cleanup/mixed; nested group_summary and title_summary use their separate insight methods and fallback notices.'), operation_id='getOptimizedTranscript', tags=[TAG], response_model=OptimizedResult, responses=errors)
+    @app.get(jobs + '/result', summary='读取优化稿 / Read optimized transcript', description=api.bilingual('读取已完成正文及不可变来源；阅读计划v2按议题边界冻结讲述片段，画面为关联资料。生成、检查及首轮小结尝试结束才可读和导出，未发布候选返回 409；检查提示不撤销正文。', 'Read completed source-backed prose in one SQLite snapshot; reading plan v2 fixes topic-bounded fragments with associated scenes. Generation, bounded checks and initial summary attempts must finish before publication; candidates return 409. complete means readable and exportable. Check warnings never retract prose. Video paragraphs belong to one scene. Paragraph generation_method identifies model/basic_cleanup/mixed; nested group_summary and title_summary use their separate insight methods and fallback notices.'), operation_id='getOptimizedTranscript', tags=[TAG], response_model=OptimizedResult, responses=errors)
     def result(job_id: str, run_id: str = Query(..., pattern=r'^[a-f0-9]{32}$'), _: None = auth):
         with reader_lease(job_id), speaker_update_lock(job_id):
             owned(job_id, run_id)

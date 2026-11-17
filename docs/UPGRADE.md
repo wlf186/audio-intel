@@ -1,5 +1,11 @@
 # 升级指南
 
+## 未发布：全片议题识别
+
+SQLite v25→v26仅新增议题状态、来源引用、节点检查点、幂等记录及可空token用量列，不改写历史转写、优化稿或媒体。停服后仅创建SQLite一致快照；完成全部进程部署验收后清理本次临时备份。重建前端。功能默认关闭，历史稿不自动分析；勾选及目录展开仅本次页面/对话框内存，既有浏览器偏好寿命不变。融合请求尚未启用；实际模型效果和附加成本需结合来源核对。见[全片议题](EXPRESSION_OPTIMIZATION.md#全片议题识别--recording-topics)。
+
+English: v25→v26 is an additive database-only migration. Take a consistent SQLite snapshot while stopped, rebuild the UI, restore/accept all original components and clean up the temporary backup. Historical media/drafts are unchanged; topics default off and do not run automatically for history. No new durable browser preference or enabled fusion profile.
+
 ## 未发布：表达优化请求包
 
 SQLite v24→v25 仅增加不可变请求计划表，以及调用记录的请求节点关联；保留所有历史正文、来源、小结、调用计数和检查点。历史运行继续使用其原策略，新建／重新优化使用按来源归属合并的正文与完整细分小结。停服后只需 SQLite 一致快照，不复制媒体；验收后清理临时升级备份。依赖和语音模型不变，重建前端并刷新原 API、supervisor、executor。分段小结的展开状态仅在组件内存中保存，不改变浏览器偏好的期限。 现有9b连接通过新版本重新验证并保存后，新建运行采用请求包；其他模型和旧验证沿用原流程。不改变已有调用额度与窗口。
@@ -678,3 +684,7 @@ English: Schema v19 deletes all pre-upgrade optimization drafts and checkpoints 
 当前 v23 实例升级本次改动无数据库迁移、历史媒体或优化稿批量改写，无需额外升级备份。派生图文阅读修复格式等价的词语分配；旧表达优化任务使用原来源策略及检查点，新任务记录新策略版本。目录仅列实际截图，缺图独立正文不再产生大占位和文档大标题，空内容区间默认不展示。重建前端并按本页维护流程刷新 API、supervisor 和 executor，核对历史阅读／导出。手机时间轴展开和临时帧预览仅保存在当前页面内存；其他浏览器偏好期限不变。
 
 English: No migration or historical media/draft rewrite is required on v23; no additional upgrade backup is needed. Rebuild the frontend and refresh all recorded service components. Verify historical access and exports. New optimization runs snapshot the new source mapping; old runs retain their policy/checkpoints.
+
+### 未发布：分层阅读与议题策略v2
+
+不改变SQLite v26 schema，不自动重写历史稿或媒体。新议题输入使用现有表中的版本化JSON；v1检查点保持可续跑。升级需要重建前端并恢复、验收原服务。议题开关新增浏览器localStorage记忆，生命周期见表达优化说明；不会改变服务器默认开关。

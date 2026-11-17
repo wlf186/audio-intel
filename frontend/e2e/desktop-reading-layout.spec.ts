@@ -15,9 +15,9 @@ for(const [width,height] of [[1280,720],[1440,900],[1920,1080],[390,844]])for(co
  await expect(page.locator('.media-loading')).toHaveCount(0)
  if(video){
   const toggle=page.locator('.timeline-toggle')
-  if(width===390)await toggle.click()
+  if(await toggle.getAttribute('aria-expanded')==='false')await toggle.click()
   await expect(page.locator('.timeline-load-state')).toHaveCount(0)
-  if(width===390){await toggle.click();await expect(toggle).toHaveAttribute('aria-expanded','false')}
+  {await toggle.click();await expect(toggle).toHaveAttribute('aria-expanded','false')}
  }
  if(width>=1280)expect((await reading.boundingBox())!.height).toBeGreaterThanOrEqual(220)
  await page.screenshot({path:info.outputPath('original.png')})

@@ -97,7 +97,10 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
   await hide.click();await expect(hide).toBeDisabled()
   expect(f.state.patches.at(-1)).toMatchObject({revision:2,action:'set_export_visibility'})
   await expect(dialog.getByRole('checkbox').first()).toBeChecked()
+  // Disabled actions can also mean an in-flight save; wait for the close guard to release.
+  await expect(dialog.locator('.scene-detection-actions').getByRole('button',{name:zh?'关闭':'Close',exact:true})).toBeEnabled()
   await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
   f.state.conflict=false
   await page.getByRole('button',{name:zh?'画面检测':'Picture detection',exact:true}).click()
   await dialog.getByRole('checkbox').first().check();await hide.click()

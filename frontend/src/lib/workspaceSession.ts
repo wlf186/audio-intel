@@ -3,7 +3,7 @@ export type ReadingMode='original'|'optimized'|'comparison'
 export type AsrWorkspaceSession={view:'create'|'video'|'results';jobId?:string;videoReading:boolean}
 export type PeopleSession={groupId:string;query:string;selectedId:string;scrollTop:number;alphabetScrollTop:number}
 export type ReaderBookmark={sourceId?:number;anchorId:string;time:number;offset:number;scrollTop:number;visibleCount:number;query?:string;speakerFilter?:string}
-type WorkspaceSession={sourceDetails?:Record<string,boolean>;optimizationChanges?:Record<string,boolean>;readingFilters?:Record<string,{query:string;speaker:string}>;optimizationViews?:Record<string,boolean|ReadingMode>;asr?:AsrWorkspaceSession;people?:PeopleSession;readers?:Record<string,ReaderBookmark>}
+type WorkspaceSession={mergedTopics?:Record<string,boolean>;sourceDetails?:Record<string,boolean>;optimizationChanges?:Record<string,boolean>;readingFilters?:Record<string,{query:string;speaker:string}>;optimizationViews?:Record<string,boolean|ReadingMode>;asr?:AsrWorkspaceSession;people?:PeopleSession;readers?:Record<string,ReaderBookmark>}
 let memory:WorkspaceSession={}
 let loaded=false
 let active=true
@@ -46,6 +46,7 @@ export function saveReaderBookmark(key:string,value:ReaderBookmark){
 }
 export function removeJobSession(ids:string[]){
  const removed=new Set(ids)
+ read().mergedTopics=Object.fromEntries(Object.entries(read().mergedTopics||{}).filter(([key])=>!removed.has(key.split(':')[0])))
  read().sourceDetails=Object.fromEntries(Object.entries(read().sourceDetails||{}).filter(([id])=>!removed.has(id)))
  read().readingFilters=Object.fromEntries(Object.entries(read().readingFilters||{}).filter(([id])=>!removed.has(id)))
  read().optimizationChanges=Object.fromEntries(Object.entries(read().optimizationChanges||{}).filter(([id])=>!removed.has(id)))
@@ -80,3 +81,6 @@ export function clearOptimizationBookmarks(jobId:string){
  read().readers=Object.fromEntries(Object.entries(read().readers||{}).filter(([key])=>!key.startsWith(jobId+':optimized')&&!key.startsWith(jobId+':comparison')))
  persist()
 }
+
+export function readMergedTopics(jobId:string,runId:string){return read().mergedTopics?.[`${jobId}:${runId}`]===true}
+export function saveMergedTopics(jobId:string,runId:string,value:boolean){if(!active)return;const values={...read().mergedTopics};delete values[`${jobId}:${runId}`];values[`${jobId}:${runId}`]=value;read().mergedTopics=Object.fromEntries(Object.entries(values).slice(-200));persist()}

@@ -417,7 +417,11 @@ def register(app: Any, api: Any) -> None:
             with speaker_update_lock(job_id), task_reader(job_id):
                 job = completed(job_id)
                 if body.text_version == 'original':
-                    result = export_result(job['result'], body)
+                    if body.organization == 'topic':
+                        from .transcript_export import original_topic_export
+                        result = original_topic_export(job, body)
+                    else:
+                        result = export_result(job['result'], body)
                 else:
                     from .transcript_export import optimized_export_result
                     result = optimized_export_result(job, body)

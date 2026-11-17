@@ -5,11 +5,14 @@ import {HttpError,requestResponse} from '../lib/api'
 import {loadTranscriptExportPreferences,saveTranscriptExportPreferences,parseTranscriptRules,exportFormats,preferredExportFormat,type TranscriptExportPreferences} from '../lib/transcriptExportPreferences'
 import type {Job,TranscriptExportFormat} from '../lib/types'
 import {Modal} from './Modal'
+import {readMergedTopics} from '../lib/workspaceSession'
 import type {ReadingMode} from '../lib/workspaceSession'
 import {transcriptDownloadName,transcriptFilename} from '../lib/transcriptFilename'
 
-export function TranscriptExport({job,formats=['pdf','json','txt','srt','vtt'],optimizationId,readingMode='original',updating=false}:{updating?:boolean;job:Job;formats?:TranscriptExportFormat[];optimizationId?:string;readingMode?:ReadingMode}){
+export function TranscriptExport({job,formats=['pdf','json','txt','srt','vtt'],optimizationId,readingMode='original',updating=false,topicsAvailable=false}:{topicsAvailable?:boolean;updating?:boolean;job:Job;formats?:TranscriptExportFormat[];optimizationId?:string;readingMode?:ReadingMode}){
  const {t}=useTranslation()
+ const [organization,setOrganization]=useState<'topic'|'chronological'>(topicsAvailable?'topic':'chronological')
+ const [mergeRepeated,setMergeRepeated]=useState(false)
  const [textVersion,setTextVersion]=useState<'original'|'optimized'|'comparison'>('original')
  const availableFormats=exportFormats(textVersion,formats)
  const [preferences,setPreferences]=useState(loadTranscriptExportPreferences)
@@ -34,7 +37,7 @@ export function TranscriptExport({job,formats=['pdf','json','txt','srt','vtt'],o
   const active=new AbortController();controller.current=active
   setBusy(true);setError('')
   try{
-   const response=await requestResponse(`/api/v1/jobs/${job.id}/transcript-export`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({format,...(textVersion!=='original'?{text_version:textVersion,optimization_id:optimizationId}:{}),redact:preferences.redact,replacements:parsed.rules}),signal:active.signal})
+   const response=await requestResponse(`/api/v1/jobs/${job.id}/transcript-export`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({format,...(organization==='topic'&&['pdf','docx'].includes(format)&&topicsAvailable?{organization,optimization_id:optimizationId,merge_repeated_topics:mergeRepeated}:{}),...(textVersion!=='original'?{text_version:textVersion,optimization_id:optimizationId}:{}),redact:preferences.redact,replacements:parsed.rules}),signal:active.signal})
    const blob=await response.blob()
    if(active.signal.aborted)return
    releaseDownload.current?.()
@@ -57,10 +60,10 @@ export function TranscriptExport({job,formats=['pdf','json','txt','srt','vtt'],o
  const label=busy?t('video.pdfPreparing'):remaining?t('video.pdfRetryIn',{seconds:remaining}):t('common.actions.download')
  const versionPicker=optimizationId?<label className="optimization-export-version">{t('optimization.exportVersion')}<select aria-label={t('optimization.exportVersion')} value={textVersion} disabled={busy} onChange={event=>{const version=event.target.value as typeof textVersion;setTextVersion(version);setFormat(preferredExportFormat(preferences,version,formats));updatePreferences({...preferences,textVersion:version})}}><option value="original">{t('optimization.original')}</option><option value="optimized">{t('optimization.draft')}</option><option value="comparison">{t('optimization.comparisonExport')}</option></select></label>:null
  return <div className="transcript-export">
-  <button className="primary export-mobile-trigger" onClick={()=>{const saved=loadTranscriptExportPreferences();setPreferences(saved);const version=optimizationId?(saved.textVersion||readingMode):'original';setTextVersion(version);setFormat(preferredExportFormat(saved,version,formats));setOpen(true)}}><Download size={16}/>{t('transcriptExport.open')}</button>
+  <button className="primary export-mobile-trigger" onClick={()=>{const saved=loadTranscriptExportPreferences();setPreferences(saved);setOrganization(topicsAvailable?'topic':'chronological');setMergeRepeated(optimizationId?readMergedTopics(job.id,optimizationId):false);const version=optimizationId?(saved.textVersion||readingMode):'original';setTextVersion(version);setFormat(preferredExportFormat(saved,version,formats));setOpen(true)}}><Download size={16}/>{t('transcriptExport.open')}</button>
   {error&&!open?<p className="error" role="alert">{error}</p>:null}
   {open?<Modal className="transcript-export-modal" title={t('transcriptExport.open')} closeLabel={t('common.actions.close')} onClose={()=>setOpen(false)}>
-   <div className="modal-scroll-body">{!optimizationId&&readingMode!=='original'?<p className="notice">{t('optimization.exportPending')}</p>:null}{versionPicker}<label>{t('transcriptExport.format')}<select className="export-format" value={format} disabled={busy} onChange={event=>{const next=event.target.value as TranscriptExportFormat;setFormat(next);updatePreferences({...preferences,formatByVersion:{...preferences.formatByVersion,[textVersion]:next}})}}>{(['pdf','docx','txt','srt','vtt','json'] as const).filter(value=>availableFormats.includes(value)).map(value=><option key={value} value={value}>{value==='docx'?'Word (DOCX)':value.toUpperCase()}</option>)}</select></label>{redaction}<details className="export-replacement-options"><summary>{t('transcriptExport.replacements')}</summary>{editor}</details>{error?<p className="error" role="alert">{error}</p>:null}</div>
+   <div className="modal-scroll-body">{!optimizationId&&readingMode!=='original'?<p className="notice">{t('optimization.exportPending')}</p>:null}{versionPicker}{topicsAvailable&&['pdf','docx'].includes(format)?<label className="reading-merge-toggle" title={t('reading.mergeHelp')}><input type="checkbox" aria-description={t('reading.mergeHelp')} checked={mergeRepeated} onChange={e=>setMergeRepeated(e.target.checked)}/>{t('reading.mergeRepeated')}</label>:null}<label>{t('transcriptExport.format')}<select className="export-format" value={format} disabled={busy} onChange={event=>{const next=event.target.value as TranscriptExportFormat;setFormat(next);updatePreferences({...preferences,formatByVersion:{...preferences.formatByVersion,[textVersion]:next}})}}>{(['pdf','docx','txt','srt','vtt','json'] as const).filter(value=>availableFormats.includes(value)).map(value=><option key={value} value={value}>{value==='docx'?'Word (DOCX)':value.toUpperCase()}</option>)}</select></label>{redaction}<details className="export-replacement-options"><summary>{t('transcriptExport.replacements')}</summary>{editor}</details>{error?<p className="error" role="alert">{error}</p>:null}</div>
    <p className="export-download-summary" role="status">{t('optimization.downloadSummary',{version:t(textVersion==='comparison'?'optimization.comparisonExport':textVersion==='optimized'?'optimization.draft':'optimization.original'),format:format.toUpperCase()})}</p>
    {updating&&textVersion!=='original'?<p className="notice">{t('optimization.exportPrevious')}</p>:null}
    {optimizationId&&textVersion!==readingMode?<button className="button" disabled={busy} onClick={()=>{setTextVersion(readingMode);setFormat(preferredExportFormat(preferences,readingMode,formats));updatePreferences({...preferences,textVersion:readingMode})}}>{t('optimization.useReadingVersion')}</button>:null}

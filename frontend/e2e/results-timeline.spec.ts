@@ -1,3 +1,5 @@
+import {showVideoTimeline} from './timeline-fixture'
+import {showAudioOptions} from './asr-helpers'
 import {test,expect} from './fixtures'
 import {scrollTimelineTo} from './timeline-fixture'
 import {uxFixture} from './ux-fixtures'
@@ -12,17 +14,20 @@ for(const width of [1440,1024,390])for(const locale of ['zh-CN','en-US'])test(`u
  page.on('request',request=>{if(new URL(request.url()).pathname.endsWith('/waveform'))windows.push(request.url())})
  await page.goto('/#asr');await page.getByRole('tab',{name:zh?'任务与结果':'Tasks & results',exact:true}).click()
  await expect(page.locator('.video-section')).toHaveCount(20)
- if(width===390)await page.getByRole('button',{name:zh?'展开时间轴':'Expand timeline',exact:true}).click()
+ await showVideoTimeline(page)
  await expect(page.locator('.timeline-waveform')).toBeVisible()
  await expect.poll(()=>windows.length).toBeGreaterThan(0)
  await expect(page.locator('.timeline-load-state')).toHaveCount(0)
- await expect(page.locator('.enhancement-summary')).not.toContainText('160%')
- expect((await page.locator('.enhancement-summary').boundingBox())!.height).toBeLessThanOrEqual(width===390?100:60)
- await page.locator('.enhancement-summary button').click()
- await expect(page.locator('.enhancement-details-panel')).toContainText(zh?'人声 160% · 降噪 80%':'Voice 160% · Denoise 80%')
- await expect(page.locator('.enhancement-details-panel')).toContainText(zh?'已应用':'Applied')
- await page.keyboard.press('Escape');await expect(page.locator('.enhancement-details-panel')).toHaveCount(0)
+ await showAudioOptions(page)
+ await expect(page.locator('.enhancement-summary summary')).not.toContainText('160%')
+ expect((await page.locator('.enhancement-summary summary').boundingBox())!.height).toBeGreaterThanOrEqual(44)
+ await page.locator('.enhancement-summary summary').click()
+ await expect(page.locator('.enhancement-inline-details')).toContainText(zh?'人声 160% · 降噪 80%':'Voice 160% · Denoise 80%')
+ await expect(page.locator('.enhancement-inline-details')).toContainText(zh?'已应用':'Applied')
+ await page.keyboard.press('Escape');await expect(page.locator('.enhancement-inline-details')).toHaveCount(0)
+ await showVideoTimeline(page)
  const before=windows.length
+ await showVideoTimeline(page)
  const waveform=page.locator('.timeline-waveform')
  await waveform.focus();await page.keyboard.press('Home');await page.keyboard.press('ArrowRight')
  await expect.poll(()=>page.locator('.result-panel audio').evaluate((node:HTMLAudioElement)=>node.currentTime)).toBeCloseTo(5,0)
@@ -47,6 +52,8 @@ for(const width of [1440,1024,390])for(const locale of ['zh-CN','en-US'])test(`u
  await expect(page.locator('.video-section[data-reader-id="scene-40"]')).toBeInViewport()
  await expect.poll(()=>page.locator('.result-panel audio').evaluate((node:HTMLAudioElement)=>node.paused)).toBe(true)
  await page.getByRole('button',{name:zh?'文本阅读':'Text reading',exact:true}).click()
+ await expect(page.getByRole('button',{name:zh?'文本阅读':'Text reading',exact:true})).toHaveAttribute('aria-pressed','true')
+ await showVideoTimeline(page)
  await page.getByRole('combobox',{name:zh?'画面目录':'Scene directory'}).selectOption('scene-45')
  await expect(page.locator('.segments [data-reader-id="45"]')).toBeInViewport()
  await scrollTimelineTo(page,0)
@@ -65,6 +72,7 @@ test('2000 scene overview only loads visible thumbnails and shares one scenes re
  let sceneReads=0;const images=new Set<string>()
  page.on('request',request=>{const url=new URL(request.url());if(url.pathname.endsWith('/video-scenes'))sceneReads++;if(url.pathname.includes('/video-frames/'))images.add(url.pathname)})
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+ await showVideoTimeline(page)
  await expect(page.locator('.timeline-scene')).toHaveCount(2000)
  await expect(page.locator('.timeline-load-state')).toHaveCount(0)
  expect(images.size).toBeLessThan(64)
@@ -112,6 +120,7 @@ test('new waveform window wins over a delayed obsolete response @timing',async({
   return route.fulfill({json:{track:'original',duration:120,start,end,waveform:Array(200).fill(start===40?.8:.2)}})
  })
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+ await showVideoTimeline(page)
  const waveform=page.locator('.timeline-waveform')
  await expect(waveform).toHaveAttribute('data-window-end','120')
  await page.getByRole('button',{name:'放大时间轴',exact:true}).click();await old.arrived

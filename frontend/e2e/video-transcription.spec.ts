@@ -1,3 +1,4 @@
+import {showAudioOptions} from './asr-helpers'
 import {downloadConcise,openTranscriptExport,closeTranscriptExport} from './ux-helpers'
 import {capabilitiesFor,expect,test} from './fixtures'
 import path from 'node:path'
@@ -60,6 +61,9 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  await page.getByRole('button',{name:'查看本次任务'}).click()
  await expect(page.locator('.video-section')).toHaveCount(2,{timeout:30000})
  const originalDownload=page.waitForEvent('download')
+ await showAudioOptions(page)
+ const downloadGroup=page.getByRole('group',{name:'下载音频',exact:true})
+ if(await downloadGroup.getByRole('button',{name:'下载音频',exact:true}).isVisible())await downloadGroup.getByRole('button',{name:'下载音频',exact:true}).click()
  await page.getByRole('link',{name:'下载原音',exact:true}).click()
  const originalFile=await originalDownload
  expect(originalFile.suggestedFilename()).toBe('lecture-original.wav')

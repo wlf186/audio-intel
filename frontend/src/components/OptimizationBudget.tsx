@@ -3,7 +3,7 @@ import {useTranslation} from 'react-i18next'
 import {request} from '../lib/api'
 import {optimizationPath,type CallEstimate,type CallUsage,type RewriteMode} from '../lib/optimization'
 
-export function OptimizationBudget({jobId,runId,mode,planning,defaultLimit,limit,onLimit,onReady,revision,onEstimate}:{jobId?:string;runId?:string;mode:RewriteMode;planning:boolean;defaultLimit:number;revision?:number;limit?:number;onLimit:(limit:number)=>void;onReady:(ready:boolean)=>void;onEstimate?:(fingerprint:string)=>void}){
+export function OptimizationBudget({jobId,runId,mode,planning,defaultLimit,limit,onLimit,onReady,revision,onEstimate,analyzeTopics=false}:{jobId?:string;runId?:string;mode:RewriteMode;planning:boolean;defaultLimit:number;revision?:number;limit?:number;onLimit:(limit:number)=>void;onReady:(ready:boolean)=>void;onEstimate?:(fingerprint:string)=>void;analyzeTopics?:boolean}){
  const {t}=useTranslation()
  const [estimate,setEstimate]=useState<CallEstimate>()
  const [usage,setUsage]=useState<CallUsage>()
@@ -17,7 +17,7 @@ export function OptimizationBudget({jobId,runId,mode,planning,defaultLimit,limit
   const load=async()=>{
    try{
     if(planning){
-     const next=await request<CallEstimate>(`${root}/estimate`,{method:'POST',signal:abort.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({rewrite_mode:mode,...(runId?{run_id:runId}:{})})})
+     const next=await request<CallEstimate>(`${root}/estimate`,{method:'POST',signal:abort.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({rewrite_mode:mode,...(analyzeTopics?{analyze_topics:true}:{}),...(runId?{run_id:runId}:{})})})
      if(!Number.isSafeInteger(next.minimum_limit))throw new Error(t('optimization.estimateError'))
      if(!abort.signal.aborted){setEstimate(next);onEstimate?.(next.fingerprint);if(defaultLimit<next.recommended_limit)onLimit(next.recommended_limit)}
     }
@@ -26,7 +26,7 @@ export function OptimizationBudget({jobId,runId,mode,planning,defaultLimit,limit
   }
   void load()
   return()=>abort.abort()
- },[jobId,runId,mode,planning,defaultLimit,revision,reload,onLimit,onReady,onEstimate,t])
+ },[jobId,runId,mode,analyzeTopics,planning,defaultLimit,revision,reload,onLimit,onReady,onEstimate,t])
  const effective=limit??defaultLimit
  const valid=Number.isSafeInteger(effective)&&effective>=Math.max(estimate?.minimum_limit??1,usage?.max_llm_calls??1)
  useEffect(()=>{onReady(!planning||Boolean(estimate&&valid))},[planning,estimate,valid,onReady])
@@ -43,6 +43,7 @@ export function OptimizationBudget({jobId,runId,mode,planning,defaultLimit,limit
    <p>{t('optimization.usageSummary',{used:usage.calls_used,limit:usage.max_llm_calls,remaining:usage.remaining_calls})}</p>
    {usage.estimate?<p>{t('optimization.estimateSummary',{count:usage.estimate.estimated_calls,recommended:usage.estimate.recommended_limit})}</p>:null}
    {Object.entries(usage.stages).map(([stage,count])=><p key={stage}>{t(`optimization.callStages.${stage}`,{defaultValue:stage})}: {count}</p>)}
+   {usage.token_usage?<><p>{t('optimization.tokenInput',{tokens:usage.token_usage.prompt_tokens??t('optimization.unknownTokens'),known:usage.token_usage.input_recorded,total:usage.token_usage.attempts})}</p><p>{t('optimization.tokenOutput',{tokens:usage.token_usage.completion_tokens??t('optimization.unknownTokens'),known:usage.token_usage.output_recorded,total:usage.token_usage.attempts})}</p></>:null}
    <p>{t('optimization.failedCalls',{count:usage.failed_or_interrupted})}</p>
   </>:<p>{t('optimization.usageUnrecorded')}</p>}</details>:null}
   {error?<p role="alert">{error} <button className="button" onClick={()=>setReload(n=>n+1)}>{t('common.actions.retry')}</button></p>:null}

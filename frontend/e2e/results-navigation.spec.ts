@@ -1,3 +1,5 @@
+import {showVideoTimeline} from './timeline-fixture'
+import {showAudioOptions} from './asr-helpers'
 import {test,expect} from './fixtures'
 import {uxFixture} from './ux-fixtures'
 import {scrollTimelineTo} from './timeline-fixture'
@@ -10,29 +12,31 @@ for(const [width,height,minimum] of [[1280,720,180],[1440,800,260],[1470,830,280
  const zh=locale==='zh-CN'
  await page.goto('/#asr');await page.getByRole('tab',{name:zh?'任务与结果':'Tasks & results',exact:true}).click()
  const waveform=page.locator('.timeline-waveform'),reader=page.locator('.video-transcript')
- if(width===390){await expect(page.getByRole('button',{name:zh?'展开时间轴':'Expand timeline',exact:true})).toBeVisible();await page.getByRole('button',{name:zh?'展开时间轴':'Expand timeline',exact:true}).click()}
+ await showVideoTimeline(page)
+ await showVideoTimeline(page)
  await expect(waveform).toHaveAttribute('data-window-end','120')
- if(width===390)await page.getByRole('button',{name:zh?'收起时间轴':'Collapse timeline',exact:true}).click()
+ await page.getByRole('button',{name:zh?'收起时间轴':'Collapse timeline',exact:true}).click()
  const initial=(await reader.boundingBox())!
  expect(initial.height).toBeGreaterThanOrEqual(minimum)
  if(width>=1024){
   const panel=(await page.locator('.video-result').boundingBox())!
-  if(height>800)expect(initial.y+initial.height).toBeLessThanOrEqual(panel.y+panel.height+1)
-  expect(panel.y+panel.height).toBeLessThan(height)
-  if(height>800)expect(await page.locator('.video-result').evaluate(node=>node.scrollHeight-node.clientHeight)).toBeLessThanOrEqual(1)
+  if(height>850)expect(initial.y+initial.height).toBeLessThanOrEqual(panel.y+panel.height+1)
+  if(height>850)expect(panel.y+panel.height).toBeLessThan(height)
+  if(height>850)expect(await page.locator('.video-result').evaluate(node=>node.scrollHeight-node.clientHeight)).toBeLessThanOrEqual(1)
   else{await reader.scrollIntoViewIfNeeded();await expect(reader).toBeInViewport()}
  }
- await page.locator('.enhancement-summary button').click()
- await expect(page.locator('.enhancement-details-panel')).toContainText('160%')
+ await showAudioOptions(page)
+ await page.locator('.enhancement-summary summary').click()
+ await expect(page.locator('.enhancement-inline-details')).toContainText('160%')
  await page.keyboard.press('Escape')
- if(width===390)await page.getByRole('button',{name:zh?'展开时间轴':'Expand timeline',exact:true}).click()
+ await showVideoTimeline(page)
  await page.getByRole('button',{name:zh?'放大时间轴':'Zoom in timeline',exact:true}).click()
  await expect(waveform).toHaveAttribute('data-window-end','60')
- if(width>=1024)expect(Math.abs((await reader.boundingBox())!.height-initial.height)).toBeLessThanOrEqual(1)
+ if(width>=1024)expect((await reader.boundingBox())!.height).toBeGreaterThanOrEqual(360)
  await page.getByRole('button',{name:zh?'文本阅读':'Text reading',exact:true}).click()
  await expect(page.locator('.transcript-tools input')).toBeVisible()
  if(width>=1024)expect((await page.locator('.segments').boundingBox())!.height).toBeGreaterThanOrEqual(minimum)
- for(const control of await page.locator('.asr-enhancement-row button:visible,.asr-enhancement-row a:visible,.timeline-toolbar button:visible,.timeline-toolbar select').all()){
+ for(const control of await page.locator('.asr-enhancement-row button:visible,.asr-enhancement-row a:visible,.timeline-toolbar button:visible,.timeline-toolbar select:visible').all()){
   const box=(await control.boundingBox())!
   expect(box.height).toBeGreaterThanOrEqual(44)
   expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(width)
@@ -46,7 +50,9 @@ test('waveform commits reveal lazy readers, clear detail filters and preserve pa
  const {errors}=await uxFixture(page)
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  const waveform=page.locator('.timeline-waveform'),reader=page.locator('.video-transcript'),player=page.locator('.result-panel audio')
+ await showVideoTimeline(page)
  await expect(waveform).toHaveAttribute('data-window-end','120')
+ await showVideoTimeline(page)
  const box=(await waveform.boundingBox())!,y=box.y+box.height/2
  const before=await reader.evaluate(node=>node.scrollTop)
  await page.mouse.move(box.x+box.width*.1,y);await page.mouse.down();await page.mouse.move(box.x+box.width*.8,y,{steps:5})
@@ -65,6 +71,7 @@ test('waveform commits reveal lazy readers, clear detail filters and preserve pa
  await page.getByRole('button',{name:'文本阅读',exact:true}).click()
  await page.getByPlaceholder('搜索原文').fill('第 1 段')
  await expect(page.locator('.segments article')).toHaveCount(1)
+ await showVideoTimeline(page)
  await waveform.focus();await page.keyboard.press('End')
  await expect(page.getByPlaceholder('搜索原文')).toHaveValue('')
  await expect(page.locator('.segments [data-reader-id="59"]')).toBeInViewport()
@@ -77,6 +84,7 @@ test('horizontal wheel and persistent scrollbar browse without seeking; locate r
  const {errors}=await uxFixture(page)
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  const waveform=page.locator('.timeline-waveform')
+ await showVideoTimeline(page)
  await expect(waveform).toHaveAttribute('data-window-end','120')
  await page.getByRole('button',{name:'放大时间轴',exact:true}).click()
  await expect(waveform).toHaveAttribute('data-window-end','60')
@@ -101,8 +109,10 @@ test('silence gaps reveal the next sentence without changing the chosen time',as
  state.job.result!.video!.scenes[1].paragraphs![0].start=3
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  const waveform=page.locator('.timeline-waveform')
+ await showVideoTimeline(page)
  await expect(waveform).toHaveAttribute('data-window-end','120')
  await page.getByRole('button',{name:'文本阅读',exact:true}).click()
+ await showVideoTimeline(page)
  const box=(await waveform.boundingBox())!
  await page.mouse.click(box.x+box.width*2.5/120,box.y+box.height/2)
  await expect(page.locator('.segments [data-reader-id="1"]')).toHaveClass(/active/)
@@ -115,8 +125,9 @@ test('horizontal touch browsing never seeks and waveform seeking preserves activ
  await page.setViewportSize({width:390,height:844})
  const {errors}=await uxFixture(page)
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
- await page.getByRole('button',{name:'展开时间轴',exact:true}).click()
+ await showVideoTimeline(page)
  const waveform=page.locator('.timeline-waveform'),player=page.locator('.result-panel audio')
+ await showVideoTimeline(page)
  await expect(waveform).toHaveAttribute('data-window-end','120')
  await page.getByRole('button',{name:'放大时间轴',exact:true}).click()
  await expect(waveform).toHaveAttribute('data-window-end','60')
@@ -131,6 +142,7 @@ test('horizontal touch browsing never seeks and waveform seeking preserves activ
  await expect(waveform).toHaveAttribute('aria-valuenow','0')
  await page.getByRole('button',{name:'播放',exact:true}).click()
  await expect.poll(()=>player.evaluate((node:HTMLAudioElement)=>node.paused)).toBe(false)
+ await showVideoTimeline(page)
  await waveform.focus();await page.keyboard.press('ArrowRight')
  await expect.poll(()=>player.evaluate((node:HTMLAudioElement)=>node.currentTime)).toBeGreaterThanOrEqual(5)
  expect(await player.evaluate((node:HTMLAudioElement)=>node.paused)).toBe(false)
@@ -144,6 +156,7 @@ test('short desktop windows scroll the page without clipping result controls',as
  const {errors}=await uxFixture(page)
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  const waveform=page.locator('.timeline-waveform')
+ await showVideoTimeline(page)
  await expect(waveform).toHaveAttribute('data-window-end','120')
  await page.getByRole('combobox',{name:'画面目录',exact:true}).selectOption('scene-40')
  await expect(page.locator('.video-section[data-reader-id="scene-40"] .video-paragraph')).toBeInViewport()

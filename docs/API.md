@@ -1093,3 +1093,29 @@ ASR transcription and alignment read exact sample intervals from the saved 16 kH
 PCM16 WAV 产物波形采用单遍有界读取，可见窗口波形按固定块聚合。峰值、时间范围、缓存和 `429`／`Retry-After` 行为保持不变。
 
 PCM16 WAV artifact peaks use one bounded read pass; visible-window peaks aggregate fixed-size blocks. Peak values, time ranges, caching and `429`/`Retry-After` behavior remain unchanged.
+
+### Recording topics / 全片议题
+
+Create/estimate accept `analyze_topics:false` by default. Requested topics complete before atomic publication. Capabilities expose `asr.transcript_optimization.topics`; status exposes `topic_state`, `topic_revision` and completed/total nodes. GET `.../topics?run_id=...` returns typed topics, source ranges, timing precision and explicit unclassified ranges; unpublished catalogues are withheld. POST `.../topics/estimate`, `.../topics`, `.../topics/pause`, `.../topics/resume` provide auxiliary work for compatible published drafts. Create/resume require Idempotency-Key; 202/200/409/429 and shared total-call accounting apply. Topic responses include `summary_method` (`model` or labelled `source_excerpt`). Usage additionally exposes provider token counts with independent input/output coverage; missing statistics are null, not zero. See [full contract](EXPRESSION_OPTIMIZATION.md#全片议题识别--recording-topics).
+
+### Topic reading organization
+
+`GET /api/v1/jobs/{job_id}/transcript-optimization/topics` accepts `include_outline=false` (default). Opting in adds a versioned `outline` with `groups` and `items`: topic IDs, primary/related item IDs, scene/paragraph IDs, titles, original times and assignment method. Original topic ranges remain available. No media or transcript text is duplicated in the outline.
+
+Transcript export accepts `organization=chronological|topic`, default chronological. Topic organization requires PDF/DOCX plus a published, source-compatible optimization_id for the same job, including text_version=original. Missing topics return409. Existing text, redaction, hidden-frame and resource-budget rules apply. Topic policy2 uses saved scene titles as grouping hints with original-source evidence; legacy policy1 checkpoints retain their execution version.
+
+```bash
+# JOB_ID and OPTIMIZATION_ID identify the same completed task and published draft.
+curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d "{\"format\":\"docx\",\"text_version\":\"original\",\"organization\":\"topic\",\"merge_repeated_topics\":false,\"optimization_id\":\"$OPTIMIZATION_ID\"}" \
+  "$BASE_URL/api/v1/jobs/$JOB_ID/transcript-export" --output transcript.docx
+```
+
+### Source-bound reading plan v2
+
+New `analyze_topics:true` drafts identify topics before prose. The frozen source-offset plan splits prose at topic boundaries. `GET .../result` adds `reading_plan_version:2`, `reading_blocks`, and paragraph `reading_block_id`, `reading_topic_id`, `occurrence_id`. `GET .../summaries` separates fragment titles in `blocks`; physical images remain in the parent job.
+
+`GET .../topics?run_id=...&include_outline=true&outline_version=2` opts into chronological topic occurrences and source-bound block items. `groups` preserves every occurrence; `merged_groups` explicitly consolidates recurring topics. Each block includes source offsets/times, timing precision, paragraph ID and associated scene IDs/frame numbers. Omitting `outline_version` retains v1. The ETag includes this selection. No model calls occur on reads.
+
+PDF/Word topic exports accept optional `merge_repeated_topics:false` to use chronological occurrences or `true` to merge recurrences. Missing the field preserves legacy organization. Original, optimized and comparison exports share block headings; images are associated resources. Narrow `/topics` write/estimate/pause/resume operations return409 for v2 reading plans: submit a complete `regenerate:true, analyze_topics:true` workflow with its full call estimate. The previous published draft remains readable until success.

@@ -1,3 +1,5 @@
+import {showVideoTimeline} from './timeline-fixture'
+import {showMediaStatus} from './reader-helpers'
 import {capabilitiesFor,systemFor,expect,test,type Page} from './fixtures'
 import type {Job,VoiceprintPerson} from '../src/lib/types'
 import path from 'node:path'
@@ -272,6 +274,7 @@ for(const locale of ['zh-CN','en-US'])test(`compact library and video reading in
   await page.locator('.asr-tabs button').last().click()
   await expect(page.locator('.video-section')).toHaveCount(20)
   await expect.poll(()=>playbackRequested).toBe(true)
+  await showMediaStatus(page)
   await expect(page.locator('.media-loading')).toBeVisible()
   await expect(page.locator('.video-paragraph p').first()).toBeInViewport()
  }finally{playback.resolve()}
@@ -279,7 +282,9 @@ for(const locale of ['zh-CN','en-US'])test(`compact library and video reading in
  await expect(page.locator('.media-loading')).toHaveCount(0)
  const reader=page.locator('.video-transcript')
  // Measure the actual visible reading space, not the former overflowing 280px minimum.
+ await showVideoTimeline(page)
  await expect(page.locator('.timeline-waveform')).toHaveAttribute('data-window-end','60')
+ await page.locator('.timeline-toggle').click()
  const readingBox=(await reader.boundingBox())!
  expect(readingBox.height).toBeGreaterThanOrEqual(180)
  await reader.scrollIntoViewIfNeeded()
@@ -291,6 +296,7 @@ for(const locale of ['zh-CN','en-US'])test(`compact library and video reading in
   await expect(dialog.locator('img')).toBeVisible()
  await dialog.getByRole('button',{name:locale==='zh-CN'?'关闭':'Close',exact:true}).click()
  await expect(dialog).toHaveCount(0)
+ await showVideoTimeline(page)
  const waveform=page.locator('.timeline-waveform')
  await waveform.focus();await page.keyboard.press('Home');await page.keyboard.press('ArrowRight');await page.keyboard.press('ArrowRight');await page.keyboard.press('ArrowRight')
  await expect.poll(()=>page.locator('.result-panel audio').evaluate((e:HTMLAudioElement)=>e.currentTime)).toBeCloseTo(15,0)

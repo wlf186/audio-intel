@@ -31,7 +31,7 @@ for(const width of [1440,390])test(`independent prose, directory, empty blocks a
  await expect(text.locator('h3,img,.video-no-frame')).toHaveCount(0)
  await expect(page.locator('[data-reader-id="scene-2"] h3')).toHaveText('画面 1')
  expect(previews).toBe(0)
- if(width===390){await expect(page.getByRole('button',{name:'展开时间轴',exact:true})).toBeVisible();expect((await text.boundingBox())!.y).toBeLessThan(744)}
+ if(width===390){await expect(page.getByRole('button',{name:'收起时间轴',exact:true})).toBeVisible();await text.scrollIntoViewIfNeeded();await expect(text).toBeInViewport()}
  await text.getByRole('button',{name:'查看画面',exact:true}).click()
  const modal=page.getByRole('dialog')
  await expect(modal).toContainText('不保存到截图目录或导出')

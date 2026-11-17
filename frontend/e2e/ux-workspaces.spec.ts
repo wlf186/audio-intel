@@ -84,7 +84,7 @@ for(const width of [1440,390])test(`segment filters and deep position survive re
  const bookmark=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('audio-intel:workspace-session:v1')!).readers['ux-video:segments'])
  await page.getByRole('button',{name:'文本阅读',exact:true}).click()
  const anchor=root.locator(`[data-reader-id="${bookmark.anchorId}"]`)
- const offset=()=>anchor.evaluate(element=>element.getBoundingClientRect().top-element.parentElement!.getBoundingClientRect().top)
+ const offset=()=>anchor.evaluate(element=>element.getBoundingClientRect().top-element.closest('.segments')!.getBoundingClientRect().top)
  await expect.poll(async()=>Math.abs(await offset()-bookmark.offset)).toBeLessThanOrEqual(2)
  await page.reload();await expect(search).toHaveValue('阅读');await expect(root.locator('article')).toHaveCount(60)
  await expect.poll(async()=>Math.abs(await offset()-bookmark.offset)).toBeLessThanOrEqual(2)

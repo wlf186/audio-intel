@@ -1,3 +1,5 @@
+import {showVideoTimeline} from './timeline-fixture'
+import {closeReadingOptions,showReadingOptions} from './reader-helpers'
 import {test,expect} from './fixtures'
 import {uxFixture} from './ux-fixtures'
 
@@ -16,10 +18,11 @@ for(const width of [1366,1440,1920,390])test(`scene-scoped unified reading ${wid
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  const detection=page.getByRole('button',{name:'画面检测',exact:true})
  await expect(detection).toBeEnabled()
- if(width===390)await page.getByRole('button',{name:'展开时间轴',exact:true}).click()
+ await showVideoTimeline(page)
  await expect(page.locator('.timeline-load-state')).toHaveCount(0)
+ await page.locator('.timeline-toggle').click()
  const initial=await detection.boundingBox()
- const enhancement=page.locator('.enhancement-summary')
+ const enhancement=page.locator('.transport-audio-menu>button')
  const audioPosition=await enhancement.boundingBox()
  for(const mode of ['优化稿','对照','原文']){
   await page.getByRole('button',{name:mode,exact:true}).click()
@@ -35,15 +38,21 @@ for(const width of [1366,1440,1920,390])test(`scene-scoped unified reading ${wid
  const first=page.locator('[data-reader-id="g0"]')
  await expect(first.locator('.optimization-pair-columns')).toContainText('第0段来源7')
  await expect(page.getByRole('button',{name:'展开全部 8 条原文'})).toHaveCount(0)
+ await showReadingOptions(page)
  await expect(page.getByLabel('显示改动',{exact:true})).toBeChecked()
+ await closeReadingOptions(page)
  if(width>1000){
   const picture=await page.locator('.optimization-scene-picture').first().boundingBox()
   const prose=await page.locator('.optimization-scene-prose').first().boundingBox()
   expect(picture!.x+picture!.width).toBeLessThan(prose!.x)
  }
+ await showReadingOptions(page)
  await page.getByRole('checkbox',{name:'来源明细',exact:true}).check()
+ await closeReadingOptions(page)
  await expect(first.locator('.optimization-source')).toHaveCount(8)
+ await showReadingOptions(page)
  await page.getByRole('checkbox',{name:'来源明细',exact:true}).uncheck()
+ await closeReadingOptions(page)
  await page.getByPlaceholder('搜索两侧内容').fill('优化正文')
  await page.getByRole('button',{name:'上一处',exact:true}).click()
  await expect(page.locator('[data-reader-id="g99"] mark.search-current')).toBeInViewport()
@@ -54,6 +63,7 @@ for(const width of [1366,1440,1920,390])test(`scene-scoped unified reading ${wid
  await page.getByRole('button',{name:'清除筛选',exact:true}).click()
  await page.getByRole('button',{name:'文本阅读',exact:true}).click()
  await expect(page.locator('.optimization-reader .video-frame')).toHaveCount(0)
+ await showVideoTimeline(page)
  await page.locator('.timeline-waveform').press('Home')
  await expect(first).toBeInViewport()
  await expect(page.getByPlaceholder('搜索两侧内容')).toHaveValue('')

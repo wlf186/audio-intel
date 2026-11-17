@@ -66,7 +66,7 @@ export function useOptimization(jobId:string|undefined,active:boolean,sourceVers
  const setMode=useCallback((value:ReadingMode)=>{setModeState(value);if(jobId)saveOptimizationView(jobId,value)},[jobId])
  const setOptimized=useCallback((value:boolean)=>setMode(value?'optimized':'original'),[setMode])
  const setCompare=useCallback((value:boolean)=>setMode(value?'comparison':'optimized'),[setMode])
- const action=async(kind:'create'|'regenerate'|'pause'|'resume'|'delete'|'summaryRetry'|'summaryPause',rewriteMode:RewriteMode='rewrite',phase:'workflow'|'generation'|'review'='workflow',maxLlmCalls?:number,estimateFingerprint?:string)=>{
+ const action=async(kind:'create'|'regenerate'|'pause'|'resume'|'delete'|'summaryRetry'|'summaryPause',rewriteMode:RewriteMode='rewrite',phase:'workflow'|'generation'|'review'='workflow',maxLlmCalls?:number,estimateFingerprint?:string,analyzeTopics=false)=>{
   if(!jobId||busy)return
   const version=generation.current
   statusEpoch.current++
@@ -83,9 +83,9 @@ export function useOptimization(jobId:string|undefined,active:boolean,sourceVers
     const auxiliary=kind==='summaryRetry'||kind==='summaryPause'
     const idempotent=create||kind==='summaryRetry'
     const path=kind==='summaryRetry'?'summaries/retry':kind==='summaryPause'?'summaries/pause':kind
-    const identity=JSON.stringify({kind,rewriteMode,maxLlmCalls})
+    const identity=JSON.stringify({kind,rewriteMode,maxLlmCalls,analyzeTopics})
     if(idempotent&&(!pendingKey.current||pendingRequest.current!==identity)){pendingKey.current=createIdempotencyKey();pendingRequest.current=identity}
-    const next=await request<OptimizationStatus>(create?root:`${root}/${path}`,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json',...(idempotent?{'Idempotency-Key':pendingKey.current!}:{})},body:JSON.stringify(create?{...(estimateFingerprint&&/^[a-f0-9]{64}$/.test(estimateFingerprint)?{estimate_fingerprint:estimateFingerprint}:{}),regenerate:kind==='regenerate',rewrite_mode:rewriteMode,...(maxLlmCalls!==undefined?{max_llm_calls:maxLlmCalls}:{})}:{run_id:auxiliary?status?.published?.id:status?.candidate?.id,phase,...(maxLlmCalls!==undefined?{max_llm_calls:maxLlmCalls}:{})})})
+    const next=await request<OptimizationStatus>(create?root:`${root}/${path}`,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json',...(idempotent?{'Idempotency-Key':pendingKey.current!}:{})},body:JSON.stringify(create?{...(estimateFingerprint&&/^[a-f0-9]{64}$/.test(estimateFingerprint)?{estimate_fingerprint:estimateFingerprint}:{}),...(analyzeTopics?{analyze_topics:true}:{}),regenerate:kind==='regenerate',rewrite_mode:rewriteMode,...(maxLlmCalls!==undefined?{max_llm_calls:maxLlmCalls}:{})}:{run_id:auxiliary?status?.published?.id:status?.candidate?.id,phase,...(maxLlmCalls!==undefined?{max_llm_calls:maxLlmCalls}:{})})})
     if(version===generation.current){setStatus(next);pendingKey.current=undefined}
    }
    succeeded=true

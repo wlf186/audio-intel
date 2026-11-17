@@ -1,5 +1,6 @@
+import {showAudioOptions} from './asr-helpers'
 import {test,expect} from './fixtures'
-import {mockTimelineWaveform} from './timeline-fixture'
+import {mockTimelineWaveform,showVideoTimeline} from './timeline-fixture'
 import {uxFixture} from './ux-fixtures'
 import type {Job} from '../src/lib/types'
 
@@ -71,6 +72,7 @@ for(const width of [1440,390])test(`cached ASR task switching removes previous m
  await expect(page.locator('.video-transcript')).toBeVisible()
  await expect(page.locator('.video-timeline')).toHaveCount(1)
  await page.screenshot({path:info.outputPath(`switch-video-${width}.png`),fullPage:true})
+ await showVideoTimeline(page)
  await page.locator('.timeline-scenes').focus()
  await expect(page.locator('.timeline-preview')).toBeVisible()
  await select(audio)

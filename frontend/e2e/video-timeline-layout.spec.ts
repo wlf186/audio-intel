@@ -1,3 +1,4 @@
+import {showVideoTimeline} from './timeline-fixture'
 import {test,expect,type Page} from './fixtures'
 import {uxFixture} from './ux-fixtures'
 
@@ -31,12 +32,13 @@ test.describe('video timeline with classic scrollbars',()=>{
   page.on('request',request=>{const url=new URL(request.url());if(url.pathname.endsWith('/waveform'))requests.push(Number(url.searchParams.get('points')))})
   await page.goto('/#asr')
   await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+  await showVideoTimeline(page)
   const waveform=page.locator('.timeline-waveform')
   await expect(waveform).toHaveAttribute('data-window-end','120')
   await expect(page.locator('.video-section')).toHaveCount(20)
   const geometry=await page.evaluate(()=>{
    const panel=document.querySelector<HTMLElement>('.video-result')!,reader=document.querySelector<HTMLElement>('.video-transcript')!
-   const spareReaderHeight=Math.max(0,reader.clientHeight-280)
+   const spareReaderHeight=Math.max(0,reader.clientHeight-360)
    return{criticalHeight:Math.ceil(innerHeight+panel.scrollHeight-panel.clientHeight-spareReaderHeight+12),width:Math.round(document.querySelector('.timeline-tracks')!.getBoundingClientRect().width)}
   })
   // Derive the boundary from the synthetic content, independent of OS font metrics.
@@ -73,12 +75,13 @@ test.describe('video timeline with classic scrollbars',()=>{
   })
   await page.goto('/#asr')
   await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
-  if(width===390)await page.getByRole('button',{name:'展开时间轴',exact:true}).click()
+  await showVideoTimeline(page)
   await pending.arrived
   await expect(page.locator('.timeline-load-state[role=status]')).toBeVisible()
   pending.release()
   const failure=page.locator('.timeline-load-state[role=alert]')
   await expect(failure).toBeVisible()
+  await showVideoTimeline(page)
   const waveform=page.locator('.timeline-waveform')
   await waveform.focus();await page.keyboard.press('Home');await page.keyboard.press('ArrowRight')
   await expect.poll(()=>page.locator('.result-panel audio').evaluate((node:HTMLAudioElement)=>node.currentTime)).toBeCloseTo(5,0)

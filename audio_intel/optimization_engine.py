@@ -291,14 +291,21 @@ async def streamed_text(config: dict, payload: dict, activity=None) -> str:
     from . import optimization_budget as calls
     call_id = calls.reserve()
     failure = None
+    capture = {}
+    usage_token = provider.usage_capture.set(capture)
     try:
+        body = provider.request_body(config, payload)
+        capture['request_bytes'] = len(json.dumps(body, ensure_ascii=False, separators=(',', ':')).encode())
         async with asyncio.timeout(120), client(config) as connection:
-            return await provider.completion(connection, provider.request_body(config, payload), activity)
+            text = await provider.completion(connection, body, activity)
+            capture['response_bytes'] = len(text.encode())
+            return text
     except BaseException as exc:
         failure = exc
         raise
     finally:
-        calls.finish(call_id, failure)
+        provider.usage_capture.reset(usage_token)
+        calls.finish(call_id, failure, capture)
 
 
 async def structured(config: dict, payload: dict, activity=None) -> dict:
@@ -546,8 +553,15 @@ def reading_result(result: dict, run_id: str, *, complete: bool = False) -> dict
             else:
                 owner = max(scenes, key=lambda scene: max(0, min(unit['end'], scene['end']) - max(unit['start'], scene['start'])))
             owner['paragraphs'].append(value)
+    blocks = []
+    if run['config'].get('reading_plan_version') == 2:
+        from . import optimization_topics
+        from .reading_plan import outline
+        projected = outline(result, optimization_topics.read(run_id)['result'], units, insights.get('blocks', {}))
+        blocks = projected['items']
     fields = ('review_state', 'reviewed_units', 'uncertain_units', 'unavailable_units', 'basic_cleanup_units')
     return {'run_id': run_id, 'complete': bool(run['published']), 'model': run['model'],
             'prompt_version': run['config'].get('prompt_version', 1), 'rewrite_mode': run['config'].get('rewrite_mode'),
             'needs_review_units': run['needs_review_units'], 'paragraphs': values, 'scenes': scenes,
+            'reading_plan_version': run['config'].get('reading_plan_version', 1), 'reading_blocks': blocks,
             'summary_status': insights['summary_status'], 'review_total_units': run['total_units'], **{field: run[field] for field in fields}}

@@ -55,38 +55,72 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     normal.paragraph_format.line_spacing = 1.2
     document.add_heading(title, 0)
     hidden = set((result.get('video') or {}).get('export_hidden_scene_ids') or [])
-    sections = reading_sections(result)
-    if result.get('video'):
-        sections = presentation_sections(sections)
+    from .reading_outline import sections as outline_sections
+    sections = outline_sections(result)
     image_bytes = 0
+    frame_bytes = {}
     if result.get('review_notice'):
         document.add_paragraph(result['review_notice'])
+    if result.get('topics') and not result.get('reading_outline'):
+        document.add_heading('议题目录 / Topics', 1)
+        for topic in result['topics']:
+            document.add_paragraph(topic['title'], style='Heading 2')
+            document.add_paragraph(('原文要点 / Source excerpt: ' if topic.get('summary_method') == 'source_excerpt' else '') + topic['summary'])
+            document.add_paragraph(' / '.join(f"{timecode(r['start'])} – {timecode(r['end'])}" for r in topic['ranges']))
+    def anchor_for(value): return 'a' + hashlib.sha256(str(value).encode()).hexdigest()[:32]
+    def bookmark(paragraph, value, number):
+        start = OxmlElement('w:bookmarkStart'); start.set(qn('w:id'), str(number)); start.set(qn('w:name'), anchor_for(value))
+        end = OxmlElement('w:bookmarkEnd'); end.set(qn('w:id'), str(number))
+        paragraph._p.insert(0, start); paragraph._p.append(end)
+    def link(text, value):
+        paragraph = document.add_paragraph()
+        element = OxmlElement('w:hyperlink'); element.set(qn('w:anchor'), anchor_for(value))
+        run = OxmlElement('w:r'); word = OxmlElement('w:t'); word.text = text; run.append(word); element.append(run); paragraph._p.append(element)
+    if result.get('reading_outline'):
+        document.add_heading('目录 / Contents', 1)
+        for item in sections:
+            if item.get('reading_resource'): continue
+            title = item.get('topic_heading') or (item.get('title_summary') or {}).get('title') or ('画面 ' + str(item.get('frame_number', '')) if item.get('image') else '')
+            if title: link(title, item.get('id', item.get('topic_id')))
     frame_root = (output_dir / 'frames').resolve()
     for index, item in enumerate(sections):
+        if 'topic_heading' in item:
+            paragraph = document.add_heading(item['topic_heading'], 1)
+            bookmark(paragraph, item['id'], index+1)
+            document.add_paragraph(item['topic_summary'])
+            for related in item['related_item_ids']:
+                link('相关内容 / Related: ' + item['related_titles'][related], related)
+            continue
+        if result.get('reading_outline') and not item.get('reading_resource'):
+            paragraph = document.add_heading((f"画面 {item['frame_number']} · " if item.get('frame_number') and not item.get('reading_block') else '') + ((item.get('title_summary') or {}).get('title') or f"片段 {index+1}"), 2)
+            bookmark(paragraph, item.get('id', str(index)), index+1)
         if result.get('video'):
             title = (item.get('title_summary') or {}).get('title')
-            if item.get('image'):
-                document.add_heading(f"画面 {item['frame_number']}" + (f" · {title}" if title else ''), 1)
-            elif title:
+            if item.get('image') and not result.get('reading_outline'):
+                document.add_heading(f"画面 {item['frame_number']}" + (f" · {title}" if title else ''), 2 if result.get('reading_outline') else 1)
+            elif title and not result.get('reading_outline'):
                 document.add_paragraph().add_run(title).bold = True
             document.add_paragraph(f"{timecode(item['start'])} – {timecode(item['end'])}")
+            if item.get('reading_block') and item.get('frame_number'):
+                document.add_paragraph(f"关联画面 / Associated frame {item['frame_number']}")
             method = insight_label(item.get('title_summary') or {})
             if method:
                 document.add_paragraph(method)
             if not item.get('image'):
                 pass
-            elif item['id'] in hidden:
+            elif item.get('frame_scene_id', item['id']) in hidden:
                 document.add_paragraph('画面已隐藏 / Picture hidden')
             else:
                 name = item['image']
                 path = (frame_root / name).resolve()
                 if Path(name).name != name or not path.is_relative_to(frame_root):
                     raise ValueError('Invalid frame path')
-                image_bytes += path.stat().st_size
+                image_bytes += 0 if name in frame_bytes else path.stat().st_size
                 if image_bytes > _max_image_bytes:
                     raise ValueError('Images exceed DOCX resource budget; split the source')
                 # Read the validated bytes, avoiding filename metadata in the package.
-                stream = io.BytesIO(path.read_bytes())
+                if name not in frame_bytes: frame_bytes[name] = path.read_bytes()
+                stream = io.BytesIO(frame_bytes[name])
                 picture = Image.from_file(stream)
                 scale = min(int(section.page_width - section.left_margin - section.right_margin) / picture.width, int(Mm(100)) / picture.height)
                 stream.seek(0)

@@ -37,13 +37,20 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     if sum(len(segment.get('text', '')) + len(segment.get('original_text', '')) for segment in result.get('segments', [])) > _max_text_chars:
         raise ValueError('Transcript exceeds PDF text budget; split the source')
     image_bytes = 0
+    frame_names = set()
     global _font_ready
     if not _font_ready:
         pdfmetrics.registerFont(TTFont('Transcript', str(Path(__file__).parent / 'assets/fonts/NotoSansSC.ttf')))
         _font_ready = True
     stream = io.BytesIO()
     page_size = landscape(A4) if result.get('text_version') == 'comparison' else A4
-    doc = SimpleDocTemplate(stream, pagesize=page_size, rightMargin=48, leftMargin=48,
+    class OutlineDocument(SimpleDocTemplate):
+        def afterFlowable(self, flowable):
+            if hasattr(flowable, 'outline_entry'):
+                level, title, anchor = flowable.outline_entry
+                self.canv.bookmarkPage(anchor)
+                self.canv.addOutlineEntry(title, anchor, level=level)
+    doc = OutlineDocument(stream, pagesize=page_size, rightMargin=48, leftMargin=48,
                             topMargin=44, bottomMargin=44, title=title, author='Sandevistan-Audio')
     body = ParagraphStyle('body', fontName='Transcript', fontSize=10.5, leading=17,
                           wordWrap='CJK', spaceAfter=12, alignment=TA_LEFT)
@@ -55,24 +62,53 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     story: list[Any] = [Paragraph(html.escape(title), heading)]
     if result.get('review_notice'):
         story.append(Paragraph(html.escape(result['review_notice']), original_style))
-    sections = reading_sections(result)
-    if result.get('video'):
-        sections = presentation_sections(sections)
+    if result.get('topics') and not result.get('reading_outline'):
+        story.append(Paragraph('议题目录 / Topics', heading))
+        for topic in result['topics']:
+            story.append(Paragraph(html.escape(topic['title']), label))
+            story.append(Paragraph(html.escape(('原文要点 / Source excerpt: ' if topic.get('summary_method') == 'source_excerpt' else '') + topic['summary']), body))
+            story.append(Paragraph(' / '.join(f"{timecode(r['start'])} – {timecode(r['end'])}" for r in topic['ranges']), original_style))
+    from .reading_outline import sections as outline_sections
+    sections = outline_sections(result)
+    if result.get('reading_outline'):
+        story.append(Paragraph('目录 / Contents', heading))
+        for section in sections:
+            if section.get('reading_resource'): continue
+            text = section.get('topic_heading') or (section.get('title_summary') or {}).get('title') or ('画面 ' + str(section.get('frame_number', '')) if section.get('image') else '')
+            if text:
+                anchor = hashlib.sha256(str(section.get('id', section.get('topic_id'))).encode()).hexdigest()
+                story.append(Paragraph(f'<link href="#{anchor}">{html.escape(text)}</link>', body if 'topic_heading' in section else original_style))
     for index, section in enumerate(sections):
+        if result.get('reading_outline') and not section.get('reading_resource'):
+            anchor = hashlib.sha256(str(section.get('id', section.get('topic_id'))).encode()).hexdigest()
+            marker = Paragraph(f'<a name="{anchor}"/>', label)
+            marker.outline_entry = (0 if 'topic_heading' in section else 1, section.get('topic_heading') or (section.get('title_summary') or {}).get('title') or f"画面 {section.get('frame_number', index+1)}", anchor)
+            story.append(marker)
+        if 'topic_heading' in section:
+            story.append(Paragraph(html.escape(section['topic_heading']), heading))
+            story.append(Paragraph(html.escape(section['topic_summary']), body))
+            for related in section['related_item_ids']:
+                target = hashlib.sha256(str(related).encode()).hexdigest()
+                story.append(Paragraph(f'<link href="#{target}">相关内容 / Related: {html.escape(section["related_titles"][related])}</link>', original_style))
+            continue
+        if result.get('reading_outline') and not section.get('reading_resource') and (not result.get('video') or section.get('reading_block')):
+            story.append(Paragraph(html.escape(section['title_summary']['title']), label))
         if result.get('video'):
             story.append(Spacer(1, 14))
             title = (section.get('title_summary') or {}).get('title')
-            if section.get('image'):
+            if section.get('image') and not section.get('reading_block'):
                 story.append(Paragraph(html.escape(f"画面 {section['frame_number']}" + (f" · {title}" if title else '')), label))
-            elif title:
+            elif title and not section.get('reading_block'):
                 story.append(Paragraph(html.escape(title), body))
             story.append(Paragraph(f"{timecode(section['start'])} – {timecode(section['end'])}", label))
+            if section.get('reading_block') and section.get('frame_number'):
+                story.append(Paragraph(f"关联画面 / Associated frame {section['frame_number']}", label))
             method = insight_label(section.get('title_summary') or {})
             if method:
                 story.append(Paragraph(html.escape(method), original_style))
             if not section.get('image'):
                 pass
-            elif section['id'] in hidden:
+            elif section.get('frame_scene_id', section['id']) in hidden:
                 story.append(Paragraph('画面已隐藏 / Picture hidden', original_style))
             else:
                 name = section['image']
@@ -81,7 +117,9 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                 path = (output_dir / 'frames' / name).resolve()
                 if not path.is_relative_to((output_dir / 'frames').resolve()):
                     raise ValueError('Invalid frame path')
-                image_bytes += path.stat().st_size
+                if name not in frame_names:
+                    image_bytes += path.stat().st_size
+                    frame_names.add(name)
                 if image_bytes > _max_image_bytes:
                     raise ValueError('Images exceed PDF resource budget; split the source')
                 picture = Image(str(path))

@@ -13,6 +13,32 @@ CONFIG = {'protocol': provider.PROTOCOL, 'base_url': 'https://model.invalid/gate
 ROOT = '/api/v1/settings/transcript-optimization'
 
 
+def test_usage_scope_and_call_finish_survive_request_body_errors(monkeypatch):
+    from audio_intel import optimization_budget as budget
+    finished = []
+    monkeypatch.setattr(budget, 'reserve', lambda: 7)
+    monkeypatch.setattr(budget, 'finish', lambda identifier, error, usage: finished.append((identifier, type(error), usage)))
+
+    def invalid(*args):
+        raise ValueError('Invalid request body')
+
+    monkeypatch.setattr(provider, 'request_body', invalid)
+    monkeypatch.setattr(engine, 'request_fits', lambda *args: True)
+
+    async def check():
+        outer = {}
+        token = provider.usage_capture.set(outer)
+        try:
+            with pytest.raises(ValueError, match='Invalid request body'):
+                await engine.streamed_text(CONFIG, {})
+            assert provider.usage_capture.get() is outer
+        finally:
+            provider.usage_capture.reset(token)
+
+    asyncio.run(check())
+    assert finished == [(7, ValueError, {})]
+
+
 def stream(text='正文', finish='stop'):
     return 'data: '+json.dumps({'choices': [{'index': 0, 'delta': {'content': text}, 'finish_reason': finish}]})+'\n\ndata: [DONE]\n\n'
 
@@ -126,7 +152,7 @@ def test_v21_upgrade_retains_historical_snapshots(local):
     assert db.get_job(job['id'])['state']=='succeeded'
     assert store.get(run)['config'] == snapshot and store.parts(run, 0) == before
     assert store.get(run)['state'] == 'paused'
-    with db.connect() as c:assert c.execute('SELECT version FROM schema_meta').fetchone()[0]== 25
+    with db.connect() as c:assert c.execute('SELECT version FROM schema_meta').fetchone()[0]== 26
 
 
 def test_stream_cancellation_closes_response():

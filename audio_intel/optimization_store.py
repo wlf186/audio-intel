@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from . import db, transcript_docx, transcript_pdf
 from .optimization_policy import PROMPT_VERSION, DEFAULT_MODE
 
-SUMMARY = 'calls_limit,calls_used,budget_error,' + "COALESCE(json_extract(config_json, '$.prompt_version'), 1) AS prompt_version,json_extract(config_json, '$.rewrite_mode') AS rewrite_mode," + 'id,job_id,state,phase,review_failures,reviewed_parts,total_parts,published,model,total_chars,completed_chars,completed_units,total_units,needs_review_units,review_state,reviewed_units,uncertain_units,unavailable_units,basic_cleanup_units,review_error,activity_chars,error,revision,created_at,updated_at,summary_version,summary_state,summary_counts_json,summary_revision'
+SUMMARY = 'topic_state,topic_revision,topic_completed_nodes,topic_total_nodes,calls_limit,calls_used,budget_error,' + "COALESCE(json_extract(config_json, '$.prompt_version'), 1) AS prompt_version,COALESCE(json_extract(config_json, '$.reading_plan_version'), 1) AS reading_plan_version,json_extract(config_json, '$.rewrite_mode') AS rewrite_mode," + 'id,job_id,state,phase,review_failures,reviewed_parts,total_parts,published,model,total_chars,completed_chars,completed_units,total_units,needs_review_units,review_state,reviewed_units,uncertain_units,unavailable_units,basic_cleanup_units,review_error,activity_chars,error,revision,created_at,updated_at,summary_version,summary_state,summary_counts_json,summary_revision'
 ACTIVE = ('queued', 'running', 'pausing')
 
 
@@ -99,6 +99,8 @@ def migrate(connection: sqlite3.Connection) -> None:
         optimization_budget.migrate(connection)
         from . import optimization_packet_store
         optimization_packet_store.migrate(connection)
+        from . import optimization_topics
+        optimization_topics.migrate(connection)
 
 
 def settings() -> dict:
@@ -216,25 +218,26 @@ def snapshot(run_id: str) -> tuple[dict, list[dict]]:
         return run, _units(connection, run_id)
 
 
-def replay(job_id: str, key: str, regenerate: bool, rewrite_mode: str | None = None, max_llm_calls: int | None = None) -> bool:
+def replay(job_id: str, key: str, regenerate: bool, rewrite_mode: str | None = None, max_llm_calls: int | None = None, analyze_topics: bool = False) -> bool:
     with db.connect() as connection:
         row = connection.execute('SELECT fingerprint FROM transcript_optimizations WHERE job_id=? AND key_hash=?', (job_id, digest(key))).fetchone()
     if row is None:
         return False
     override = {'max_llm_calls': max_llm_calls} if max_llm_calls is not None else {}
+    if analyze_topics: override['analyze_topics'] = True
     fingerprints = [digest({'regenerate': regenerate, 'rewrite_mode': rewrite_mode or DEFAULT_MODE, **override})]
-    if rewrite_mode is None and max_llm_calls is None:
+    if rewrite_mode is None and max_llm_calls is None and not analyze_topics:
         fingerprints.append(digest({'regenerate': regenerate}))
     if row['fingerprint'] not in fingerprints:
         raise HTTPException(409, 'Idempotency key conflict')
     return True
 
 
-def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: str, hotwords: list[str], paragraphs: list[dict], minimum_free: int = 0) -> tuple[str, bool]:
+def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: str, hotwords: list[str], paragraphs: list[dict], minimum_free: int = 0, *, topic_result: dict | None = None) -> tuple[str, bool]:
     import shutil
     if '_api_key' in config or 'api_key' in config:
         raise ValueError('Task snapshots cannot contain credentials')
-    fingerprint = digest({'regenerate': regenerate, **({'rewrite_mode': config['rewrite_mode']} if 'rewrite_mode' in config else {}), **({'max_llm_calls': config['call_limit_override']} if config.get('call_limit_override') is not None else {})})
+    fingerprint = digest({'regenerate': regenerate, **({'analyze_topics': True} if config.get('analyze_topics') else {}), **({'rewrite_mode': config['rewrite_mode']} if 'rewrite_mode' in config else {}), **({'max_llm_calls': config['call_limit_override']} if config.get('call_limit_override') is not None else {})})
     key_hash = digest(key)
     with db.connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
@@ -251,7 +254,7 @@ def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: s
             raise HTTPException(409, 'Resume or delete the existing optimization / 请继续或删除现有优化任务')
         if old and not regenerate:
             raise HTTPException(409, 'Set regenerate=true / 请明确选择重新优化')
-        if connection.execute("SELECT count(*) FROM transcript_optimizations WHERE state='queued' OR summary_state='queued'").fetchone()[0] >= 5:
+        if connection.execute("SELECT count(*) FROM transcript_optimizations WHERE state='queued' OR summary_state='queued' OR topic_state='queued'").fetchone()[0] >= 5:
             raise HTTPException(429, 'Optimization queue is full / 优化队列已满', headers={'Retry-After': '5'})
         if shutil.disk_usage(db.settings.data_dir).free < minimum_free:
             raise HTTPException(429, 'Insufficient disk space / 磁盘空间不足', headers={'Retry-After': '30'})
@@ -276,6 +279,9 @@ def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: s
         if config.get('packet_version') == 1:
             from . import optimization_packet_store
             optimization_packet_store.initialize(connection, identifier, config, paragraphs, hotwords)
+        if config.get('analyze_topics'):
+            from . import optimization_topics
+            optimization_topics.initialize(connection, identifier, topic_result, config)
         connection.commit()
     return identifier, False
 
@@ -298,7 +304,7 @@ def resume(run_id: str, max_llm_calls: int | None = None) -> None:
             return
         if row['state'] not in ('paused', 'failed'):
             raise HTTPException(409, 'Task cannot be resumed')
-        if connection.execute("SELECT count(*) FROM transcript_optimizations WHERE state='queued' OR summary_state='queued'").fetchone()[0] >= 5:
+        if connection.execute("SELECT count(*) FROM transcript_optimizations WHERE state='queued' OR summary_state='queued' OR topic_state='queued'").fetchone()[0] >= 5:
             raise HTTPException(429, 'Optimization queue is full', headers={'Retry-After': '5'})
         connection.execute("UPDATE transcript_optimizations SET state='queued',error=NULL,revision=revision+1,updated_at=? WHERE id=?", (db.utcnow(), run_id))
         connection.commit()
@@ -333,7 +339,7 @@ def checkpoint(run_id: str, values: list[tuple[int, str]], *, review_reason: str
 def publish(run_id: str) -> bool:
     with db.connect() as connection:
         connection.execute('BEGIN IMMEDIATE')
-        row = connection.execute("SELECT job_id FROM transcript_optimizations WHERE id=? AND state='running' AND completed_units=total_units AND review_state='completed' AND (summary_version IS NULL OR summary_state IN ('completed','partial'))", (run_id,)).fetchone()
+        row = connection.execute("SELECT job_id FROM transcript_optimizations WHERE id=? AND state='running' AND completed_units=total_units AND review_state='completed' AND (summary_version IS NULL OR summary_state IN ('completed','partial')) AND topic_state IN ('not_requested','completed')", (run_id,)).fetchone()
         if not row:
             return False
         connection.execute('DELETE FROM transcript_optimizations WHERE job_id=? AND published=1', (row['job_id'],))

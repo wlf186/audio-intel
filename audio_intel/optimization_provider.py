@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from contextvars import ContextVar
+
+usage_capture: ContextVar[dict | None] = ContextVar("optimization_usage_capture", default=None)
 import json
 import re
 import time
@@ -131,6 +134,12 @@ async def completion(connection: httpx.AsyncClient, body: dict, activity=None) -
     last_activity = time.monotonic()
     async def consume(item):
         nonlocal text, finish, last_activity
+        usage = item.get('usage')
+        capture = usage_capture.get()
+        if capture is not None and isinstance(usage, dict):
+            for key in ('prompt_tokens', 'completion_tokens'):
+                value = usage.get(key)
+                if type(value) is int and value >= 0: capture[key] = value
         if item.get('error'):
             check_capacity_error(str(item['error']))
             raise InvalidOutput('模型服务返回错误 / Model service returned an error')

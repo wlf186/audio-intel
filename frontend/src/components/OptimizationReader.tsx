@@ -1,5 +1,8 @@
+import {ReadingBlocks} from './ReadingBlocks'
 import {hasReadingContent,pictureNumbers,relatedTextStart} from '../lib/videoPresentation'
 import {VideoFramePreview} from './VideoFramePreview'
+import {createPortal} from 'react-dom'
+import {useReadingWorkspace,readingScenes,readingParagraphs,RelatedTopics,TopicHeading} from './ReadingWorkspace'
 import {memo,useDeferredValue,useLayoutEffect,useMemo,useRef,useState} from 'react'
 import {useTranslation} from 'react-i18next'
 import type {Job} from '../lib/types'
@@ -49,9 +52,10 @@ const Pair=memo(function Pair({paragraph,compare,showChanges,showSources,query,o
  </article>
 })
 
-export function OptimizationReader({job,controller,query,speaker,onSeek,onModeChange,reveal,illustrated=true}:{reveal?:{sceneId?:string;time:number;token:number};illustrated?:boolean;job:Job;onModeChange:()=>void;controller:OptimizationController;query:string;speaker:string;onSeek:(time:number)=>void}){
+function LegacyOptimizationReader({job,controller,query,speaker,onSeek,onModeChange,reveal,illustrated=true}:{reveal?:{sceneId?:string;time:number;token:number};illustrated?:boolean;job:Job;onModeChange:()=>void;controller:OptimizationController;query:string;speaker:string;onSeek:(time:number)=>void}){
  const {t}=useTranslation(),compare=controller.compare
- const key=`${job.id}:${compare?'comparison':'optimized'}${illustrated?'':':text'}`
+ const workspace=useReadingWorkspace()
+ const key=`${job.id}:${compare?'comparison':'optimized'}${illustrated?'':':text'}${workspace.grouped&&workspace.outline?':topic':''}`
  const bookmark=readReaderBookmark(key)
  const deferred=useDeferredValue(query)
  const {paragraphFilter:filter,setParagraphFilter:setFilter}=controller
@@ -98,35 +102,59 @@ export function OptimizationReader({job,controller,query,speaker,onSeek,onModeCh
    if(node&&root.current){revealedToken.current=reveal.token;revealReadingNode(root.current,node)}
   }
  },[reveal,result,deferred,speaker,filter,setFilter,filtered,visible])
- const shown=filtered.slice(0,visible)
+ const shown=useMemo(()=>filtered.slice(0,visible),[filtered,visible])
  const byScene=useMemo(()=>{
   const map=new Map<string,OptimizationParagraph[]>()
   for(const p of shown){const id=p.scene_ids?.[0]||'';const bucket=map.get(id)||[];bucket.push(p);map.set(id,bucket)}
   return map
  },[shown])
+ const orderedScenes=useMemo(()=>readingScenes(result?.scenes||[],workspace.outline,workspace.grouped),[result?.scenes,workspace.outline,workspace.grouped])
+ const orderedAudio=useMemo(()=>readingParagraphs(shown,workspace.outline,workspace.grouped),[shown,workspace.outline,workspace.grouped])
  const pair=(p:OptimizationParagraph)=><Pair key={p.id} paragraph={p} compare={compare} showChanges={showChanges} showSources={showSources} query={deferred} onSeek={onSeek} onCompare={onModeChange}/>
  return <>
-  {result?<div className="optimization-summary"><span>{t('optimization.readingCount',{count:filtered.length,total:result.paragraphs.length})}</span><div className="optimization-reading-options">
+  {result&&workspace.tools?createPortal(<details className="reader-options"><summary>{t('reading.options')}</summary><div className="optimization-summary"><span>{t('optimization.readingCount',{count:filtered.length,total:result.paragraphs.length})}</span><div className="optimization-reading-options">
    {compare?<><label className="optimization-diff-toggle"><input type="checkbox" checked={showChanges} onChange={event=>{checkpointWorkspace();setShowChanges(event.target.checked);saveOptimizationChanges(job.id,event.target.checked)}}/>{t('optimization.showChanges')}</label><label>{t('optimization.paragraphFilter')}<select aria-label={t('optimization.paragraphFilter')} value={filter} onChange={event=>{setFilter(event.target.value);setVisible(80)}}><option value="all">{t('optimization.filterAll')}</option><option value="changed">{t('optimization.filterChanged')}</option><option value="review">{t('optimization.filterReview')}</option></select></label></>:null}
    <label className="optimization-diff-toggle"><input type="checkbox" checked={showSources} onChange={event=>{checkpointWorkspace();setShowSources(event.target.checked);saveSourceDetails(job.id,event.target.checked)}}/>{t('optimization.sourceDetails')}</label>
-  </div></div>:null}
+  </div></div></details>,workspace.tools):null}
   <TranscriptSearchNavigation query={deferred} entries={searchEntries} visibleRevision={`${visible}:${showChanges}:${showSources}:${compare}:${illustrated}`} root={root} onReveal={id=>{const index=filtered.findIndex(p=>id.startsWith('scene-title:')?p.scene_ids?.[0]===id.slice(12):p.id===id);setVisible(n=>Math.max(n,index+1))}}/>
   <div className="optimization-reader" ref={root} aria-busy={!result&&!resultError}>
    {resultError?<p className="error" role="alert">{resultError} <button className="button" onClick={controller.retry}>{t('common.actions.retry')}</button></p>:null}
    {!result?!resultError?<p role="status">{t('optimization.loading')}</p>:null:<>
     {!compare&&!deferred.trim()&&speaker==='all'&&filter==='all'&&result.paragraphs.length>0&&result.paragraphs.every(p=>p.omitted)?<p className="reader-empty-note" role="note">{t('optimization.allOmitted')} <button className="button" onClick={onModeChange}>{t('optimization.viewOmittedSources')}</button></p>:null}
-    {result.scenes.length?result.scenes.map((scene,index)=>{
+    {result.scenes.length?orderedScenes.map(({scene,group})=>{
      const owned=byScene.get(scene.id)||[]
      const related=owned.length?undefined:relatedTextStart(scene,filtered)
      if(!hasReadingContent({...scene,paragraphs:filteredByScene.get(scene.id)}))return null
      if(!owned.length&&(speaker!=='all'||filter!=='all'||deferred.trim()&&!(sceneTitles.get(scene.id)||'').toLocaleLowerCase().includes(deferred.trim().toLocaleLowerCase())))return null
      if(!owned.length&&filteredByScene.has(scene.id))return null
-     return <section key={scene.id} className={`optimization-scene${scene.image?'':' video-text-only'}`} data-scene-id={scene.id}><h3 className="optimization-scene-meta">{scene.image?t('video.scene',{number:numbers.get(scene.id)}):t('video.unillustrated')} <small>{formatTime(scene.start,false)}–{formatTime(scene.end,false)}</small></h3>{scene.title_summary?.title?<h4 className="optimization-scene-title" data-search-owner={`scene-title:${scene.id}`}>{highlightText(scene.title_summary.title,deferred)}{scene.title_summary.generation_method==='model_keywords'||scene.title_summary.generation_method==='source_excerpt'?<small className="optimization-insight-method">{t(scene.title_summary.generation_method==='model_keywords'?'optimization.keywordInsight':'optimization.sourceInsight')}</small>:null}</h4>:null}<div className={illustrated&&scene.image?'optimization-scene-columns':'optimization-scene-text'}>{illustrated&&scene.image?<div className="optimization-scene-picture"><Frame jobId={job.id} scene={scene}/></div>:null}<div className="optimization-scene-prose">{owned.length?owned.map(pair):related!==undefined?<button className="button" onClick={()=>onSeek(related)}>{t('video.relatedText',{time:formatTime(related,false)})}</button>:null}</div></div>{illustrated&&!scene.image?<VideoFramePreview jobId={job.id} time={scene.start}/>:null}</section>
-    }):shown.map(pair)}
+     return <section key={scene.id} className={`optimization-scene${scene.image?'':' video-text-only'}`} data-scene-id={scene.id}>{group?<TopicHeading group={group}/>:null}<h3 className="optimization-scene-meta">{scene.image?t('video.scene',{number:numbers.get(scene.id)}):t('video.unillustrated')} <small>{formatTime(scene.start,false)}–{formatTime(scene.end,false)}</small></h3>{scene.title_summary?.title?<h4 className="optimization-scene-title" data-search-owner={`scene-title:${scene.id}`}>{highlightText(scene.title_summary.title,deferred)}{scene.title_summary.generation_method==='model_keywords'||scene.title_summary.generation_method==='source_excerpt'?<small className="optimization-insight-method">{t(scene.title_summary.generation_method==='model_keywords'?'optimization.keywordInsight':'optimization.sourceInsight')}</small>:null}</h4>:null}<div className={illustrated&&scene.image?'optimization-scene-columns':'optimization-scene-text'}>{illustrated&&scene.image?<div className="optimization-scene-picture"><Frame jobId={job.id} scene={scene}/></div>:null}<div className="optimization-scene-prose">{owned.length?owned.map(pair):related!==undefined?<button className="button" onClick={()=>onSeek(related)}>{t('video.relatedText',{time:formatTime(related,false)})}</button>:null}</div></div>{illustrated&&!scene.image?<VideoFramePreview jobId={job.id} time={scene.start}/>:null}</section>
+    }):orderedAudio.map(({scene,group})=><div key={scene.id}>{group?<TopicHeading group={group}/>:null}{pair(scene)}</div>)}
+    <RelatedTopics/>
     {result.scenes.length?(byScene.get('')||[]).map(pair):null}
     {!filtered.length&&(deferred.trim()||speaker!=='all'||filter!=='all')&&!searchEntries.some(entry=>entry.texts.some(text=>deferred.trim()&&text.toLocaleLowerCase().includes(deferred.trim().toLocaleLowerCase())))?<p>{t('asr.results.noMatches')}{filter!=='all'?<button className="button" onClick={()=>setFilter('all')}>{t('optimization.filterAll')}</button>:null}</p>:null}
     {visible<filtered.length?<button className="button" onClick={()=>setVisible(n=>n+80)}>{t('asr.results.loadMore')}</button>:null}
    </>}
   </div>
+ </>
+}
+
+export function OptimizationReader(props:Parameters<typeof LegacyOptimizationReader>[0]){
+ const {job,controller,query,speaker,onSeek,onModeChange,illustrated,reveal}=props
+ const result=controller.result,workspace=useReadingWorkspace(),{t}=useTranslation()
+ const deferred=useDeferredValue(query)
+ const paragraphs=useMemo(()=>new Map(result?.paragraphs.map(p=>[p.id,p])),[result])
+ const [showChanges,setShowChanges]=useState(()=>readOptimizationChanges(job.id)),[showSources,setShowSources]=useState(()=>readSourceDetails(job.id))
+ if(result?.reading_plan_version!==2)return <LegacyOptimizationReader {...props}/>
+ const filter=controller.paragraphFilter
+ if(!controller.compare&&!deferred.trim()&&result.paragraphs.length>0&&result.paragraphs.every(p=>p.omitted))return <div className="optimization-reader"><p>{t('optimization.allOmitted')} <button className="button" onClick={onModeChange}>{t('optimization.viewOmittedSources')}</button></p></div>
+ return <>
+ {workspace.tools?createPortal(<details className="reader-options"><summary>{t('reading.options')}</summary><div className="optimization-summary"><div className="optimization-reading-options">
+  {controller.compare?<><label className="optimization-diff-toggle"><input type="checkbox" checked={showChanges} onChange={e=>{setShowChanges(e.target.checked);saveOptimizationChanges(job.id,e.target.checked)}}/>{t('optimization.showChanges')}</label><label>{t('optimization.paragraphFilter')}<select aria-label={t('optimization.paragraphFilter')} value={filter} onChange={e=>controller.setParagraphFilter(e.target.value)}><option value="all">{t('optimization.filterAll')}</option><option value="changed">{t('optimization.filterChanged')}</option><option value="review">{t('optimization.filterReview')}</option></select></label></>:null}
+  <label className="optimization-diff-toggle"><input type="checkbox" checked={showSources} onChange={e=>{setShowSources(e.target.checked);saveSourceDetails(job.id,e.target.checked)}}/>{t('optimization.sourceDetails')}</label>
+ </div></div></details>,workspace.tools):null}
+ <ReadingBlocks key={`${workspace.runId}:${controller.mode}:${workspace.grouped}`} job={job} query={deferred} speaker={speaker} illustrated={illustrated} mode={controller.mode} reveal={reveal}
+  include={block=>{const p=paragraphs.get(block.paragraph_id||'');return Boolean(p&&(controller.compare||!p.omitted)&&(!controller.compare||filter==='all'||(filter==='review'?p.review_outcome==='fact':p.text!==p.original_text)))}}
+  texts={block=>{const p=paragraphs.get(block.paragraph_id||'');return p?[...(controller.compare?[p.original_text]:[]),p.text||'',...insightTexts(p)]:[]}}
+  render={block=>{const p=paragraphs.get(block.paragraph_id||'');return p?<Pair paragraph={p} compare={controller.compare} showChanges={showChanges} showSources={showSources} query={deferred} onSeek={onSeek} onCompare={onModeChange}/>:null}}/>
  </>
 }

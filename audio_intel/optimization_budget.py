@@ -65,8 +65,8 @@ def reserve() -> int | None:
     run_id, stage, node_key = value
     with db.connect() as c:
         c.execute('BEGIN IMMEDIATE')
-        row = c.execute('SELECT calls_limit,calls_used,state,summary_state FROM transcript_optimizations WHERE id=?', (run_id,)).fetchone()
-        if row is None or not (row['state'] == 'running' or row['state'] == 'succeeded' and row['summary_state'] == 'running'):
+        row = c.execute('SELECT calls_limit,calls_used,state,summary_state,topic_state FROM transcript_optimizations WHERE id=?', (run_id,)).fetchone()
+        if row is None or not (row['state'] == 'running' or row['state'] == 'succeeded' and (row['summary_state'] == 'running' or row['topic_state'] == 'running')):
             import asyncio
             raise asyncio.CancelledError()
         # Legacy runs have no reliable starting count and retain their snapshots.
@@ -83,17 +83,17 @@ def reserve() -> int | None:
     return call_id
 
 
-def finish(call_id: int | None, error: BaseException | None):
+def finish(call_id: int | None, error: BaseException | None, usage: dict | None = None):
     if call_id is not None:
         with db.connect() as c:
-            c.execute('UPDATE optimization_calls SET state=?,error=?,finished_at=? WHERE id=?',
+            c.execute('UPDATE optimization_calls SET state=?,error=?,finished_at=?,prompt_tokens=?,completion_tokens=?,request_bytes=?,response_bytes=? WHERE id=?',
                       ('completed' if error is None else 'interrupted' if isinstance(error, BaseException) and not isinstance(error, Exception) else 'failed',
-                       type(error).__name__ if error else None, db.utcnow(), call_id))
+                       type(error).__name__ if error else None, db.utcnow(), *((usage or {}).get(k) for k in ('prompt_tokens','completion_tokens','request_bytes','response_bytes')), call_id))
 
 
 def pause(run_id: str):
     with db.connect() as c:
-        c.execute("UPDATE transcript_optimizations SET budget_error='exhausted',error=?,state=CASE WHEN published=0 THEN 'paused' ELSE state END,summary_state=CASE WHEN summary_state='running' THEN 'paused' ELSE summary_state END,revision=revision+1,updated_at=? WHERE id=?",
+        c.execute("UPDATE transcript_optimizations SET budget_error='exhausted',error=?,state=CASE WHEN published=0 THEN 'paused' ELSE state END,summary_state=CASE WHEN summary_state='running' THEN 'paused' ELSE summary_state END,topic_state=CASE WHEN topic_state='running' THEN 'paused' ELSE topic_state END,revision=revision+1,updated_at=? WHERE id=?",
                   ('本次调用预算已用完，请调整本次预算并继续 / Call budget exhausted; raise this run limit and resume', db.utcnow(), run_id))
 
 
@@ -101,8 +101,10 @@ def usage(run_id: str) -> dict:
     with db.connect() as c:
         r = c.execute('SELECT calls_limit,calls_used,estimate_json,budget_error FROM transcript_optimizations WHERE id=?', (run_id,)).fetchone()
         stages = {stage: count for stage, count in c.execute('SELECT stage,count(*) FROM optimization_calls WHERE run_id=? GROUP BY stage', (run_id,))}
+        token_row = c.execute('SELECT count(*),count(prompt_tokens),count(completion_tokens),sum(prompt_tokens),sum(completion_tokens),sum(request_bytes),sum(response_bytes) FROM optimization_calls WHERE run_id=?', (run_id,)).fetchone()
+        token_usage = dict(zip(('attempts','input_recorded','output_recorded','prompt_tokens','completion_tokens','request_bytes','response_bytes'), token_row))
         failures = c.execute("SELECT count(*) FROM optimization_calls WHERE run_id=? AND state IN ('failed','interrupted','started')", (run_id,)).fetchone()[0]
-    return {'run_id': run_id, 'recorded': r['calls_limit'] is not None, 'max_llm_calls': r['calls_limit'],
+    return {'run_id': run_id, 'token_usage': token_usage, 'recorded': r['calls_limit'] is not None, 'max_llm_calls': r['calls_limit'],
             'calls_used': r['calls_used'] if r['calls_limit'] is not None else None,
             'remaining_calls': max(0, r['calls_limit'] - r['calls_used']) if r['calls_limit'] is not None else None,
             'estimate': json.loads(r['estimate_json']) if r['estimate_json'] else None,
@@ -147,7 +149,7 @@ def _legacy_breakdown(config: dict, units: list[dict], hotwords: list[str], pend
     return breakdown
 
 
-def estimate(config: dict, units: list[dict], hotwords: list[str], *, used: int = 0, limit: int | None = None, pending_insights: set[tuple[str, str]] | None = None) -> dict:
+def estimate(config: dict, units: list[dict], hotwords: list[str], *, used: int = 0, limit: int | None = None, pending_insights: set[tuple[str, str]] | None = None, topic_atoms: list[dict] | None = None, topic_run_id: str | None = None) -> dict:
     from . import optimization_engine as engine, optimization_store as store
     from . import optimization_batch as batching, optimization_summary_policy as policy
     limit = limit if limit is not None else config.get('max_llm_calls', DEFAULT_LIMIT)
@@ -189,6 +191,9 @@ def estimate(config: dict, units: list[dict], hotwords: list[str], *, used: int 
                 breakdown[stage] += 1
     else:
         breakdown = _legacy_breakdown(config, units, hotwords, pending_insights)
+    if topic_atoms is not None:
+        from . import optimization_topics
+        breakdown['topics'] = optimization_topics.estimate(config, topic_atoms, topic_run_id)
     expected = sum(breakdown.values())
     recovery = math.ceil(expected * .5)
     if config.get('packet_version') == 1:
@@ -201,7 +206,7 @@ def estimate(config: dict, units: list[dict], hotwords: list[str], *, used: int 
     return {'estimated_calls': expected, 'used_calls': used, 'minimum_limit': used + expected,
             'recommended_limit': recommended, 'max_llm_calls': limit, 'sufficient': limit >= recommended,
             'can_start': limit >= used + expected, 'breakdown': breakdown,
-            'fingerprint': store.digest({'configuration': {**{k: config.get(k) for k in ('base_url', 'model', 'use_proxy', 'context_length', 'max_output_tokens', 'extra_body', 'structured_output_mode', 'rewrite_mode', 'summary_version', 'packet_version', 'packet_joint', 'packet_presence_penalty')}, **({'english_source': True} if config.get('english_source') else {})}, 'batch_max_items': config.get('batch_max_items', 1), 'hotwords': hotwords, 'sources': [{k: u.get(k) for k in ('original_text', 'speaker', 'sources', 'scene_ids', '_detail_sources')} for u in units]})}
+            'fingerprint': store.digest({'configuration': {**{k: config.get(k) for k in ('base_url', 'model', 'use_proxy', 'context_length', 'max_output_tokens', 'extra_body', 'structured_output_mode', 'rewrite_mode', 'analyze_topics', 'summary_version', 'packet_version', 'packet_joint', 'packet_presence_penalty')}, **({'english_source': True} if config.get('english_source') else {})}, 'batch_max_items': config.get('batch_max_items', 1), 'hotwords': hotwords, 'sources': [{k: u.get(k) for k in ('original_text', 'speaker', 'sources', 'scene_ids', '_detail_sources')} for u in units]})}
 
 
 def admit(value: dict):

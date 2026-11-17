@@ -1,3 +1,5 @@
+import {createPortal} from 'react-dom'
+import {useReadingWorkspace} from './ReadingWorkspace'
 export function highlightText(text:string,query:string){
  const needle=query.trim().toLocaleLowerCase()
  if(!needle)return text
@@ -15,6 +17,7 @@ import {useLayoutEffect,useMemo,useState,useRef,type RefObject} from 'react'
 import {useTranslation} from 'react-i18next'
 export function TranscriptSearchNavigation({query,entries,root,onReveal,visibleRevision}:{visibleRevision?:unknown;query:string;entries:{id:string;texts:string[]}[];root:RefObject<HTMLElement|null>;onReveal:(id:string)=>void}){
  const {t}=useTranslation()
+ const {navigationTools}=useReadingWorkspace()
  const needle=query.trim().toLocaleLowerCase()
  const hits=useMemo(()=>entries.flatMap(entry=>{
   const matches:{id:string;occurrence:number}[]=[]
@@ -37,5 +40,6 @@ export function TranscriptSearchNavigation({query,entries,root,onReveal,visibleR
  },[hits,index,query,root,visibleRevision])
  if(!needle)return null
  const jump=(direction:number)=>{const next=index<0?(direction>0?0:hits.length-1):(index+direction+hits.length)%hits.length;setSelection({query,index:next});onReveal(hits[next].id)}
- return <div className="transcript-search-navigation" role="group" aria-label={t('optimization.searchMatches')}><span role="status">{index<0?t('optimization.hitTotal',{count:hits.length}):t('optimization.hitCount',{current:index+1,total:hits.length})}</span><button className="button" disabled={!hits.length} onClick={()=>jump(-1)}>{t('optimization.previousHit')}</button><button className="button" disabled={!hits.length} onClick={()=>jump(1)}>{t('optimization.nextHit')}</button></div>
+ const navigation=<div className="transcript-search-navigation" role="group" aria-label={t('optimization.searchMatches')}><span role="status">{index<0?t('optimization.hitTotal',{count:hits.length}):t('optimization.hitCount',{current:index+1,total:hits.length})}</span><button className="button" disabled={!hits.length} onClick={()=>jump(-1)}>{t('optimization.previousHit')}</button><button className="button" disabled={!hits.length} onClick={()=>jump(1)}>{t('optimization.nextHit')}</button></div>
+ return navigationTools?createPortal(navigation,navigationTools):navigation
 }

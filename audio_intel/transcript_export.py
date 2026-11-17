@@ -34,6 +34,8 @@ class Replacement(BaseModel):
 class TranscriptExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     format: Literal["pdf", "docx", "json", "txt", "srt", "vtt"] = "pdf"
+    organization: Literal["chronological", "topic"] = "chronological"
+    merge_repeated_topics: bool | None = None
     text_version: Literal["original", "optimized", "comparison"] = "original"
     optimization_id: str | None = Field(None, pattern=r"^[a-f0-9]{32}$")
     redact: bool = Field(True, description="缩写姓名、遮盖备注并替换正文 / Abbreviate names, mask notes and replace transcript keywords")
@@ -47,8 +49,10 @@ class TranscriptExportRequest(BaseModel):
             allowed = ('pdf', 'docx') if self.text_version == 'comparison' else ('pdf', 'docx', 'txt')
             if self.format not in allowed:
                 raise ValueError('This format requires the original transcript')
-        elif self.optimization_id:
+        elif self.optimization_id and self.organization != 'topic':
             raise ValueError('optimization_id requires an optimized text_version')
+        if self.organization == 'topic' and (self.format not in ('pdf', 'docx') or not self.optimization_id):
+            raise ValueError('Topic organization requires PDF/Word and optimization_id')
         if len({rule.source for rule in self.replacements}) != len(self.replacements):
             raise ValueError("Duplicate replacement source")
         return self
@@ -145,6 +149,14 @@ def export_result(result: dict[str, Any], policy: TranscriptExportRequest) -> di
     # Unknown historical metadata can contain source text, identities or file paths.
     safe_fields = ("_optimized", "text_version", "optimization_policy", "review_notice", "language", "duration", "timestamp_precision", "diarization_mode", "model", "model_name", "model_revision", "compute_device", "compute_device_name", "precision", "quantized")
     exported = {key: deepcopy(result[key]) for key in safe_fields if key in result}
+    if result.get('reading_outline'):
+        outline = deepcopy(result['reading_outline'])
+        for item in [*outline['groups'], *outline.get('merged_groups', []), *outline['items']]:
+            for key in ('title', 'summary'):
+                if key in item: item[key] = replacer.text(item[key])
+        exported['reading_outline'] = outline
+    if result.get('topics'):
+        exported['topics'] = [{**topic, 'title': replacer.text(topic['title']), 'summary': replacer.text(topic['summary'])} for topic in result['topics']]
     if result.get('optimization_packet_version') == 1:
         exported['optimization_packet_version'] = 1
     identities = list(result.get("speakers", []))
@@ -190,7 +202,7 @@ def export_result(result: dict[str, Any], policy: TranscriptExportRequest) -> di
                     'sentences': [replacer.text(text) for text in detail.get('sentences', [])],
                     'generation_method': detail.get('generation_method')}
                     for detail in summary['subgroups']]
-        for key in ('scene_ids', 'merged_source_count', 'generation_method', 'review_outcome'):
+        for key in ('scene_ids', 'segment_ids', 'merged_source_count', 'generation_method', 'review_outcome', 'reading_block_id'):
             if key in segment:
                 item[key] = deepcopy(segment[key])
         if 'sources' in segment:
@@ -249,6 +261,9 @@ def optimized_export_result(job: dict, policy: TranscriptExportRequest) -> dict:
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     result = deepcopy(job['result'])
+    from . import optimization_topics
+    if run.get('topic_state', 'not_requested') != 'not_requested':
+        result['topics'] = (optimization_topics.read(run['id']).get('result') or {}).get('topics', [])
     version = draft.get('prompt_version', run['config'].get('prompt_version', 1))
     result.update(_optimized=True, text_version=policy.text_version, optimization_policy=version)
     if run['config'].get('packet_version'):
@@ -280,7 +295,7 @@ def optimized_export_result(job: dict, policy: TranscriptExportRequest) -> dict:
         if paragraph.get('candidate_text') is not None:
             item['text'] = paragraph['candidate_text']
         if version >= 6:
-            for key in ('scene_ids', 'merged_source_count', 'generation_method', 'review_outcome'):
+            for key in ('scene_ids', 'segment_ids', 'merged_source_count', 'generation_method', 'review_outcome', 'reading_block_id'):
                 if key in paragraph:
                     item[key] = deepcopy(paragraph[key])
         if paragraph['review_status'] == 'needs_review':
@@ -301,4 +316,45 @@ def optimized_export_result(job: dict, policy: TranscriptExportRequest) -> dict:
         result['segments'].append(item)
     result['text'] = '\n'.join(p['text'] for p in result['segments'])
     result.pop('artifacts', None)
+    if policy.organization == 'topic':
+        attach_outline(result, job, run, policy)
+    return export_result(result, policy)
+
+
+def attach_outline(result: dict, job: dict, run: dict, policy: TranscriptExportRequest) -> None:
+    from . import optimization_topics, optimization_summaries as insights, optimization_store as store
+    from .reading_outline import build
+    from fastapi import HTTPException
+    catalogue = optimization_topics.read(run['id'])['result']
+    if catalogue is None: raise HTTPException(409, '请先识别议题 / Generate topics first')
+    summaries = insights.read(run['id'])
+    titles = summaries['scenes']
+    if run['config'].get('reading_plan_ready') and policy.merge_repeated_topics is not None:
+        from .reading_plan import outline
+        result['reading_outline'] = outline(job['result'], catalogue, store.snapshot(run['id'])[1], summaries.get('blocks', {}))
+        result['reading_outline']['merge_repeated_topics'] = policy.merge_repeated_topics
+    else:
+        result['reading_outline'] = build(job['result'], catalogue, titles)
+    for scene in result.get('video', {}).get('scenes', []):
+        scene['title_summary'] = titles.get(scene['id'])
+
+
+def original_topic_export(job: dict, policy: TranscriptExportRequest) -> dict:
+    from . import optimization_store as store, optimization_engine as engine
+    from fastapi import HTTPException
+    run = store.get(policy.optimization_id or '')
+    if run['job_id'] != job['id']: raise HTTPException(404, 'Optimization not found')
+    if not run['published'] or engine.source_hash(job['result'], source_assignment_version=run['config'].get('source_assignment_version', 1)) != run['source_hash']:
+        raise HTTPException(409, 'Source changed or draft is incomplete')
+    result = deepcopy(job['result'])
+    attach_outline(result, job, run, policy)
+    if result['reading_outline']['version'] == 2:
+        raw = {s['id']: s for s in result['segments']}
+        result['segments'] = []
+        for block in result['reading_outline']['items']:
+            for ref in block['source_refs']:
+                segment = deepcopy(raw[ref['segment_id']])
+                segment.update(text=segment['text'][ref['start_offset']:ref['end_offset']], start=ref['start'], end=ref['end'], reading_block_id=block['id'])
+                segment.pop('words', None)
+                result['segments'].append(segment)
     return export_result(result, policy)

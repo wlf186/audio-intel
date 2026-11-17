@@ -15,7 +15,8 @@ type WindowRange={start:number;span:number}
 const clamp=(value:number,lower:number,upper:number)=>Math.max(lower,Math.min(upper,value))
 export function VideoTimeline({jobId,duration,currentTime,enhanced,available,scenes,titles,onSeek,onSceneSeek,onSeekCommit}:{jobId:string;duration:number;currentTime:number;enhanced:boolean;available:boolean;scenes:VideoScenesResource;titles?:Record<string,SceneSummary>;onSeek:(time:number)=>void;onSceneSeek:(scene:VideoScene)=>void;onSeekCommit:(time:number)=>void}){
  const {t}=useTranslation()
- const [expanded,setExpanded]=useState(()=>matchMedia('(min-width:1024px)').matches)
+ const [expanded,setExpanded]=useState(true)
+
  const pictures=useMemo(()=>scenes.data?.scenes.filter(scene=>scene.image)||[],[scenes.data?.scenes])
  const numbers=useMemo(()=>pictureNumbers(scenes.data?.scenes||[]),[scenes.data?.scenes])
  const [range,setRange]=useState<WindowRange>({start:0,span:duration})

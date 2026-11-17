@@ -6,6 +6,7 @@ type SettingToggleRowProps={
  id:string
  label:string
  description:string
+ disabled?:boolean
  checked:boolean
  onChange:(checked:boolean)=>void
  help:string
@@ -13,7 +14,7 @@ type SettingToggleRowProps={
  children?:ReactNode
 }
 
-export function SettingToggleRow({id,label,description,checked,onChange,help,helpLabel,children}:SettingToggleRowProps){
+export function SettingToggleRow({id,label,description,checked,disabled,onChange,help,helpLabel,children}:SettingToggleRowProps){
  return <div className="setting-toggle-row acceleration-control">
   <div className="setting-toggle-main">
    <label className="setting-toggle-copy" htmlFor={id}>
@@ -22,7 +23,7 @@ export function SettingToggleRow({id,label,description,checked,onChange,help,hel
    </label>
    <InfoTooltip id={`${id}-help`} text={help} label={helpLabel}/>
    <label className="setting-toggle-hit" htmlFor={id}>
-    <input id={id} type="checkbox" role="switch" aria-label={label} aria-describedby={`${id}-description`} checked={checked} onChange={event=>onChange(event.target.checked)}/>
+    <input id={id} type="checkbox" disabled={disabled} role="switch" aria-label={label} aria-describedby={`${id}-description`} checked={checked} onChange={event=>onChange(event.target.checked)}/>
     <span className="setting-toggle-track" aria-hidden="true"/>
    </label>
   </div>

@@ -142,15 +142,15 @@ def read(run_id: str, connection: sqlite3.Connection | None = None) -> dict[str,
     if row is None:
         raise HTTPException(404, 'Optimization not found')
     items = connection.execute('SELECT * FROM optimization_summaries WHERE run_id=?', (run_id,)).fetchall()
-    groups, scenes = {}, {}
+    groups, scenes, blocks = {}, {}, {}
     for item in items:
         value = {'state': item['state'], 'error': item['error']}
         if row['summary_version'] == 2:
             value.update({key: item[key] for key in ('generation_method', 'attempt_count', 'quality_notice', 'skip_reason')})
         texts = json.loads(item['value_json'] or '[]')
         value.update({'sentences': texts} if item['kind'] == 'group' else {'title': texts[0] if texts else None})
-        (groups if item['kind'] == 'group' else scenes)[item['item_id']] = value
-    return {'run_id': run_id, 'summary_status': status(dict(row)), 'groups': groups, 'scenes': scenes}
+        (groups if item['kind'] == 'group' else blocks if item['item_id'].startswith('block_') else scenes)[item['item_id']] = value
+    return {'run_id': run_id, 'summary_status': status(dict(row)), 'groups': groups, 'scenes': scenes, 'blocks': blocks}
 
 
 def pause(run_id: str) -> None:
@@ -390,14 +390,14 @@ async def process(run_id: str) -> None:
     cached, attempted = {}, set()
     try:
         for position, (kind, item_id) in enumerate(items):
-            source = units[int(item_id)]['original_text'] if kind == 'group' else '\n'.join(u['original_text'] for u in units if item_id in u.get('scene_ids', []))
+            source = units[int(item_id)]['original_text'] if kind == 'group' else '\n'.join(u['original_text'] for u in units if item_id in u.get('scene_ids', []) or item_id == u.get('reading_block_id'))
             if run['summary_version'] == 2:
                 if run['config'].get('batch_max_items', 1) > 1 and not circuit.reason and (kind, item_id) not in attempted:
                     candidates = []
                     for next_kind, next_id in items[position:]:
                         if next_kind != kind:
                             break
-                        next_source = units[int(next_id)]['original_text'] if kind == 'group' else '\n'.join(u['original_text'] for u in units if next_id in u.get('scene_ids', []))
+                        next_source = units[int(next_id)]['original_text'] if kind == 'group' else '\n'.join(u['original_text'] for u in units if next_id in u.get('scene_ids', []) or next_id == u.get('reading_block_id'))
                         if not policy.meaningful(next_source) or not engine.request_fits(run['config'], policy.request(run['config'], next_source, kind)):
                             break
                         candidates.append({'id': next_id, 'original_text': next_source})

@@ -596,7 +596,7 @@ def group_sources(units: list[dict]) -> list[dict]:
 
 def scene_sources(units: list[dict], scene_ids: list[str]) -> list[dict]:
     return [{'id': scene, 'original_text': '\n'.join(
-        unit['original_text'] for unit in units if scene in unit.get('scene_ids', []))}
+        unit['original_text'] for unit in units if scene in unit.get('scene_ids', []) or scene == unit.get('reading_block_id'))}
         for scene in scene_ids]
 
 

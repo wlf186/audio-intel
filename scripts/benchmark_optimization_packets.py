@@ -27,6 +27,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--case', required=True, type=Path, help='UTF-8 JSON with request/result; private data stays in the trial directory')
 parser.add_argument('--mode', default='rewrite', choices=('polish', 'rewrite', 'editorial'))
 parser.add_argument('--trial', required=True)
+parser.add_argument('--analyze-topics', action='store_true', help='Include full recording topic discovery')
+parser.add_argument('--allow-dirty', action='store_true', help='Measure an explicitly labelled working tree, checking all Python source hashes before/after')
+parser.add_argument('--usage', action='store_true', help='Request streamed token usage on a provider confirmed to support include_usage')
 parser.add_argument('--integrated', action='store_true', help='Use the packet candidate profile; omit for the preserved baseline')
 parser.add_argument('--resume', action='store_true', help='Continue the same paused trial; retain immutable phase receipts and cumulative usage')
 parser.add_argument('--configuration-stdin', action='store_true')
@@ -52,6 +55,8 @@ else:
     config['_api_key'] = key[0] if key else ''
     connection.close()
 config.update(enabled=True, max_llm_calls=10000, max_output_tokens=4096)
+if args.usage:
+    config['extra_body'] = {**config.get('extra_body', {}), 'stream_options': {'include_usage': True}}
 if args.integrated:
     config.update(packet_presence_penalty=0, structured_output_mode='json_schema')
 else:
@@ -88,13 +93,15 @@ def git(*arguments):
 
 def source_hashes():
     return {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
-            for name in git('ls-files', 'audio_intel/*.py').splitlines()}
+            for name in sorted(str(p.relative_to(root)) for p in (root / 'audio_intel').glob('*.py'))}
 
 software_sha, source_before = git('rev-parse', 'HEAD'), source_hashes()
 benchmark_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-if git('status', '--porcelain', '--untracked-files=no'):
+dirty = bool(git('status', '--porcelain', '--untracked-files=no'))
+if dirty and not args.allow_dirty:
     raise RuntimeError('Benchmark source must be committed and immutable')
-if args.resume and prior['software_sha'] != software_sha:
+if args.resume and (prior['software_sha'] != software_sha or
+                    prior.get('source_hashes', source_before) != source_before):
     raise RuntimeError('Resume requires the same immutable source checkout')
 from fastapi.testclient import TestClient
 from audio_intel import api, db, optimization_store as store, optimization_budget as budget
@@ -136,7 +143,7 @@ try:
             db.update_job(job['id'], state='succeeded', result_json=case['result'])
             endpoint = f"/api/v1/jobs/{job['id']}/transcript-optimization"
             started, before = time.monotonic(), io_counters()
-            created = client.post(endpoint, json={'max_llm_calls': 10000, 'rewrite_mode': args.mode},
+            created = client.post(endpoint, json={'max_llm_calls': 10000, 'rewrite_mode': args.mode, **({'analyze_topics': True} if args.analyze_topics else {})},
                                   headers={'Idempotency-Key': 'research-' + args.trial})
             created.raise_for_status()
             run_id = created.json()['candidate']['id']
@@ -156,6 +163,8 @@ try:
                 items = client.get(endpoint + '/summaries', params={'run_id': run_id})
                 items.raise_for_status()
                 result.update(status='succeeded', result=draft.json(), insights=items.json())
+                if args.analyze_topics:
+                    result['topics'] = client.get(endpoint + '/topics', params={'run_id': run_id}).json()
                 break
             if current['state'] in ('failed', 'paused'):
                 result.update(status=current['state'], error=current.get('error'))
@@ -172,7 +181,7 @@ except Exception as exc:
 after = io_counters()
 result.update(trial=args.trial, mode=args.mode, fixture_digest=case.get('source_digest') or hashlib.sha256(json.dumps(case, ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
               benchmark_sha256=benchmark_sha256,
-              software_sha=software_sha, source_hashes=source_before, model=config['model'], quality_assessment='unassessed',
+              software_sha=software_sha, dirty=dirty, analyze_topics=args.analyze_topics, source_hashes=source_before, model=config['model'], quality_assessment='unassessed',
               context_length=config.get('context_length'), max_output_tokens=config['max_output_tokens'],
               structured_output_mode=config.get('structured_output_mode'),
               packet_presence_penalty=config.get('packet_presence_penalty'),
@@ -180,6 +189,8 @@ result.update(trial=args.trial, mode=args.mode, fixture_digest=case.get('source_
 if before:
     result['io_delta'] = {key: after[key] - before[key] for key in after}
     result['storage_write_bytes'] = result['io_delta']['write_bytes'] - result['io_delta']['cancelled_write_bytes']
+import resource
+result['peak_rss_bytes'] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
 result['phase'] = phase
 previous_calls = prior['usage']['calls_used'] if prior else 0
 result['calls_in_phase'] = result.get('usage', {}).get('calls_used', previous_calls) - previous_calls

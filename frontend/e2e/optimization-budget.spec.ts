@@ -26,6 +26,7 @@ for(const width of [1440,390])test(`call budget preflight override and usage ${w
  expect(submissions[0].max_llm_calls).toBe(200)
  expect(submissions[0].estimate_fingerprint).toBe('b'.repeat(64))
  await page.getByRole('button',{name:'表达优化',exact:true}).click()
+ await dialog.getByText('上一稿用量',{exact:true}).click()
  await dialog.getByText('本次用量详情',{exact:true}).click()
  await expect(dialog).toContainText('已使用 86／200 次，剩余 114 次')
  await expect(dialog.getByLabel('本次总调用上限')).toHaveValue('180')

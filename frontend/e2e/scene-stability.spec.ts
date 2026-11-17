@@ -1,3 +1,4 @@
+import {showVideoTimeline} from './timeline-fixture'
 import {test,expect} from './fixtures'
 import {uxFixture} from './ux-fixtures'
 
@@ -48,15 +49,18 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US'])test(`stable
  await expect(section.locator('img')).toHaveCount(0)
  await expect(section.locator('.video-paragraph')).toContainText('第 1 段')
  await section.locator('.video-scene-time').click()
- if(width===390)await page.getByRole('button',{name:zh?'展开时间轴':'Expand timeline',exact:true}).click()
+ await showVideoTimeline(page)
  const track=page.locator('.timeline-scenes')
  await track.focus()
  await track.press('Home')
+ if(await page.locator('.timeline-toggle').getAttribute('aria-expanded')==='true')await page.locator('.timeline-toggle').click()
  await page.locator('.video-scene-time').first().click()
+ await showVideoTimeline(page)
  await track.blur();await track.focus()
- await expect(page.getByRole('tooltip')).toContainText(empty)
- await expect(page.getByRole('tooltip').locator('img')).toHaveCount(0)
- await expect(page.getByRole('tooltip')).not.toContainText(captured)
+ await expect(page.locator('.timeline-preview')).toContainText(empty)
+ await expect(page.locator('.timeline-preview').locator('img')).toHaveCount(0)
+ await expect(page.locator('.timeline-preview')).not.toContainText(captured)
+ await showVideoTimeline(page)
  await expect(page.locator('.timeline-waveform')).toHaveAttribute('aria-valuenow','0')
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  expect(invalidRequests).toEqual([])

@@ -1921,3 +1921,23 @@ UI用K tokens（1K=1024），API用整数tokens；高级输出参数不得与显
 表达优化入口提供用量详情，不自动弹窗。新验证9B配置启用请求包，保留全部细分小结；其他模型和旧稿保留原策略。
 New configurations default to 100 calls; explicit saved limits and run snapshots are preserved. The cap is not a spending target. All stages and failed attempts count, resume keeps usage, and temporary overrides never change System settings. Call-limit-only edits need no model re-verification. Context includes input, output and safety allowance; UI uses K tokens while API fields use integer tokens. Estimate/usage endpoints and the executable example above show one-run overrides. Newly reverified 9B profiles enable source packets; other models and historical runs retain their policy.
 """
+
+
+API_DESCRIPTION += """
+
+## 全片议题 / Recording topics
+
+新稿 `analyze_topics:true` 使用阅读计划v2：先识别主议题，按原文偏移冻结讲述片段，再批量生成正文、复核和标题，统一发布。`GET .../result` 增加 `reading_plan_version`、`reading_blocks`，段落带 `reading_block_id`、`reading_topic_id`、`occurrence_id`；`GET .../summaries` 的 `blocks` 返回片段标题。画面仍是父任务中的关联资料，不增加视觉模型调用。
+
+GET `.../transcript-optimization/topics?run_id=...&include_outline=true&outline_version=2` 返回来源偏移、时间精度、片段/段落ID与关联画面编号；`groups` 保留每次议题出现的位置，`merged_groups` 是显式合并投影。省略 `outline_version` 保持v1；ETag包含该选项。未发布内容不公开。
+
+PDF/Word的 `organization:topic` 要求同任务已发布的 `optimization_id`，支持原文、优化稿、对照稿。新界面显式传 `merge_repeated_topics:false` 保持讲述顺序，`true` 把后续重复内容并至首次出现的位置；省略该字段保留旧导出组织方式。读取、切换、定位及导出均不调用模型。
+
+新阅读计划拒绝狭义 `/topics` 写入、预估、暂停、继续并返回409。需要更改议题时，对整个表达优化流程预估，再提交 `regenerate:true, analyze_topics:true`；旧成功稿保留到新稿发布。兼容的旧阅读计划仍支持 `/topics/estimate`、`/topics`、`/topics/pause`、`/topics/resume`；创建与继续要求Idempotency-Key，保留202/200/409/429语义和原预算。`summary_method:source_excerpt` 是明确标记的原文要点。`usage.token_usage`缺失表示未知，字节数不是tokens。
+
+**English:** New topic-enabled workflows discover topics before freezing source-offset reading blocks and generating prose. Opt into outline_version=2 for chronological occurrences plus an explicit merged_groups projection; omitted versions remain v1. Result paragraphs carry stable reading block/topic/occurrence IDs; summaries.blocks contains their titles. PDF/Word accept merge_repeated_topics=false for source order or true to consolidate recurrences; omission preserves legacy organization. Images remain associated resources. Narrow topic operations return409 for source-bound plans: explicitly estimate and regenerate the complete draft. Previous successful drafts remain readable until publication. Compatible legacy workflows retain their auxiliary topic endpoints and idempotent submission contracts. Reads and exports make no model calls; unknown provider token counts remain null.
+
+Executable example: `python3 scripts/optimize_transcript.py --url http://localhost:20815 --job JOB_ID --analyze-topics`
+"""
+
+# Topic outline and export organization are also documented by the typed operation schemas.
