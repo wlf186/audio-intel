@@ -148,3 +148,11 @@ English: Export transcript selects original, optimized or comparison content and
 生成、自动检查、小结／标题及必要的自动兜底、发布是一次流程；小结在组末展示，对照时只展示一份，画面目录追加标题。“关键词”和“原文要点”标明替代输出方式，计数包含这些有效交付，不能据此判定事实准确。新稿完成前不可下载，同一画面划分下的旧完成稿继续可用。正式应用新画面边界会清理旧优化，预览、更换截图和隐藏导出画面不会。详见[表达优化](EXPRESSION_OPTIMIZATION.md)。
 
 English: Text version and reading mode are independent. Desktop comparisons show complete source and draft side by side; mobile stacks them. Source details are optional. Search includes visible summaries and titles as well as the selected prose version or both comparison columns. Group insights appear once below the group; the scene directory appends titles. Keywords/source excerpts are labelled and counted as usable delivery, independently of factual accuracy. Generation, bounded checks and automatic insight recovery publish together; previous published prose remains usable during regeneration under unchanged scene boundaries.
+
+## 任务结果阅读 / Result reading
+
+播放与音频选项、阅读模式、搜索和说话人筛选分别分组，较窄窗口允许换行。窗口高度 ≤850 CSS px 或宽度 ≤700 CSS px 时，通过“展开时间轴”打开面板；关闭并重开保留当前任务的时间轴缩放，切换任务重置。较大窗口直接显示时间轴。选中原文片段后，时间轴区域暂时显示选择计数、加入声纹库及清除选择，搜索和筛选仍可操作；同一来源片段跨阅读块出现时不会重复入库。
+
+优化稿中的“对照此段”只展开该段原文和优化稿，可独立收起；顶部“对照”切换整篇。局部展开不改变播放位置、不纳入持久存储，刷新、切换任务、整篇模式或优化运行后收起。播放失败直接在结果标题区显示重试与源文件下载。
+
+English: Result controls separate playback/audio options, reading modes and search/speaker filters. At height ≤850 CSS px or width ≤700 CSS px, the timeline opens in a panel; closing/reopening retains its current-task zoom, and task changes reset it. Source selection temporarily replaces the timeline with enrollment/clear actions without hiding filters; repeated source IDs are enrolled once. Compare this paragraph expands only the selected paragraph; the toolbar comparison remains document-wide. Local expansion does not seek playback or add persistent storage. Playback failures show retry and source-download actions directly.

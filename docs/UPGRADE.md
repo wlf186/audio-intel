@@ -1,20 +1,28 @@
 # 升级指南
 
-## 未发布：全片议题识别
+## v0.1.48 升级总览
 
-SQLite v25→v26仅新增议题状态、来源引用、节点检查点、幂等记录及可空token用量列，不改写历史转写、优化稿或媒体。停服后仅创建SQLite一致快照；完成全部进程部署验收后清理本次临时备份。重建前端。功能默认关闭，历史稿不自动分析；勾选及目录展开仅本次页面/对话框内存，既有浏览器偏好寿命不变。融合请求尚未启用；实际模型效果和附加成本需结合来源核对。见[全片议题](EXPRESSION_OPTIMIZATION.md#全片议题识别--recording-topics)。
+从正式版 v0.1.47 升级包含 SQLite v23→v26 的增量数据库迁移：调用预算与用量、不可变请求包计划、议题与来源检查点。不改写历史正文、媒体或模型。停服后备份实际 SQLite 数据库即可，无需复制媒体；完成 API、ASR/TTS supervisor、executor 及历史任务验收后清理本次临时备份。已迁移至 v26 的开发实例，本次纯前端/文档更新无需再次备份。更早版本仍须覆盖中间版本要求。
 
-English: v25→v26 is an additive database-only migration. Take a consistent SQLite snapshot while stopped, rebuild the UI, restore/accept all original components and clean up the temporary backup. Historical media/drafts are unchanged; topics default off and do not run automatically for history. No new durable browser preference or enabled fusion profile.
+重建前端并按原配置恢复全部服务，刷新浏览器。任务与结果页重新组织播放、阅读与筛选工具；窗口高度不超过 850 CSS px 或宽度不超过 700 CSS px 时，时间轴通过面板打开。选择原文片段会显示声纹入库操作；“对照此段”只在当前段展开，顶部“对照”仍用于整篇。播放失败直接显示重试入口。临时展开不新增存储，历史数据与导出接口保持兼容。
 
-## 未发布：表达优化请求包
+English: Upgrading from v0.1.47 migrates SQLite v23→v26 additively for call budgets, immutable packet plans and topic/source checkpoints. Back up SQLite while stopped; media/model copies are unnecessary. Restore and verify every original service process and historical jobs, then remove temporary upgrade backups. Already-migrated v26 development instances need no repeated backup for this frontend/documentation update. Rebuild the UI and refresh browsers. Compact windows open the timeline in a panel; source selection exposes enrollment actions; Compare this paragraph expands only that paragraph, while the toolbar comparison remains document-wide. No API contract change is introduced by these UI fixes.
+
+## v0.1.48：全片议题识别
+
+SQLite v25→v26仅新增议题状态、来源引用、节点检查点、幂等记录及可空token用量列，不改写历史转写、优化稿或媒体。停服后仅创建SQLite一致快照；完成全部进程部署验收后清理本次临时备份。重建前端。服务器功能默认关闭，历史稿不自动分析；议题勾选使用现有优化偏好的 localStorage 记忆，目录展开仅本次页面内存。融合请求尚未启用；实际模型效果和附加成本需结合来源核对。见[全片议题](EXPRESSION_OPTIMIZATION.md#全片议题识别--recording-topics)。
+
+English: v25→v26 is an additive database-only migration. Take a consistent SQLite snapshot while stopped, rebuild the UI, restore/accept all original components and clean up the temporary backup. Historical media/drafts are unchanged; topics default off and do not run automatically for history. The topic checkbox is remembered in the existing optimization localStorage preferences; directory expansion is page-local. No fusion profile is enabled.
+
+## v0.1.48：表达优化请求包
 
 SQLite v24→v25 仅增加不可变请求计划表，以及调用记录的请求节点关联；保留所有历史正文、来源、小结、调用计数和检查点。历史运行继续使用其原策略，新建／重新优化使用按来源归属合并的正文与完整细分小结。停服后只需 SQLite 一致快照，不复制媒体；验收后清理临时升级备份。依赖和语音模型不变，重建前端并刷新原 API、supervisor、executor。分段小结的展开状态仅在组件内存中保存，不改变浏览器偏好的期限。 现有9b连接通过新版本重新验证并保存后，新建运行采用请求包；其他模型和旧验证沿用原流程。不改变已有调用额度与窗口。
 
 English: The additive SQLite v24→v25 migration preserves historical drafts, checkpoints and call counts. Take a SQLite-only backup while stopped, rebuild the UI, restore all original service processes and remove the temporary backup after acceptance. No media rewrite or dependency/model change. Fine-insight expansion is component memory only.
 
-## 未发布：表达优化调用预算
+## v0.1.48：表达优化调用预算
 
-数据迁移仅涉及数据库：SQLite v23→v24增量增加优化调用额度、实际计数、预估和调用记录，保留已有稿件、来源及检查点。不改写或删除媒体；按下文仅备份实际SQLite数据库。历史运行保留原策略，未记录的调用用量显示未知；新建或重新优化默认上限300次。验收包含额度耗尽后恢复、用量读取、窗口配置及全部服务来自最终源码，完成后清理本次临时备份。见[表达优化](EXPRESSION_OPTIMIZATION.md#调用预算与用量--call-budget-and-usage)。
+数据迁移仅涉及数据库：SQLite v23→v24增量增加优化调用额度、实际计数、预估和调用记录，保留已有稿件、来源及检查点。不改写或删除媒体；按下文仅备份实际SQLite数据库。历史运行保留原策略，未记录的调用用量显示未知；新配置默认上限100次；已有显式额度与历史运行保持原值。验收包含额度耗尽后恢复、用量读取、窗口配置及全部服务来自最终源码，完成后清理本次临时备份。见[表达优化](EXPRESSION_OPTIMIZATION.md#调用预算与用量--call-budget-and-usage)。
 
 ## v0.1.47：视频阅读、截图目录与导出体验
 
@@ -685,6 +693,6 @@ English: Schema v19 deletes all pre-upgrade optimization drafts and checkpoints 
 
 English: No migration or historical media/draft rewrite is required on v23; no additional upgrade backup is needed. Rebuild the frontend and refresh all recorded service components. Verify historical access and exports. New optimization runs snapshot the new source mapping; old runs retain their policy/checkpoints.
 
-### 未发布：分层阅读与议题策略v2
+### v0.1.48：分层阅读与议题策略v2
 
 不改变SQLite v26 schema，不自动重写历史稿或媒体。新议题输入使用现有表中的版本化JSON；v1检查点保持可续跑。升级需要重建前端并恢复、验收原服务。议题开关新增浏览器localStorage记忆，生命周期见表达优化说明；不会改变服务器默认开关。

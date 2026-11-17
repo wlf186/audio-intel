@@ -39,7 +39,7 @@
 
 Separate audio/video creation tabs share the ASR queue. Audio keeps its 4 GiB limit; video supports resumable uploads up to 25 GiB, adjustable picture detection, export visibility controls and matching discussion, and illustrated PDF/Word (DOCX). Audio offers concise PDF/Word while retaining detailed exports. See the [video transcription guide](docs/VIDEO_TRANSCRIPTION.md).
 
-Video results include a zoomable picture-and-waveform timeline with horizontal scrolling and click-to-read navigation. Picture detection previews load as you scroll; hidden export pictures remain marked in illustrated reading. Task history shows per-job file usage and selected totals; enhancement details stay in a compact summary.
+Video results include a zoomable picture-and-waveform timeline with horizontal scrolling and click-to-read navigation. Compact windows open the timeline in a panel to preserve reading space. Draft paragraphs support local source comparison without leaving the current reading position. Picture detection previews load as you scroll; hidden export pictures remain marked in illustrated reading. Task history shows per-job file usage and selected totals; enhancement details stay in a compact summary.
 
 Voiceprint libraries support groups, scoped ASR recognition and batch move/delete. Transcript downloads support default-on name/note redaction and up to 100 keyword replacements, with persistent browser preferences. ZIP v2 includes groups and imports remain compatible with v1. Upgrade backups cover only necessary data and must be removed after complete acceptance; see [the upgrade guide](docs/UPGRADE.md).
 
