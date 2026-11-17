@@ -51,7 +51,7 @@
 .asr-workspace .segments article>.icon-button{min-width:44px}
 .asr-workspace .segment-select{position:relative;min-width:44px}
 .asr-workspace .segment-select input{width:18px;height:18px;margin:0;cursor:pointer}
-.asr-workspace .segments article{grid-template-columns:44px 110px 118px minmax(0,1fr) 44px}
+
 .asr-task-status{padding:16px}
 @media(min-width:1200px){.asr-results{overflow:hidden}}
 @media(max-width:1199px){
@@ -72,7 +72,7 @@
  .asr-workspace.workbench{padding:16px 14px}
  .asr-tabs{gap:0}.asr-tabs button{flex:1;padding:10px 6px;font-size:13px}
  .asr-upload{padding:14px}.asr-file-info{flex-wrap:wrap}
- .asr-workspace .segments article{grid-template-columns:44px minmax(0,1fr) 44px}
+
  .asr-workspace .waveform{height:64px}
  .asr-workspace .result-head>span:nth-child(2){display:block;margin-left:0}
  .asr-workspace .artifact-links .button{min-height:44px}

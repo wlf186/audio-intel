@@ -1,3 +1,4 @@
+import {closeMediaTimeline} from './asr-helpers'
 import {showVideoTimeline} from './timeline-fixture'
 import {showAudioOptions} from './asr-helpers'
 import {test,expect} from './fixtures'
@@ -33,6 +34,7 @@ for(const [width,height,minimum] of [[1280,720,180],[1440,800,260],[1470,830,280
  await page.getByRole('button',{name:zh?'放大时间轴':'Zoom in timeline',exact:true}).click()
  await expect(waveform).toHaveAttribute('data-window-end','60')
  if(width>=1024)expect((await reader.boundingBox())!.height).toBeGreaterThanOrEqual(360)
+ await closeMediaTimeline(page)
  await page.getByRole('button',{name:zh?'文本阅读':'Text reading',exact:true}).click()
  await expect(page.locator('.transcript-tools input')).toBeVisible()
  if(width>=1024)expect((await page.locator('.segments').boundingBox())!.height).toBeGreaterThanOrEqual(minimum)
@@ -54,20 +56,23 @@ test('waveform commits reveal lazy readers, clear detail filters and preserve pa
  await expect(waveform).toHaveAttribute('data-window-end','120')
  await showVideoTimeline(page)
  const box=(await waveform.boundingBox())!,y=box.y+box.height/2
+ // Seek into scene 48, not its exact boundary: pointer coordinates round to device pixels.
  const before=await reader.evaluate(node=>node.scrollTop)
- await page.mouse.move(box.x+box.width*.1,y);await page.mouse.down();await page.mouse.move(box.x+box.width*.8,y,{steps:5})
+ await page.mouse.move(box.x+box.width*.1,y);await page.mouse.down();await page.mouse.move(box.x+box.width*(97/120),y,{steps:5})
  expect(await reader.evaluate(node=>node.scrollTop)).toBe(before)
  await page.mouse.up()
  await expect(page.locator('.video-section[data-reader-id="scene-48"]')).toBeInViewport()
  await expect(page.locator('.video-section[data-reader-id="scene-48"]')).toHaveClass(/navigation-active/)
- await expect.poll(()=>player.evaluate((node:HTMLAudioElement)=>node.currentTime)).toBeCloseTo(96,0)
+ await expect.poll(()=>player.evaluate((node:HTMLAudioElement)=>node.currentTime)).toBeCloseTo(97,0)
  expect(await player.evaluate((node:HTMLAudioElement)=>node.paused)).toBe(true)
  // Loading more sections after navigation must not force the reader back to the old target.
  await reader.evaluate(node=>{node.scrollTop=0})
  await expect(page.locator('.video-section').first()).toBeInViewport()
+ await closeMediaTimeline(page)
  await page.getByRole('button',{name:'文本阅读',exact:true}).click()
  await page.getByRole('button',{name:'图文阅读',exact:true}).click()
  await expect.poll(()=>reader.evaluate(node=>node.scrollTop)).toBe(0)
+ await closeMediaTimeline(page)
  await page.getByRole('button',{name:'文本阅读',exact:true}).click()
  await page.getByPlaceholder('搜索原文').fill('第 1 段')
  await expect(page.locator('.segments article')).toHaveCount(1)
@@ -111,6 +116,7 @@ test('silence gaps reveal the next sentence without changing the chosen time',as
  const waveform=page.locator('.timeline-waveform')
  await showVideoTimeline(page)
  await expect(waveform).toHaveAttribute('data-window-end','120')
+ await closeMediaTimeline(page)
  await page.getByRole('button',{name:'文本阅读',exact:true}).click()
  await showVideoTimeline(page)
  const box=(await waveform.boundingBox())!
@@ -140,6 +146,7 @@ test('horizontal touch browsing never seeks and waveform seeking preserves activ
  await session.detach()
  await expect.poll(async()=>Number(await waveform.getAttribute('data-window-start'))).toBeGreaterThan(5)
  await expect(waveform).toHaveAttribute('aria-valuenow','0')
+ await closeMediaTimeline(page)
  await page.getByRole('button',{name:'播放',exact:true}).click()
  await expect.poll(()=>player.evaluate((node:HTMLAudioElement)=>node.paused)).toBe(false)
  await showVideoTimeline(page)
@@ -160,6 +167,7 @@ test('short desktop windows scroll the page without clipping result controls',as
  await expect(waveform).toHaveAttribute('data-window-end','120')
  await page.getByRole('combobox',{name:'画面目录',exact:true}).selectOption('scene-40')
  await expect(page.locator('.video-section[data-reader-id="scene-40"] .video-paragraph')).toBeInViewport()
+ await closeMediaTimeline(page)
  await page.getByRole('button',{name:'文本阅读',exact:true}).click()
  await expect(page.locator('.transcript-tools input')).toBeVisible()
  expect(await page.locator('.video-result').evaluate(node=>node.scrollHeight-node.clientHeight)).toBeLessThanOrEqual(1)

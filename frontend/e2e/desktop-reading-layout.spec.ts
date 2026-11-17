@@ -1,3 +1,5 @@
+import {showVideoTimeline} from './timeline-fixture'
+import {closeMediaTimeline} from './asr-helpers'
 import {test,expect} from './fixtures'
 import {uxFixture} from './ux-fixtures'
 
@@ -14,10 +16,12 @@ for(const [width,height] of [[1280,720],[1440,900],[1920,1080],[390,844]])for(co
  await expect(reading).toContainText('第 1 段')
  await expect(page.locator('.media-loading')).toHaveCount(0)
  if(video){
+  await showVideoTimeline(page)
   const toggle=page.locator('.timeline-toggle')
   if(await toggle.getAttribute('aria-expanded')==='false')await toggle.click()
   await expect(page.locator('.timeline-load-state')).toHaveCount(0)
   {await toggle.click();await expect(toggle).toHaveAttribute('aria-expanded','false')}
+  await closeMediaTimeline(page)
  }
  if(width>=1280)expect((await reading.boundingBox())!.height).toBeGreaterThanOrEqual(220)
  await page.screenshot({path:info.outputPath('original.png')})

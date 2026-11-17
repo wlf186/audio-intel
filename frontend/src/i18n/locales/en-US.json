@@ -1009,7 +1009,10 @@
       "loadMore": "Load more",
       "noMatches": "No matching transcript segments",
       "empty": "No transcript yet",
-      "emptyHelp": "Upload audio and start a task on the left; the result will appear here when processing completes."
+      "emptyHelp": "Upload audio and start a task on the left; the result will appear here when processing completes.",
+      "playbackFailed": "Audio playback failed",
+      "selectForVoiceprint": "Select the source segment for the voiceprint library",
+      "audioTimeline": "Audio timeline"
     },
     "rename": {
       "title": "Rename speaker",
@@ -1524,6 +1527,7 @@
     "wholeRewrite": "Paragraph rewritten",
     "detailedChanges": "Detailed differences",
     "compareParagraph": "Compare this paragraph",
+    "collapseParagraph": "Collapse comparison",
     "sourceDetails": "Source details",
     "readingCount": "Reading paragraphs {{count}} / {{total}}",
     "layout": "Reading layout",

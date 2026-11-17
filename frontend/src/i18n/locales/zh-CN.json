@@ -1009,7 +1009,10 @@
       "loadMore": "加载更多",
       "noMatches": "没有匹配的转写片段",
       "empty": "还没有转写结果",
-      "emptyHelp": "从左侧上传音频并启动任务；处理完成后会在这里展示。"
+      "emptyHelp": "从左侧上传音频并启动任务；处理完成后会在这里展示。",
+      "playbackFailed": "音频播放失败",
+      "selectForVoiceprint": "选择原始片段，加入声纹库",
+      "audioTimeline": "音频时间轴"
     },
     "rename": {
       "title": "重命名说话人",
@@ -1524,6 +1527,7 @@
     "wholeRewrite": "整段重写",
     "detailedChanges": "逐字差异",
     "compareParagraph": "对照此段",
+    "collapseParagraph": "收起对照",
     "sourceDetails": "来源明细",
     "readingCount": "阅读段落 {{count}} / {{total}}",
     "layout": "阅读布局",

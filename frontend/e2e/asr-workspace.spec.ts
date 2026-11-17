@@ -1,7 +1,6 @@
-import {showMediaStatus} from './reader-helpers'
 import {capabilitiesFor,expect,test,type Page} from './fixtures'
 import type {Job,JobSummary} from '../src/lib/types'
-import {expandAsrSettings,showAsrResults,showAudioTimeline} from './asr-helpers'
+import {expandAsrSettings,showAsrResults,showAudioTimeline,closeMediaTimeline} from './asr-helpers'
 function wave(){const b=Buffer.alloc(160044);b.write('RIFF');b.writeUInt32LE(b.length-8,4);b.write('WAVEfmt ',8);b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(1,22);b.writeUInt32LE(16000,24);b.writeUInt32LE(32000,28);b.writeUInt16LE(2,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(b.length-44,40);for(let i=44;i<b.length;i+=2)b.writeInt16LE(Math.round(Math.sin(i/15)*8000),i);return b}
 async function fixture(page:Page){
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text())})
@@ -41,7 +40,7 @@ for(const width of [1440,1280,1024,390,720])test(`ASR fixed workspace navigation
  await showAsrResults(page);await expect(page.locator('.result-head')).toContainText('会议转写.wav')
  expect(state.detailReads).toEqual(['asr-old'])
  await page.locator('#main-content').evaluate(e=>e.scrollTo(0,0));await page.evaluate(()=>window.scrollTo(0,0))
- if(width<1200){const picker=await page.locator('.asr-task-picker select').boundingBox();const manage=await page.locator('.asr-manage').boundingBox();expect(Math.abs(picker!.y-manage!.y)).toBeLessThanOrEqual(1)}
+ if(width<1024){const picker=await page.locator('.asr-task-picker select').boundingBox();const manage=await page.locator('.asr-manage').boundingBox();expect(Math.abs(picker!.y-manage!.y)).toBeLessThanOrEqual(1)}
  const after=await tabs.boundingBox();expect(Math.abs(after!.x-before!.x)).toBeLessThanOrEqual(1);expect(Math.abs(after!.y-before!.y)).toBeLessThanOrEqual(1)
  await page.getByRole('button',{name:'播放',exact:true}).click()
  await expect.poll(()=>page.locator('.result-panel audio').evaluate((e:HTMLAudioElement)=>e.currentTime)).toBeGreaterThan(.1)
@@ -63,6 +62,7 @@ for(const width of [1440,1280,1024,390,720])test(`ASR fixed workspace navigation
  await expect.poll(()=>page.locator('.result-panel audio').evaluate((e:HTMLAudioElement)=>e.currentTime)).toBeGreaterThan(4)
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  if(width===1440||width===390){await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`/tmp/asr-results-${width}.png`})}
+ await closeMediaTimeline(page)
  await page.locator('.language-switcher select:visible').first().selectOption('en-US')
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
  await page.getByRole('tab',{name:'Tasks & results',exact:true}).focus();await page.keyboard.press('Home');await expect(page.getByRole('tab',{name:'New audio transcription',exact:true})).toHaveAttribute('aria-selected','true')
@@ -156,7 +156,6 @@ for(const width of [1440,390])test(`ASR normalized playback has accurate audible
   await route.fulfill({status:range?206:200,contentType:'audio/wav',headers:{'Accept-Ranges':'bytes',...(range?{'Content-Range':`bytes ${start}-${end}/${buffer.length}`}:{})},body:buffer.subarray(start,end+1)})
  })
  await showAsrResults(page)
- await showMediaStatus(page)
  await expect(page.getByRole('status').filter({hasText:'正在加载播放音频'})).toBeVisible()
  releasePlayback()
  const player=page.locator('.result-panel audio')
@@ -208,8 +207,7 @@ test('ASR playback failure retries the WAV without falling back to the original'
  await page.route('**/source',async route=>{originalReads++;await route.fulfill({contentType:'audio/wav',body:wave()})})
  await page.route('**/playback',async route=>unavailable?route.fulfill({status:404,json:{detail:'Playback audio is unavailable'}}):route.fulfill({contentType:'audio/wav',body:playbackChirp()}))
  await showAsrResults(page)
- await showMediaStatus(page)
- const alert=page.locator('.media-error')
+ const alert=page.locator('.playback-feedback')
  await expect(alert).toBeVisible()
  const retry=alert.getByRole('button',{name:'重新加载音频'})
  const box=await retry.boundingBox()

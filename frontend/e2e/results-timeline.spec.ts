@@ -1,5 +1,5 @@
 import {showVideoTimeline} from './timeline-fixture'
-import {showAudioOptions} from './asr-helpers'
+import {showAudioOptions,closeMediaTimeline} from './asr-helpers'
 import {test,expect} from './fixtures'
 import {scrollTimelineTo} from './timeline-fixture'
 import {uxFixture} from './ux-fixtures'
@@ -51,6 +51,7 @@ for(const width of [1440,1024,390])for(const locale of ['zh-CN','en-US'])test(`u
  await expect.poll(()=>page.locator('.result-panel audio').evaluate((node:HTMLAudioElement)=>node.currentTime)).toBeCloseTo(80,0)
  await expect(page.locator('.video-section[data-reader-id="scene-40"]')).toBeInViewport()
  await expect.poll(()=>page.locator('.result-panel audio').evaluate((node:HTMLAudioElement)=>node.paused)).toBe(true)
+ await closeMediaTimeline(page)
  await page.getByRole('button',{name:zh?'文本阅读':'Text reading',exact:true}).click()
  await expect(page.getByRole('button',{name:zh?'文本阅读':'Text reading',exact:true})).toHaveAttribute('aria-pressed','true')
  await showVideoTimeline(page)

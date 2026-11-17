@@ -90,7 +90,7 @@ export function VideoTimeline({jobId,duration,currentTime,enhanced,available,sce
  },[data,width,start,span])
  useEffect(()=>{
   if(!preview)return
-  const escape=(event:KeyboardEvent)=>{if(event.key==='Escape')setPreview(undefined)}
+  const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setPreview(undefined)}}
   const scroll=()=>{
    const anchor=previewAnchor.current
    if(anchor&&document.activeElement===anchor){
@@ -146,6 +146,6 @@ export function VideoTimeline({jobId,duration,currentTime,enhanced,available,sce
   {!data?<div className="timeline-load-state" role={error?'alert':'status'}>{!available?t('asr.enhancement.originalUnavailable'):error?t('timeline.waveFailed'):t('audio.waveformLoading')}{error&&available?<button className="button" disabled={retryWaiting} onClick={()=>setReload(value=>value+1)}>{t('common.actions.retry')}</button>:null}</div>:null}
 
   </div>
-  {preview?createPortal(<div className="timeline-preview" role="tooltip" style={{left:preview.left,top:preview.top,transform:`translate(-50%,${preview.below?'0':'-100%'})`}}>{!preview.scene.image?<span>{t('video.noStableFrame')}</span>:previewError?<span>{t('video.frameFailed')}</span>:<img src={`/api/v1/jobs/${jobId}/video-frames/${encodeURIComponent(preview.scene.image)}`} alt={t('video.frameAt',{time:formatTime(preview.scene.frame_time??0,false)})} onError={()=>setPreviewError(true)}/>}{titles?.[preview.scene.id]?.title?<strong>{titles[preview.scene.id].title}</strong>:null}<span>{t('timeline.sceneRange')} {formatTime(preview.scene.start,false)}–{formatTime(preview.scene.end,false)}{preview.scene.frame_time!==null?` · ${t('timeline.frameTime')} ${formatTime(preview.scene.frame_time)}`:''}</span></div>,document.body):null}
+  {preview?createPortal(<div className="timeline-preview" role="tooltip" style={{left:preview.left,top:preview.top,transform:`translate(-50%,${preview.below?'0':'-100%'})`}}>{!preview.scene.image?<span>{t('video.noStableFrame')}</span>:previewError?<span>{t('video.frameFailed')}</span>:<img src={`/api/v1/jobs/${jobId}/video-frames/${encodeURIComponent(preview.scene.image)}`} alt={t('video.frameAt',{time:formatTime(preview.scene.frame_time??0,false)})} onError={()=>setPreviewError(true)}/>}{titles?.[preview.scene.id]?.title?<strong>{titles[preview.scene.id].title}</strong>:null}<span>{t('timeline.sceneRange')} {formatTime(preview.scene.start,false)}–{formatTime(preview.scene.end,false)}{preview.scene.frame_time!==null?` · ${t('timeline.frameTime')} ${formatTime(preview.scene.frame_time)}`:''}</span></div>,track.current?.closest('dialog')||document.body):null}
  </section>
 }

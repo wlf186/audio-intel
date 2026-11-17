@@ -1,3 +1,5 @@
+import {showVideoTimeline} from './timeline-fixture'
+import {closeMediaTimeline} from './asr-helpers'
 import {closeOptimizationDetails,closeReadingOptions,showOptimizationDetails,showReadingOptions} from './reader-helpers'
 import {test,expect} from './fixtures'
 import {uxFixture} from './ux-fixtures'
@@ -16,6 +18,7 @@ for(const [width,height] of [[1280,900],[1366,768],[1440,900],[1920,1080],[390,8
  await page.route('**/transcript-optimization/summaries?*',route=>route.fulfill({json:values}))
  await page.route('**/transcript-optimization/summaries/retry',route=>{retries++;return route.fulfill({status:500})})
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+ await showVideoTimeline(page);await closeMediaTimeline(page)
  await expect(page.locator('.timeline-scene-picker option').filter({hasText:'复核门槛与单据 (关键词)'})).toHaveCount(1)
  await page.getByRole('button',{name:'对照',exact:true}).click()
  await expect(page.locator('[data-reader-id="v2g0"] .optimization-group-summary small')).toHaveText('分组小结 · 关键词')
@@ -63,6 +66,7 @@ for(const [width,height] of [[1280,900],[1366,768],[1440,900],[1920,1080],[390,8
  })
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  // Original mode only loads auxiliary titles, never the full optimized body.
+ await showVideoTimeline(page);await closeMediaTimeline(page)
  await expect(page.locator('.timeline-scene-picker option').filter({hasText:'客户数据隐私保护'})).toHaveCount(1)
  expect(bodyRequests).toBe(0)
  await page.getByRole('button',{name:'对照',exact:true}).click()

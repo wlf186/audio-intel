@@ -3,7 +3,7 @@ import {hasReadingContent,pictureNumbers,relatedTextStart} from '../lib/videoPre
 import {VideoFramePreview} from './VideoFramePreview'
 import {createPortal} from 'react-dom'
 import {useReadingWorkspace,readingScenes,readingParagraphs,RelatedTopics,TopicHeading} from './ReadingWorkspace'
-import {memo,useDeferredValue,useLayoutEffect,useMemo,useRef,useState} from 'react'
+import {memo,useDeferredValue,useLayoutEffect,useMemo,useRef,useState,useId} from 'react'
 import {useTranslation} from 'react-i18next'
 import type {Job} from '../lib/types'
 import type {OptimizationController} from '../hooks/useOptimization'
@@ -23,22 +23,25 @@ function changedText(parts:TextChange[],side:'original'|'edited',query:string){
 function insightTexts(paragraph:OptimizationParagraph){
  return [paragraph.group_summary,...paragraph.group_summary?.subgroups||[]].flatMap(summary=>summary?.state==='ready'?summary.sentences:[])
 }
-const Pair=memo(function Pair({paragraph,compare,showChanges,showSources,query,onSeek,onCompare}:{paragraph:OptimizationParagraph;compare:boolean;showChanges:boolean;showSources:boolean;query:string;onSeek:(time:number)=>void;onCompare:()=>void}){
+const Pair=memo(function Pair({paragraph,compare,showChanges,showSources,query,onSeek}:{paragraph:OptimizationParagraph;compare:boolean;showChanges:boolean;showSources:boolean;query:string;onSeek:(time:number)=>void}){
  const {t}=useTranslation()
+ const [expanded,setExpanded]=useState(false)
+ const comparisonId=useId()
+ const comparing=compare||expanded
  const [detailed,setDetailed]=useState(false)
  const [selectedSource,setSelectedSource]=useState<number>()
  const [expandedInsights,setExpandedInsights]=useState(false)
  const details=paragraph.group_summary?.subgroups||[]
  const insightMatch=Boolean(query.trim()&&details.some(detail=>detail.state==='ready'&&detail.sentences.some(text=>text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))))
  const showInsights=expandedInsights||insightMatch
- const diff=useMemo(()=>compare&&showChanges&&paragraph.text!==null?transcriptDiff(paragraph.original_text,paragraph.text):null,[compare,showChanges,paragraph.original_text,paragraph.text])
+ const diff=useMemo(()=>comparing&&showChanges&&paragraph.text!==null?transcriptDiff(paragraph.original_text,paragraph.text):null,[comparing,showChanges,paragraph.original_text,paragraph.text])
  const wholeRewrite=Boolean(diff&&(diff.edited.reduce((n,p)=>n+(p.changed?p.text.length:0),0)>Math.max(1,paragraph.text?.length||0)*.6||diff.original.reduce((n,p)=>n+(p.changed?p.text.length:0),0)>Math.max(1,paragraph.original_text.length)*.6))
  const showDiff=diff&&(!wholeRewrite||detailed)&&!query.trim()
  const hasReview=paragraph.review_outcome&&['fact','uncertain','unavailable'].includes(paragraph.review_outcome)
- return <article className={`optimization-paragraph${compare?' optimization-pair':''}`} data-search-owner={paragraph.id} data-reader-id={paragraph.id} data-reader-time={paragraph.start} data-reader-end={paragraph.end} data-reader-source-ids={paragraph.segment_ids.join(',')} data-reader-selected-source={selectedSource}>
-  <header><strong>{paragraph.speaker_label||paragraph.speaker||t('optimization.unknownSpeaker')}</strong><button className="optimization-time" onClick={()=>onSeek(paragraph.start)}>{formatTime(paragraph.start,false)}–{formatTime(paragraph.end,false)}</button><small>{t('optimization.sourceCount',{count:paragraph.merged_source_count||paragraph.segment_ids.length})}</small>{paragraph.review_outcome==='fact'?<small className="optimization-review-badge">{t('optimization.factConcern')}</small>:null}</header>
+ return <article className={`optimization-paragraph${comparing?' optimization-pair':''}`} data-search-owner={paragraph.id} data-reader-id={paragraph.id} data-reader-time={paragraph.start} data-reader-end={paragraph.end} data-reader-source-ids={paragraph.segment_ids.join(',')} data-reader-selected-source={selectedSource}>
+  <header>{!compare?<button className="button optimization-compare-paragraph" aria-expanded={expanded} aria-controls={comparisonId} onClick={()=>setExpanded(value=>!value)}>{t(expanded?'optimization.collapseParagraph':'optimization.compareParagraph')}</button>:null}<strong>{paragraph.speaker_label||paragraph.speaker||t('optimization.unknownSpeaker')}</strong><button className="optimization-time" onClick={()=>onSeek(paragraph.start)}>{formatTime(paragraph.start,false)}–{formatTime(paragraph.end,false)}</button><small>{t('optimization.sourceCount',{count:paragraph.merged_source_count||paragraph.segment_ids.length})}</small>{paragraph.review_outcome==='fact'?<small className="optimization-review-badge">{t('optimization.factConcern')}</small>:null}</header>
   {wholeRewrite?<div className="optimization-rewrite-note"><span>{t('optimization.wholeRewrite')}</span><button className="button" aria-pressed={detailed} onClick={()=>setDetailed(v=>!v)}>{t('optimization.detailedChanges')}</button></div>:null}
-  {compare?<div className="optimization-pair-columns"><div><small>{t('optimization.original')}</small><p>{showDiff?changedText(diff!.original,'original',query):highlightText(paragraph.original_text,query)}</p></div><div><small>{t('optimization.draft')}</small><p>{paragraph.omitted?t('optimization.omitted'):showDiff?changedText(diff!.edited,'edited',query):highlightText(paragraph.text||'',query)}</p></div></div>:<><p>{highlightText(paragraph.text||'',query)}</p><button className="button optimization-compare-paragraph" onClick={event=>{event.currentTarget.closest('article')?.scrollIntoView({block:'start'});checkpointWorkspace();onCompare()}}>{t('optimization.compareParagraph')}</button></>}
+  {comparing?<div id={comparisonId} className="optimization-pair-columns"><div><small>{t('optimization.original')}</small><p>{showDiff?changedText(diff!.original,'original',compare?query:''):highlightText(paragraph.original_text,compare?query:'')}</p></div><div><small>{t('optimization.draft')}</small><p>{paragraph.omitted?t('optimization.omitted'):showDiff?changedText(diff!.edited,'edited',query):highlightText(paragraph.text||'',query)}</p></div></div>:<p>{highlightText(paragraph.text||'',query)}</p>}
   {paragraph.group_summary?.state==='ready'?<aside className="optimization-group-summary" aria-label={t('optimization.groupSummary')}><small>{t('optimization.groupSummary')}{paragraph.group_summary.generation_method==='model_keywords'||paragraph.group_summary.generation_method==='source_excerpt'?` · ${t(paragraph.group_summary.generation_method==='model_keywords'?'optimization.keywordInsight':'optimization.sourceInsight')}`:''}</small><div>{paragraph.group_summary.sentences.map((text,index)=><p key={index}>{highlightText(text,query)}</p>)}</div></aside>:paragraph.group_summary?.state==='unavailable'?<p className="optimization-summary-missing">{t('optimization.summaryMissing')}</p>:null}
   {showSources?<div className="optimization-sources" aria-label={t('optimization.sourceDetails')}>{paragraph.sources?.map(source=><div className="optimization-source" key={`${source.segment_id}:${source.start_offset}`} data-source-id={source.segment_id} data-source-time={source.start}><button className="optimization-time" onClick={()=>{setSelectedSource(source.segment_id);onSeek(source.start)}} aria-label={t('optimization.listenSource',{time:formatTime(source.start,false)})}>{formatTime(source.start,false)}</button><p>{source.text}</p></div>)}</div>:null}
   {details.length?<section className="optimization-fine-insights">
@@ -110,7 +113,7 @@ function LegacyOptimizationReader({job,controller,query,speaker,onSeek,onModeCha
  },[shown])
  const orderedScenes=useMemo(()=>readingScenes(result?.scenes||[],workspace.outline,workspace.grouped),[result?.scenes,workspace.outline,workspace.grouped])
  const orderedAudio=useMemo(()=>readingParagraphs(shown,workspace.outline,workspace.grouped),[shown,workspace.outline,workspace.grouped])
- const pair=(p:OptimizationParagraph)=><Pair key={p.id} paragraph={p} compare={compare} showChanges={showChanges} showSources={showSources} query={deferred} onSeek={onSeek} onCompare={onModeChange}/>
+ const pair=(p:OptimizationParagraph)=><Pair key={`${result?.run_id}:${p.id}`} paragraph={p} compare={compare} showChanges={showChanges} showSources={showSources} query={deferred} onSeek={onSeek}/>
  return <>
   {result&&workspace.tools?createPortal(<details className="reader-options"><summary>{t('reading.options')}</summary><div className="optimization-summary"><span>{t('optimization.readingCount',{count:filtered.length,total:result.paragraphs.length})}</span><div className="optimization-reading-options">
    {compare?<><label className="optimization-diff-toggle"><input type="checkbox" checked={showChanges} onChange={event=>{checkpointWorkspace();setShowChanges(event.target.checked);saveOptimizationChanges(job.id,event.target.checked)}}/>{t('optimization.showChanges')}</label><label>{t('optimization.paragraphFilter')}<select aria-label={t('optimization.paragraphFilter')} value={filter} onChange={event=>{setFilter(event.target.value);setVisible(80)}}><option value="all">{t('optimization.filterAll')}</option><option value="changed">{t('optimization.filterChanged')}</option><option value="review">{t('optimization.filterReview')}</option></select></label></>:null}
@@ -155,6 +158,6 @@ export function OptimizationReader(props:Parameters<typeof LegacyOptimizationRea
  <ReadingBlocks key={`${workspace.runId}:${controller.mode}:${workspace.grouped}`} job={job} query={deferred} speaker={speaker} illustrated={illustrated} mode={controller.mode} reveal={reveal}
   include={block=>{const p=paragraphs.get(block.paragraph_id||'');return Boolean(p&&(controller.compare||!p.omitted)&&(!controller.compare||filter==='all'||(filter==='review'?p.review_outcome==='fact':p.text!==p.original_text)))}}
   texts={block=>{const p=paragraphs.get(block.paragraph_id||'');return p?[...(controller.compare?[p.original_text]:[]),p.text||'',...insightTexts(p)]:[]}}
-  render={block=>{const p=paragraphs.get(block.paragraph_id||'');return p?<Pair paragraph={p} compare={controller.compare} showChanges={showChanges} showSources={showSources} query={deferred} onSeek={onSeek} onCompare={onModeChange}/>:null}}/>
+  render={block=>{const p=paragraphs.get(block.paragraph_id||'');return p?<Pair key={`${result.run_id}:${p.id}`} paragraph={p} compare={controller.compare} showChanges={showChanges} showSources={showSources} query={deferred} onSeek={onSeek}/>:null}}/>
  </>
 }

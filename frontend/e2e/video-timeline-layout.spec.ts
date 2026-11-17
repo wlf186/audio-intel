@@ -43,12 +43,12 @@ test.describe('video timeline with classic scrollbars',()=>{
   })
   // Derive the boundary from the synthetic content, independent of OS font metrics.
   expect(geometry.criticalHeight).toBeGreaterThan(600)
-  await page.setViewportSize({width,height:geometry.criticalHeight-40})
+  await page.setViewportSize({width,height:geometry.criticalHeight-40});await showVideoTimeline(page)
   const narrowWidth=await page.locator('.timeline-tracks').evaluate(node=>Math.round(node.getBoundingClientRect().width))
   if(narrowWidth!==geometry.width)await expect.poll(()=>requests.at(-1)).toBe(narrowWidth)
   await expect(waveform).toHaveAttribute('data-window-end','120')
   const before=requests.length
-  await page.setViewportSize({width,height:geometry.criticalHeight})
+  await page.setViewportSize({width,height:geometry.criticalHeight});await showVideoTimeline(page)
   const observed=await observeTimeline(page)
   expect(observed.frames).toBeGreaterThan(20)
   expect(observed.widths).toHaveLength(1)

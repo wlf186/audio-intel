@@ -49,8 +49,8 @@ export function ReadingBlocks({job,query,speaker,illustrated=true,mode,render,te
    return <section key={item.id} className="reading-block" data-search-owner={item.id} data-reading-block-id={item.id} data-reader-id={item.id} data-reader-time={item.start} data-reader-end={item.end}>
     {heading?<TopicHeading group={group}/>:null}
     <h3 className="reading-block-title">{highlightText(item.title,query)} <small>{formatTime(item.start,false)}–{formatTime(item.end,false)}{item.timing_precision==='segment'?` · ${t('optimization.topics.coarse')}`:''}</small></h3>
-    {illustrated?<AssociatedFrames job={job} block={item}/>:null}
-    {render(item)}
+    <div className="reading-block-body">{illustrated?<AssociatedFrames job={job} block={item}/>:null}
+    <div className="reading-block-copy">{render(item)}</div></div>
    </section>
   })}
   {visible<filtered.length?<button className="button" onClick={()=>setVisible(n=>n+80)}>{t('asr.results.loadMore')}</button>:null}

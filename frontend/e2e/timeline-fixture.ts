@@ -18,4 +18,4 @@ export async function scrollTimelineTo(page:Page,start:number,duration=120,span=
  await page.mouse.move(target,y,{steps:4});await page.mouse.up()
 }
 
-export async function showVideoTimeline(page:Page){const toggle=page.locator('.timeline-toggle');await toggle.waitFor();if(await toggle.getAttribute('aria-expanded')==='false')await toggle.click()}
+export async function showVideoTimeline(page:Page){await page.locator('.timeline-open,.timeline-toggle').first().waitFor();const open=page.locator('.timeline-open');if(await open.isVisible()&&!await page.locator('.timeline-modal').isVisible())await open.click();const toggle=page.locator('.timeline-toggle');await toggle.waitFor();if(await toggle.getAttribute('aria-expanded')==='false')await toggle.click()}

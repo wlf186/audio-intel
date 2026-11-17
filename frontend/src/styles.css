@@ -148,7 +148,6 @@ select:focus{border-color:var(--cyan)}
 .artifact-links{display:flex;gap:7px}
 .artifact-links .button{height:38px;min-width:56px;padding:0 9px;border-color:#6d6a10;font-size:11px}
 .wave-area{padding:17px 18px 8px;border-bottom:1px solid var(--line);background:repeating-linear-gradient(90deg,transparent 0,transparent 59px,#1d303022 60px),#060a0b;position:relative}
-.wave-area::before{content:"SIGNAL_ANALYSIS // LIVE";position:absolute;left:18px;top:8px;color:var(--cyan);font:8px ui-monospace,monospace;letter-spacing:.08em}
 .waveform{display:block;width:100%;height:112px;cursor:crosshair}
 .waveform[role="slider"]:focus-visible{outline:2px solid var(--cyan);outline-offset:4px}.waveform-empty[role="img"]{cursor:default}
 .time-ruler{display:flex;justify-content:space-between;color:#899592;font:10px ui-monospace,monospace}

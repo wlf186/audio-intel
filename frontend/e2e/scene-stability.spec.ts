@@ -1,3 +1,4 @@
+import {closeMediaTimeline} from './asr-helpers'
 import {showVideoTimeline} from './timeline-fixture'
 import {test,expect} from './fixtures'
 import {uxFixture} from './ux-fixtures'
@@ -53,7 +54,7 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US'])test(`stable
  const track=page.locator('.timeline-scenes')
  await track.focus()
  await track.press('Home')
- if(await page.locator('.timeline-toggle').getAttribute('aria-expanded')==='true')await page.locator('.timeline-toggle').click()
+ if(await page.locator('.timeline-toggle').getAttribute('aria-expanded')==='true')await page.locator('.timeline-toggle').click();await closeMediaTimeline(page)
  await page.locator('.video-scene-time').first().click()
  await showVideoTimeline(page)
  await track.blur();await track.focus()

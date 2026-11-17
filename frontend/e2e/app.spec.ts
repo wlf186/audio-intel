@@ -1,5 +1,5 @@
 import {showMediaStatus} from './reader-helpers'
-import {showAudioTimeline} from './asr-helpers'
+import {showAudioTimeline,closeMediaTimeline} from './asr-helpers'
 import {openSampleForm} from './ux-helpers'
 import {expandAsrAdvanced,expandAsrSettings,showAsrResults} from './asr-helpers'
 import {expandTtsSettings} from './tts-helpers'
@@ -138,6 +138,7 @@ for(const width of [1440,390])test(`summary SSE stays idle and task details load
  await expect(page.getByRole('heading',{name:'转写结果加载失败'})).toBeVisible()
  await page.getByRole('button',{name:'重新加载'}).click()
  await expect(page.locator('.result-head')).toContainText('按需详情.wav')
+ await showAudioTimeline(page);await closeMediaTimeline(page)
  await expect(page.locator('.waveform-empty')).toHaveAttribute('aria-label','音频播放位置')
  await page.evaluate(job=>{const target=window as typeof window&{emitJobEvent:(name:string,data:unknown)=>void};target.emitJobEvent('snapshot',{jobs:[job],workers:[]});target.emitJobEvent('heartbeat',{})},summary)
  // Observe a real interval longer than the 5-second fallback poll.

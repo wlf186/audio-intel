@@ -1,3 +1,4 @@
+import {closeMediaTimeline} from './asr-helpers'
 import {showVideoTimeline} from './timeline-fixture'
 import {showMediaStatus} from './reader-helpers'
 import {capabilitiesFor,systemFor,expect,test,type Page} from './fixtures'
@@ -284,13 +285,13 @@ for(const locale of ['zh-CN','en-US'])test(`compact library and video reading in
  // Measure the actual visible reading space, not the former overflowing 280px minimum.
  await showVideoTimeline(page)
  await expect(page.locator('.timeline-waveform')).toHaveAttribute('data-window-end','60')
- await page.locator('.timeline-toggle').click()
+ await page.locator('.timeline-toggle').click();await closeMediaTimeline(page)
  const readingBox=(await reader.boundingBox())!
  expect(readingBox.height).toBeGreaterThanOrEqual(180)
  await reader.scrollIntoViewIfNeeded()
  await expect(reader).toBeInViewport()
  await expect(page.locator('.video-paragraph p').first()).toBeInViewport()
- await expect(page.locator('.video-timeline')).toBeVisible()
+ await expect(page.locator('.timeline-open')).toBeVisible()
  await page.locator('.video-frame').first().click()
  const dialog=page.getByRole('dialog')
   await expect(dialog.locator('img')).toBeVisible()

@@ -1,3 +1,5 @@
+import {showVideoTimeline} from './timeline-fixture'
+import {closeMediaTimeline} from './asr-helpers'
 import {test,expect} from './fixtures'
 import {uxFixture} from './ux-fixtures'
 import {readFileSync} from 'node:fs'
@@ -23,6 +25,7 @@ for(const width of [1440,390])test(`independent prose, directory, empty blocks a
  await page.route('**/video-preview?*',route=>{previews++;if(previews===1)return route.fulfill({status:503,json:{detail:'Frame temporarily unavailable'}});return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="white"/></svg>'})})
  await page.addInitScript(()=>{const create=URL.createObjectURL.bind(URL),revoke=URL.revokeObjectURL.bind(URL);const counts={created:0,revoked:0};(window as unknown as {blobCounts:typeof counts}).blobCounts=counts;URL.createObjectURL=blob=>{counts.created++;return create(blob)};URL.revokeObjectURL=url=>{counts.revoked++;revoke(url)}})
  await page.goto('/#asr');await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+ await showVideoTimeline(page);await closeMediaTimeline(page)
  await expect(page.locator('.timeline-scene-picker option')).toHaveCount(3)
  await expect(page.locator('.timeline-scene-picker')).toContainText('画面目录（2）')
  await expect(page.locator('[data-reader-id="scene-0"]')).toHaveCount(0)
@@ -31,7 +34,7 @@ for(const width of [1440,390])test(`independent prose, directory, empty blocks a
  await expect(text.locator('h3,img,.video-no-frame')).toHaveCount(0)
  await expect(page.locator('[data-reader-id="scene-2"] h3')).toHaveText('画面 1')
  expect(previews).toBe(0)
- if(width===390){await expect(page.getByRole('button',{name:'收起时间轴',exact:true})).toBeVisible();await text.scrollIntoViewIfNeeded();await expect(text).toBeInViewport()}
+ if(width===390){await expect(page.locator('.timeline-open')).toBeVisible();await text.scrollIntoViewIfNeeded();await expect(text).toBeInViewport()}
  await text.getByRole('button',{name:'查看画面',exact:true}).click()
  const modal=page.getByRole('dialog')
  await expect(modal).toContainText('不保存到截图目录或导出')

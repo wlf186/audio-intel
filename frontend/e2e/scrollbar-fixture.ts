@@ -1,3 +1,4 @@
+import {showVideoTimeline} from './timeline-fixture'
 import {test,expect,type Page} from './fixtures'
 import {uxFixture} from './ux-fixtures'
 
@@ -5,6 +6,7 @@ export async function openTimeline(page:Page){
  const fixture=await uxFixture(page)
  await page.goto('/#asr')
  await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
+ await showVideoTimeline(page)
  const toggle=page.locator('.timeline-toggle')
  await expect(toggle).toBeVisible()
  if(await toggle.getAttribute('aria-expanded')==='false')await toggle.click()

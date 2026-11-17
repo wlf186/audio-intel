@@ -1,4 +1,4 @@
-import {showAudioOptions} from './asr-helpers'
+import {showAudioOptions,showAudioTimeline,closeMediaTimeline} from './asr-helpers'
 import {test,expect} from './fixtures'
 import {mockTimelineWaveform,showVideoTimeline} from './timeline-fixture'
 import {uxFixture} from './ux-fixtures'
@@ -30,17 +30,17 @@ for(const width of [1440,390])test(`cached ASR task switching removes previous m
  await page.goto('/#asr')
  await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  async function select(job:Job){
+  await closeMediaTimeline(page)
   if(width<1024)await page.locator('.asr-task-picker select').selectOption(job.id)
   else await page.locator('.asr-recent-jobs .job-mini').filter({hasText:job.display_name}).click()
   await expect(page.locator('.result-identity')).toContainText(job.display_name)
   await expect(page.locator('.result-panel audio')).toHaveCount(1)
   if(job.result!.video){
    await expect(page.locator('.video-transcript')).toHaveCount(1)
+   await showVideoTimeline(page)
    await expect(page.locator('.video-timeline')).toHaveCount(1)
    await expect(page.locator('.timeline-scenes')).toHaveCount(1)
    await expect(page.locator('.timeline-waveform')).toHaveCount(1)
-   const expand=page.getByRole('button',{name:'展开时间轴',exact:true})
-   if(await expand.isVisible())await expand.click()
    await expect(page.locator('.timeline-waveform')).toHaveAttribute('data-window-end','120')
    await expect(page.locator('.wave-area')).toHaveCount(0)
    const frames=page.locator('.timeline-tiles img')
@@ -48,6 +48,7 @@ for(const width of [1440,390])test(`cached ASR task switching removes previous m
    await expect.poll(()=>frames.evaluateAll(nodes=>nodes.every(node=>(node as HTMLImageElement).complete&&(node as HTMLImageElement).naturalWidth>0))).toBe(true)
    for(const frame of await frames.all())await expect(frame).toHaveAttribute('src',new RegExp(`/jobs/${job.id}/video-frames/`))
   }else{
+   await showAudioTimeline(page)
    await expect(page.locator('.wave-area canvas')).toHaveCount(1)
    await expect(page.locator('.video-timeline')).toHaveCount(0)
    await expect(page.locator('.timeline-scenes')).toHaveCount(0)
@@ -64,12 +65,16 @@ for(const width of [1440,390])test(`cached ASR task switching removes previous m
  await waveform.focus();await page.keyboard.press('Home');await page.keyboard.press('ArrowRight')
  await expect(waveform).toHaveAttribute('aria-valuenow','5')
  await expect.poll(()=>page.locator('.result-panel audio').evaluate((node:HTMLAudioElement)=>node.currentTime)).toBeCloseTo(5,0)
+ await closeMediaTimeline(page)
  await page.getByRole('button',{name:'文本阅读',exact:true}).click()
  await expect(page.locator('.segments')).toBeVisible()
  await expect(page.locator('.video-transcript')).toHaveCount(0)
+ await showVideoTimeline(page)
  await expect(page.locator('.video-timeline')).toHaveCount(1)
+ await closeMediaTimeline(page)
  await page.getByRole('button',{name:'图文阅读',exact:true}).click()
  await expect(page.locator('.video-transcript')).toBeVisible()
+ await showVideoTimeline(page)
  await expect(page.locator('.video-timeline')).toHaveCount(1)
  await page.screenshot({path:info.outputPath(`switch-video-${width}.png`),fullPage:true})
  await showVideoTimeline(page)

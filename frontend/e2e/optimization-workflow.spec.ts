@@ -1,3 +1,4 @@
+import {closeMediaTimeline} from './asr-helpers'
 import {showVideoTimeline} from './timeline-fixture'
 import {closeReadingOptions,showReadingOptions} from './reader-helpers'
 import {test,expect} from './fixtures'
@@ -20,13 +21,14 @@ for(const width of [1366,1440,1920,390])test(`scene-scoped unified reading ${wid
  await expect(detection).toBeEnabled()
  await showVideoTimeline(page)
  await expect(page.locator('.timeline-load-state')).toHaveCount(0)
- await page.locator('.timeline-toggle').click()
+ await page.locator('.timeline-toggle').click();await closeMediaTimeline(page)
  const initial=await detection.boundingBox()
  const enhancement=page.locator('.transport-audio-menu>button')
  const audioPosition=await enhancement.boundingBox()
  for(const mode of ['优化稿','对照','原文']){
   await page.getByRole('button',{name:mode,exact:true}).click()
-  await expect(page.locator('.video-timeline')).toBeVisible()
+  await expect(page.locator('.result-timeline')).toBeVisible()
+  await showVideoTimeline(page);await expect(page.locator('.video-timeline')).toBeVisible();await closeMediaTimeline(page)
   const position=await detection.boundingBox()
   expect(Math.abs(position!.x-initial!.x)).toBeLessThan(2)
   expect(Math.abs(position!.y-initial!.y)).toBeLessThan(2)
@@ -67,6 +69,7 @@ for(const width of [1366,1440,1920,390])test(`scene-scoped unified reading ${wid
  await page.locator('.timeline-waveform').press('Home')
  await expect(first).toBeInViewport()
  await expect(page.getByPlaceholder('搜索两侧内容')).toHaveValue('')
+ await closeMediaTimeline(page)
  await page.getByRole('button',{name:'表达优化',exact:true}).click()
  await expect(page.getByRole('dialog')).toContainText('qwen3.5:4b')
  await expect(page.getByRole('radio',{name:/深度成稿/})).toBeChecked()
