@@ -36,7 +36,7 @@ function chunkRequest(url:string,block:Blob,offset:number,checksum:string,total:
  })
 }
 export async function submitVideo(file:File,params:Record<string,unknown>,options:SubmissionOptions):Promise<Job>{
- const worker=new Worker(new URL('./videoHash.worker.ts',import.meta.url),{type:'module'})
+ const worker=new Worker(VIDEO_HASH_WORKER_URL,{type:'module'})
  const hash=(blob:Blob)=>new Promise<string>((resolve,reject)=>{
   const abort=()=>{worker.terminate();reject(new DOMException('Paused','AbortError'))}
   if(options.signal?.aborted){abort();return}

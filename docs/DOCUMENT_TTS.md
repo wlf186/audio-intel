@@ -182,3 +182,7 @@ PDF 页码需要页边位置和相邻页面编号规律等证据；引用标记�
 ```
 
 English: New imports retain the complete extracted source and annotate high-confidence page numbers, note/citation markers and note bodies, skipped by default. Ordinary numeric content and bibliography entries remain spoken. The browser offers category checkboxes and a natural-pause toggle; source-range overrides are API-only and bound to the analysis revision. PDF layout wraps and page continuations are distinct from paragraph breaks. Natural pauses add 350 ms at paragraphs and 700 ms at chapters; ordinary chunk gaps stay 180 ms. Reanalysis is explicit and uses the retained source, preserves the previous successful parse on failure, and never rewrites historical jobs/audio. Snapshot v2 freezes the narration plan for retries. Draft storage remains session-scoped. See the JSON and CLI examples above for request shape, offset units and opt-outs.
+
+在文档工作区，「调整分段」与「朗读处理」并排显示。已解析文档可在朗读设置底部重新分析，旧版文档可通过「启用朗读处理」进入。设置中显示整份文档识别到的数量；选段栏与提交区显示所选片段的原文及朗读字符数。连续阅读中的「原书第 … 页」指文档页码，预览翻页按当前分段的文本窗口计算。
+
+The document toolbar opens segmentation and narration settings in separate dialogs. Narration settings show document-wide detection counts and provide reanalysis. The selection and submission summaries count only the selected sections. Source page labels in continuous reading refer to the original document.

@@ -1337,7 +1337,7 @@
     "removalResult": "Removed: {{removed}}. Already absent: {{missing}}. Failed: {{failed}}.",
     "retryRemovalHelp": "Failed items remain selected. Choose “Remove selected documents” to retry; wait for active imports to finish parsing.",
     "readerSection": "Section {{current}} / {{total}}",
-    "readerPage": "Text page {{current}} / {{total}}",
+    "readerPage": "Preview page {{current}} / {{total}}",
     "readerMode": "Text display mode",
     "originalLines": "Original line breaks",
     "continuousReading": "Continuous reading",
@@ -1362,15 +1362,22 @@
       "note_reference": "Footnote / citation markers",
       "note_body": "Footnote text",
       "pauses": "Natural paragraph and chapter pauses",
-      "help": "The full extracted text remains visible. Only well-supported auxiliary text is skipped; ordinary numbers and bibliography entries remain. Paragraph and chapter gaps add about 350 and 700 ms.",
+      "help": "Only recognized auxiliary text is skipped. The source text is preserved.",
       "reanalyze": "Reanalyze document",
       "analysisRequired": "This document uses an older parser. Reanalyze to enable annotations and natural pauses. Existing jobs and audio remain unchanged.",
       "empty": "No speakable text",
       "skipped": "Not spoken: auxiliary text",
       "retained": "Auxiliary text: spoken",
       "page": "Page",
-      "readingHelp": "Auxiliary styling identifies skipped text; the source remains intact. Continuous reading joins layout wraps and page continuations, with page numbers and notes after the paragraph."
-    }
+      "readingHelp": "A dotted underline marks text skipped during synthesis.",
+      "enable": "Enable narration settings",
+      "rules": "Skip {{count}} categories",
+      "keep": "Read auxiliary text",
+      "detected": "{{count}} in document",
+      "sourcePage": "Source page {{page}}",
+      "pauseTimes": "Paragraphs 350 ms · Chapters 700 ms"
+    },
+    "selectionSpoken": "{{count}} selected · {{chars, number}} source characters · {{spoken, number}} to read"
   },
   "library": {
     "title": "Library",

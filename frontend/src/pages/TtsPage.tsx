@@ -1208,7 +1208,7 @@ export function TtsPage({
           <details className="document-quality-help"><summary>{t('tts.quality.title')}</summary><p>{t('tts.modelHelp')}</p><p>{t('tts.languageHelp')}</p>{qualityNote}</details>
             </div>
           <div className="submission-actions">
-            {inputMode==='document'&&documentSelection?<p className="document-submit-summary">{t('document.selected',{count:documentSelection.section_ids.length,chars:documentSelection.selected_chars||0})}</p>:null}
+            {inputMode==='document'&&documentSelection?<p className="document-submit-summary">{t(documentSelection.spoken_chars==null?'document.selected':'document.selectionSpoken',{count:documentSelection.section_ids.length,chars:documentSelection.selected_chars||0,spoken:documentSelection.spoken_chars})}</p>:null}
             {error ? (
               <p className="error" role="alert">
                 {error}

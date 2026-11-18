@@ -67,16 +67,40 @@ test.describe('video timeline with classic scrollbars',()=>{
   await page.setViewportSize({width,height:940})
   const {state,errors}=await uxFixture(page)
   state.job.result!.audio_enhancement={mode:'auto',status:'bypassed',reason:'clean'}
+  await page.addInitScript(()=>{
+   const Native=window.ResizeObserver
+   window.ResizeObserver=class extends Native{
+    constructor(callback:ResizeObserverCallback){
+     super((entries,observer)=>{
+      if(entries.some(entry=>entry.target.matches('.timeline-tracks'))&&!document.documentElement.hasAttribute('data-release-measure')){
+       document.documentElement.dataset.measurePending='true'
+       window.addEventListener('release-track-measure',()=>callback(entries,observer),{once:true})
+      }else callback(entries,observer)
+     })
+    }
+   }
+  })
+  await page.clock.install()
   const pending=responseGate();let reads=0
+  let firstPoints=0
   await page.route('**/api/v1/jobs/ux-video/waveform?*',async route=>{
-   if(++reads===1){await pending.hold();return route.fulfill({status:503,json:{detail:'Waveform temporarily unavailable'}})}
+   if(++reads===1){firstPoints=Number(new URL(route.request().url()).searchParams.get('points'));await pending.hold();return route.fulfill({status:503,json:{detail:'Waveform temporarily unavailable'}})}
    const params=new URL(route.request().url()).searchParams
    return route.fulfill({json:{track:'original',duration:120,start:Number(params.get('start')),end:Number(params.get('end')),waveform:Array(Number(params.get('points'))).fill(.3)}})
   })
   await page.goto('/#asr')
   await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
   await showVideoTimeline(page)
+  await expect(page.locator('html')).toHaveAttribute('data-measure-pending','true')
+  await page.clock.runFor(250)
+  expect(reads).toBe(0)
+  const measured=await page.locator('.timeline-tracks').evaluate(el=>{
+   document.documentElement.dataset.releaseMeasure='true'
+   window.dispatchEvent(new Event('release-track-measure'))
+   return Math.min(2048,Math.max(64,Math.round(el.getBoundingClientRect().width)))
+  })
   await pending.arrived
+  expect(firstPoints).toBe(measured)
   await expect(page.locator('.timeline-load-state[role=status]')).toBeVisible()
   pending.release()
   const failure=page.locator('.timeline-load-state[role=alert]')

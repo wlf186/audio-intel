@@ -1337,7 +1337,7 @@
     "removalResult": "已移除 {{removed}} 个，已不存在 {{missing}} 个，失败 {{failed}} 个。",
     "retryRemovalHelp": "失败项保留勾选，可重新点击“移除所选文档”重试；正在解析的文档需等待解析结束。",
     "readerSection": "分段 {{current}} / {{total}}",
-    "readerPage": "正文第 {{current}} / {{total}} 页",
+    "readerPage": "预览第 {{current}} / {{total}} 页",
     "readerMode": "正文显示方式",
     "originalLines": "原文换行",
     "continuousReading": "连续阅读",
@@ -1362,15 +1362,22 @@
       "note_reference": "脚注／引用标记",
       "note_body": "脚注正文",
       "pauses": "自然段落与章节停顿",
-      "help": "原文仍完整保留。仅跳过有充分依据的辅助文本；普通数字和参考文献保留。段落与章节分别增加约 350 和 700 毫秒停顿。",
+      "help": "仅跳过有充分依据的辅助文本，原文完整保留。",
       "reanalyze": "重新分析文档",
       "analysisRequired": "此文档使用旧版解析。重新分析后可启用辅助文本识别和自然停顿，已有任务与音频不变。",
       "empty": "无可朗读正文",
       "skipped": "不朗读：辅助文本",
       "retained": "辅助文本：保留朗读",
       "page": "页",
-      "readingHelp": "辅助样式标明不朗读的内容；原文始终保留。连续阅读连接排版折行与跨页续句，页码和脚注置于段后。"
-    }
+      "readingHelp": "点线下划线表示合成时跳过。",
+      "enable": "启用朗读处理",
+      "rules": "跳过 {{count}} 类",
+      "keep": "保留辅助文本",
+      "detected": "全文 {{count}} 处",
+      "sourcePage": "原书第 {{page}} 页",
+      "pauseTimes": "段落 350 毫秒 · 章节 700 毫秒"
+    },
+    "selectionSpoken": "已选 {{count}} 段 · 原文 {{chars, number}} 字符 · 将朗读 {{spoken, number}} 字符"
   },
   "library": {
     "title": "资料库",

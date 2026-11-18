@@ -32,7 +32,7 @@ Real-model inference is required when changing model loading, precision, device 
 
 - `audio_intel/` owns the FastAPI gateway, queue, admission, events, observability, workers, GPU coordination, model registry, and cleanup.
 - `asr/` and `tts/` own their inference pipelines.
-- `frontend/src/` contains the React 19/Vite UI.
+- `frontend/src/` contains the React 19/esbuild UI.
 - `tests/` and `frontend/e2e/` contain backend and browser coverage.
 - `service.sh` and `service.cmd` are the supported Linux and native Windows entrypoints.
 

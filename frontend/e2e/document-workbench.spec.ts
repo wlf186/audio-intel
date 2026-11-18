@@ -50,7 +50,7 @@ for(const [width,height] of [[1440,900],[1280,720],[1024,768],[720,450],[390,844
    const select=await page.locator('.document-controls select').boundingBox(),button=await page.locator('.document-controls button').boundingBox()
    expect(Math.abs(select!.y+select!.height-button!.y-button!.height)).toBeLessThanOrEqual(2)
   }
-  await page.getByRole('button',{name:/调整分段/}).click()
+  await page.keyboard.press('Escape')
   const trigger=page.locator('.document-sections li').first().getByRole('button',{name:'预览正文'})
   await trigger.scrollIntoViewIfNeeded()
   const scrollBefore=await page.locator('.document-sections').evaluate(e=>e.scrollTop)

@@ -37,6 +37,6 @@ export function DocumentReaderText({data,flow,options}:{data:DocumentText;flow:b
  if(!flow)return <pre>{paragraphs.flat().map(render)}</pre>
  return <div className="document-reader-flow">{paragraphs.map((parts,index)=><section className="document-flow-paragraph" key={index}>
   <p>{parts.filter(p=>p.annotation?.kind!=='page_number'&&p.annotation?.kind!=='note_body').map(render)}</p>
-  {parts.some(p=>p.annotation?.kind==='page_number'||p.annotation?.kind==='note_body')?<aside className="document-reader-notes">{parts.filter(p=>p.annotation?.kind==='page_number'||p.annotation?.kind==='note_body').map(p=><span key={p.at}>{p.annotation?.kind==='page_number'?t('document.narration.page')+' ':null}{render(p)} </span>)}</aside>:null}
+  {parts.some(p=>p.annotation?.kind==='page_number'||p.annotation?.kind==='note_body')?<aside className="document-reader-notes">{parts.filter(p=>p.annotation?.kind==='page_number'||p.annotation?.kind==='note_body').map(p=>p.annotation?.kind==='page_number'?<div key={p.at} className={p.skipped?'document-annotation is-skipped':'document-annotation'}>{t('document.narration.sourcePage',{page:p.text.trim()})}</div>:render(p))}</aside>:null}
  </section>)}</div>
 }

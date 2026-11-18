@@ -19,7 +19,7 @@ Original code and documentation in this repository are licensed under Apache-2.0
 | qwen-asr / qwen-tts Python packages | <https://pypi.org/project/qwen-asr/>, <https://pypi.org/project/qwen-tts/> | Apache-2.0 |
 | Transformers / Hugging Face Hub | <https://github.com/huggingface/transformers>, <https://github.com/huggingface/huggingface_hub> | Apache-2.0 |
 | FastAPI / Starlette / Uvicorn | <https://fastapi.tiangolo.com/>, <https://www.starlette.io/>, <https://www.uvicorn.org/> | MIT / BSD-3-Clause |
-| React / Vite | <https://react.dev/>, <https://vite.dev/> | MIT |
+| React / esbuild | <https://react.dev/>, <https://esbuild.github.io/> | MIT |
 | Lucide React | <https://github.com/lucide-icons/lucide> | ISC |
 | Swagger UI Dist | <https://github.com/swagger-api/swagger-ui> | Apache-2.0 |
 | pypinyin 0.55.0 | <https://github.com/mozillazg/python-pinyin> | MIT; offline person ordering in the API environment |

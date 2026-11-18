@@ -34,12 +34,14 @@ export function VideoTimeline({jobId,duration,currentTime,enhanced,available,sce
  const sceneMoved=useRef(false)
  const touchPanning=useRef(false)
  const dragged=useRef(false)
- const [width,setWidth]=useState(800)
+ const [measuredWidth,setWidth]=useState(0)
+ const width=Math.max(1,measuredWidth)
  const trackName=enhanced?'enhanced':'original'
  const start=clamp(range.start,0,Math.max(0,duration-range.span))
  const span=Math.min(duration,range.span)||duration
  const end=Math.min(duration,start+span)
  const points=Math.min(2048,Math.max(64,Math.round(width)))
+ const hasWidth=measuredWidth>0
  const key=`${jobId}:${trackName}:${start}:${end}:${points}`
  const data=resource.key===key?resource.data:undefined
  const error=resource.key===key?resource.error:undefined
@@ -49,16 +51,16 @@ export function VideoTimeline({jobId,duration,currentTime,enhanced,available,sce
   const timer=setInterval(()=>{if(Date.now()>=blockedUntil)setRetryWaiting(false)},250)
   return()=>clearInterval(timer)
  },[retryWaiting,blockedUntil])
- useLayoutEffect(()=>{const node=track.current;if(!node)return;const observer=new ResizeObserver(entries=>setWidth(Math.max(1,entries[0].contentRect.width)));observer.observe(node);return()=>observer.disconnect()},[])
+ useLayoutEffect(()=>{const node=track.current;if(!node)return;const observer=new ResizeObserver(entries=>setWidth(entries[0].contentRect.width));observer.observe(node);return()=>observer.disconnect()},[])
  useEffect(()=>{
-  if(!duration||!available||!expanded)return
+  if(!duration||!available||!expanded||!hasWidth)return
   const controller=new AbortController()
   const timer=setTimeout(()=>{
    setResource({key})
    void request<JobWaveform>(`/api/v1/jobs/${jobId}/waveform?track=${trackName}&start=${start}&end=${end}&points=${points}`,{signal:controller.signal}).then(value=>{if(!controller.signal.aborted)setResource({key,data:value})},cause=>{if(!controller.signal.aborted){setResource({key,error:cause.message});if(cause instanceof HttpError&&cause.retryAfter){setBlockedUntil(Date.now()+cause.retryAfter*1000);setRetryWaiting(true)}}})
   },150)
   return()=>{clearTimeout(timer);controller.abort()}
- },[key,jobId,trackName,start,end,points,duration,available,reload,expanded])
+ },[key,jobId,trackName,start,end,points,duration,available,reload,expanded,hasWidth])
  useEffect(()=>{
   const node=track.current?.parentElement
   if(!node)return

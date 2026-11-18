@@ -260,3 +260,8 @@
 .document-reader-toolbar>button{min-height:44px}
 .document-narration-controls label{min-height:44px;display:flex;align-items:center;gap:8px}
 .document-narration-controls p{font-size:12px;color:var(--muted)}
+.document-segmentation{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.document-narration-kinds{display:grid;gap:0;padding-inline-start:20px}
+.document-narration-kinds label small{margin-inline-start:auto;color:var(--muted)}
+.document-reanalysis{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+.document-reader-notes .document-annotation:not(.is-skipped){color:var(--text)}

@@ -5,11 +5,11 @@
   "packageManager": "pnpm@10.34.5",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/frontend.mjs dev",
     "check:i18n": "node scripts/check-i18n.mjs",
-    "typecheck": "node scripts/check-i18n.mjs && tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
-    "build": "node scripts/check-i18n.mjs && tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && vite build && node scripts/copy-swagger-assets.mjs",
-    "preview": "vite preview",
+    "typecheck": "node scripts/check-i18n.mjs && tsc --noEmit -p tsconfig.app.json",
+    "build": "node scripts/check-i18n.mjs && tsc --noEmit -p tsconfig.app.json && node scripts/frontend.mjs build && node scripts/copy-swagger-assets.mjs",
+    "preview": "node scripts/frontend.mjs preview",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -29,6 +29,6 @@
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "typescript": "^5.9.2",
-    "vite": "^7.3.7"
+    "esbuild": "0.28.2"
   }
 }

@@ -29,11 +29,12 @@ for(const width of [1440,390])for(const emptyBoundaries of [false,true])test(`na
  await page.goto('/#tts')
  await page.getByRole('tab',{name:'文档合成',exact:true}).click()
  await expect(page.locator('.document-sections li')).toHaveCount(1)
- await page.getByText('朗读处理',{exact:true}).click()
+ await page.getByRole('button',{name:/^朗读处理 ·/}).click()
  await expect(page.getByLabel('跳过辅助文本',{exact:true})).toBeChecked()
  await expect(page.getByLabel('自然段落与章节停顿',{exact:true})).toBeChecked()
  await page.getByLabel('脚注正文',{exact:true}).uncheck()
  await expect.poll(()=>page.evaluate(()=>JSON.parse(sessionStorage.getItem('audio-intel:document-draft')!).narration_options.skip_kinds.sort())).toEqual(['note_reference','page_number'])
+ await page.keyboard.press('Escape')
  await page.getByRole('button',{name:'预览正文',exact:true}).click()
  await expect(page.locator('.document-reader-body pre')).toHaveText(text)
  await expect(page.locator('.document-annotation-note_body').filter({hasText:/^脚注正文$/})).not.toHaveClass(/is-skipped/)
@@ -60,8 +61,54 @@ for(const width of [1440,390])for(const emptyBoundaries of [false,true])test(`na
  await page.keyboard.press('Escape')
  await expect(page.locator('.document-reader-body')).toBeVisible()
  await page.keyboard.press('Escape')
+ await page.getByRole('button',{name:/^朗读处理 ·/}).click()
  await page.getByRole('button',{name:'重新分析文档',exact:true}).click()
  await expect.poll(()=>reanalyzed).toBe(1)
  await expect(page.locator('.document-sections li')).toHaveCount(1)
  expect(errors).toEqual([])
+})
+
+for(const [width,height,minRows] of [[1440,900,4],[1280,720,2]])test(`document settings preserve visible selection space at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height})
+ let failNext=true
+ const sections=Array.from({length:24},(_,i)=>({id:String(i),index:i+1,title:`第 ${i+1} 章`,start:300*i,end:300*(i+1),char_count:300,spoken_chars:280,basis:'heading',speakable:true}))
+ const defaults={skip_enabled:true,skip_kinds:['page_number','note_reference','note_body'],natural_pauses:true}
+ await page.route('**/api/v1/tts/document-imports/layout**',route=>{
+  if(!route.request().url().endsWith('/preview'))return route.fulfill({json:{id:'layout',name:'排版走查.pdf',state:'ready',metadata:{narration_version:1}}})
+  const options=route.request().postDataJSON().narration_options||defaults
+  if(!options.natural_pauses&&failNext){failNext=false;return route.fulfill({status:503,json:{detail:'Preview temporarily unavailable'}})}
+  return route.fulfill({json:{preview_revision:JSON.stringify(options),analysis_revision:'a',narration_options:options,annotation_counts:{page_number:12},segmentation_mode:'auto',target_section_chars:10000,title:'排版走查',total_chars:7200,warnings:[],sections}})
+ })
+ await page.addInitScript(()=>sessionStorage.setItem('audio-intel:document-draft',JSON.stringify({version:3,importId:'layout'})))
+ await page.goto('/#tts')
+ await page.getByRole('tab',{name:'文档合成',exact:true}).click()
+ const list=page.locator('.document-sections')
+ await expect(list.locator('li')).toHaveCount(20)
+ const rows=await list.evaluate(el=>{
+  let top=0,bottom=innerHeight
+  for(let node:HTMLElement|null=el;node;node=node.parentElement){
+   if(node===el||/(auto|scroll|hidden|clip)/.test(getComputedStyle(node).overflowY)){
+    const box=node.getBoundingClientRect();top=Math.max(top,box.top);bottom=Math.min(bottom,box.bottom)
+   }
+  }
+  return [...el.children].filter(row=>{const box=row.getBoundingClientRect();return box.top>=top&&box.bottom<=bottom}).length
+ })
+ expect(rows).toBeGreaterThanOrEqual(minRows)
+ await list.locator('input').first().uncheck()
+ const box=await list.boundingBox()
+ const scroll=await list.evaluate(el=>{el.scrollTop=120;return el.scrollTop})
+ const settings=page.getByRole('button',{name:/^朗读处理 ·/})
+ await settings.click()
+ const dialog=page.getByRole('dialog',{name:'朗读处理'})
+ await expect(dialog).toContainText('全文 12 处')
+ await dialog.getByLabel('自然段落与章节停顿').uncheck()
+ await expect(dialog.getByRole('alert')).toContainText('temporarily unavailable')
+ await dialog.getByRole('button',{name:'重试'}).click()
+ await expect(dialog.getByRole('alert')).toHaveCount(0)
+ await page.keyboard.press('Escape')
+ await expect(settings).toBeFocused()
+ expect(await list.boundingBox()).toEqual(box)
+ expect(await list.evaluate(el=>el.scrollTop)).toBe(scroll)
+ await expect(list.locator('input').first()).not.toBeChecked()
+ await expect(page.locator('.document-selection-bar')).toContainText('6,440')
 })
