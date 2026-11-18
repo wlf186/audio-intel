@@ -520,7 +520,13 @@ def register(app: FastAPI, api: Any) -> None:
 
     @app.get("/api/v1/jobs/{job_id}/document/download", tags=[api.TTS_TAG], response_class=StreamingResponse,
               responses={**responses, **api.ADMISSION_RESPONSE, 200: {"description": "Streaming audio or independent audiobook HTML downloads", "content": {"text/html": {"schema": {"type": "string"}}, "application/zip": {"schema": {"type": "string", "format": "binary"}}, "audio/mpeg": {"schema": {"type": "string", "format": "binary"}}}}})
-    async def download(job_id: str, mode: Literal["sections", "complete", "html_complete", "html_sections", "html_section", "reader"], section_id: str | None = None, _: None = auth):
+    async def download(
+        job_id: str,
+        mode: Annotated[Literal["sections", "complete", "html_complete", "html_sections", "html_section", "reader"],
+                        Query(description="下载或在线阅读 / MP3 ZIP (sections), complete MP3, standalone book (html_complete), chapter HTML ZIP (html_sections), standalone chapter (html_section), or online reader.")],
+        section_id: Annotated[str | None, Query(description="单章 ID / Required only for html_section. Use the id from result.document.sections.")] = None,
+        _: None = auth,
+    ):
         from .document_download import lease, zip_stream, mp3_stream, validate_mp3
         job = await run_in_threadpool(api.job_or_404, job_id)
         if job["request"].get("purpose") != "tts_document" or job["state"] != "succeeded":

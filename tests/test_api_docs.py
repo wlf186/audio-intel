@@ -601,6 +601,10 @@ def test_reference_range_docs_match_generated_contract(tmp_path, monkeypatch):
     download = schema["paths"]["/api/v1/jobs/{job_id}/document/download"]["get"]
     assert "UTC" in download["description"]
     assert "audio_metadata" in download["description"]
+    params = {p["name"]: p for p in download["parameters"]}
+    assert set(params["mode"]["schema"]["enum"]) == {"sections", "complete", "html_complete", "html_sections", "html_section", "reader"}
+    assert params["mode"]["required"] and "html_section" in params["section_id"]["description"]
+    assert set(download["responses"]["200"]["content"]) == {"text/html", "application/zip", "audio/mpeg"}
 
 
 def test_video_binary_contracts_and_examples(tmp_path, monkeypatch):

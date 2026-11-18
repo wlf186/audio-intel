@@ -531,6 +531,26 @@ New document jobs persist server-owned `request.document.audio_metadata`; caller
 
 ZIP and complete MP3 downloads are streamed without stored exports. Handle 401/404/409/429 before consuming the body and honor `Retry-After` (also `retry_after_seconds` in problem JSON). After the response has begun, transport failures terminate the download; retry from the beginning. The browser UI retains the page on an error and delegates large downloads to the browser download manager without a whole-file Blob.
 
+For a successful document job, send an authenticated GET to `/api/v1/jobs/{job_id}/document/download`.
+
+| Required mode | Response |
+|---|---|
+| `complete` | Complete MP3 attachment |
+| `sections` | ZIP attachment containing chapter MP3 files |
+| `reader` | Inline HTML reader using the job’s authenticated audio URLs |
+| `html_complete` | Standalone HTML with all selected chapters and their audio |
+| `html_sections` | ZIP containing independent chapter HTML files with embedded audio |
+| `html_section` | Standalone chapter HTML. Supply `section_id` from `result.document.sections[].id` |
+
+Set `BASE_URL`, `JOB_ID` and `SECTION_ID` to the server, completed job and chapter.
+
+```bash
+curl --fail -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" "$BASE_URL/api/v1/jobs/$JOB_ID/document/download?mode=html_complete" -o book.html
+curl --fail -G -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" "$BASE_URL/api/v1/jobs/$JOB_ID/document/download" --data-urlencode mode=html_section --data-urlencode "section_id=$SECTION_ID" -o chapter.html
+```
+
+A missing or misplaced `section_id` returns 422. An unknown section returns 404. The inline reader depends on the job, while downloaded HTML remains usable after deletion. See [Document TTS](DOCUMENT_TTS.md#有声书-html).
+
 ### 音频波形 / Audio waveforms
 
 `GET /api/v1/jobs/{job_id}/artifacts/{name}/waveform` 使用浏览器会话或 Bearer 鉴权。`name` 必须来自成功任务的 `artifacts[].name`，并进行 URL 编码。返回 `{ "artifact_name": "speech.wav", "duration": 1.5, "waveform": [0.1, 0.4, 0.2] }`，其中峰值按时间均匀分布，范围为 0–1，最多 240 项。
@@ -1124,5 +1144,3 @@ HTML/Word topic exports accept optional `merge_repeated_topics:false` to use chr
 Browser-local paragraph comparison and compact timeline panels reuse existing result/media reads; they add no endpoints or request fields. Paragraph comparison does not submit optimization, seek media or change export scope. / 浏览器单段对照和紧凑时间轴复用既有读取接口，不新增端点或字段，不提交优化、不改变播放时间或导出范围。
 
 Document narration options are accepted by segmentation preview as a JSON object and by document submission as the `narration_options` JSON form string. New imports default to skipping high-confidence page numbers, note references and note bodies, with short structural pauses. API-only source-range overrides use Unicode code-point offsets and require the current analysis revision. Retained imports can be explicitly reanalyzed using `POST /api/v1/tts/document-imports/{identifier}/reanalyze` with `Idempotency-Key`; old jobs and audio remain unchanged. See [narration annotations and pauses](DOCUMENT_TTS.md#辅助文本与自然停顿--narration-annotations-and-pauses) for fields, errors, defaults and executable examples.
-
-Document TTS audiobook downloads use the authenticated document download endpoint with mode=html_complete (one self-contained HTML), html_sections (ZIP64 of independent HTML chapters), or html_section plus section_id. Mode reader serves an inline page using the authenticated audio artifacts. See [Document TTS](DOCUMENT_TTS.md).
