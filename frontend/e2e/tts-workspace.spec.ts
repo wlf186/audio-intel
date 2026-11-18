@@ -99,21 +99,25 @@ for(const width of [1440,390])test(`primary audio downloads retain readable cont
    if(width<1024)await page.getByRole('combobox',{name:'选择任务',exact:true}).selectOption('text-result')
    else await page.locator('.tts-recent-jobs').getByRole('button').filter({hasText:'文本任务'}).click()
   }
-  const download=page.locator(kind==='document'?'.document-downloads .primary':'.audio-card a.primary')
-  await expect(download).toBeVisible()
-  for(const hover of [false,true]){
-   if(hover)await download.hover()
-   await expect.poll(()=>download.evaluate(element=>{
-    const style=getComputedStyle(element)
-    const luminance=(color:string)=>{
-     const channels=color.match(/[\d.]+/g)!.slice(0,3).map(value=>Number(value)/255).map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4)
-     return channels[0]*.2126+channels[1]*.7152+channels[2]*.0722
-    }
-    const foreground=luminance(style.color),background=luminance(style.backgroundColor)
-    return(Math.max(foreground,background)+.05)/(Math.min(foreground,background)+.05)
-   })).toBeGreaterThanOrEqual(4.5)
+  const downloads=kind==='document'
+   ? [page.getByRole('link',{name:'打开有声书',exact:true}),page.getByRole('link',{name:'下载分段 ZIP',exact:true})]
+   : [page.locator('.audio-card a.primary')]
+  for(const download of downloads){
+   await expect(download).toBeVisible()
+   for(const hover of [false,true]){
+    if(hover)await download.hover()
+    await expect.poll(()=>download.evaluate(element=>{
+     const style=getComputedStyle(element)
+     const luminance=(color:string)=>{
+      const channels=color.match(/[\d.]+/g)!.slice(0,3).map(value=>Number(value)/255).map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4)
+      return channels[0]*.2126+channels[1]*.7152+channels[2]*.0722
+     }
+     const foreground=luminance(style.color),background=luminance(style.backgroundColor)
+     return(Math.max(foreground,background)+.05)/(Math.min(foreground,background)+.05)
+    })).toBeGreaterThanOrEqual(4.5)
+   }
+   await page.mouse.move(0,0)
   }
-  await page.mouse.move(0,0)
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
   await page.screenshot({path:info.outputPath(`${kind}-download.png`)})
  }

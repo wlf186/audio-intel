@@ -85,7 +85,10 @@ for(const width of [1440,390])for(const emptyBoundaries of [false,true])test(`na
  await expect.poll(()=>reanalyzed).toBe(1)
  await expect(page.locator('.document-sections li')).toHaveCount(2)
  const captured=page.waitForRequest(r=>r.url().endsWith('/tts/document-jobs')&&r.method()==='POST')
- await page.route('**/tts/document-jobs',route=>route.fulfill({status:202,json:{id:'test-document',state:'queued',kind:'tts'}}))
+ const now=new Date().toISOString()
+ const job={id:'test-document',kind:'tts',purpose:'tts_document',display_name:'朗读测试',state:'queued',stage:'queued',progress:0,created_at:now,updated_at:now,request:{}}
+ await page.route('**/api/v1/jobs/test-document',route=>route.fulfill({json:job}))
+ await page.route('**/tts/document-jobs',route=>route.fulfill({status:202,json:job}))
  await page.getByRole('button',{name:/生成语音|开始合成/}).click()
  const req=await captured
  const form=await new Response(new Uint8Array(req.postDataBuffer()!),{headers:{'content-type':req.headers()['content-type']}}).formData()
