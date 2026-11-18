@@ -16,7 +16,7 @@ API Key 通过密码框输入，存入服务端 SQLite 独立凭据表；网页�
 
 当前请求包仅对新版本连接验证后的 qwen3.5:9b 新运行启用，其他模型及旧验证配置继续原流程；不切换模型。已有9b连接只需在系统状态重新验证并保存一次，无需改预算、窗口或参数值。新验证明确发送 presence_penalty=0，高级参数显式设置或null仍优先，历史任务不变。调用、耗时、应用写入及未达标质量项见[请求包实测](EXPRESSION_OPTIMIZATION_PACKETS_VALIDATION.md)。
 
-新请求包策略在说话人、画面归属、15秒停顿边界内，组合不超过约2400字的语义段；窗口较小时自动缩小。密集问答或口头重复较多的内容保留约400字的细分编辑单元，同一请求仍可处理多个独立单元。原来的全部细分小结保留在“分段小结”中，默认收起，搜索命中会展开，时间按钮可回听来源。展开状态只保存在当前组件内存中；没有新增浏览器持久偏好。优化稿API的JSON、Word、PDF及新策略的TXT导出包含全部细分小结；SRT/VTT仍只支持原始转写。
+新请求包策略在说话人、画面归属、15秒停顿边界内，组合不超过约2400字的语义段；窗口较小时自动缩小。密集问答或口头重复较多的内容保留约400字的细分编辑单元，同一请求仍可处理多个独立单元。原来的全部细分小结保留在“分段小结”中，默认收起，搜索命中会展开，时间按钮可回听来源。展开状态只保存在当前组件内存中；没有新增浏览器持久偏好。优化稿API的JSON、Word、HTML及新策略的TXT导出包含全部细分小结；SRT/VTT仍只支持原始转写。
 
 请求包按独立ID传输多个来源，正文生成后另发请求独立复核，同时可提炼该正文的小结；短任务可在第二次请求中完成复核、小结和画面标题。小结不是独立事实认证。引用无法定位时保留“未确定”提示。输出截断会在原输出上限内缩小请求包，不自动增大窗口；有效项先原子保存，再修复失败项。所有实际尝试均计入预算，暂停恢复不重新处理已保存内容。
 
@@ -80,7 +80,7 @@ qwen3.5:4b 与 9b 的本轮实测仍有事实改变、复核漏报和整理不�
 
 图文模式每幅画面左图右文，对照的右侧为两栏正文。正式应用新检测参数／画面划分或编辑边界，会在同一事务内清理旧优化数据并回到原文，之后可手动重新优化。仅编辑参数、预览、更换截图、改变导出隐藏状态或人物显示名不会清理成稿；应用失败保留旧划分和旧稿。
 
-统一「导出转写」入口长期记忆内容、各内容格式、脱敏及替换规则；不可用选择临时回退，不覆盖偏好。弹窗说明将下载的版本和格式，可选择使用当前阅读版本；重新生成期间导出旧完成稿会明确提示。下载成功触发浏览器下载后关闭弹窗，失败保留选项。优化稿支持 PDF/DOCX/TXT，对照支持横向双栏 PDF/DOCX。段落和来源覆盖与页面一致，具体疑点保留标记，对照附脱敏原因。来源、正文和原因使用相同替换策略，导出不修改持久化原始文件。
+统一「导出转写」入口长期记忆内容、各内容格式、脱敏及替换规则；不可用选择临时回退，不覆盖偏好。弹窗说明将下载的版本和格式，可选择使用当前阅读版本；重新生成期间导出旧完成稿会明确提示。下载成功触发浏览器下载后关闭弹窗，失败保留选项。优化稿支持 HTML/DOCX/TXT，HTML 对照版宽屏双栏、手机按段展开原文，DOCX 对照版采用横向双栏。段落和来源覆盖与页面一致，具体疑点保留标记，对照附脱敏原因。来源、正文和原因使用相同替换策略，导出不修改持久化原始文件。
 
 ## API 与脚本
 
@@ -160,11 +160,11 @@ English: These synthetic fixtures demonstrate layout, not model quality. Run bot
 
 视频在现有画面边界内生成分组小结，再根据该画面的全部归属文本提炼一个标题。长画面逐层归纳，中间结果持久化；不会只截取开头。分组和原始时间轴保持原样。
 
-小结显示在优化稿／对照版每组正文下面，对照时横跨两列，避免与任一侧正文混淆。视频图文阅读和文本阅读都有画面标题；画面目录追加标题，原文模式也可用目录标题。可搜索当前可见的小结和标题，命中计数、跳转与高亮一致。PDF/Word 优化稿及对照版包含小结和标题，并应用同一套关键词替换。原文导出、TXT 和字幕保持原格式。
+小结显示在优化稿／对照版每组正文下面，对照时横跨两列，避免与任一侧正文混淆。视频图文阅读和文本阅读都有画面标题；画面目录追加标题，原文模式也可用目录标题。可搜索当前可见的小结和标题，命中计数、跳转与高亮一致。HTML/Word 优化稿及对照版包含小结和标题，并应用同一套关键词替换。原文导出、TXT 和字幕保持原格式。
 
 小结策略 v2 在本次执行内自动恢复：先用独立的小结／标题提示生成一次，仅在格式、长度、数字或明确范围异常时定向修复一次，随后最多请求一次原文关键词提取。每项（长画面的每个归纳节点）总计最多3次模型请求，包含连接重试，最长60秒；第二句缺失或无效不阻塞合格的第一句。没有额外的模型语义复核循环，本地检查只是有限保护，并非事实认证。连续3次服务故障会跳过后续模型请求，仍为有内容的项选取原文短句／主题词；上下文或容量故障同样使用原文兜底。长画面仍处理全部来源并复用中间检查点。
 
-关键词按完整原文短语去重、择取至长度合规，不因拼接过长就丢弃全部结果，也不截断数字及单位。只要存在通过来源与长度检查的可用关键词，就立即采用，标记为“关键词”，该项结束，不再执行原文兜底。模型关键词与原文兜底都记为 `ready`，分别标注“关键词”“原文要点”；页面、PDF/Word 使用同一标记和替换规则，状态中分开显示数量。`not_applicable` 仅用于确实无实质内容；无法保存、来源失效等真实运行故障不伪装成成功。
+关键词按完整原文短语去重、择取至长度合规，不因拼接过长就丢弃全部结果，也不截断数字及单位。只要存在通过来源与长度检查的可用关键词，就立即采用，标记为“关键词”，该项结束，不再执行原文兜底。模型关键词与原文兜底都记为 `ready`，分别标注“关键词”“原文要点”；页面、HTML/Word 使用同一标记和替换规则，状态中分开显示数量。`not_applicable` 仅用于确实无实质内容；无法保存、来源失效等真实运行故障不伪装成成功。
 
 最终“原文要点”由程序规则摘取，不再调用模型：优先选取长度合适的原文子句，倾向含要求、预算、理由等信息的句子；没有合适子句时，再选择短语或长度受限的片段。不会默认复制整组全文，短分组可能恰好全部入选。中文小结50字、标题20字及其他语种预算仍有效。长画面处理全部来源后逐层归纳；最终兜底可能从已保存的分片归纳结果中摘取，不能将其一概理解为逐字引用原始转写。
 
@@ -183,7 +183,7 @@ SQLite v20→v21 只增加生成方式、尝试次数、质量提示和有界尝
 
 v2 单项可选元数据：`generation_method` 为 `model`、`model_repair`、`model_keywords`、`source_excerpt`；`attempt_count` 为已完成的模型请求数（长画面包含各节点）；`quality_notice` 为 `keywords`／`source_excerpt` 或 null；`skip_reason` 仅在无实质内容时为 `no_substantive_content`。计数增加 `model_ready`、`repaired_ready`、`keyword_ready`、`extractive_ready` 和后两者之和 `fallback_ready`；历史未知生成方式不推算为任何类别。有效交付率分别按小结、画面标题计算：`ready / (total - skipped)`，并同时报告各生成方式。分母为0时记为不适用，不宣称100%成功。`processed = ready + skipped + failed`，`fallback_ready = keyword_ready + extractive_ready`；v2 的四种已知生成方式之和为 `ready`，历史未知方式不能套用该分类等式。
 
-English: V2 generates once, repairs only explicit abnormalities once, then attempts literal keyword extraction. All transport retries share the same three-request / 60-second node budget. Accepted, source-matched keywords end the item immediately. Otherwise local rules select a bounded clause, phrase or excerpt, rather than copying the whole group by default. For reduced long scenes the selected text may come from saved intermediate notes. A short group can fit in full. All fallback output shares the length limits. A zero eligible denominator means no applicable delivery rate. Keywords and excerpts count as ready and are labelled in the reader and PDF/Word exports, with separate counters. Only genuinely empty/greeting inputs are excluded; outlines, introductions and procedures remain eligible. There is no auxiliary semantic-review voting loop or autonomous restart after a pause/reboot. Existing v1 runs retain their saved policy. SQLite v20→v21 is additive and requires a SQLite-only backup.
+English: V2 generates once, repairs only explicit abnormalities once, then attempts literal keyword extraction. All transport retries share the same three-request / 60-second node budget. Accepted, source-matched keywords end the item immediately. Otherwise local rules select a bounded clause, phrase or excerpt, rather than copying the whole group by default. For reduced long scenes the selected text may come from saved intermediate notes. A short group can fit in full. All fallback output shares the length limits. A zero eligible denominator means no applicable delivery rate. Keywords and excerpts count as ready and are labelled in the reader and HTML/Word exports, with separate counters. Only genuinely empty/greeting inputs are excluded; outlines, introductions and procedures remain eligible. There is no auxiliary semantic-review voting loop or autonomous restart after a pause/reboot. Existing v1 runs retain their saved policy. SQLite v20→v21 is additive and requires a SQLite-only backup.
 
 ### 配置接口补充
 
@@ -204,11 +204,17 @@ English: New optimization runs snapshot the formatting-aware source-assignment p
 
 ## 调用预算与用量 / Call budget and usage
 
-系统状态可配置每次新优化的调用上限，新配置默认100次；已有显式配置保持原值。一次优化的正文、复核、分组小结、画面标题、接缝与失败尝试共用额度；暂停继续和补试小结沿用余额，重新优化重新计数。连接验证不属于任务调用，预估本身不调用模型。该额度限制请求尝试次数，不代表 tokens 或费用上限，也不会为了用满额度而额外调用。新默认100对全部模型统一生效；本轮已测9B任务实际2–38次、建议10–60次，其他模型、超长稿仍需以预估为准。既有任务沿用原额度；长期预算由用户在系统状态修改，临时额度只影响本次。
+新建或重新优化时，网页和 API 默认采用本次预估的建议上限，包含重试余量。例如预计调用 31 次、建议上限 50 次，默认就以 50 次启动。实际用量按已发起的模型请求计数，最多可用次数不会增加模型调用。创建时可在「调整上限」或 API 的 `max_llm_calls` 指定本次额度。命令行支持 `--max-llm-calls 100`。
 
-表达优化对话框先按全文、热词、窗口和输出上限预估正常需求。请求包为每个生成请求预留一次内容修复，并为其他阶段增加50%恢复余量；原流程保留50%总恢复余量。两者均至少增加5次，再向上取整至10次；建议额度本身不增加调用或修改有效上限。建议值不是完成保证；持续连接故障仍可能消耗额度。预算不足时可直接修改一次性建议值，不改变系统默认值。耗尽会保留检查点并暂停，调高本次总上限后继续，不重跑已保存内容，也不因额度不足跳过检查。
+预估根据转写内容、模型窗口、输出上限、整理方式和议题选项在本地计算。请求包为每个生成请求预留一次内容修复，并为其他阶段增加 50% 恢复余量，原流程保留 50% 总恢复余量。两者均至少增加 5 次，再向上取整至 10 次。正文、复核、小结、画面标题、议题和失败尝试共用本稿额度。额度耗尽时保存检查点并暂停，可以调高本次上限后继续。重新优化会生成新的预算和用量记录。
 
-完成后仅在表达优化入口内查看“本次用量详情”，没有自动通知。阶段统计之和为总调用，失败／中断是其中的子集；无法确认远端结果的中断尝试仍计入额度。历史未记录稿显示“未记录”。临时输入不保存到浏览器长期偏好；任务接受后的额度由服务端持久保存。
+在「转写工作台 → 任务与结果」打开「表达优化」。首次优化可直接选择档位、议题分析和调用上限。已有稿件先显示实际处理耗时、模型调用次数和 Token 用量。重新优化期间可切换「本次优化」与「当前可读稿」。展开「用量明细」可查看各阶段调用、输入与输出 Token、覆盖率及失败次数。临时上限在提交后保存在本稿中。
+
+同一稿件的实际处理耗时累计正文、复核及补做小结和议题的执行时段，排队与手动暂停期间停止计时。异常退出仅计到可确认的最后活动，显示已记录下界。早期稿件耗时可能未记录。每次模型尝试计入总调用，执行中的请求和失败或中断的请求分别统计。
+
+连接验证用内置示例检查服务是否回传 Token。按需增加一次小型探测，确认支持后，新稿额外请求流式用量。高级参数中显式选择的 `stream_options.include_usage` 继续生效。已保存的连接可在系统设置中重新验证并保存，历史稿沿用提交时的配置。实际用量按每次调用的总数或输入输出相加。部分回传显示已知下界，无记录显示未知。
+
+Use **Expression optimization** to inspect the current run or the published draft. The usage response includes `active_duration_ms`, `timing_partial`, `in_progress_calls` and token coverage. A complete per-call total takes precedence over separate input and output counts. The optional connection probe sends only synthetic text. Read the current draft's metrics with `python scripts/optimize_transcript.py --url http://localhost:20810 --job JOB_ID --usage`.
 
 总上下文与单次最大输出使用 K tokens，1K=1024 tokens，默认16K与4K；API仍使用整数 tokens。总窗口包含输入、输出和安全余量，仅是客户端预算，不证明服务端实际分配。高级参数中的输出值须与显式配置一致。输出达到上限的截断响应不发布为完整正文。
 
@@ -221,8 +227,7 @@ English: New optimization runs snapshot the formatting-aware source-assignment p
 root = f"/api/v1/jobs/{job_id}/transcript-optimization"
 plan = client.post(root + "/estimate", json={"rewrite_mode": "rewrite"})
 plan.raise_for_status()
-limit = plan.json()["recommended_limit"]  # Let the user edit this value before accepting.
-accepted = client.post(root, json={"rewrite_mode": "rewrite", "max_llm_calls": limit},
+accepted = client.post(root, json={"rewrite_mode": "rewrite", "estimate_fingerprint": plan.json()["fingerprint"]},
                        headers={"Idempotency-Key": optimization_key})
 accepted.raise_for_status()
 run_id = accepted.json()["candidate"]["id"]
@@ -270,7 +275,7 @@ cd "$CANDIDATE_CHECKOUT"
 
 议题包含标题、简述、原文引用及全部讨论时段；识别结果可将同一议题跨说话人、跨画面的讨论归为一类；阅读默认保留每次出现的位置，仅显式勾选合并才重排。程序根据原始来源计算时间：可靠字词对齐使用字词时间，否则明确标注“片段时间”，不猜句内时间。同一原文段落可按来源偏移拆成多个议题片段，每个新阅读片段只有一个主议题；未能归类的来源独立展示，不等于没有内容。简述检查异常时可采用有标记的“原文要点”，从本议题的原始来源直接摘取，不再为简述反复调用模型。标题和归属仍由模型识别，不是事实认证。
 
-结果页议题目录按需加载；展开原文才构建相应引文。点击各时段可回听并定位正文。优化稿与对照PDF/Word附议题目录、简述及时间，使用相同脱敏和替换规则；原文导出、字幕不变。读取、搜索、展开及导出不触发模型调用。
+结果页议题目录按需加载；展开原文才构建相应引文。点击各时段可回听并定位正文。优化稿与对照HTML/Word附议题目录、简述及时间，使用相同脱敏和替换规则；原文导出、字幕不变。读取、搜索、展开及导出不触发模型调用。
 
 `asr.transcript_optimization.topics` 提供能力发现。旧阅读计划中兼容且有明确预算的已发布稿可补生成议题；新阅读计划需要重新生成议题与正文，原成功稿保留至新稿发布；旧策略或未记录预算的稿件须重新优化。接口前缀为 `/api/v1/jobs/{job_id}/transcript-optimization/topics`：
 
@@ -338,7 +343,7 @@ tokens来自已确认支持 `stream_options.include_usage` 的模型服务，六
 
 新生成及显式重新识别使用议题策略v2：在议题阶段冻结画面标题与原文对应关系，按包去重发送标题线索；事实依据仍是原文。不开启视觉模型，不重新处理媒体。v1稿件可直接显示分层目录，v1未完成任务按原检查点继续；不会自动重算历史。补生成期间继续显示旧稿和旧目录。
 
-API：`GET .../topics?run_id=...&include_outline=true` 可附加 `outline`（版本、议题分组、内容ID、主归属与相关引用），默认不计算该附加结构。`POST .../transcript-export` 增加 `organization: chronological|topic`，API默认chronological保持兼容。topic仅用于PDF/Word，并要求同任务已发布稿的optimization_id；原文版本也允许此组合，字词保持原样。界面有议题时默认按议题导出。Word提供一级/二级标题及内部跳转目录，PDF提供可点击目录及书签；读取和导出不请求模型。
+API：`GET .../topics?run_id=...&include_outline=true` 可附加 `outline`（版本、议题分组、内容ID、主归属与相关引用），默认不计算该附加结构。`POST .../transcript-export` 增加 `organization: chronological|topic`，API默认chronological保持兼容。topic仅用于HTML/Word，并要求同任务已发布稿的optimization_id；原文版本也允许此组合，字词保持原样。界面有议题时默认按议题导出。Word提供一级/二级标题及内部跳转目录，HTML 提供可跳转目录；读取和导出不请求模型。
 
 ### 分层阅读与v2成本复验（2026-11-16）
 
@@ -364,7 +369,9 @@ v2只在全局归并时发送从已有画面标题中去重、限量提取的主
 
 启用议题的新稿使用议题策略v3与阅读计划v2：先从原文识别主议题，再按原文偏移冻结讲述片段，随后批量生成正文、复核、小结和片段标题，全部完成才发布。每段正文只属于一个主议题，不再事后把跨议题成稿硬归到一张画面。标题描述讲述内容，画面编号仅作为关联资料；同一张图可以服务多个片段。没有字词对齐时保留并标明片段时间，不猜句内时间。
 
-在线、原文/优化稿/对照PDF和Word均默认保持讲述顺序，议题再次出现时另起一节。只有勾选“合并重复议题”才把后续内容移到同一议题下。该偏好按任务及优化稿保存在sessionStorage，刷新保留、新稿默认关闭、退出登录清除；不含密钥。导出弹窗沿用当前选择，可单独覆盖一次。阅读、切换、搜索、定位和导出不产生模型调用。点击目录按不可变片段ID定位可见标题，来源时间用于回听。
+在线、原文/优化稿/对照HTML 和 Word均默认保持讲述顺序，议题再次出现时另起一节。只有勾选“合并重复议题”才把后续内容移到同一议题下。该偏好按任务及优化稿保存在sessionStorage，刷新保留、新稿默认关闭、退出登录清除；不含密钥。导出弹窗沿用当前选择，可单独覆盖一次。阅读、切换、搜索、定位和导出不产生模型调用。点击目录按不可变片段ID定位可见标题，来源时间用于回听。
+
+按议题导出的 HTML 和 Word 使用两级目录。按讲述顺序导出时，重复议题从第二次出现起标记为「续 1」「续 2」，合并重复议题后使用原题。HTML 目录直接跳到正文标题。Word 首次打开即可点击目录条目；页码由客户端排版后计算。如页码为空，或编辑后分页有变化，在 Word 或 WPS 中右键目录，选择「更新域／更新目录」→「更新整个目录」。
 
 较高桌面窗口内，视频时间轴（含缩略图）和音频波形默认展开；可用高度不超过850px或宽度不超过700px时，时间轴按需在可关闭面板内打开，为正文保留空间。同一任务内关闭再打开面板保留时间轴缩放；切换任务或跨越布局断点重置面板，不新增浏览器存储偏好。桌面视口高度至少720px时，正文与视口及所有裁剪祖先的实际可见交集至少360px且占结果面板60%。搜索与阅读工具共用一行；选择原文片段后，时间轴区域暂时显示去重的声纹样本选择操作，清除后恢复时间轴；搜索及说话人过滤始终可用。播放加载或失败直接显示在结果标题区，失败可直接重试；音频下载和处理详情保留在音频选项中。宽屏图文并排，图片可放大；390px下按顺序堆叠并保持至少44px的触控区域。
 

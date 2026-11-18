@@ -25,7 +25,7 @@ for(const [width,height] of [[1280,900],[1366,768],[1440,900],[1920,1080],[390,8
  await expect(page.locator('[data-reader-id="v2g1"] .optimization-group-summary small')).toHaveText('分组小结 · 原文要点')
  await expect(page.locator('.optimization-scene-title').first()).toContainText('关键词')
  await showOptimizationDetails(page)
- await expect(page.locator('.optimization-status-summary')).toContainText('关键词2 · 原文要点2')
+ await expect(page.locator('.optimization-summary-report')).toContainText('关键词2 · 原文要点2')
  await closeOptimizationDetails(page)
  await expect(page.getByRole('button',{name:'补试未生成小结',exact:true})).toHaveCount(0)
  const search=page.getByPlaceholder('搜索两侧内容')

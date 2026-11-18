@@ -26,6 +26,7 @@ _max_text_chars = 4_000_000
 def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     from docx import Document
     from docx.image.image import Image
+    from docx.enum.style import WD_STYLE_TYPE
     from docx.enum.section import WD_ORIENT
     from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
     from docx.oxml import OxmlElement
@@ -45,7 +46,7 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     section.page_width, section.page_height = (Mm(297), Mm(210)) if comparison else (Mm(210), Mm(297))
     section.left_margin = section.right_margin = Mm(18)
     section.top_margin = section.bottom_margin = Mm(18)
-    for name in ('Normal', 'Title', 'Heading 1'):
+    for name in ('Normal', 'Title', 'Heading 1', 'Heading 2'):
         style = document.styles[name]
         style.font.name = 'Calibri'
         style.element.get_or_add_rPr().get_or_add_rFonts().set(qn('w:eastAsia'), '宋体')
@@ -53,10 +54,20 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     normal.font.size = Pt(11)
     normal.paragraph_format.space_after = Pt(8)
     normal.paragraph_format.line_spacing = 1.2
+    ink = RGBColor.from_string('232321')
+    muted = RGBColor.from_string('64645E')
+    for name, color, bold in [('Heading 1', ink, True), ('Heading 2', muted, False)]:
+        font = document.styles[name].font
+        font.color.rgb = color
+        font.bold = bold
+    summary_style = document.styles.add_style('Transcript Summary', WD_STYLE_TYPE.PARAGRAPH)
+    summary_style.base_style = normal
+    summary_style.font.color.rgb = RGBColor.from_string('28654B')
     document.add_heading(title, 0)
     hidden = set((result.get('video') or {}).get('export_hidden_scene_ids') or [])
-    from .reading_outline import sections as outline_sections
+    from .reading_outline import export_headings, sections as outline_sections
     sections = outline_sections(result)
+    titles = export_headings(result, sections)
     image_bytes = 0
     frame_bytes = {}
     if result.get('review_notice'):
@@ -64,42 +75,87 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     if result.get('topics') and not result.get('reading_outline'):
         document.add_heading('议题目录 / Topics', 1)
         for topic in result['topics']:
-            document.add_paragraph(topic['title'], style='Heading 2')
-            document.add_paragraph(('原文要点 / Source excerpt: ' if topic.get('summary_method') == 'source_excerpt' else '') + topic['summary'])
+            topic_run = document.add_paragraph(style='Heading 2').add_run(topic['title'])
+            topic_run.font.color.rgb = ink
+            topic_run.bold = True
+            document.add_paragraph(('原文要点 / Source excerpt: ' if topic.get('summary_method') == 'source_excerpt' else '') + topic['summary'], style=summary_style)
             document.add_paragraph(' / '.join(f"{timecode(r['start'])} – {timecode(r['end'])}" for r in topic['ranges']))
     def anchor_for(value): return 'a' + hashlib.sha256(str(value).encode()).hexdigest()[:32]
     def bookmark(paragraph, value, number):
         start = OxmlElement('w:bookmarkStart'); start.set(qn('w:id'), str(number)); start.set(qn('w:name'), anchor_for(value))
         end = OxmlElement('w:bookmarkEnd'); end.set(qn('w:id'), str(number))
-        paragraph._p.insert(0, start); paragraph._p.append(end)
-    def link(text, value):
-        paragraph = document.add_paragraph()
-        element = OxmlElement('w:hyperlink'); element.set(qn('w:anchor'), anchor_for(value))
-        run = OxmlElement('w:r'); word = OxmlElement('w:t'); word.text = text; run.append(word); element.append(run); paragraph._p.append(element)
-    if result.get('reading_outline'):
-        document.add_heading('目录 / Contents', 1)
+        paragraph._p.insert(1 if paragraph._p.pPr is not None else 0, start)
+        paragraph._p.append(end)
+    def field_marker(paragraph, kind):
+        marker = OxmlElement('w:fldChar')
+        marker.set(qn('w:fldCharType'), kind)
+        paragraph.add_run()._r.append(marker)
+
+    def instruction(paragraph, value):
+        node = OxmlElement('w:instrText')
+        node.set(qn('xml:space'), 'preserve')
+        node.text = value
+        paragraph.add_run()._r.append(node)
+
+    def add_link(paragraph, text, identity):
+        element = OxmlElement('w:hyperlink')
+        element.set(qn('w:anchor'), anchor_for(identity))
+        run = paragraph.add_run(text)
+        element.append(run._r)
+        paragraph._p.append(element)
+
+    if titles:
+        from docx.enum.text import WD_TAB_ALIGNMENT, WD_TAB_LEADER
+        document.add_paragraph('目录 / Contents', style='TOC Heading')
+        for level in (1, 2):
+            style = document.styles.add_style(f'TOC {level}', WD_STYLE_TYPE.PARAGRAPH)
+            style.base_style = normal
+            style.font.bold = level == 1
+            style.paragraph_format.left_indent = Mm(6 if level == 2 else 0)
+            style.paragraph_format.tab_stops.add_tab_stop(
+                section.page_width - section.left_margin - section.right_margin,
+                WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
+        first = True
         for item in sections:
-            if item.get('reading_resource'): continue
-            title = item.get('topic_heading') or (item.get('title_summary') or {}).get('title') or ('画面 ' + str(item.get('frame_number', '')) if item.get('image') else '')
-            if title: link(title, item.get('id', item.get('topic_id')))
+            identity = item['id']
+            if identity not in titles:
+                continue
+            paragraph = document.add_paragraph(style='TOC 1' if 'topic_heading' in item else 'TOC 2')
+            if first:
+                field_marker(paragraph, 'begin')
+                instruction(paragraph, r' TOC \o "1-2" \h ')
+                field_marker(paragraph, 'separate')
+                first = False
+            add_link(paragraph, titles[identity], identity)
+            paragraph.add_run().add_tab()
+            field_marker(paragraph, 'begin')
+            instruction(paragraph, ' PAGEREF ' + anchor_for(identity) + r' \h ')
+            field_marker(paragraph, 'end')
+        field_marker(paragraph, 'end')
+        update = OxmlElement('w:updateFields')
+        update.set(qn('w:val'), 'true')
+        document.settings.element.append(update)
+        document.add_page_break()
     frame_root = (output_dir / 'frames').resolve()
     for index, item in enumerate(sections):
         if 'topic_heading' in item:
-            paragraph = document.add_heading(item['topic_heading'], 1)
+            paragraph = document.add_heading(titles[item['id']], 1)
             bookmark(paragraph, item['id'], index+1)
-            document.add_paragraph(item['topic_summary'])
+            document.add_paragraph(item['topic_summary'], style=summary_style)
             for related in item['related_item_ids']:
-                link('相关内容 / Related: ' + item['related_titles'][related], related)
+                add_link(document.add_paragraph(), '相关内容 / Related: ' + titles[related], related)
             continue
         if result.get('reading_outline') and not item.get('reading_resource'):
-            paragraph = document.add_heading((f"画面 {item['frame_number']} · " if item.get('frame_number') and not item.get('reading_block') else '') + ((item.get('title_summary') or {}).get('title') or f"片段 {index+1}"), 2)
+            paragraph = document.add_heading(titles[item['id']], 2)
             bookmark(paragraph, item.get('id', str(index)), index+1)
         if result.get('video'):
             title = (item.get('title_summary') or {}).get('title')
             if item.get('image') and not result.get('reading_outline'):
-                document.add_heading(f"画面 {item['frame_number']}" + (f" · {title}" if title else ''), 2 if result.get('reading_outline') else 1)
+                frame = document.add_heading(level=1).add_run(f"画面 {item['frame_number']}" + (f" · {title}" if title else ''))
+                frame.font.color.rgb = muted
+                frame.bold = False
             elif title and not result.get('reading_outline'):
-                document.add_paragraph().add_run(title).bold = True
+                document.add_paragraph().add_run(title).font.color.rgb = muted
             document.add_paragraph(f"{timecode(item['start'])} – {timecode(item['end'])}")
             if item.get('reading_block') and item.get('frame_number'):
                 document.add_paragraph(f"关联画面 / Associated frame {item['frame_number']}")
@@ -168,11 +224,10 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
             else:
                 document.add_paragraph(paragraph['text'])
             for text in group_insight_lines(paragraph.get('group_summary') or {}):
-                content = document.add_paragraph(text)
+                content = document.add_paragraph(text, style=summary_style)
                 content.paragraph_format.left_indent = Mm(3)
                 for run in content.runs:
                     run.font.size = Pt(10)
-                    run.font.color.rgb = RGBColor.from_string('667085')
         for link in item.get('linked_paragraphs', []):
             document.add_paragraph(f"本段文字已并入 {('画面 ' + str(link['frame_number'])) if link.get('frame_number') else '相关段落'} 的成稿（{timecode(link['start'])}） / Text included in the earlier group")
 

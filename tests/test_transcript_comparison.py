@@ -2,9 +2,8 @@ from pathlib import Path
 import io
 
 from docx import Document
-from pypdf import PdfReader
 
-from audio_intel.transcript_pdf import render as pdf
+from audio_intel.transcript_html import render as pdf
 from audio_intel.transcript_docx import render as docx
 from audio_intel.transcript_diff import text_changes
 
@@ -17,14 +16,11 @@ def test_comparison_landscape_columns_long_rows_and_literal_markup(tmp_path):
         {'speaker': 's2', 'speaker_label': '乙', 'start': 20, 'end': 21, 'text': '最后一段', 'original_text': '最后一段'},
     ]}
     data = pdf('对照', result, tmp_path)
-    reader = PdfReader(io.BytesIO(data))
-    assert len(reader.pages) >= 2
-    assert all(p.mediabox.width > p.mediabox.height for p in reader.pages)
-    text = '\n'.join(p.extract_text() for p in reader.pages)
-    for marker in ('原文段落开头', '原文段落结尾', '改写段落开头', '改写段落结尾', '最后一段', 'Needs review'):
-        assert marker in text
-    # Both columns are identified on continuation pages.
-    assert sum('Original' in p.extract_text() for p in reader.pages) >= 2
+    from lxml import html
+    tree = html.fromstring(data.decode())
+    assert tree.xpath('//div[@class="pair"]//details/p')[0].text_content() == original
+    assert tree.xpath('//div[@class="pair"]/div/p')[0].text_content() == edited
+    assert tree.xpath('//span[@class="warn"]')
     document = Document(io.BytesIO(docx('对照', result, tmp_path)))
     assert document.sections[0].page_width > document.sections[0].page_height
     assert len(document.tables) == 2

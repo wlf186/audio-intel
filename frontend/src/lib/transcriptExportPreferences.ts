@@ -5,17 +5,21 @@ export type TranscriptReplacement={source:string;target:string}
 export const transcriptExportPreferencesKey='audio-intel:transcript-export:v1'
 export const defaultTranscriptExportPreferences:TranscriptExportPreferences={redact:true,rules:''}
 const versions:TranscriptTextVersion[]=['original','optimized','comparison']
-const formats:TranscriptExportFormat[]=['pdf','docx','txt','srt','vtt','json']
-export function exportFormats(version:TranscriptTextVersion,available:TranscriptExportFormat[]){return available.filter(value=>version==='original'||value==='pdf'||value==='docx'||version==='optimized'&&value==='txt')}
+const formats:TranscriptExportFormat[]=['html','docx','txt','srt','vtt','json']
+export function exportFormats(version:TranscriptTextVersion,available:TranscriptExportFormat[]){return available.filter(value=>version==='original'||value==='html'||value==='docx'||version==='optimized'&&value==='txt')}
 export function preferredExportFormat(preferences:TranscriptExportPreferences,version:TranscriptTextVersion,available:TranscriptExportFormat[]):TranscriptExportFormat{
  const allowed=exportFormats(version,available),saved=preferences.formatByVersion?.[version]
- return saved&&allowed.includes(saved)?saved:allowed.includes('pdf')?'pdf':allowed[0]||'pdf'
+ return saved&&allowed.includes(saved)?saved:allowed.includes('html')?'html':allowed[0]||'html'
 }
 export function loadTranscriptExportPreferences():TranscriptExportPreferences{
  try{
   const value=JSON.parse(localStorage.getItem(transcriptExportPreferencesKey)||'null')
   const formatByVersion:Partial<Record<TranscriptTextVersion,TranscriptExportFormat>>={}
-  for(const version of versions)if(formats.includes(value?.formatByVersion?.[version]))formatByVersion[version]=value.formatByVersion[version]
+  for(const version of versions){
+   const saved=value?.formatByVersion?.[version]
+   if(saved==='pdf')formatByVersion[version]='html'
+   else if(formats.includes(saved))formatByVersion[version]=saved
+  }
   return{redact:typeof value?.redact==='boolean'?value.redact:true,rules:typeof value?.rules==='string'?value.rules:'',textVersion:versions.includes(value?.textVersion)?value.textVersion:undefined,formatByVersion}
  }catch{return{...defaultTranscriptExportPreferences}}
 }

@@ -1,4 +1,8 @@
 from copy import deepcopy
+from io import BytesIO
+
+from docx import Document
+from lxml import html
 from email.message import Message
 
 from fastapi.testclient import TestClient
@@ -36,21 +40,27 @@ def test_cross_platform_download_name(name, expected):
 @pytest.mark.parametrize('redact', [True, False])
 def test_every_export_format_uses_task_name_without_rewriting_history(local, source, redact):
     result = transcript()
-    job = db.create_job('asr', source, {'export_formats': ['json', 'txt', 'srt', 'vtt']})
+    job = db.create_job('asr', source, {'original_name': '采访.v2.MOV', 'export_formats': ['json', 'txt', 'srt', 'vtt']})
     db.update_job(job['id'], state='succeeded', result_json=result)
     before = deepcopy(db.get_job(job['id']))
     with TestClient(api.create_app()) as client:
         root = f"/api/v1/jobs/{job['id']}"
-        for format in ('pdf', 'docx', 'json', 'txt', 'srt', 'vtt'):
+        for format in ('html', 'docx', 'json', 'txt', 'srt', 'vtt'):
             response = client.post(root + '/transcript-export', json={'format': format, 'redact': redact})
             assert response.status_code == 200, response.text[:200]
             assert filename(response) == source.rsplit('.', 1)[0] + '.' + format
+            if format == 'html':
+                page = html.fromstring(response.text)
+                assert page.findtext('.//title') == page.findtext('.//h1') == '采访.v2'
+            if format == 'docx':
+                document = Document(BytesIO(response.content))
+                assert document.core_properties.title == document.paragraphs[0].text == '采访.v2'
             assert len(response.content) == int(response.headers['content-length'])
+        retired = client.post(root + '/transcript-export', json={'format': 'pdf'})
+        assert retired.status_code == 422 and 'format=html' in retired.text
         get = client.get(root + '/transcript.pdf')
         head = client.head(root + '/transcript.pdf')
-        assert get.status_code == head.status_code == 200
-        assert filename(get) == filename(head) == source.rsplit('.', 1)[0] + '.pdf'
-        assert get.headers['content-length'] == head.headers['content-length']
+        assert get.status_code == head.status_code == 410
         assert not head.content
     assert db.get_job(job['id']) == before
 
@@ -81,7 +91,7 @@ def test_artifact_download_names_keep_paths_bytes_and_other_artifacts(local, kin
 
 def test_export_names_are_documented_in_openapi(local):
     schema = api.create_app().openapi()
-    for path, method in [('/api/v1/jobs/{job_id}/transcript-export', 'post'), ('/api/v1/jobs/{job_id}/transcript.pdf', 'get'), ('/api/v1/jobs/{job_id}/transcript.pdf', 'head'), ('/api/v1/jobs/{job_id}/artifacts/{name}', 'get')]:
+    for path, method in [('/api/v1/jobs/{job_id}/transcript-export', 'post'), ('/api/v1/jobs/{job_id}/artifacts/{name}', 'get')]:
         operation = schema['paths'][path][method]
         assert 'Content-Disposition' in operation['responses']['200']['headers']
         assert 'task basename' in operation['description']

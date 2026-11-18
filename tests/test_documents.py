@@ -155,6 +155,21 @@ def test_document_contract_checkpoint_resume_streams_and_purge(document_client,m
     from audio_intel.waveforms import cached
     assert all(cached(Path(a['path'])) is not None for a in result['artifacts'])
     files=[(a['name'],Path(a['path'])) for a in result['artifacts']]
+    import base64
+    endpoint = f"/api/v1/jobs/{job['id']}/document/download"
+    whole = client.get(endpoint, params={"mode":"html_complete"})
+    assert whole.status_code == 200 and 'data-at="' in whole.text
+    archived = client.get(endpoint, params={"mode":"html_sections"})
+    with zipfile.ZipFile(io.BytesIO(archived.content)) as archive:
+        for section, (name, path) in zip(result['document']['sections'], files, strict=True):
+            single = client.get(endpoint, params={"mode":"html_section","section_id":section["id"]})
+            assert single.content == archive.read(Path(name).with_suffix(".html").name)
+            encoded = base64.b64encode(path.read_bytes())
+            assert encoded in single.content and encoded in whole.content
+    online = client.get(endpoint, params={"mode":"reader"})
+    assert online.headers['content-disposition'].startswith('inline')
+    assert encoded not in online.content
+    assert client.get(endpoint, params={"mode":"html_section","section_id":"missing"}).status_code == 404
     streamed=client.get(f"/api/v1/jobs/{job['id']}/document/download?mode=sections")
     assert streamed.status_code==200 and streamed.headers['accept-ranges']=='none'
     with zipfile.ZipFile(io.BytesIO(streamed.content)) as archive:
@@ -630,7 +645,7 @@ def test_v10_migration_preserves_historical_jobs_and_queue(tmp_path, monkeypatch
         connection.execute('UPDATE schema_meta SET version=10')
     db.init_db()
     with db.connect() as connection:
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 26
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 27
         assert tuple(connection.execute('SELECT * FROM jobs WHERE id=?', (job['id'],)).fetchone()) == before
         assert tuple(connection.execute('SELECT * FROM queue_sequence').fetchone()) == sequence
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()

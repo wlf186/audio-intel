@@ -86,7 +86,8 @@ def sections(result: dict) -> list[dict]:
     outline = result.get('reading_outline')
     if not outline: return output
     if result.get('video'):
-        indexed = {str(s['id']): s for s in output}
+        numbers = {str(scene['id']): n for n, scene in enumerate(result['video']['scenes'], 1)}
+        indexed = {str(s['id']): {**s, 'export_number': numbers[str(s['id'])]} for s in output}
         links = {key: key for key in indexed}
     else:
         # A merged paragraph remains intact and belongs to one primary topic.
@@ -103,7 +104,7 @@ def sections(result: dict) -> list[dict]:
             owner = ranked[0]['topic_id'] if ranked and scores[ranked[0]['topic_id']] else None
             identity = 'paragraph:' + str(paragraph['id'])
             title = direct[0]['title'] if direct else f'片段 {number}'
-            indexed[identity] = {'id': identity, 'paragraphs': [paragraph], '_topic_owner': owner,
+            indexed[identity] = {'id': identity, 'paragraphs': [paragraph], '_topic_owner': owner, 'export_number': number,
                                  'start': paragraph['start'], 'end': paragraph['end'], 'title_summary': {'title': title}}
             for ref in refs: links.setdefault(ref, identity)
     labels = items_by_id(outline)
@@ -137,10 +138,10 @@ def block_sections(result: dict, outline: dict) -> list[dict]:
     for group in groups:
         children = [items[key] for key in group['primary_item_ids'] if segments.get(key)]
         if not children: continue
-        output.append({'id':group['occurrence_id'], 'topic_heading':group['title'], 'topic_summary':group['summary'], 'paragraphs':[], 'related_item_ids':[]})
+        output.append({'id':group['occurrence_id'], 'topic_id':group['topic_id'], 'topic_heading':group['title'], 'topic_summary':group['summary'], 'paragraphs':[], 'related_item_ids':[]})
         for block in children:
             frames = [scenes[key] for key in block['scene_ids'] if key in scenes and scenes[key].get('image')]
-            output.append({'id':block['id'], 'reading_block':True, 'title_summary':{'title':block['title']},
+            output.append({'id':block['id'], 'reading_block':True, 'export_number':block['number'], 'title_summary':{'title':block['title']},
                            'start':block['start'], 'end':block['end'], 'paragraphs':segments[block['id']],
                            'image':frames[0]['image'] if frames else None, 'frame_scene_id':frames[0]['id'] if frames else None,
                            'frame_number':block['frame_numbers'][0] if frames else None})
@@ -149,3 +150,32 @@ def block_sections(result: dict, outline: dict) -> list[dict]:
                                'title_summary':{}, 'start':frame['start'], 'end':frame['end'], 'paragraphs':[],
                                'image':frame['image'], 'frame_scene_id':frame['id'], 'frame_number':block['frame_numbers'][index]})
     return output
+
+
+def export_headings(result: dict, sections: list[dict]) -> dict[str, str]:
+    """Visible export titles keyed by the same IDs as internal navigation."""
+    outline = result.get('reading_outline')
+    if not outline:
+        return {}
+    source_items = items_by_id(outline)
+    occurrences = defaultdict(int)
+    headings = {}
+    for section in sections:
+        if section.get('reading_resource'):
+            continue
+        identity = section['id']
+        if 'topic_heading' in section:
+            key = section['topic_id']
+            occurrences[key] += 1
+            title = section['topic_heading'].strip() or '议题'
+            if occurrences[key] > 1:
+                title += f'（续 {occurrences[key] - 1}）'
+        else:
+            title = (section.get('title_summary') or {}).get('title') or ''
+            frame = section.get('frame_number')
+            if frame and not section.get('reading_block'):
+                title = f'画面 {frame}' + (f' · {title}' if title.strip() else '')
+            if not title.strip():
+                title = source_items.get(identity, {}).get('title') or f"片段 {section['export_number']}"
+        headings[identity] = title
+    return headings

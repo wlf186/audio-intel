@@ -19,7 +19,7 @@ function SourceEvidence({range,segments,label}:{range:Range;segments:Map<number,
 export function TopicDirectory({jobId,run,enabled,result,onSeek,onUpdated,onRegenerate,trigger=0}:{jobId:string;run?:OptimizationSummary|null;enabled:boolean;result:JobResult;onSeek:(time:number)=>void;onUpdated:()=>void;trigger?:number;onRegenerate?:()=>void}){
  const {t}=useTranslation()
  const [open,setOpen]=useState(false),[data,setData]=useState<Response>(),[error,setError]=useState(''),[reload,setReload]=useState(0)
- const [dialog,setDialog]=useState(false),[estimate,setEstimate]=useState<Estimate>(),[limit,setLimit]=useState(100),[busy,setBusy]=useState(false)
+ const [dialog,setDialog]=useState(false),[estimate,setEstimate]=useState<Estimate>(),[limit,setLimit]=useState<number>(),[busy,setBusy]=useState(false)
  const [actionError,setActionError]=useState('')
  const actionVersion=useRef(0)
  const actionAbort=useRef<AbortController|undefined>(undefined)
@@ -41,7 +41,7 @@ export function TopicDirectory({jobId,run,enabled,result,onSeek,onUpdated,onRege
  useEffect(()=>{
   if(!dialog||!runId)return
   const abort=new AbortController();setEstimate(undefined);setActionError('')
-  void request<Estimate>(root+'/estimate',{method:'POST',signal:abort.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:runId,regenerate})}).then(value=>{if(!abort.signal.aborted){setEstimate(value);setLimit(Math.max(value.recommended_limit,run?.calls_limit||100))}}).catch(cause=>{if(!abort.signal.aborted)setActionError((cause as Error).message)})
+  void request<Estimate>(root+'/estimate',{method:'POST',signal:abort.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({run_id:runId,regenerate})}).then(value=>{if(!abort.signal.aborted){setEstimate(value);setLimit(run?.calls_limit!=null&&run.calls_limit>=value.minimum_limit?run.calls_limit:value.recommended_limit)}}).catch(cause=>{if(!abort.signal.aborted)setActionError((cause as Error).message)})
   return()=>abort.abort()
  },[dialog,runId,root,regenerate,run?.calls_limit,reload])
  if(!run)return null
@@ -64,10 +64,10 @@ export function TopicDirectory({jobId,run,enabled,result,onSeek,onUpdated,onRege
  </div>)
  const modal=dialog?<Modal title={t('optimization.topics.title')} closeLabel={t('common.actions.close')} onClose={()=>setDialog(false)}>
    <p>{t('optimization.topics.help')}</p>
-   {estimate?<p>{t('optimization.estimateSummary',{count:estimate.estimated_calls,recommended:estimate.recommended_limit})}</p>:!actionError?<p role="status">{t('optimization.estimating')}</p>:null}
-   <label>{t('optimization.topics.limit')}<input type="number" value={limit} min={Math.max(estimate?.minimum_limit||1,run.calls_limit||1)} onChange={e=>setLimit(Number(e.target.value))}/></label>
+   {estimate?<><p>{t('optimization.estimateSummary',{count:estimate.estimated_calls,recommended:estimate.recommended_limit})}</p>
+   <label>{t('optimization.topics.limit')}<input type="number" value={limit??''} min={Math.max(estimate.minimum_limit,run.calls_limit||1)} onChange={e=>setLimit(e.target.value===''?undefined:Number(e.target.value))}/></label></>:!actionError?<p role="status">{t('optimization.estimating')}</p>:null}
    {actionError?<p role="alert">{actionError} <button className="button" disabled={busy} onClick={()=>setReload(n=>n+1)}>{t('optimization.topics.retry')}</button></p>:null}
-   <div className="modal-actions"><button className="button" onClick={()=>setDialog(false)}>{t('common.actions.cancel')}</button><button className="primary" disabled={!estimate||busy||!Number.isSafeInteger(limit)||limit<Math.max(estimate.minimum_limit,run.calls_limit||1)} onClick={()=>void action()}>{t('optimization.topics.confirm')}</button></div>
+   <div className="modal-actions"><button className="button" onClick={()=>setDialog(false)}>{t('common.actions.cancel')}</button><button className="primary" disabled={!estimate||busy||limit===undefined||!Number.isSafeInteger(limit)||limit<Math.max(estimate.minimum_limit,run.calls_limit||1)} onClick={()=>void action()}>{t('optimization.topics.confirm')}</button></div>
   </Modal>:null
  if(state==='not_requested')return modal
  return <section className="topic-directory">

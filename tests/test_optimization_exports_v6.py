@@ -3,10 +3,9 @@ from copy import deepcopy
 import io
 
 from docx import Document
-from pypdf import PdfReader
 import pytest
 
-from audio_intel import transcript_docx, transcript_pdf
+from audio_intel import transcript_docx, transcript_html
 from audio_intel.transcript import reading_sections
 from audio_intel.transcript_export import TranscriptExportRequest, export_result, format_transcript, optimized_export_result
 
@@ -36,7 +35,7 @@ def exported(monkeypatch, version='comparison', value=None):
     monkeypatch.setattr(optimization_store, 'get', lambda _: {'id': 'a' * 32, 'job_id': 'job',
         'published': True, 'state': 'succeeded', 'config': {'prompt_version': 6}})
     monkeypatch.setattr(optimization_engine, 'reading_result', lambda *args, **kwargs: deepcopy(data))
-    return optimized_export_result(job(), TranscriptExportRequest(format='pdf', text_version=version,
+    return optimized_export_result(job(), TranscriptExportRequest(format='html', text_version=version,
         optimization_id='a' * 32, replacements=[{'source': '阿特拉斯', 'target': '项目甲'}, {'source': 'Atlas', 'target': '项目甲'}]))
 
 
@@ -53,15 +52,15 @@ def test_published_draft_exports_before_review_finishes(monkeypatch, state):
     assert sections[1]['linked_paragraphs'] == [{'start': 0, 'scene_number': 1}]
 
 
-@pytest.mark.parametrize('format', ['pdf', 'docx', 'txt'])
+@pytest.mark.parametrize('format', ['html', 'docx', 'txt'])
 def test_review_and_cleanup_labels_survive_redaction(monkeypatch, tmp_path, format):
     data = draft(); data.update(review_state='completed', basic_cleanup_units=1)
     data['paragraphs'][0].update(review_status='needs_review', review_outcome='fact',
         generation_method='basic_cleanup', review_details={'stage': 'review', 'issues': [
             {'source_quote': '阿特拉斯', 'candidate_quote': 'Atlas', 'reason': '请核对阿特拉斯名称'}]})
     result = exported(monkeypatch, version='optimized' if format == 'txt' else 'comparison', value=data)
-    if format == 'pdf':
-        text = '\n'.join(p.extract_text() for p in PdfReader(io.BytesIO(transcript_pdf.render('title', result, tmp_path))).pages)
+    if format == 'html':
+        text = transcript_html.render('title', result, tmp_path, 'en-US').decode()
     elif format == 'docx':
         document = Document(io.BytesIO(transcript_docx.render('title', result, tmp_path)))
         text = '\n'.join(p.text for p in document.paragraphs) + '\n'.join(c.text for t in document.tables for r in t.rows for c in r.cells)

@@ -19,7 +19,7 @@ export async function uxFixture(page:Page){
  const state={people,groups,job,exports:[] as unknown[],created:[] as Record<string,unknown>[],patches:[] as Record<string,unknown>[],imports:[] as Record<string,unknown>[],groupError:false,sceneHold:undefined as (()=>Promise<void>)|undefined,auth:{required:true,authenticated:true}}
  const caps=await capabilitiesFor(page,{transcriptOptimization:true});caps.events.sse=false
  await page.route('**/api/v1/jobs/*/transcript-optimization',route=>route.fulfill({json:{enabled:false,published:null,candidate:null}}))
- await page.route('**/transcript-optimization/estimate',route=>route.fulfill({json:{estimated_calls:20,used_calls:0,minimum_limit:20,recommended_limit:30,max_llm_calls:300,sufficient:true,can_start:true,fingerprint:'fixture',breakdown:{generation:10,review:10}}}))
+ await page.route('**/transcript-optimization/estimate',route=>route.fulfill({json:{estimated_calls:20,used_calls:0,minimum_limit:20,recommended_limit:30,max_llm_calls:route.request().postDataJSON().run_id?100:30,sufficient:true,can_start:true,fingerprint:'fixture',breakdown:{generation:10,review:10}}}))
  await page.route('**/transcript-optimization/usage?*',route=>route.fulfill({json:{recorded:false,calls_used:null,max_llm_calls:null,remaining_calls:null,estimate:null,stages:{},failed_or_interrupted:0}}))
  await page.route('**/api/v1/auth/session',route=>route.fulfill({json:state.auth}))
  await page.route('**/api/v1/auth/logout',route=>{state.auth.authenticated=false;return route.fulfill({status:204})})
@@ -50,6 +50,6 @@ export async function uxFixture(page:Page){
   const start=range?Number(range[1]):0,end=range?.[2]?Math.min(Number(range[2]),audio.length-1):audio.length-1
   return route.fulfill({status:range?206:200,contentType:'audio/wav',headers:{'Accept-Ranges':'bytes',...(range?{'Content-Range':`bytes ${start}-${end}/${audio.length}`}:{})},body:audio.subarray(start,end+1)})
  })
- await page.route('**/api/v1/jobs/ux-video/transcript-export',route=>{state.exports.push(route.request().postDataJSON());return route.fulfill({contentType:'application/pdf',headers:{'Content-Disposition':'attachment; filename="transcript.pdf"'},body:'%PDF-fixture'})})
+ await page.route('**/api/v1/jobs/ux-video/transcript-export',route=>{state.exports.push(route.request().postDataJSON());return route.fulfill({contentType:'text/html',headers:{'Content-Disposition':'attachment; filename="transcript.html"'},body:'HTML-fixture'})})
  return{state,errors}
 }

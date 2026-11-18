@@ -5,7 +5,7 @@ from typing import Any
 
 from .model_registry import asr_enhancement_model, asr_models, tts_models
 from .asr_enhancement import strength_capabilities
-from .optimization_budget import DEFAULT_LIMIT
+from .optimization_budget import CALL_BUDGET_CAPABILITY
 
 
 API_DESCRIPTION = r"""
@@ -144,21 +144,21 @@ print("Database maintenance:", result["database_compaction_status"])
 
 Audio and compatible submissions accept `voiceprint_group_ids` as JSON-array form text; video takes a JSON array. Omission selects all. Eligible person IDs are fixed on first acceptance; replay and retry preserve the scope. Group moves do not rewrite historical results. Library ZIP v2 includes membership and continues to accept v1 imports.
 
-`POST /api/v1/jobs/{job_id}/transcript-export` 支持 PDF/DOCX/JSON/TXT/SRT/VTT，默认 `redact=true`，姓名缩写、备注遮盖居中一半；最多 100 对 `{source,target}` 字面关键词替换，每项最多 8000 字，区分大小写、最长优先、不连锁。关闭开关仅停止文字处理，PDF/DOCX 仍遵循画面隐藏设置；任务原数据、音频和画面保持原样。
+`POST /api/v1/jobs/{job_id}/transcript-export` 支持 HTML/DOCX/JSON/TXT/SRT/VTT，默认 `redact=true`，姓名缩写、备注遮盖居中一半；最多 100 对 `{source,target}` 字面关键词替换，每项最多 8000 字，区分大小写、最长优先、不连锁。关闭开关仅停止文字处理，HTML/DOCX 仍遵循画面隐藏设置；任务原数据、音频和画面保持原样。
 
-所有转写下载的附件名使用任务名主体加导出扩展名，例如 `Recording_10.m4a` → `Recording_10.pdf`，脱敏开关不隐藏文件名中的任务名称。旧 PDF GET/HEAD 和 ASR transcript.json/txt/srt/vtt 产物下载同样适用，URL 与磁盘产物名不变。浏览器遵循响应头；客户端显式指定输出路径时仍使用该路径。
+HTML 和 Word 文内标题使用上传文件名主体，开启脱敏时同样显示。所有转写下载的附件名使用任务名主体加导出扩展名，例如 `Recording_10.m4a` → `Recording_10.html`，脱敏开关不隐藏文件名中的任务名称。ASR transcript.json/txt/srt/vtt 产物下载同样适用，URL 与磁盘产物名不变。浏览器遵循响应头；客户端显式指定输出路径时仍使用该路径。
 
-Redacted downloads abbreviate names, mask notes, replace configured transcript keywords and remove auxiliary original identity snapshots from JSON. Turning redact off preserves original text; PDF/DOCX still honor export-hidden pictures with brief notices and retained text. PDF/DOCX caches and resource limits remain bounded; binary downloads use normal authentication and Retry-After recovery. Legacy artifact routes remain available; PDF GET retains original text and honors picture visibility. Only export copies change.
+Redacted downloads abbreviate names, mask notes, replace configured transcript keywords and remove auxiliary original identity snapshots from JSON. Turning redact off preserves original text; HTML/DOCX still honor export-hidden pictures with brief notices and retained text. Document generation uses bounded resources; binary downloads use normal authentication and Retry-After recovery. Legacy artifact routes remain available; retired PDF GET/HEAD return 410 and explicit PDF requests return 422. Only export copies change.
 
-All transcript attachments use the task basename plus export extension, such as `Recording_10.m4a` → `Recording_10.pdf`, regardless of redaction. Legacy PDF GET/HEAD and ASR transcript.json/txt/srt/vtt downloads use the same naming; URLs and saved artifacts remain unchanged. Browsers follow Content-Disposition; explicit client output paths still take precedence.
+HTML and Word document titles use the saved upload basename even with redaction. All transcript attachments use the task basename plus export extension, such as `Recording_10.m4a` → `Recording_10.html`, regardless of redaction. ASR transcript.json/txt/srt/vtt downloads use the same naming; URLs and saved artifacts remain unchanged. Browsers follow Content-Disposition; explicit client output paths still take precedence.
 
 ```bash
 BASE_URL=${AUDIO_INTEL_BASE_URL:-http://127.0.0.1:20810}
 JOB_ID=${JOB_ID:?export the completed ASR job ID first}
 curl --fail-with-body -sS -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"format":"pdf","redact":true,"replacements":[{"source":"广东移动","target":"gy"}]}' \
-  "$BASE_URL/api/v1/jobs/$JOB_ID/transcript-export" -o Recording_10.pdf
+  -d '{"format":"html","redact":true,"replacements":[{"source":"广东移动","target":"gy"}]}' \
+  "$BASE_URL/api/v1/jobs/$JOB_ID/transcript-export" -o Recording_10.html
 ```
 
 <details>
@@ -564,19 +564,19 @@ The stream immediately emits `event: job`, continues on changes, and closes at a
 
 Audio defaults to 4 GiB; the video API defaults to 25 GiB. Capabilities publish formats, chunk size and limits. Create a resumable upload, append exact-size checksummed chunks, then submit the complete upload to the shared ASR queue. GET the upload to verify persisted hashes before resuming. Unfinished uploads expire after 24 idle hours or 7 days total; DELETE immediately discards them. Submitted uploads follow task deletion.
 
-`GET /api/v1/jobs/{job_id}/video-scenes` 返回画面与合并发言；PATCH 同路径携带 revision，支持 merge_next / split / boundary / frame / restore / apply_detection / set_export_visibility；冲突后重新读取。`GET /api/v1/jobs/{job_id}/transcript.pdf` 对已完成音频返回简洁 PDF，对视频返回图文 PDF；同说话人连续发言合并时间与原文，保留口头语。原始逐句结果不丢弃。已有音频 JSON/TXT/SRT/VTT 保持可用。POST `/api/v1/jobs/{job_id}/transcript-export` 还支持 `format="docx"`，生成可编辑图文，沿用脱敏与画面隐藏规则。PDF、DOCX 与截图预览均无需云服务。
+`GET /api/v1/jobs/{job_id}/video-scenes` 返回画面与合并发言；PATCH 同路径携带 revision，支持 merge_next / split / boundary / frame / restore / apply_detection / set_export_visibility；冲突后重新读取。通过 POST transcript-export 下载离线 HTML；旧 PDF GET/HEAD 返回 410。
 
-GET video-scenes for images/paragraphs; PATCH with revision for edits, reloading on conflicts. Concise PDF/DOCX preserves words and combines adjacent same-speaker speech and time ranges; video adds representative images. Detailed audio formats remain available. PDF/DOCX generation is bounded and memory-cached; timestamp image previews do not write files. Picture-detection previews retain temporary images until expiry. Busy operations return 429. Images are heuristic presentation representatives, not codec I-frames; adjust changed-area and duration settings to tune detection.
+GET video-scenes for images/paragraphs; PATCH with revision for edits, reloading on conflicts. Concise HTML/DOCX preserves words and combines adjacent same-speaker speech and time ranges; video adds representative images. Detailed audio formats remain available. HTML/DOCX generation is bounded; timestamp image previews do not write files. Picture-detection previews retain temporary images until expiry. Busy operations return 429. Images are heuristic presentation representatives, not codec I-frames; adjust changed-area and duration settings to tune detection.
 
 画面检测参数来自 `asr.video.scene_detection`：最小变化比例默认 3%（0.5–50%），最短保持时间默认 1 秒（0.5–5 秒）。视频提交可传 `video_scene_detection`。结果页使用 POST `/api/v1/jobs/{job_id}/video-scene-previews`（Idempotency-Key，revision、settings）创建 CPU 预览；GET 同路径加 preview_id 轮询进度，DELETE 取消。ready 后 PATCH video-scenes，传 action=apply_detection、preview_id、revision 应用。首次 202、同 key 重放 200、冲突 409、繁忙 429、过期 410；最多一个计算、八份预览，30 分钟或重启后失效。最近自动分段保存在 automatic_scenes，首次 original_scenes 保留。只重算画面，不重新运行 ASR。
 
-Picture detection settings come from `asr.video.scene_detection`: changed area defaults to 3% (0.5–50), new-picture duration to 1 second (0.5–5). Video submissions accept `video_scene_detection`. POST `/api/v1/jobs/{job_id}/video-scene-previews` with Idempotency-Key, revision and settings; GET with preview_id polls and DELETE cancels. Apply a ready preview by PATCHing video-scenes with action=apply_detection, preview_id and revision. First acceptance 202, replay 200, conflict 409, busy 429, expiry 410. One active calculation, eight previews, 30-minute lifetime, invalidated on restart. Latest automatic sections are automatic_scenes; original_scenes retains the initial snapshot. ASR is not rerun. Export-hidden picture IDs persist in video.export_hidden_scene_ids. PATCH video-scenes with action=set_export_visibility, revision and the complete export_hidden_scene_ids list; an empty list restores all. PDF/DOCX uses brief notices while keeping text; JSON includes the markers. Text redaction does not disable picture hiding. Applying changed detection settings clears markers; unchanged settings retain only identical pictures. The browser exposes detection and export visibility, while manual section editing remains API-only.
+Picture detection settings come from `asr.video.scene_detection`: changed area defaults to 3% (0.5–50), new-picture duration to 1 second (0.5–5). Video submissions accept `video_scene_detection`. POST `/api/v1/jobs/{job_id}/video-scene-previews` with Idempotency-Key, revision and settings; GET with preview_id polls and DELETE cancels. Apply a ready preview by PATCHing video-scenes with action=apply_detection, preview_id and revision. First acceptance 202, replay 200, conflict 409, busy 429, expiry 410. One active calculation, eight previews, 30-minute lifetime, invalidated on restart. Latest automatic sections are automatic_scenes; original_scenes retains the initial snapshot. ASR is not rerun. Export-hidden picture IDs persist in video.export_hidden_scene_ids. PATCH video-scenes with action=set_export_visibility, revision and the complete export_hidden_scene_ids list; an empty list restores all. HTML/DOCX uses brief notices while keeping text; JSON includes the markers. Text redaction does not disable picture hiding. Applying changed detection settings clears markers; unchanged settings retain only identical pictures. The browser exposes detection and export visibility, while manual section editing remains API-only.
 
-presentation-v3 将分段和截图确认分开：截图需要在同一分段内连续稳定达到用户配置的 `min_stable_seconds`，与音频、句子时长无关。截图使用独立的降噪容差（显著颜色变化面积低于 0.4%），小通知不能因低于分段面积阈值而绕过确认。多个合格区间采用最后一个区间的首个实际采样帧；短暂变化不覆盖已确认截图。无合格画面时 `image`、`frame_time` 和预览 `preview_url` 为 null，阅读界面与 PDF/DOCX 保留独立的文字和时间段，不显示大幅缺图占位；画面目录只列保留截图，缺图空文字段默认省略展示，检测明细仍可查看“无稳定画面”；这不是加载错误或导出隐藏。分段范围与截图时刻分别显示。
+presentation-v3 将分段和截图确认分开：截图需要在同一分段内连续稳定达到用户配置的 `min_stable_seconds`，与音频、句子时长无关。截图使用独立的降噪容差（显著颜色变化面积低于 0.4%），小通知不能因低于分段面积阈值而绕过确认。多个合格区间采用最后一个区间的首个实际采样帧；短暂变化不覆盖已确认截图。无合格画面时 `image`、`frame_time` 和预览 `preview_url` 为 null，阅读界面与 HTML/DOCX 保留独立的文字和时间段，不显示大幅缺图占位；画面目录只列保留截图，缺图空文字段默认省略展示，检测明细仍可查看“无稳定画面”；这不是加载错误或导出隐藏。分段范围与截图时刻分别显示。
 
 保持时间范围仍为 0.5–5 秒，输入步进 0.1 秒（如 0.6）；约每 0.5 秒抽样，按实际时间跨度确认，不提前、跨分段或在片尾补足时长，因此非抽样间隔整数倍的设置可能等到下一个抽样点。检测仍是有容差的视觉启发式，不进行 OCR/通知语义识别。自动截图遵守此规则；明确手工指定截图的 API 保留原有语义。
 
-Presentation-v3 separates sections from screenshot confirmation. Automatic pictures require a continuous sampled stable interval inside one section lasting at least the configured `min_stable_seconds`, independently of audio or sentence length. A separate noise tolerance (significant RGB changes over less than 0.4% of pixels) prevents section-area settings from bypassing screenshot confirmation. The first actual sample of the latest qualifying interval represents the section; brief changes cannot overwrite it. Without a qualifying picture, `image`, `frame_time` and preview `preview_url` are null. The reader and PDF/DOCX preserve unillustrated prose without large placeholders or picture headings; empty content blocks are omitted. The picture directory numbers retained pictures only, while detection details can still show No stable picture; this is distinct from loading failure and export hiding. Section ranges and capture times are labeled separately.
+Presentation-v3 separates sections from screenshot confirmation. Automatic pictures require a continuous sampled stable interval inside one section lasting at least the configured `min_stable_seconds`, independently of audio or sentence length. A separate noise tolerance (significant RGB changes over less than 0.4% of pixels) prevents section-area settings from bypassing screenshot confirmation. The first actual sample of the latest qualifying interval represents the section; brief changes cannot overwrite it. Without a qualifying picture, `image`, `frame_time` and preview `preview_url` are null. The reader and HTML/DOCX preserve unillustrated prose without large placeholders or picture headings; empty content blocks are omitted. The picture directory numbers retained pictures only, while detection details can still show No stable picture; this is distinct from loading failure and export hiding. Section ranges and capture times are labeled separately.
 
 Duration remains 0.5–5 seconds with a 0.1-second input step, including 0.6. Sampling remains about 0.5 seconds. Confirmation uses observed elapsed time without early acceptance, crossing sections or padding EOF; fractional settings may wait until the next sample. This remains a noise-tolerant visual heuristic without OCR or notification recognition. Explicit manual frame selection retains its API semantics.
 
@@ -1367,7 +1367,7 @@ def _capabilities_example() -> dict[str, Any]:
         "deployment": {"profile": "full", "default_compute_device": "gpu", "gpu_runtime_installed": True},
         "asr": {
             "transcript_optimization": {
-                "supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096, "batching": {"supported": True, "enabled": True, "max_items": 12, "reason": "source_packets", "eligible_models": ["qwen3.5:9b"], "packet_version": 1, "retains_fine_insights": True, "independent_prose_review": True}, "call_budget": {"supported": True, "default_limit": DEFAULT_LIMIT, "counts_failed_attempts": True, "temporary_override": True},
+                "supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096, "batching": {"supported": True, "enabled": True, "max_items": 12, "reason": "source_packets", "eligible_models": ["qwen3.5:9b"], "packet_version": 1, "retains_fine_insights": True, "independent_prose_review": True}, "call_budget": CALL_BUDGET_CAPABILITY,
                 "text_versions": ["original", "optimized", "comparison"],
                 "rewrite_modes": ["polish", "rewrite", "editorial"], "default_rewrite_mode": "rewrite",
                 "summaries": {"version": 2, "automatic_fallback": True, "max_model_calls_per_node": 3,
@@ -1381,8 +1381,8 @@ def _capabilities_example() -> dict[str, Any]:
                     "model": None, "model_revision": None, "strength": strength_capabilities("gtcrn")["speech_enhancement"]},
                 "background_denoise": {"supported": True, "available": True, "default": True,
                     "model": enhancer["name"], "model_revision": enhancer["revision"], "strength": strength_capabilities("gtcrn")["background_denoise"]}},
-            "audio_formats": ["wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff"], "concise_pdf": True,
-            "transcript_export": {"formats": ["pdf", "docx", "json", "txt", "srt", "vtt"], "redact_default": True, "max_replacements": 100},
+            "audio_formats": ["wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff"], "concise_pdf": False,
+            "transcript_export": {"formats": ["html", "docx", "json", "txt", "srt", "vtt"], "redact_default": True, "max_replacements": 100},
             "video": {"supported": True, "formats": ["mp4", "m4v", "mov", "mkv", "webm", "avi", "mpeg", "mpg", "ts"],
                       "max_upload_bytes": 26843545600, "chunk_bytes": 33554432, "upload_idle_seconds": 86400,
                       "upload_lifetime_seconds": 604800, "max_scenes": 2000, "scene_editing": True, "scene_detection": scene_detection_capability()},
@@ -1440,7 +1440,7 @@ VIDEO_SCENES_EXAMPLE = {"revision": 1, "scenes": [{**VIDEO_SCENE_EXAMPLE, "parag
 ]}, {"id": "scene_2", "start": 3.2, "end": 4.0, "frame_time": None, "image": None, "paragraphs": []}]}
 REQUEST_EXAMPLES.update({
     ("/api/v1/jobs/{job_id}/transcript-export", "post"): {
-        "concise_pdf": {"summary": "简洁 PDF / Concise PDF", "value": {"format": "pdf", "redact": True}},
+        "offline_html": {"summary": "离线阅读 / Offline HTML", "value": {"format": "html", "redact": True}},
         "editable_docx": {"summary": "可编辑 Word / Editable Word", "value": {"format": "docx", "redact": True, "replacements": []}},
     },
     ("/api/v1/jobs/{job_id}/video-scene-previews", "post"): {
@@ -1545,7 +1545,7 @@ with httpx.Client(base_url=os.environ["AUDIO_INTEL_BASE_URL"], headers=headers) 
 _OPTIMIZATION_CONNECTION = {'base_url': 'http://localhost:11434/v1', 'use_proxy': False,
     'model': 'qwen3.5:9b', 'context_length': 16384, 'extra_body': {'reasoning_effort': 'none'}}
 _OPTIMIZATION_VERIFIED = {**_OPTIMIZATION_CONNECTION, 'protocol': 'openai_chat_completions',
-    'has_api_key': False, 'enabled': True, 'max_llm_calls': DEFAULT_LIMIT, 'max_output_tokens': 4096, 'structured_output_mode': 'json_schema',
+    'has_api_key': False, 'enabled': True, 'max_output_tokens': 4096, 'structured_output_mode': 'json_schema',
     'verified_at': '2026-11-03T00:00:00+00:00', 'prompt_version': 7,
     'model_context_length': None, 'observed_context_length': None, 'model_digest': None}
 _OPTIMIZATION_SETTINGS_PATH = '/api/v1/settings/transcript-optimization'
@@ -1556,7 +1556,7 @@ REQUEST_EXAMPLES.update({
     (_OPTIMIZATION_SETTINGS_PATH + '/verify', 'post'): {
         'local_ollama': {'summary': '验证已安装模型 / Verify an installed model', 'value': deepcopy(_OPTIMIZATION_CONNECTION)}},
     (_OPTIMIZATION_SETTINGS_PATH, 'put'): {
-        'verified_connection': {'summary': '使用本次验证返回的真实凭证 / Use the live token returned by verification', 'value': {**_OPTIMIZATION_CONNECTION, 'enabled': True, 'max_llm_calls': DEFAULT_LIMIT, 'max_output_tokens': 4096, 'verification_token': 'replace-with-verification-response-token'}}},
+        'verified_connection': {'summary': '使用本次验证返回的真实凭证 / Use the live token returned by verification', 'value': {**_OPTIMIZATION_CONNECTION, 'enabled': True, 'max_output_tokens': 4096, 'verification_token': 'replace-with-verification-response-token'}}},
 })
 
 
@@ -1742,7 +1742,7 @@ def enrich_openapi_schema(schema: dict[str, Any]) -> dict[str, Any]:
                 if not str(status).startswith("2"):
                     continue
                 for content_type, media in response.get("content", {}).items():
-                    if content_type in {"text/event-stream", "application/octet-stream", "application/pdf", "application/zip"} or content_type.startswith(("audio/", "video/", "image/")):
+                    if content_type in {"text/event-stream", "application/octet-stream", "text/html", "application/zip"} or content_type.startswith(("audio/", "video/", "image/")):
                         continue
                     response_schema = media.get("schema", {})
                     ref_name = response_schema.get("$ref", "").rsplit("/", 1)[-1]
@@ -1800,7 +1800,7 @@ with httpx.Client(base_url=base, headers=headers, timeout=360) as client:
 
 V2 gives each insight/reduction node at most three model requests and 60 seconds including transport retries: generate, repair explicit abnormalities, then extract literal keywords. Accepted source-matched, length-compliant keywords finish the item. Only if no usable keywords remain does local extraction select a bounded clause/phrase; a short group may fit in full. Long-scene fallback may select from saved reduction notes. Chinese summary/title limits remain 50/20 characters; word-separated languages use 30/10 words, and mixed scripts use proportional budgets.
 
-`ready` 包括有用的关键词与原文要点，页面与 PDF/Word 分别标记。`generation_method` 为 model/model_repair/model_keywords/source_excerpt；它属于小结，区别于正文的同名字段。`attempt_count` 包括已结束的连接失败尝试，不计程序摘取；长画面累计各节点，可能大于3。目录、介绍、引用、操作过程仍是有效输入，仅纯空内容／问候等可跳过。
+`ready` 包括有用的关键词与原文要点，页面与 HTML/Word 分别标记。`generation_method` 为 model/model_repair/model_keywords/source_excerpt；它属于小结，区别于正文的同名字段。`attempt_count` 包括已结束的连接失败尝试，不计程序摘取；长画面累计各节点，可能大于3。目录、介绍、引用、操作过程仍是有效输入，仅纯空内容／问候等可跳过。
 
 Counts are separate for group and scene: `processed = ready + skipped + failed`; `fallback_ready = keyword_ready + extractive_ready` is already included in ready. V2's four known method counters sum to ready; legacy unknown methods cannot be inferred. Delivery rate is `ready/(total-skipped)`, not applicable for a zero denominator, and is distinct from factual accuracy. Global job lists/SSE remain metadata-only.
 
@@ -1853,13 +1853,14 @@ with httpx.Client(base_url=base_url, headers=headers, timeout=120) as client:
     response = client.post(root + "/estimate", json={"rewrite_mode": "rewrite"})
     response.raise_for_status()
     estimate = response.json()
-    # Optional user-selected override, effective for this run only.
-    limit = int(os.getenv("OPTIMIZATION_CALL_LIMIT", str(estimate["max_llm_calls"])))
-    if limit < estimate["minimum_limit"]:
-        raise SystemExit(f"Review suggested limit {estimate['recommended_limit']} and set OPTIMIZATION_CALL_LIMIT")
-    response = client.post(root, headers={"Idempotency-Key": key},
-                           json={"regenerate": False, "rewrite_mode": "rewrite",
-                                 "max_llm_calls": limit, "estimate_fingerprint": estimate["fingerprint"]})
+    submission = {"rewrite_mode": "rewrite", "estimate_fingerprint": estimate["fingerprint"]}
+    # Omit max_llm_calls to use the recommendation, or choose a limit for this run.
+    if (override := os.getenv("OPTIMIZATION_CALL_LIMIT")) is not None:
+        limit = int(override)
+        if limit < estimate["minimum_limit"]:
+            raise SystemExit(f"Review suggested limit {estimate['recommended_limit']} and set OPTIMIZATION_CALL_LIMIT")
+        submission["max_llm_calls"] = limit
+    response = client.post(root, headers={"Idempotency-Key": key}, json=submission)
     response.raise_for_status()
     status = response.json()
     run = status["candidate"] or status["published"]
@@ -1888,7 +1889,7 @@ with httpx.Client(base_url=base_url, headers=headers, timeout=120) as client:
     Path("optimized.txt").write_bytes(response.content)
 ```
 
-暂停／继续使用 `POST .../pause` 或 `.../resume`，正文 `{"run_id":"已接受的运行 ID","phase":"workflow"}`；恢复保留原档位。优化稿支持 PDF/DOCX/TXT，对照支持 PDF/DOCX；新候选未完成返回 409。增强音入库示例：
+暂停／继续使用 `POST .../pause` 或 `.../resume`，正文 `{"run_id":"已接受的运行 ID","phase":"workflow"}`；恢复保留原档位。优化稿支持 HTML/DOCX/TXT，对照支持 HTML/DOCX；新候选未完成返回 409。增强音入库示例：
 
 ```python
 import os
@@ -1921,7 +1922,7 @@ Newly reverified `qwen3.5:9b` profiles enable source packets for new runs; other
 
 ## 调用预算 / LLM call budget
 
-新配置默认每次优化最多100次调用；已有显式配置和任务快照保持原值。上限不是消耗目标，所有阶段及失败尝试共用，暂停继续和补试小结不重置。仅改调用上限不需重新验证。
+新建和重新优化默认使用本次预估的建议上限，已包含重试余量。所有阶段及失败尝试共用本稿额度，继续和补试沿用余额。系统配置的旧字段仅供旧客户端读写。
 `POST /api/v1/jobs/{job_id}/transcript-optimization/estimate` 不调用模型，返回正常预估、最小及建议总上限。
 创建支持 `max_llm_calls` 一次性覆盖；继续与小结补试允许调高当前总上限，额度耗尽保留检查点并暂停。
 `GET .../usage?run_id=...` 返回实际尝试次数及阶段分布，历史未记录用量为null。
@@ -1929,7 +1930,7 @@ Newly reverified `qwen3.5:9b` profiles enable source packets for new runs; other
 配置 `max_output_tokens` 控制单次最大输出，默认4096；`context_length` 是输入加输出的客户端总预算。
 UI用K tokens（1K=1024），API用整数tokens；高级输出参数不得与显式上限冲突。
 表达优化入口提供用量详情，不自动弹窗。新验证9B配置启用请求包，保留全部细分小结；其他模型和旧稿保留原策略。
-New configurations default to 100 calls; explicit saved limits and run snapshots are preserved. The cap is not a spending target. All stages and failed attempts count, resume keeps usage, and temporary overrides never change System settings. Call-limit-only edits need no model re-verification. Context includes input, output and safety allowance; UI uses K tokens while API fields use integer tokens. Estimate/usage endpoints and the executable example above show one-run overrides. Newly reverified 9B profiles enable source packets; other models and historical runs retain their policy.
+New and regenerated drafts use their recommended limit, including retry headroom. An explicit per-run limit takes precedence. All stages and failed attempts count toward the saved allowance. Resume and follow-up work share it. The deprecated connection setting is retained for older clients. Context includes input, output and safety allowance; UI uses K tokens while API fields use integer tokens. Estimate/usage endpoints and the executable example above show one-run overrides. Newly reverified 9B profiles enable source packets; other models and historical runs retain their policy.
 """
 
 
@@ -1941,11 +1942,11 @@ API_DESCRIPTION += """
 
 GET `.../transcript-optimization/topics?run_id=...&include_outline=true&outline_version=2` 返回来源偏移、时间精度、片段/段落ID与关联画面编号；`groups` 保留每次议题出现的位置，`merged_groups` 是显式合并投影。省略 `outline_version` 保持v1；ETag包含该选项。未发布内容不公开。
 
-PDF/Word的 `organization:topic` 要求同任务已发布的 `optimization_id`，支持原文、优化稿、对照稿。新界面显式传 `merge_repeated_topics:false` 保持讲述顺序，`true` 把后续重复内容并至首次出现的位置；省略该字段保留旧导出组织方式。读取、切换、定位及导出均不调用模型。
+HTML/Word的 `organization:topic` 要求同任务已发布的 `optimization_id`，支持原文、优化稿、对照稿。新界面显式传 `merge_repeated_topics:false` 保持讲述顺序，`true` 把后续重复内容并至首次出现的位置；省略该字段保留旧导出组织方式。读取、切换、定位及导出均不调用模型。
 
 新阅读计划拒绝狭义 `/topics` 写入、预估、暂停、继续并返回409。需要更改议题时，对整个表达优化流程预估，再提交 `regenerate:true, analyze_topics:true`；旧成功稿保留到新稿发布。兼容的旧阅读计划仍支持 `/topics/estimate`、`/topics`、`/topics/pause`、`/topics/resume`；创建与继续要求Idempotency-Key，保留202/200/409/429语义和原预算。`summary_method:source_excerpt` 是明确标记的原文要点。`usage.token_usage`缺失表示未知，字节数不是tokens。
 
-**English:** New topic-enabled workflows discover topics before freezing source-offset reading blocks and generating prose. Opt into outline_version=2 for chronological occurrences plus an explicit merged_groups projection; omitted versions remain v1. Result paragraphs carry stable reading block/topic/occurrence IDs; summaries.blocks contains their titles. PDF/Word accept merge_repeated_topics=false for source order or true to consolidate recurrences; omission preserves legacy organization. Images remain associated resources. Narrow topic operations return409 for source-bound plans: explicitly estimate and regenerate the complete draft. Previous successful drafts remain readable until publication. Compatible legacy workflows retain their auxiliary topic endpoints and idempotent submission contracts. Reads and exports make no model calls; unknown provider token counts remain null.
+**English:** New topic-enabled workflows discover topics before freezing source-offset reading blocks and generating prose. Opt into outline_version=2 for chronological occurrences plus an explicit merged_groups projection; omitted versions remain v1. Result paragraphs carry stable reading block/topic/occurrence IDs; summaries.blocks contains their titles. HTML/Word accept merge_repeated_topics=false for source order or true to consolidate recurrences; omission preserves legacy organization. Images remain associated resources. Narrow topic operations return409 for source-bound plans: explicitly estimate and regenerate the complete draft. Previous successful drafts remain readable until publication. Compatible legacy workflows retain their auxiliary topic endpoints and idempotent submission contracts. Reads and exports make no model calls; unknown provider token counts remain null.
 
 Executable example: `python3 scripts/optimize_transcript.py --url http://localhost:20815 --job JOB_ID --analyze-topics`
 """

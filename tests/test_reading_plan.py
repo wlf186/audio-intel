@@ -41,3 +41,19 @@ def test_source_partition_occurrences_and_shared_frames():
     projected['merge_repeated_topics'] = True
     assert children() == [plan[i]['reading_block_id'] for i in (0,2,1)]
     assert all(s.get('reading_block') for s in sections(export) if 'topic_heading' not in s)
+
+
+def test_recurring_export_labels_follow_identity():
+    from audio_intel.reading_outline import export_headings
+
+    raw, topics = recording(), catalogue()
+    raw.pop('video')
+    topics['topics'][1]['title'] = topics['topics'][0]['title']
+    plan = units(raw, topics)
+    result = {**raw, 'reading_outline': outline(raw, topics, plan, {}),
+              'segments': [{'reading_block_id': unit['reading_block_id']} for unit in plan]}
+    for merge, expected in [(False, ['设计', '设计', '设计（续 1）']), (True, ['设计', '设计'])]:
+        result['reading_outline']['merge_repeated_topics'] = merge
+        rows = sections(result)
+        titles = export_headings(result, rows)
+        assert [titles[row['id']] for row in rows if 'topic_heading' in row] == expected

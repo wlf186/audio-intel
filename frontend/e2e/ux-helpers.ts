@@ -38,7 +38,7 @@ export async function assertReachable(page:Page,width:number){
  expect(clipped).toEqual([])
 }
 
-export async function downloadConcise(page:Page,format:'pdf'|'docx'='pdf'){
+export async function downloadConcise(page:Page,format:'html'|'docx'='html'){
  await openTranscriptExport(page)
  const modal=page.locator('.transcript-export-modal')
  if(await modal.isVisible()){

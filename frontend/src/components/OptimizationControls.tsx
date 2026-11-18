@@ -1,90 +1,143 @@
 import {createPortal} from 'react-dom'
-import {useEffect,useState,type ReactNode} from 'react'
+import {useEffect,useId,useRef,useState,type ReactNode} from 'react'
 import {useTranslation} from 'react-i18next'
 import {Sparkles} from 'lucide-react'
 import type {OptimizationController} from '../hooks/useOptimization'
+import type {OptimizationSummary} from '../lib/optimization'
+import type {ReadingMode} from '../lib/workspaceSession'
 import {ConfirmDialog} from './ConfirmDialog'
 import {Modal} from './Modal'
-import {request} from '../lib/api'
-import {DEFAULT_CALL_LIMIT,LEGACY_CALL_LIMIT,optimizationSettingsPath,needsServiceNotice,type OptimizationConfiguration,readRewriteMode,saveRewriteMode,readAnalyzeTopics,saveAnalyzeTopics,rewriteModes,type RewriteMode} from '../lib/optimization'
-import type {ReadingMode} from '../lib/workspaceSession'
+import {OptimizationSetup,type SetupAction} from './OptimizationSetup'
+import {OptimizationUsage} from './OptimizationUsage'
 import './optimization.css'
-import {SettingToggleRow} from './SettingToggleRow'
-import {OptimizationBudget} from './OptimizationBudget'
 
-const ignoreReady=()=>{}
+type Props={
+ controller:OptimizationController;video:boolean;videoReading:boolean;topicsSupported?:boolean;regenerateTrigger?:number
+ onOriginal:()=>void;onDetails:()=>void;onModeChange:(mode:ReadingMode)=>void;onRequestTopics?:()=>void
+ actionsTarget?:HTMLElement|null;tools?:ReactNode;children?:ReactNode
+}
 
-export function OptimizationControls({controller,video,topicsSupported=false,onRequestTopics,regenerateTrigger=0,videoReading,onOriginal,onDetails,onModeChange,tools,children,actionsTarget}:{actionsTarget?:HTMLElement|null;controller:OptimizationController;regenerateTrigger?:number;topicsSupported?:boolean;onRequestTopics?:()=>void;video:boolean;videoReading:boolean;onOriginal:()=>void;onDetails:()=>void;onModeChange:(mode:ReadingMode)=>void;tools?:ReactNode;children?:ReactNode}){
+function RunProgress({run,description,children}:{run:OptimizationSummary;description:string;children:ReactNode}){
  const {t}=useTranslation()
- const [analyzeTopics,setAnalyzeTopics]=useState(readAnalyzeTopics)
- const [summaryBudget,setSummaryBudget]=useState(false)
- const [estimateFingerprint,setEstimateFingerprint]=useState('')
- const [callLimit,setCallLimit]=useState<number>()
- const [budgetReady,setBudgetReady]=useState(false)
- const [inspection,setInspection]=useState(false)
+ const counts=run.summary_status?.counts
+ let done=run.completed_chars,total=run.total_chars
+ let message:'optimization.characterProgress'|'optimization.checkProgress'|'optimization.metrics.summaryCount'|'optimization.metrics.topicCount'='optimization.characterProgress'
+ let stage:`optimization.states.${OptimizationSummary['state']}`|'optimization.checking'|'optimization.summarizing'|'optimization.topics.discovering'=`optimization.states.${run.state}`
+ if(run.phase==='review'){
+  done=run.reviewed_parts??0;total=run.total_parts??0;message='optimization.checkProgress'
+  if(run.state==='running')stage='optimization.checking'
+ }else if(run.phase==='summaries'){
+  done=(counts?.group?.processed??0)+(counts?.scene?.processed??0)
+  total=(counts?.group?.total??0)+(counts?.scene?.total??0)
+  message='optimization.metrics.summaryCount'
+  if(run.state==='running')stage='optimization.summarizing'
+ }else if(run.phase==='topics'){
+  done=run.topic_completed_nodes??0;total=run.topic_total_nodes??0;message='optimization.metrics.topicCount'
+  if(run.state==='running')stage='optimization.topics.discovering'
+ }
+ return <div className="optimization-workflow">
+  <div className="optimization-status-summary" role="status"><strong>{t(stage)}</strong><span>{description}</span></div>
+  {total>0?<div className="optimization-progress-line"><span>{t(message,{done,total})}</span><progress value={done} max={total} aria-label={t(stage)}/></div>:null}
+  {children}
+ </div>
+}
+
+export function OptimizationControls({controller,video,topicsSupported=false,onRequestTopics,regenerateTrigger=0,videoReading,onOriginal,onDetails,onModeChange,tools,children,actionsTarget}:Props){
+ const {t}=useTranslation()
  const [open,setOpen]=useState(false)
- useEffect(()=>{if(regenerateTrigger){setAnalyzeTopics(true);setOpen(true)}},[regenerateTrigger])
- const [connection,setConnection]=useState<OptimizationConfiguration>()
- const [connectionError,setConnectionError]=useState('')
- const [connectionRetry,setConnectionRetry]=useState(0)
- useEffect(()=>{if(!open)return;const abort=new AbortController();setConnection(undefined);setConnectionError('');void request<OptimizationConfiguration>(optimizationSettingsPath,{signal:abort.signal}).then(setConnection).catch(error=>{if(!abort.signal.aborted)setConnectionError((error as Error).message)});return()=>abort.abort()},[open,connectionRetry])
+ const [setup,setSetup]=useState<SetupAction>()
+ const [readable,setReadable]=useState(false)
+ const [requestTopics,setRequestTopics]=useState(false)
  const [deleting,setDeleting]=useState(false)
- const [rewriteMode,setRewriteMode]=useState<RewriteMode>(readRewriteMode)
- const {status,error,busy,view}=controller
+ const stateId=useId()
+ const trigger=useRef(regenerateTrigger)
+ const {status,error,busy,jobId}=controller
  const current=status?.candidate,published=status?.published
+ const run=readable&&published?published:current??published
+ const history=Boolean(current||published)
+ const canGenerate=Boolean(!current||current.state==='failed'||current.requires_regeneration)
+ const show=()=>{setSetup(undefined);setReadable(false);setRequestTopics(false);setOpen(true)}
+ useEffect(()=>{
+  if(trigger.current===regenerateTrigger)return
+  trigger.current=regenerateTrigger
+  setSetup('regenerate');setRequestTopics(true);setOpen(true)
+ },[regenerateTrigger])
  const active=current&&['queued','running','pausing'].includes(current.state)
- const checking=current?.phase==='review'
- const summarizing=current?.phase==='summaries'
- const discovering=current?.phase==='topics'
- const counts=current?.summary_status?.counts
- const summaryDone=(counts?.group?.processed||0)+(counts?.scene?.processed||0)
- const summaryTotal=(counts?.group?.total||0)+(counts?.scene?.total||0)
- const publishedSummaries=published?.summary_status
- const auxActive=publishedSummaries&&['queued','running'].includes(publishedSummaries.state)
- const missingSummaries=publishedSummaries&&['paused','partial'].includes(publishedSummaries.state)
- const summaryProgress=(value:typeof publishedSummaries)=>t('optimization.summaryProgress',{done:(value?.counts.group?.processed||0)+(value?.counts.scene?.processed||0),total:(value?.counts.group?.total||0)+(value?.counts.scene?.total||0),failed:(value?.counts.group?.failed||0)+(value?.counts.scene?.failed||0)})
- const fallbackCounts=publishedSummaries?.counts
- const keywordCount=(fallbackCounts?.group?.keyword_ready||0)+(fallbackCounts?.scene?.keyword_ready||0)
- const sourceCount=(fallbackCounts?.group?.extractive_ready||0)+(fallbackCounts?.scene?.extractive_ready||0)
- const canGenerate=status?.enabled&&!busy&&(!current||current.state==='failed'||current.requires_regeneration)
- const action=current||published?'regenerate':'create'
- const progress=current?<div className="optimization-workflow" role="status">
-  <div><strong>{discovering?t('optimization.topics.discovering'):t(current.state==='running'&&summarizing?'optimization.summarizing':current.state==='running'&&checking?'optimization.checking':`optimization.states.${current.state}`)}</strong><span>{discovering?`${current.topic_completed_nodes||0} / ${current.topic_total_nodes||0}`:summarizing?t('optimization.summaryProgress',{done:summaryDone,total:summaryTotal,failed:(counts?.group?.failed||0)+(counts?.scene?.failed||0)}):checking?t('optimization.checkProgress',{done:current.reviewed_parts||0,total:current.total_parts||0}):t('optimization.characterProgress',{done:current.completed_chars,total:current.total_chars})}</span></div>
-  <progress value={discovering?current.topic_completed_nodes||0:summarizing?summaryDone:checking?current.reviewed_parts||0:current.completed_chars} max={Math.max(1,discovering?current.topic_total_nodes||0:summarizing?summaryTotal:checking?current.total_parts||0:current.total_chars)}/>
-  {active?<button className="button" disabled={busy||current.state==='pausing'} onClick={()=>void controller.action('pause')}>{t('optimization.pause')}</button>:<button className="button" disabled={busy||!status?.enabled||current.requires_regeneration||Boolean(open&&current.budget_error&&!budgetReady)} onClick={()=>{if(current.budget_error&&!open){setCallLimit(undefined);setSummaryBudget(false);setOpen(true);return}void controller.action('resume','rewrite','workflow',callLimit)}}>{t('optimization.resume')}</button>}
-  {current.error?<p className="error">{current.error}</p>:null}
- </div>:null
- const actions=<div className="optimization-actions"><button className="button" aria-label={t('optimization.title')} title={t('optimization.title')} disabled={!status} onClick={()=>{setRewriteMode(published?.rewrite_mode||readRewriteMode());setCallLimit(undefined);setSummaryBudget(false);setAnalyzeTopics(readAnalyzeTopics());setOpen(true)}}><Sparkles size={15}/>{t('reading.optimizeAction')}</button>{topicsSupported&&published&&(!published.topic_state||published.topic_state==='not_requested')&&published.calls_limit!=null?<button className="button" disabled={!status?.enabled||busy} onClick={onRequestTopics}>{t('optimization.topics.generate')}</button>:null}<button className="button" aria-label={t('reading.status')} title={error||controller.insightsError||t('reading.status')} onClick={()=>setInspection(true)}>{current?t(`optimization.states.${current.state}`):t('reading.detailsAction')}{error||controller.insightsError?' !':''}</button>{children}</div>
+ const summaries=run?.summary_status
+ const retrySummary=summaries?.state==='paused'||summaries?.state==='partial'
+ const activeSummary=summaries?.state==='queued'||summaries?.state==='running'
+ const keywords=(summaries?.counts.group?.keyword_ready??0)+(summaries?.counts.scene?.keyword_ready??0)
+ const extracts=(summaries?.counts.group?.extractive_ready??0)+(summaries?.counts.scene?.extractive_ready??0)
+ const action:SetupAction|undefined=!status?undefined:!history?'create':
+  setup==='regenerate'&&canGenerate?'regenerate':setup==='resume'&&current?.budget_error?'resume':
+  setup==='summaryRetry'&&retrySummary?'summaryRetry':undefined
+ const description=run?.rewrite_mode?t('optimization.currentMode',{mode:t(`optimization.rewriteModes.${run.rewrite_mode}.label`)})+' · '+run.model:run?.model??''
+ const openDraft=()=>{setOpen(false);onModeChange('optimized')}
+ const close=()=>setOpen(false)
+ const actions=<div className="optimization-actions">
+  {jobId?<button className="button" aria-haspopup="dialog" aria-label={t('optimization.title')} aria-describedby={current?stateId:undefined} aria-expanded={open} onClick={show}>
+   <Sparkles size={15}/>{t('optimization.title')}{current?<span id={stateId} className="optimization-trigger-state">{t(`optimization.states.${current.state}`)}</span>:null}
+  </button>:null}
+  {topicsSupported&&published&&(!published.topic_state||published.topic_state==='not_requested')&&published.calls_limit!=null?<button className="button" disabled={!status?.enabled||busy} onClick={onRequestTopics}>{t('optimization.topics.generate')}</button>:null}
+  {children}
+ </div>
  return <>
   <div className="optimization-toolbar">
    <div className="optimization-modes" role="group" aria-label={t('optimization.readingMode')}>
-    <button aria-pressed={!view} onClick={()=>onModeChange('original')}>{t('optimization.original')}</button>
+    <button aria-pressed={!controller.view} onClick={()=>onModeChange('original')}>{t('optimization.original')}</button>
     <button aria-pressed={controller.mode==='optimized'} disabled={!published} onClick={()=>onModeChange('optimized')}>{t('optimization.draft')}</button>
     <button aria-pressed={controller.compare} disabled={!published} onClick={()=>onModeChange('comparison')}>{t('optimization.compare')}</button>
    </div>
-   {video?<div className="optimization-modes reading-layout-switch" role="group" aria-label={t('optimization.layout')}><button aria-label={t('video.reading')} title={t('video.reading')} aria-pressed={videoReading} onClick={onOriginal}>{t('reading.pictureLayout')}</button><button aria-label={t('optimization.textReading')} title={t('optimization.textReading')} aria-pressed={!videoReading} onClick={onDetails}>{t('reading.textLayout')}</button></div>:null}
+   {video?<div className="optimization-modes reading-layout-switch" role="group" aria-label={t('optimization.layout')}>
+    <button aria-label={t('video.reading')} title={t('video.reading')} aria-pressed={videoReading} onClick={onOriginal}>{t('reading.pictureLayout')}</button>
+    <button aria-label={t('optimization.textReading')} title={t('optimization.textReading')} aria-pressed={!videoReading} onClick={onDetails}>{t('reading.textLayout')}</button>
+   </div>:null}
    {actionsTarget?createPortal(actions,actionsTarget):actions}
   </div>
   {tools?<div className="optimization-filter-row">{tools}</div>:null}
-  {inspection?<Modal title={t('reading.status')} closeLabel={t('common.actions.close')} onClose={()=>setInspection(false)}>{progress}  {published?<div className="optimization-status-summary" role="status"><span>{t('optimization.states.succeeded')} · {t('optimization.currentMode',{mode:t(`optimization.rewriteModes.${published.rewrite_mode||'rewrite'}.label`)})}</span>{publishedSummaries?.version?<span>{summaryProgress(publishedSummaries)}{keywordCount||sourceCount?` · ${t('optimization.summaryFallbackCount',{keywords:keywordCount,source:sourceCount})}`:''}{auxActive||missingSummaries?` · ${t(publishedSummaries.state==='paused'?'optimization.summaryStates.paused':publishedSummaries.state==='partial'?'optimization.summaryStates.partial':publishedSummaries.state==='queued'?'optimization.summaryStates.queued':'optimization.summaryStates.running')}`:''}</span>:<span>{t('optimization.legacySummaries')}</span>}{auxActive||missingSummaries?<button className="button" disabled={busy||!status?.enabled} onClick={()=>{if(!auxActive&&published.calls_limit!=null){setInspection(false);setSummaryBudget(true);setCallLimit(undefined);setOpen(true)}else void controller.action(auxActive?'summaryPause':'summaryRetry')}}>{t(auxActive?'optimization.pauseSummaries':'optimization.retrySummaries')}</button>:null}{Boolean(published.needs_review_units||published.uncertain_units||published.unavailable_units)?<details><summary>{t('optimization.checkDetails')}</summary><p>{t('optimization.checkWarnings',{facts:published.needs_review_units||0,uncertain:published.uncertain_units||0,unavailable:published.unavailable_units||0})}</p></details>:null}</div>:null}
-  {controller.insightsError?<p className="error" role="alert">{controller.insightsError} <button className="button" onClick={controller.retry}>{t('common.actions.retry')}</button></p>:null}
-  {error?<p className="error" role="alert">{error} <button className="button" onClick={controller.retry}>{t('common.actions.retry')}</button></p>:null}
-</Modal>:null}
-
-  {open?<Modal className="optimization-mode-modal" title={t('optimization.title')} closeLabel={t('common.actions.close')} onClose={()=>setOpen(false)}>
-     {controller.insightsError?<p className="error" role="alert">{controller.insightsError} <button className="button" onClick={controller.retry}>{t('common.actions.retry')}</button></p>:null}
-  {error?<p className="error" role="alert">{error} <button className="button" onClick={controller.retry}>{t('common.actions.retry')}</button></p>:null}
-   <div className="optimization-dialog-intro"><strong>{t(published?'optimization.regenerate':'optimization.begin')}</strong><p>{t(published?'optimization.regenerateHelp':'optimization.workflowHelp')}</p>{connection?<small>{t('optimization.model')}: {connection.model} · {connection.base_url}</small>:connectionError?<p role="alert">{connectionError} <button className="button" onClick={()=>setConnectionRetry(n=>n+1)}>{t('common.actions.retry')}</button></p>:<p role="status">{t('common.states.loading')}</p>}<small>{t('optimization.summaryHelp')}</small>{video?<small>{t('optimization.sceneScope')}</small>:null}</div>
-   {connection&&needsServiceNotice(connection.base_url)?<p className="optimization-service-notice">{t('optimization.serviceNotice')}</p>:null}
-   {current?progress:null}
-   {published&&canGenerate&&!summaryBudget?<details className="previous-usage"><summary>{t('reading.previousUsage')}</summary><OptimizationBudget jobId={controller.jobId} revision={published.revision} runId={published.id} mode={rewriteMode} planning={false} defaultLimit={published.calls_limit??LEGACY_CALL_LIMIT} onLimit={setCallLimit} onReady={ignoreReady}/></details>:null}
-   <fieldset className="optimization-mode-choices" disabled={Boolean(summaryBudget||current&&!canGenerate)}><legend>{t('optimization.chooseMode')}</legend>{rewriteModes.map(mode=><label key={mode} className={rewriteMode===mode?'selected':''}><input type="radio" name="rewrite-mode" value={mode} checked={rewriteMode===mode} onChange={()=>{setRewriteMode(mode);saveRewriteMode(mode)}}/><span><strong>{t(`optimization.rewriteModes.${mode}.label`)}</strong><small>{t(`optimization.rewriteModes.${mode}.help`)}</small></span></label>)}</fieldset>
-   {connection?<OptimizationBudget jobId={controller.jobId} revision={canGenerate?undefined:current?.revision||published?.revision} runId={summaryBudget?published?.id:canGenerate?undefined:current?.id||published?.id} mode={rewriteMode} analyzeTopics={analyzeTopics} planning={Boolean(summaryBudget||canGenerate||current?.state==='paused'||current?.state==='failed')} defaultLimit={summaryBudget?(published?.calls_limit??LEGACY_CALL_LIMIT):canGenerate?(connection.max_llm_calls??DEFAULT_CALL_LIMIT):(current?.calls_limit??LEGACY_CALL_LIMIT)} limit={callLimit} onEstimate={setEstimateFingerprint} onLimit={setCallLimit} onReady={setBudgetReady}/>:null}
-   {topicsSupported&&canGenerate&&!summaryBudget?<SettingToggleRow id="optimization-analyze-topics" label={t('optimization.topics.option')} description={t('reading.rememberTopics')} help={t('optimization.topics.help')} checked={analyzeTopics} onChange={value=>{setBudgetReady(false);setAnalyzeTopics(value);saveAnalyzeTopics(value)}}/>:null}
-
-   {status&&!status.enabled?<a className="button" href="#system" onClick={()=>setOpen(false)}>{t('optimization.configure')}</a>:null}
-   <div className="modal-actions">{current||published?<details className="optimization-management"><summary>{t('optimization.more')}</summary><button className="button danger-action" disabled={busy} onClick={()=>{setOpen(false);setDeleting(true)}}>{t('optimization.delete')}</button></details>:null}<button className="button" onClick={()=>setOpen(false)}>{t('common.actions.cancel')}</button><button className="primary" disabled={Boolean((!canGenerate&&!summaryBudget)||busy||!connection?.enabled||!budgetReady)} onClick={async()=>{if(await controller.action(summaryBudget?'summaryRetry':action,rewriteMode,'workflow',callLimit??(summaryBudget?published?.calls_limit??LEGACY_CALL_LIMIT:connection?.max_llm_calls??DEFAULT_CALL_LIMIT),estimateFingerprint,analyzeTopics))setOpen(false);else setConnectionRetry(n=>n+1)}}>{t(summaryBudget?'optimization.retrySummaries':published||current?'optimization.regenerate':'optimization.begin')}</button></div>
+  {open?<Modal focusTitle className="optimization-mode-modal optimization-dialog" title={t('optimization.title')} closeLabel={t('common.actions.close')} onClose={close}>
+   {error||controller.insightsError?<p className="error" role="alert">{error||controller.insightsError} <button className="button" onClick={controller.retry}>{t('common.actions.retry')}</button></p>:null}
+   {!status&&!error?<p role="status">{t('common.states.loading')}</p>:null}
+   {action&&jobId?<OptimizationSetup key={action} action={action} jobId={jobId} controller={controller}
+    run={action==='resume'?current:published??current} requestTopics={requestTopics} topicsSupported={topicsSupported}
+    onBack={history?()=>setSetup(undefined):undefined} onClose={close}/>:run&&jobId?<>
+    <div className="optimization-dialog-body">
+     {current&&published?<div className="optimization-run-switch" role="group" aria-label={t('optimization.metrics.version')}>
+      <button aria-pressed={!readable} onClick={()=>setReadable(false)}>{t('optimization.metrics.current')}</button>
+      <button aria-pressed={readable} onClick={()=>setReadable(true)}>{t('optimization.metrics.readable')}</button>
+     </div>:null}
+     {run.published?<div className="optimization-status-summary"><strong>{t('optimization.states.succeeded')}</strong><span>{description}</span></div>:<RunProgress run={run} description={description}>
+      {active?<button className="button" disabled={busy||run.state==='pausing'} onClick={()=>void controller.action('pause')}>{t('optimization.pause')}</button>:null}
+     </RunProgress>}
+     <OptimizationUsage key={run.id} jobId={jobId} run={run}/>
+     {run.error?<p className="error" role="alert">{run.error}</p>:null}
+     {run.requires_regeneration?<p>{t('optimization.oldPolicy')}</p>:null}
+     {run.published&&Boolean(run.needs_review_units||run.uncertain_units||run.unavailable_units)?<p className="optimization-attention">{t('optimization.checkWarnings',{facts:run.needs_review_units??0,uncertain:run.uncertain_units??0,unavailable:run.unavailable_units??0})}</p>:null}
+     {run.published&&summaries?.version&&Boolean(activeSummary||retrySummary||keywords||extracts)?<div className="optimization-summary-report">
+      {activeSummary||retrySummary?<><p>{t('optimization.summaryProgress',{
+       done:(summaries.counts.group?.processed??0)+(summaries.counts.scene?.processed??0),
+       total:(summaries.counts.group?.total??0)+(summaries.counts.scene?.total??0),
+       failed:(summaries.counts.group?.failed??0)+(summaries.counts.scene?.failed??0)})}</p>
+       <button className="button" disabled={busy||!status?.enabled} onClick={()=>{
+        if(retrySummary&&run.calls_limit!=null)setSetup('summaryRetry')
+        else void controller.action(activeSummary?'summaryPause':'summaryRetry')
+       }}>{t(activeSummary?'optimization.pauseSummaries':'optimization.retrySummaries')}</button></>:null}
+      {keywords||extracts?<small>{t('optimization.summaryFallbackCount',{keywords,source:extracts})}</small>:null}
+     </div>:null}
+     <details className="optimization-management"><summary>{t('optimization.metrics.manage')}</summary><button className="button danger-action" disabled={busy} onClick={()=>{setDeleting(true);close()}}>{t('optimization.delete')}</button></details>
+    </div>
+    <div className="optimization-dialog-footer">
+     {!status?.enabled?<a className="button" href="#system" onClick={close}>{t('optimization.configure')}</a>:null}
+     {canGenerate&&status?.enabled?<button className="button" disabled={busy} onClick={()=>setSetup('regenerate')}>{t('optimization.regenerate')}</button>:null}
+     {!run.published&&!run.requires_regeneration&&['paused','failed'].includes(run.state)?<button className="primary" disabled={!status?.enabled||busy} onClick={()=>{
+      if(run.budget_error)setSetup('resume')
+      else void controller.action('resume')
+     }}>{t(run.budget_error?'optimization.metrics.raiseAndResume':'optimization.resume')}</button>:null}
+     {run.published?<button className="primary" onClick={openDraft}>{t('optimization.metrics.readDraft')}</button>:null}
+    </div>
+   </>:null}
   </Modal>:null}
-  {deleting?<ConfirmDialog title={t('optimization.delete')} description={t('optimization.deleteHelp')} confirmLabel={t('optimization.delete')} busy={busy} danger onClose={()=>setDeleting(false)} onConfirm={()=>{void controller.action('delete');setDeleting(false)}}/>:null}
+  {deleting?<ConfirmDialog title={t('optimization.delete')} description={t('optimization.deleteHelp')} confirmLabel={t('optimization.delete')} busy={busy} danger
+   onClose={()=>{setDeleting(false);show()}} onConfirm={()=>{void controller.action('delete').then(ok=>{setDeleting(false);if(!ok)show()})}}/>:null}
  </>
 }

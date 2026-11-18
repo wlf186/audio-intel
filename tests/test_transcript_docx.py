@@ -76,7 +76,8 @@ def test_video_docx_visibility_cache_redaction_and_images(local):
                 xml = b''.join(package.read(name) for name in package.namelist() if name.endswith('.xml'))
                 assert b'private-red' not in xml and b'private-blue' not in xml
                 if redact:
-                    for secret in ('私密标题','Vince Carter','01234567','广东移动'):
+                    assert document.core_properties.title == document.paragraphs[0].text == '私密标题'
+                    for secret in ('Vince Carter','01234567','广东移动'):
                         assert secret.encode() not in xml
         assert client.patch(root+'/video-scenes',json={'action':'set_export_visibility','revision':2,'export_hidden_scene_ids':[]}).status_code == 200
         restored = client.post(root+'/transcript-export',json={'format':'docx'}).content

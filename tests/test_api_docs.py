@@ -173,7 +173,7 @@ def test_openapi_is_complete_bilingual_and_sdk_ready(tmp_path, monkeypatch) -> N
         for method, operation in methods.items()
         if method in HTTP_METHODS
     ]
-    assert len(operations) == 112
+    assert len(operations) == 110
     assert len({operation["operationId"] for operation in operations}) == len(operations)
     assert all(operation.get("tags") for operation in operations)
     assert all("**English:**" in operation.get("description", "") for operation in operations)
@@ -612,12 +612,12 @@ def test_video_binary_contracts_and_examples(tmp_path, monkeypatch):
     monkeypatch.setattr(db_module, 'settings', local)
     schema = api_module.create_app().openapi()
     paths = schema['paths']
-    for suffix, media_type in [('transcript.pdf', 'application/pdf'), ('video-frames/{name}', 'image/jpeg'), ('video-preview', 'image/jpeg')]:
+    for suffix, media_type in [('video-frames/{name}', 'image/jpeg'), ('video-preview', 'image/jpeg')]:
         content = paths['/api/v1/jobs/{job_id}/' + suffix]['get']['responses']['200']['content']
         assert set(content) == {media_type}
         assert content[media_type]['schema'] == {'type': 'string', 'format': 'binary'}
         assert 'example' not in content[media_type] and 'examples' not in content[media_type]
-    for path, headers in [('/api/v1/asr/video-uploads/{upload_id}', {'Upload-Offset', 'Upload-Length', 'Upload-Expires'}), ('/api/v1/jobs/{job_id}/transcript.pdf', {'Content-Type', 'Content-Length', 'Content-Disposition'})]:
+    for path, headers in [('/api/v1/asr/video-uploads/{upload_id}', {'Upload-Offset', 'Upload-Length', 'Upload-Expires'})]:
         response = paths[path]['head']['responses']['200']
         assert 'content' not in response
         assert headers <= response['headers'].keys()
@@ -744,10 +744,10 @@ def test_optimization_documented_examples_wait_for_publication(tmp_path, monkeyp
     def handle(request):
         calls.append(request)
         if request.url.path.endswith('/estimate'):
-            return httpx.Response(200, json={'max_llm_calls': 100, 'minimum_limit': 20, 'recommended_limit': 40, 'fingerprint': 'b' * 64})
+            return httpx.Response(200, json={'max_llm_calls': 40, 'minimum_limit': 20, 'recommended_limit': 40, 'fingerprint': 'b' * 64})
         if request.url.path.endswith('/usage'):
             assert request.url.params['run_id'] == run['id']
-            return httpx.Response(200, json={'calls_used': 25, 'max_llm_calls': 100})
+            return httpx.Response(200, json={'calls_used': 25, 'max_llm_calls': 40})
         if request.url.path.endswith('/samples/from-asr'):
             assert json.loads(request.content)['audio_track'] == 'enhanced'
             return httpx.Response(201, json={'items': []})
@@ -760,7 +760,7 @@ def test_optimization_documented_examples_wait_for_publication(tmp_path, monkeyp
             return httpx.Response(200, json={'complete': True})
         if request.method == 'POST':
             assert request.headers['Idempotency-Key'] == 'example-key'
-            assert json.loads(request.content)['max_llm_calls'] == 100
+            assert 'max_llm_calls' not in json.loads(request.content)
             assert json.loads(request.content)['estimate_fingerprint'] == 'b' * 64
             return httpx.Response(202, json={'candidate': run, 'published': None})
         return httpx.Response(200, json={'candidate': None, 'published': {**run, 'state': 'succeeded'}})
@@ -849,12 +849,12 @@ def test_optimization_example_stops_before_creation_when_budget_is_insufficient(
     def handle(request):
         seen.append(request.url.path)
         assert request.url.path.endswith('/estimate')
-        return httpx.Response(200, json={'max_llm_calls': 100, 'minimum_limit': 120, 'recommended_limit': 180})
+        return httpx.Response(200, json={'max_llm_calls': 180, 'minimum_limit': 120, 'recommended_limit': 180, 'fingerprint': 'b' * 64})
     original = httpx.Client
     monkeypatch.setattr(httpx, 'Client', lambda **kwargs: original(transport=httpx.MockTransport(handle), **kwargs))
     monkeypatch.setenv('JOB_ID', 'example-job')
     monkeypatch.setenv('OPTIMIZATION_KEY', 'example-key')
-    monkeypatch.delenv('OPTIMIZATION_CALL_LIMIT', raising=False)
+    monkeypatch.setenv('OPTIMIZATION_CALL_LIMIT', '100')
     with pytest.raises(SystemExit, match='suggested limit 180'):
         exec(compile(block, '<budget-example>', 'exec'), {})
     assert len(seen) == 1

@@ -72,6 +72,7 @@ for(const width of [1366,1440,1920,390])test(`scene-scoped unified reading ${wid
  await closeMediaTimeline(page)
  await page.getByRole('button',{name:'表达优化',exact:true}).click()
  await expect(page.getByRole('dialog')).toContainText('qwen3.5:4b')
+ await page.getByRole('dialog').getByRole('button',{name:'重新优化',exact:true}).click()
  await expect(page.getByRole('radio',{name:/深度成稿/})).toBeChecked()
  await expect(page.getByRole('dialog')).toContainText('发送到此服务')
  await page.screenshot({path:info.outputPath('optimization-dialog.png')})

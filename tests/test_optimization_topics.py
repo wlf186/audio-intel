@@ -154,14 +154,13 @@ def test_v25_migration_is_additive(configured):
     db.init_db(); db.init_db()
     assert before == db.get_job(identifier)
     with db.connect() as c:
-        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 26
+        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 27
         assert not c.execute('PRAGMA foreign_key_check').fetchall()
 
 
 def test_topic_exports_use_same_replacements_and_timing(tmp_path):
-    from audio_intel import transcript_export, transcript_docx, transcript_pdf
+    from audio_intel import transcript_export, transcript_docx, transcript_html
     from docx import Document
-    from pypdf import PdfReader
     import io
     result = {'segments': [], 'topics': [{'id': 't1', 'title': 'Private budget', 'summary': 'Discuss Private budget.',
                                         'ranges': [{'start': 1, 'end': 4, 'timing_precision': 'segment', 'source_refs': []}]}]}
@@ -170,8 +169,8 @@ def test_topic_exports_use_same_replacements_and_timing(tmp_path):
     assert safe['topics'][0]['title'] == 'Public budget'
     docx = Document(io.BytesIO(transcript_docx.render('Topics', safe, tmp_path)))
     assert 'Public budget' in '\n'.join(p.text for p in docx.paragraphs)
-    pdf = PdfReader(io.BytesIO(transcript_pdf.render('Topics', safe, tmp_path)))
-    assert 'Public budget' in '\n'.join(p.extract_text() for p in pdf.pages)
+    pdf = transcript_html.render('Topics', safe, tmp_path).decode()
+    assert 'Public budget' in pdf
 
 
 def test_failed_topic_repairs_only_affected_sources(model, monkeypatch):
@@ -361,7 +360,7 @@ def test_existing_v1_checkpoints_and_original_topic_export(model):
         assert outlined.status_code == 200
         assert outlined.json()['outline']['groups'][0]['primary_item_ids']
         assert client.get(url(identifier)+'/topics',params={'run_id':run,'include_outline':True},headers={'If-None-Match':outlined.headers['etag']}).status_code==304
-        for format in ('pdf','docx'):
+        for format in ('html','docx'):
             exported = client.post(f'/api/v1/jobs/{identifier}/transcript-export',json={'format':format,'text_version':'original','organization':'topic','optimization_id':run})
             assert exported.status_code == 200, exported.text[:200]
         # New source-bound runs reject narrow regeneration; the old contract remains supported.

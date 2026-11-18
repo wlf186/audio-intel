@@ -98,7 +98,40 @@ async def discover(config: dict) -> dict:
     return {'models': [{'name': m['id']} for m in result['data'] if isinstance(m, dict) and isinstance(m.get('id'), str)]}
 
 
+_verification_usage: ContextVar[set[str] | None] = ContextVar('optimization_verification_usage', default=None)
+
+
 async def verify(config: dict) -> dict:
+    observed: set[str] = set()
+    observer = _verification_usage.set(observed)
+    deadline = time.monotonic() + 328
+    try:
+        profile = await _verify_outputs(config)
+        options = profile.get('extra_body', {}).get('stream_options', {})
+        profile['token_usage_mode'] = 'unavailable'
+        if observed:
+            profile['token_usage_mode'] = ('include_usage' if isinstance(options, dict) and options.get('include_usage') is True else 'automatic')
+        if observed or not isinstance(options, dict) or 'include_usage' in options:
+            return profile
+        # Optional negotiation uses only a synthetic sample. A provider that rejects
+        # the option can still use the already verified prose and JSON settings.
+        remaining = min(12, deadline - time.monotonic())
+        if remaining > 0:
+            try:
+                async with asyncio.timeout(remaining):
+                    await streamed_text({**profile, 'token_usage_mode': 'include_usage'},
+                                        {'messages': [{'role': 'user', 'content': 'Reply OK.'}],
+                                         'options': {'num_predict': 32}})
+            except (httpx.HTTPError, TimeoutError, ValueError, InvalidOutput, ContextWindowError):
+                pass
+            if observed:
+                profile['token_usage_mode'] = 'include_usage'
+        return profile
+    finally:
+        _verification_usage.reset(observer)
+
+
+async def _verify_outputs(config: dict) -> dict:
     from .optimization_packet_policy import ELIGIBLE_MODELS
 
     await ensure_context(config)
@@ -299,6 +332,9 @@ async def streamed_text(config: dict, payload: dict, activity=None) -> str:
         async with asyncio.timeout(120), client(config) as connection:
             text = await provider.completion(connection, body, activity)
             capture['response_bytes'] = len(text.encode())
+            observer = _verification_usage.get()
+            if observer is not None:
+                observer.update(capture.keys() & {'prompt_tokens', 'completion_tokens', 'total_tokens'})
             return text
     except BaseException as exc:
         failure = exc

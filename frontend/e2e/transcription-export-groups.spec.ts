@@ -64,7 +64,7 @@ async function chooseTask(page:Page,id:'audio'|'video',width:number){
 }
 
 async function exportFormat(page:Page,format:string,_width:number){
- if(format==='pdf'||format==='docx')return downloadConcise(page,format)
+ if(format==='html'||format==='docx')return downloadConcise(page,format)
  await openTranscriptExport(page)
  await page.locator('.transcript-export-modal .export-format').selectOption(format);await page.locator('.transcript-export-modal .modal-actions .primary').click()
 }
@@ -73,7 +73,7 @@ for(const width of [1440,390]){
  for(const source of ['audio','video'] as const)for(const redact of [true,false])test(`transcript filenames ${source} redact=${redact} at ${width}px`,async({page})=>{
   const {state,errors}=await fixture(page);await page.setViewportSize({width,height:960});await page.goto('/#asr');await showAsrResults(page);await chooseTask(page,source,width)
   await openTranscriptExport(page);await page.locator('.transcript-export').getByRole('checkbox',{name:'脱敏导出',exact:true}).setChecked(redact)
-  for(const format of ['pdf','docx','json','txt','srt','vtt']){
+  for(const format of ['html','docx','json','txt','srt','vtt']){
    const downloading=page.waitForEvent('download');await exportFormat(page,format,width)
    expect((await downloading).suggestedFilename()).toBe((source==='audio'?'Recording_10':'WorkBuddy与AI-Coding融合方案-用户旅程版')+'.'+format)
    expect(state.exports.at(-1)).toMatchObject({format,redact})

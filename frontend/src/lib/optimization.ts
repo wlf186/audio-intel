@@ -1,6 +1,3 @@
-export const DEFAULT_CALL_LIMIT=100
-export const LEGACY_CALL_LIMIT=300
-
 export type RewriteMode='polish'|'rewrite'|'editorial'
 export const rewriteModes:RewriteMode[]=['polish','rewrite','editorial']
 const preferenceKey='audio-intel:optimization-preferences:v1'
@@ -26,7 +23,7 @@ export type OptimizationSummary={reading_plan_version?:number;topic_state?:strin
 export type OptimizationStatus={enabled:boolean;published:OptimizationSummary|null;candidate:OptimizationSummary|null}
 export type OptimizationParagraph={reading_block_id?:string|null;reading_topic_id?:string|null;occurrence_id?:string|null;group_summary?:GroupSummary|null;review_outcome?:ReviewOutcome|null;generation_method?:'model'|'basic_cleanup'|'mixed'|null;sources?:OptimizationSource[];scene_ids?:string[];merged_source_count?:number;candidate_text?:string|null;review_details?:{stage:string;issues?:{source_quote:string;candidate_quote:string;reason:string}[]}|null;id:string;ordinal:number;speaker:string|null;speaker_label:string|null;start:number;end:number;original_text:string;text:string|null;omitted?:boolean;review_status?:'accepted'|'needs_review'|null;review_reason?:'review_failed'|'invalid_output'|null;segment_ids:number[]}
 export type OptimizationResult={reading_plan_version?:number;reading_blocks?:import('../components/ReadingWorkspace').OutlineItem[];summary_status?:SummaryStatus;prompt_version?:number;revision?:number;review_state?:ReviewState|null;reviewed_units?:number;review_total_units?:number;uncertain_units?:number;unavailable_units?:number;basic_cleanup_units?:number;run_id:string;complete:boolean;model:string;rewrite_mode?:RewriteMode|null;needs_review_units?:number;paragraphs:OptimizationParagraph[];scenes:(Omit<VideoScene,'paragraphs'>&{title_summary?:SceneSummary|null;paragraphs:OptimizationParagraph[]})[]}
-export type OptimizationConfiguration={max_llm_calls?:number;max_output_tokens?:number;protocol?:'openai_chat_completions';has_api_key?:boolean;extra_body?:Record<string,unknown>;structured_output_mode?:'json_schema'|'json_object'|'prompt'|null;base_url:string;use_proxy:boolean;model:string;rewrite_mode?:RewriteMode|null;enabled:boolean;context_length?:number;model_context_length?:number;observed_context_length?:number|null;verified_at?:string;verification_token?:string}
+export type OptimizationConfiguration={token_usage_mode?:'automatic'|'include_usage'|'unavailable'|null;max_output_tokens?:number;protocol?:'openai_chat_completions';has_api_key?:boolean;extra_body?:Record<string,unknown>;structured_output_mode?:'json_schema'|'json_object'|'prompt'|null;base_url:string;use_proxy:boolean;model:string;rewrite_mode?:RewriteMode|null;enabled:boolean;context_length?:number;model_context_length?:number;observed_context_length?:number|null;verified_at?:string;verification_token?:string}
 export const optimizationSettingsPath='/api/v1/settings/transcript-optimization'
 export const optimizationPath=(id:string)=>`/api/v1/jobs/${id}/transcript-optimization`
 
@@ -41,4 +38,12 @@ export function needsServiceNotice(address:string):boolean{
 }
 
 export type CallEstimate={estimated_calls:number;used_calls:number;minimum_limit:number;recommended_limit:number;max_llm_calls:number;sufficient:boolean;can_start:boolean;fingerprint:string;breakdown:Record<string,number>}
-export type CallUsage={token_usage?:{prompt_tokens:number|null;completion_tokens:number|null;input_recorded:number;output_recorded:number;attempts:number};run_id:string;recorded:boolean;max_llm_calls:number|null;calls_used:number|null;remaining_calls:number|null;estimate:CallEstimate|null;stages:Record<string,number>;failed_or_interrupted:number}
+export type TokenUsage={
+ prompt_tokens:number|null;completion_tokens:number|null;input_recorded:number;output_recorded:number;attempts:number
+ total_tokens?:number|null;total_recorded?:number
+}
+export type CallUsage={
+ run_id:string;recorded:boolean;calls_used:number|null;max_llm_calls:number|null;remaining_calls:number|null
+ active_duration_ms?:number|null;timing_partial?:boolean;in_progress_calls?:number;token_usage?:TokenUsage
+ estimate:CallEstimate|null;stages:Record<string,number>;failed_or_interrupted:number
+}

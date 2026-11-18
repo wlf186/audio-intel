@@ -15,7 +15,7 @@ from scripts import submit_video
 def args(tmp_path):
     source = tmp_path / '中文 讲座.mp4'
     source.write_bytes(b'lecture')
-    return argparse.Namespace(video=source, state=tmp_path / '续传.json', device='cpu', language='Auto', pdf=tmp_path / '讲座.pdf')
+    return argparse.Namespace(video=source, state=tmp_path / '续传.json', device='cpu', language='Auto', html=tmp_path / '讲座.html')
 
 
 def install_client(monkeypatch, handler):
@@ -28,11 +28,11 @@ def install_client(monkeypatch, handler):
 def test_resume_never_resubmits_accepted_job(args, monkeypatch, failure):
     calls = []; accepted = False; broken = True
     original_replace = submit_video.os.replace
-    args.pdf.write_bytes(b'old complete PDF')
+    args.html.write_bytes(b'old complete HTML')
 
     class BrokenStream(httpx.SyncByteStream):
         def __iter__(self):
-            yield b'%PDF-partial'
+            yield b'%HTML-partial'
             raise httpx.ReadError('disconnected')
 
     def handler(request):
@@ -57,14 +57,14 @@ def test_resume_never_resubmits_accepted_job(args, monkeypatch, failure):
                 return httpx.Response(429, headers={'Retry-After': '2'})
             if broken and failure == 'stream':
                 return httpx.Response(200, stream=BrokenStream())
-            return httpx.Response(200, content=b'%PDF-complete')
+            return httpx.Response(200, content=b'%HTML-complete')
         if broken and failure == 'poll':
             raise KeyboardInterrupt
         return httpx.Response(200, json={'id': 'existing-job', 'state': failure if broken and failure in {'failed', 'cancelled'} else 'succeeded'})
 
     def replace(source, target):
         # The download handle must already be closed, including on native Windows.
-        if Path(target) == args.pdf and broken and failure == 'replace':
+        if Path(target) == args.html and broken and failure == 'replace':
             raise PermissionError('destination in use')
         original_replace(source, target)
 
@@ -73,12 +73,12 @@ def test_resume_never_resubmits_accepted_job(args, monkeypatch, failure):
     with pytest.raises((httpx.HTTPError, KeyboardInterrupt, OSError, RuntimeError)):
         submit_video.submit(args)
     assert args.state.exists()
-    assert args.pdf.read_bytes() == b'old complete PDF'
-    assert not list(args.pdf.parent.glob('*.partial'))
+    assert args.html.read_bytes() == b'old complete HTML'
+    assert not list(args.html.parent.glob('*.partial'))
     broken = False
     submit_video.submit(args)
     assert not args.state.exists()
-    assert args.pdf.read_bytes() == b'%PDF-complete'
+    assert args.html.read_bytes() == b'%HTML-complete'
     assert calls.count(('POST', '/api/v1/asr/video-jobs')) == 1
     assert calls.count(('POST', '/api/v1/asr/video-uploads')) == 1
     assert calls.count(('PATCH', '/api/v1/asr/video-uploads/upload')) == 1
@@ -86,7 +86,7 @@ def test_resume_never_resubmits_accepted_job(args, monkeypatch, failure):
 
 def test_legacy_upload_journal_and_submit_only_completion(args, monkeypatch):
     args.state.write_text(json.dumps({'file': {'path': str(args.video.resolve()), 'size': 7}, 'upload_id': 'legacy', 'create_key': 'old-create-key', 'job_key': 'old-job-key', 'parameters': {'language': 'Auto', 'compute_device': 'cpu'}}), encoding='utf-8')
-    args.pdf = None
+    args.html = None
     calls = []
     def handler(request):
         calls.append(request.method)
@@ -102,7 +102,7 @@ def test_cli_failure_reports_job_and_retry_command(args, monkeypatch, capsys):
     def handler(request):
         return httpx.Response(429, headers={'Retry-After': '9'}) if request.url.path.endswith('/transcript-export') else httpx.Response(200, json={'id': 'same-job', 'state': 'succeeded'})
     install_client(monkeypatch, handler)
-    monkeypatch.setattr('sys.argv', ['scripts/submit_video.py', str(args.video), '--state', str(args.state), '--pdf', str(args.pdf)])
+    monkeypatch.setattr('sys.argv', ['scripts/submit_video.py', str(args.video), '--state', str(args.state), '--html', str(args.html)])
     with pytest.raises(SystemExit) as exc:
         submit_video.main()
     assert exc.value.code == 1

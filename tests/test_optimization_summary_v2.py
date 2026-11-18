@@ -12,12 +12,11 @@ from types import SimpleNamespace
 from docx import Document
 from fastapi.testclient import TestClient
 import httpx
-from pypdf import PdfReader
 import pytest
 
 from audio_intel import api, db, optimization_api as routes, optimization_engine as engine
 from audio_intel import optimization_store as store, optimization_summaries as insights
-from audio_intel import optimization_summary_policy as policy, transcript_docx, transcript_pdf
+from audio_intel import optimization_summary_policy as policy, transcript_docx, transcript_html
 from audio_intel.transcript_export import TranscriptExportRequest, optimized_export_result
 from test_optimization import configured, local, job, source, start, url, wait, PROFILE
 
@@ -214,7 +213,7 @@ def test_v20_additive_migration_preserves_published_v1_and_checkpoints(configure
     db.init_db(); db.init_db()
     assert store.units(run) == before and insights.read(run) == value
     with db.connect() as c:
-        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 26
+        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 27
         assert not c.execute('PRAGMA foreign_key_check').fetchall()
 
 
@@ -346,6 +345,6 @@ def test_v2_pdf_word_fallback_labels_and_redaction_match(v2, monkeypatch):
     assert 'candidate_json' not in json.dumps(result)
     document = Document(io.BytesIO(transcript_docx.render('Meeting', result, v2.data_dir)))
     word = '\n'.join(p.text for p in document.paragraphs)
-    pdf = '\n'.join(p.extract_text() for p in PdfReader(io.BytesIO(transcript_pdf.render('Meeting', result, v2.data_dir))).pages)
+    pdf = transcript_html.render('Meeting', result, v2.data_dir).decode()
     for text in (word, pdf):
         assert '关键词' in text and '项目X' in text

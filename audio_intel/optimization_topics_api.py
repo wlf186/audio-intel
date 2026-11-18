@@ -72,7 +72,7 @@ def estimate(run, result, *, regenerate=False, limit=None):
             completed = c.execute('SELECT count(*) FROM optimization_topic_nodes WHERE run_id=? AND value_json IS NOT NULL', (run['id'],)).fetchone()[0]
         count = max(1, count - completed)
     used = run['calls_used']
-    cap = limit if limit is not None else run['calls_limit'] or calls.DEFAULT_LIMIT
+    cap = limit if limit is not None else run['calls_limit']
     return {'estimated_calls': count, 'used_calls': used, 'minimum_limit': used + count,
             'recommended_limit': math.ceil((used + count + (max(5, math.ceil(count * .5)) if count else 0)) / 10) * 10,
             'max_llm_calls': cap, 'sufficient': cap >= used + count, 'can_start': cap >= used + count,

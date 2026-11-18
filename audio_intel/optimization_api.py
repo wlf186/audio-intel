@@ -54,7 +54,7 @@ class ModelConnection(Connection):
 
 
 class SaveConfiguration(ModelConnection):
-    max_llm_calls: int = Field(calls.DEFAULT_LIMIT, strict=True, ge=1, le=2147483647, description='每次新优化的调用总上限，包含失败重试；省略保留已存值，新配置默认100 / Per-run call cap including failed attempts; omission preserves saved value, new profiles default to 100')
+    max_llm_calls: int = Field(calls.LEGACY_SETTINGS_LIMIT, strict=True, ge=1, le=2147483647, deprecated=True, description='旧客户端兼容设置，省略时保留原值。新优化按任务预估设限。 / Legacy settings value retained on omission. New runs use their own estimate.')
     enabled: bool = Field(False, description="启用需匹配已验证连接；关闭会暂停未完成优化 / Enabling requires a matching verified connection; disabling pauses unfinished optimization")
     verification_token: str | None = Field(None, description="验证接口返回的凭证，10分钟内有效，API重启失效；未变更的已保存验证配置可省略 / Token from verification, valid for ten minutes and invalidated by API restart; unchanged saved verified profiles may omit it")
 
@@ -68,7 +68,8 @@ class OptimizationModelsResponse(BaseModel):
 
 
 class ConfigurationResponse(BaseModel):
-    max_llm_calls: int = Field(calls.DEFAULT_LIMIT, description='新建优化默认调用上限，包含失败尝试 / Default per-run call cap, including failed attempts')
+    token_usage_mode: Literal['automatic', 'include_usage', 'unavailable'] | None = Field(None, description='合成验证观察到的 Token 回传方式 / Token reporting observed during synthetic verification, null for older profiles.')
+    max_llm_calls: int = Field(calls.LEGACY_SETTINGS_LIMIT, deprecated=True, description='为旧客户端回显的配置值。请使用任务预估读取本次上限。 / Legacy settings value. Read the run estimate for the effective cap.')
     max_output_tokens: int = Field(4096, description='单次最大输出tokens，受总上下文限制 / Per-call output ceiling in tokens, constrained by total context')
     protocol: Literal['openai_chat_completions'] = Field('openai_chat_completions', description='只读协议标识 / Read-only protocol identifier')
     has_api_key: bool = Field(False, description='仅表示服务端是否已保存密钥，不返回密钥 / Whether a key is stored server-side; never the key itself')
@@ -195,7 +196,7 @@ class OptimizationStatus(BaseModel):
 class CreateRequest(BaseModel):
     analyze_topics: bool = Field(False, strict=True, description='识别全片主要议题，正文与议题统一发布 / Discover source-bound recording topics before publication')
     model_config = ConfigDict(extra='forbid')
-    max_llm_calls: int | None = Field(None, strict=True, ge=1, le=2147483647, description='仅本次生效的总上限 / One-run total cap override')
+    max_llm_calls: int | None = Field(None, strict=True, ge=1, le=2147483647, description='本次调用总上限。新建或重新优化时省略即使用本次建议值。 / One-run call cap. Omit to use the recommended limit when creating or regenerating a draft.')
     estimate_fingerprint: str | None = Field(None, pattern=r'^[a-f0-9]{64}$', description='预估绑定，来源或模型配置变化时要求刷新 / Optional preflight binding; refresh if source or model configuration changes')
     regenerate: bool = False
     rewrite_mode: Literal['polish', 'rewrite', 'editorial'] = Field('rewrite', description='自然润色 / polish; 流畅重写 / rewrite (default); 深度成稿 / editorial. Saved per run; resume retains it.')
@@ -220,15 +221,30 @@ class CallEstimate(BaseModel):
     used_calls: int
     minimum_limit: int
     recommended_limit: int
-    max_llm_calls: int
+    max_llm_calls: int = Field(description='本次有效上限，已有任务默认返回其已存上限 / Effective cap. For an existing run, defaults to its saved limit.')
     sufficient: bool
     can_start: bool
     breakdown: dict[str, int]
     fingerprint: str
 
 
+class TokenUsage(BaseModel):
+    attempts: int
+    input_recorded: int
+    output_recorded: int
+    total_recorded: int = Field(description='具有完整总数的调用次数 / Attempts with a complete provider total or both input and output counts.')
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None = Field(description='已记录总量，覆盖不完整时为下界 / Known total, a lower bound when coverage is partial.')
+    request_bytes: int | None
+    response_bytes: int | None
+
+
 class CallUsage(BaseModel):
-    token_usage: dict[str, int | None] = Field(default_factory=dict, description="Provider-reported tokens and coverage; missing usage is unknown. Byte counts are not token estimates.")
+    active_duration_ms: int | None = Field(None, description='累计实际处理毫秒，排除排队和暂停；历史未知为空 / Active processing milliseconds across this run, excluding queue and pauses. Null if unrecorded.')
+    timing_partial: bool = Field(False, description='已确认的时长下界 / Duration is a confirmed lower bound after interruption or partial historical recording.')
+    in_progress_calls: int = Field(0, description='已开始且尚未结束的调用 / Outstanding attempts, excluded from failures.')
+    token_usage: TokenUsage
     run_id: str
     recorded: bool
     max_llm_calls: int | None
@@ -525,15 +541,20 @@ class Manager:
         if engine.source_hash(parent(run['job_id'])['result'], source_assignment_version=run['config'].get('source_assignment_version', 1)) != run['source_hash']:
             raise ValueError('Source changed; regenerate / 原文已变化，请重新生成')
 
-    async def run(self):
-        self.loop = asyncio.get_running_loop()
+    def recover(self):
         with db.connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            calls.recover_processing(connection)
             connection.execute("UPDATE transcript_optimizations SET summary_state='paused',summary_revision=summary_revision+1,revision=revision+1,updated_at=? WHERE summary_state IN ('queued','running')", (db.utcnow(),))
             connection.execute("UPDATE transcript_optimizations SET state='paused',error='服务中断 / Service interrupted',revision=revision+1,updated_at=? WHERE state IN ('running','pausing')", (db.utcnow(),))
             connection.execute("UPDATE transcript_optimizations SET topic_state='paused',topic_revision=topic_revision+1 WHERE topic_state IN ('queued','running')")
             interrupted_deletions = [row[0] for row in connection.execute("SELECT DISTINCT job_id FROM transcript_optimizations WHERE state='deleting'")]
+            connection.commit()
         for job_id in interrupted_deletions:
             store.delete(job_id)
+
+    async def run(self):
+        self.loop = asyncio.get_running_loop()
         try:
             while True:
                 self.wake.clear()
@@ -545,8 +566,9 @@ class Manager:
                     claimed = identifier and (auxiliary or store.transition(identifier, 'running', ('queued',)))
                     if claimed:
                         self.current_id = identifier
-                        self.current = asyncio.create_task(self.execute_topics(identifier) if auxiliary and store.get(identifier)['topic_state']=='queued' else self.execute_summaries(identifier) if auxiliary else self.execute(identifier))
-                        await asyncio.gather(self.current, return_exceptions=True)
+                        with calls.processing_time(identifier):
+                            self.current = asyncio.create_task(self.execute_topics(identifier) if auxiliary and store.get(identifier)['topic_state']=='queued' else self.execute_summaries(identifier) if auxiliary else self.execute(identifier))
+                            await asyncio.gather(self.current, return_exceptions=True)
                         self.current_id, self.current = None, None
                         continue
                 from .background_wake import wait_for_work
@@ -657,6 +679,7 @@ def register(app, api):
     async def lifespan(application):
         async with prior(application):
             key = str(api.settings.database_path)
+            manager.recover()
             _managers[key] = manager
             task = asyncio.create_task(manager.run())
             try:
@@ -679,7 +702,7 @@ def register(app, api):
         except Exception as exc:
             raise HTTPException(422, error_message(exc)) from exc
 
-    @app.post(root + '/verify', summary='验证优化模型 / Verify optimization model', description=api.bilingual('330 秒内用合成文本验证正文与 JSON 输出方式；不验证服务端实际窗口，不发送历史转写。', 'Verify synthetic prose and JSON output within 330 seconds, not server context allocation. No historical transcripts are sent.'), operation_id='verifyOptimizationModel', tags=[TAG], response_model=ConfigurationResponseWithToken, responses=errors)
+    @app.post(root + '/verify', summary='验证优化模型 / Verify optimization model', description=api.bilingual('330 秒内用内置示例验证正文、JSON 输出及 Token 回传能力。必要时追加一次合成用量探测。', 'Verify prose, JSON and token reporting with synthetic examples within 330 seconds, including at most one optional usage probe.'), operation_id='verifyOptimizationModel', tags=[TAG], response_model=ConfigurationResponseWithToken, responses=errors)
     async def verify(body: ModelConnection, _: None = auth):
         try:
             value = connection_input(body, store.settings())
@@ -708,7 +731,8 @@ def register(app, api):
             verified = connection_identity(candidate) == connection_identity(expected) and profile.get('verified_at')
             if body.enabled and not verified:
                 raise HTTPException(409, '请先验证所选模型 / Verify the selected model first')
-            value = {**(profile if verified else candidate), '_api_key': candidate['_api_key'], 'enabled': body.enabled, 'max_llm_calls': body.max_llm_calls if 'max_llm_calls' in body.model_fields_set else current.get('max_llm_calls', calls.DEFAULT_LIMIT), 'max_output_tokens': candidate['max_output_tokens']}
+            legacy_limit = candidate['max_llm_calls'] if 'max_llm_calls' in body.model_fields_set else current['max_llm_calls']
+            value = {**(profile if verified else candidate), '_api_key': candidate['_api_key'], 'enabled': body.enabled, 'max_llm_calls': legacy_limit, 'max_output_tokens': candidate['max_output_tokens']}
             store.save_settings(value)
             manager.wake.set()
             if not body.enabled:
@@ -751,7 +775,7 @@ def register(app, api):
                  else engine.prepare_units(job['result']))
         return calls.estimate(config, units, hotwords, limit=body.max_llm_calls, topic_atoms=topics.sources(job['result']) if body.analyze_topics else None)
 
-    @app.get(jobs + '/usage', response_model=CallUsage, tags=[TAG], operation_id='getOptimizationCallUsage', responses=errors, description=api.bilingual('读取持久调用计数与阶段分布；历史未知为null。', 'Read durable call counts and stage totals; historical unknown usage is null.'), summary='读取本次预算用量 / Read call usage')
+    @app.get(jobs + '/usage', response_model=CallUsage, tags=[TAG], operation_id='getOptimizationCallUsage', responses=errors, description=api.bilingual('读取此稿实际处理耗时、模型调用和 Token 覆盖情况。历史未知为 null，部分记录为下界。', 'Read active processing time, model attempts and token coverage for this draft. Historical unknowns are null; partial figures are lower bounds.'), summary='读取本次预算用量 / Read call usage')
     def usage(job_id: str, run_id: str = Query(..., pattern=r'^[a-f0-9]{32}$'), _: None = auth):
         owned(job_id, run_id)
         return calls.usage(run_id)
@@ -766,8 +790,6 @@ def register(app, api):
             config = {**store.settings(), 'prompt_version': engine.PROMPT_VERSION, 'rewrite_mode': body.rewrite_mode, 'summary_version': insights.VERSION,
                       'analyze_topics': body.analyze_topics, 'reading_plan_version': 2 if body.analyze_topics else 1, 'request_policy_version': 2 if insights.VERSION == 2 else 1, 'source_assignment_version': 2, 'budget_policy_version': 1, 'packet_version': packet_policy.VERSION, 'batch_max_items': store.settings().get('batch_max_items', batching.DEFAULT_MAX_ITEMS), 'call_limit_override': body.max_llm_calls}
             packet_policy.configure(config)
-            if body.max_llm_calls is not None:
-                config['max_llm_calls'] = body.max_llm_calls
             if not config.get('enabled'):
                 raise HTTPException(409, '请在系统状态启用表达优化 / Enable expression optimization in System')
             candidate = store.status(job_id)['candidate']
@@ -783,7 +805,9 @@ def register(app, api):
                     else:
                         units = engine.prepare_units(job['result'])
                         engine.validate_budget(config, units, hotwords)
-                    config['call_estimate'] = calls.estimate(config, units, hotwords, topic_atoms=topics.sources(job['result']) if body.analyze_topics else None)
+                    config['call_estimate'] = calls.estimate(config, units, hotwords, limit=body.max_llm_calls,
+                                                             topic_atoms=topics.sources(job['result']) if body.analyze_topics else None)
+                    config['max_llm_calls'] = config['call_estimate']['max_llm_calls']
                     if body.estimate_fingerprint and body.estimate_fingerprint != config['call_estimate']['fingerprint']:
                         raise api.ApiProblem(409, 'optimization_estimate_stale', '来源或配置已变化，请刷新预估 / Source or configuration changed; refresh estimate', extras={'estimate': config['call_estimate']})
                     calls.admit(config['call_estimate'])

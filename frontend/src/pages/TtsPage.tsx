@@ -1299,7 +1299,7 @@ export function TtsPage({
                 <small className="tts-result-instruction">{t('tts.results.instruction',{value:selected.result.instruct})}</small>
               ) : null}
             </div>
-            {selected.result.document ? <DocumentResults key={selected.id} jobId={selected.id} result={selected.result.document} active={workspaceView==='results'}/> : selected.result.sequence ? (
+            {selected.result.document ? <DocumentResults key={selected.id} jobId={selected.id} result={selected.result.document} artifacts={selected.result.artifacts} active={workspaceView==='results'}/> : selected.result.sequence ? (
               <ol className="tts-sequence-results">
                 {selected.result.sequence.items.map(item => (
                   <li key={item.id}>

@@ -146,3 +146,13 @@ def test_pdf_note_does_not_break_a_cross_page_sentence():
     chunks=chunks_for(d,{'start':0,'end':len(d['text'])},NarrationOptions(),split_text)
     assert any('最聪明的人' in c['text'] for c in chunks)
     assert '注释' not in ''.join(c['text'] for c in chunks)
+
+
+def test_audiobook_highlights_skip_annotations_and_preserve_repeated_unicode():
+    from audio_intel.audiobook import marked_text
+    html = marked_text('😀甲[1] 甲', 10, ['😀甲', '甲'], [[0,24],[32,56]], 24,
+                       {12,13,14}, [(12,15)])
+    assert 'data-at="0.000000" data-end="1.000000">😀甲</span>' in html
+    assert 'data-at="1.333333" data-end="2.333333">甲</span>' in html
+    assert '<summary>原书注释</summary>[1]</details>' in html
+    assert 'data-at' not in marked_text('甲',0,['错'],[[0,24]],24,set())

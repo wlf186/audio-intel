@@ -32,6 +32,10 @@ def test_reservations_are_atomic_and_survive_restart(local):
         assert sum(x is not None for x in pool.map(attempt, range(12))) == 3
     db.init_db()
     assert budget.usage(run)['calls_used'] == 3
+    assert budget.usage(run)['in_progress_calls'] == 3
+    assert budget.usage(run)['failed_or_interrupted'] == 0
+    with db.connect() as c:
+        budget.recover_processing(c)
     assert budget.usage(run)['failed_or_interrupted'] == 3
     with budget.scope(run, 'review'), pytest.raises(budget.BudgetExhausted):
         budget.reserve()
@@ -79,6 +83,35 @@ def test_estimate_and_temporary_limit_have_no_remote_side_effects(configured, mo
         assert client.post(root, json={'max_llm_calls': 26}, headers=headers).status_code == 409
 
 
+@pytest.mark.parametrize('segments,legacy_setting', [(2, 300), (48, 100)])
+def test_new_run_saves_its_own_estimate_and_replays_it(configured, segments, legacy_setting):
+    store.save_settings({**store.settings(), 'max_llm_calls': legacy_setting})
+    identifier = job(source(segments))
+    root = url(identifier)
+    with TestClient(api.create_app()) as client:
+        plan = client.post(root + '/estimate', json={}).json()
+        cap = plan['recommended_limit']
+        assert plan['max_llm_calls'] == cap and plan['sufficient'] and plan['can_start']
+        if segments == 2:
+            assert cap < 100
+        else:
+            assert plan['minimum_limit'] > 100
+        headers = {'Idempotency-Key': 'auto-budget-create-key'}
+        body = {'estimate_fingerprint': plan['fingerprint']}
+        response = client.post(root, json=body, headers=headers)
+        assert response.status_code == 202, response.text
+        run = response.json()['candidate'] or response.json()['published']
+        snapshot = store.get(run['id'])['config']
+        assert run['calls_limit'] == snapshot['max_llm_calls'] == cap
+        assert snapshot['call_estimate'] == plan and snapshot['call_limit_override'] is None
+        store.save_settings({**store.settings(), 'max_llm_calls': 1})
+        replay = client.post(root, json=body, headers=headers)
+        assert replay.status_code == 200
+        replayed = replay.json()['candidate'] or replay.json()['published']
+        assert replayed['id'] == run['id'] and replayed['calls_limit'] == cap
+        assert client.post(root, json={**body, 'max_llm_calls': cap}, headers=headers).status_code == 409
+
+
 def test_packet_recommendation_covers_repair_overrun_without_raising_limit(local, monkeypatch):
     from audio_intel import optimization_packet_store as packets
     async def forbidden(*args, **kwargs):
@@ -89,7 +122,7 @@ def test_packet_recommendation_covers_repair_overrun_without_raising_limit(local
     monkeypatch.setattr(packets, 'compile_plan', lambda *args: plan)
     config = {**PROFILE, 'packet_version': 1, 'max_llm_calls': 30}
     units = engine.prepare_units(source(1))
-    value = budget.estimate(config, units, [])
+    value = budget.estimate(config, units, [], limit=30)
     assert value['estimated_calls'] == value['minimum_limit'] == 20
     assert value['recommended_limit'] >= 31
     assert value['can_start'] and not value['sufficient']
@@ -97,7 +130,7 @@ def test_packet_recommendation_covers_repair_overrun_without_raising_limit(local
     temporary = budget.estimate(config, units, [], limit=value['recommended_limit'])
     assert temporary['sufficient'] and config['max_llm_calls'] == 30
     assert temporary['fingerprint'] == value['fingerprint']
-    resumed = budget.estimate(config, units, [], used=7)
+    resumed = budget.estimate(config, units, [], used=7, limit=30)
     assert resumed['minimum_limit'] == 27 and resumed['recommended_limit'] >= 38
     monkeypatch.setattr(budget, '_legacy_breakdown', lambda *args: {'generation': 10, 'review': 10})
     assert budget.estimate({**config, 'packet_version': None}, units, [])['recommended_limit'] == 30
@@ -240,14 +273,16 @@ def test_preflight_binding_rechecks_configuration_without_consuming_key(configur
         assert client.post(root, json=body, headers=headers).status_code == 200
 
 
-def test_factory_default_preserves_explicit_settings_and_omitted_saves(local):
+def test_deprecated_setting_round_trips_and_capabilities_advertise_per_run_estimate(local):
     with TestClient(api.create_app()) as client:
         root = '/api/v1/settings/transcript-optimization'
         assert client.get(root).json()['max_llm_calls'] == 100
-        assert client.get('/api/v1/capabilities').json()['asr']['transcript_optimization']['call_budget']['default_limit'] == 100
+        capability = client.get('/api/v1/capabilities').json()['asr']['transcript_optimization']['call_budget']
+        assert capability['default_limit'] is None and capability['default_policy'] == 'per_run_estimate'
         schema = client.get('/openapi.json').json()
         for name in ['SaveConfiguration', 'ConfigurationResponse']:
-            assert schema['components']['schemas'][name]['properties']['max_llm_calls']['default'] == 100
+            field = schema['components']['schemas'][name]['properties']['max_llm_calls']
+            assert field['deprecated'] and field['default'] == 100
         store.save_settings({**PROFILE, 'max_llm_calls': 300})
         body = {k: PROFILE[k] for k in ['base_url', 'model', 'use_proxy', 'context_length']}
         body['enabled'] = True
@@ -259,18 +294,19 @@ def test_factory_default_preserves_explicit_settings_and_omitted_saves(local):
         assert response.json()['max_llm_calls'] == 100
 
 
-def test_historical_budget_snapshot_and_unrecorded_usage_keep_their_policy(local):
+@pytest.mark.parametrize('saved_limit', [100, 300])
+def test_historical_budget_snapshot_and_unrecorded_usage_keep_their_policy(local, saved_limit):
     data = source(1)
     units = engine.prepare_units(data)
-    config = {**PROFILE, 'budget_policy_version': 1, 'max_llm_calls': 300, 'call_estimate': {}}
-    run, _ = store.create(job(data), 'preserve-existing-300', False, config, engine.source_hash(data), [], units)
+    config = {**PROFILE, 'budget_policy_version': 1, 'max_llm_calls': saved_limit, 'call_estimate': {}}
+    run, _ = store.create(job(data), 'preserve-existing-limit', False, config, engine.source_hash(data), [], units)
     store.save_settings({**PROFILE, 'max_llm_calls': 100})
-    assert store.get(run)['calls_limit'] == 300
-    assert store.get(run)['config']['max_llm_calls'] == 300
+    assert store.get(run)['calls_limit'] == saved_limit
+    assert store.get(run)['config']['max_llm_calls'] == saved_limit
     with TestClient(api.create_app()) as client:
         response = client.post(url(store.get(run)['job_id']) + '/estimate', json={'run_id': run})
         assert response.status_code == 200
-        assert response.json()['max_llm_calls'] == 300
+        assert response.json()['max_llm_calls'] == saved_limit
     legacy_job = job(data)
     legacy, _ = store.create(legacy_job, 'preserve-unrecorded-budget', False, PROFILE, engine.source_hash(data), [], units)
     assert budget.usage(legacy)['recorded'] is False
@@ -279,3 +315,78 @@ def test_historical_budget_snapshot_and_unrecorded_usage_keep_their_policy(local
         response = client.post(url(legacy_job) + '/estimate', json={'run_id': legacy})
         assert response.status_code == 200
         assert response.json()['max_llm_calls'] == 300
+
+
+def test_draft_metrics_accumulate_only_active_intervals_and_known_tokens(local, monkeypatch):
+    from types import SimpleNamespace
+
+    run = running(4)
+    clock = [100.]
+    monkeypatch.setattr(budget, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+    with budget.processing_time(run):
+        with budget.scope(run, 'generation'):
+            first, second, third = (budget.reserve() for _ in range(3))
+        budget.finish(first, None, {'total_tokens': 12, 'prompt_tokens': 10, 'completion_tokens': 2})
+        budget.finish(second, None, {'prompt_tokens': 3})
+        current = budget.usage(run)
+        assert current['in_progress_calls'] == 1 and current['failed_or_interrupted'] == 0
+        assert current['token_usage']['total_tokens'] == 15 and current['token_usage']['total_recorded'] == 1
+        budget.finish(third, ValueError(), {'prompt_tokens': 4, 'completion_tokens': 0})
+        clock[0] += 6.5
+    clock[0] += 86400
+    assert budget.usage(run)['active_duration_ms'] == 6500
+    with budget.processing_time(run):
+        clock[0] += 3
+    value = budget.usage(run)
+    assert value['active_duration_ms'] == 9500 and value['timing_partial'] is False
+    assert value['calls_used'] == 3 and value['failed_or_interrupted'] == 1 and value['in_progress_calls'] == 0
+    assert value['token_usage']['total_tokens'] == 19 and value['token_usage']['total_recorded'] == 2
+
+
+def test_crash_recovers_last_confirmed_work_once_and_leaves_old_totals_unknown(local):
+    run = running()
+    with db.connect() as c:
+        c.execute('UPDATE transcript_optimizations SET active_ms=NULL WHERE id=?', (run,))
+    assert budget.usage(run)['active_duration_ms'] is None
+    with db.connect() as c:
+        c.execute('''UPDATE transcript_optimizations SET active_ms=1300,active_since=?,updated_at=? WHERE id=?''',
+                  ('2026-01-01T12:00:00+00:00','2026-01-01T12:00:04+00:00',run))
+        budget.recover_processing(c)
+        budget.recover_processing(c)
+    value = budget.usage(run)
+    assert value['active_duration_ms'] == 5300 and value['timing_partial']
+    assert value['token_usage']['total_tokens'] is None
+
+
+def test_historical_run_only_reports_time_measured_after_resume(local):
+    run = running()
+    with db.connect() as c:
+        c.execute('UPDATE transcript_optimizations SET active_ms=NULL WHERE id=?', (run,))
+    with budget.processing_time(run):
+        assert budget.usage(run)['timing_partial']
+    assert budget.usage(run)['active_duration_ms'] is not None
+
+
+def test_v26_usage_migration_keeps_existing_tokens_and_api_contract(local):
+    run = running()
+    with budget.scope(run, 'generation'):
+        budget.finish(budget.reserve(), None, {'prompt_tokens': 7, 'completion_tokens': 3})
+    parent_id = store.get(run)['job_id']
+    with db.connect() as c:
+        for field in ('active_ms', 'active_since', 'timing_partial'):
+            c.execute(f'ALTER TABLE transcript_optimizations DROP COLUMN {field}')
+        c.execute('ALTER TABLE optimization_calls DROP COLUMN total_tokens')
+        c.execute('UPDATE schema_meta SET version=26')
+    db.init_db()
+    db.init_db()
+    with TestClient(api.create_app()) as client:
+        response = client.get(url(parent_id)+'/usage', params={'run_id':run})
+        assert response.status_code == 200
+        usage = response.json()
+        assert usage['active_duration_ms'] is None and not usage['timing_partial']
+        assert usage['calls_used'] == 1 and usage['in_progress_calls'] == 0
+        assert usage['token_usage']['total_tokens'] == 10 and usage['token_usage']['total_recorded'] == 1
+        schemas = client.get('/openapi.json').json()['components']['schemas']
+        assert 'active_duration_ms' in schemas['CallUsage']['properties']
+        assert 'total_recorded' in schemas['TokenUsage']['properties']
+        assert 'token_usage_mode' in schemas['ConfigurationResponseWithToken']['properties']

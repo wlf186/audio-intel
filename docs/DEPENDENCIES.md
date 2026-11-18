@@ -66,7 +66,7 @@ API 锁和前端锁要求审计无已知漏洞。Qwen/Torch 当前精确约束�
 审计以 `dependency-exceptions.json` 为唯一机器可读例外来源，绑定公告、包版本、环境、模型 manifest 校验值与复查日期。新增或重新评估的例外最多有效 30 天；API、前端、工具不增加例外。上述说明与下方逐项 VEX 是证据说明，不能单独让流水线放行。任何未豁免公告均使审计失败。每次 Qwen 包发布时重新检查是否可解除 Transformers 固定版本与对应豁免。
 
 
-视频转写沿用 API/ASR 已固定的 PyAV 和 NumPy；API 显式依赖 Pillow 13.0.0，ASR/模型环境因 Gradio 约束保留 12.3.0（见下方 VEX）。简洁 PDF 在 API 环境使用 ReportLab 4.5.1 与仓库内 Noto Sans SC 字体，不依赖系统字体或在线服务。浏览器分片 SHA-256 使用 @noble/hashes 2.0.1，在 Web Worker 运行。字体来源与许可证见 [第三方说明](../THIRD_PARTY_NOTICES.md)。模型、Transformers、精度和既有推理批次保持不变。
+视频转写沿用 API/ASR 已固定的 PyAV 和 NumPy；API 显式依赖 Pillow 13.0.0，ASR/模型环境因 Gradio 约束保留 12.3.0（见下方 VEX）。转写 HTML 使用系统字体，所有资源随文档离线交付。浏览器分片 SHA-256 使用 @noble/hashes 2.0.1，在 Web Worker 运行。模型、Transformers、精度和既有推理批次保持不变。
 
 API 环境固定使用 pypinyin 0.55.0 离线生成声纹人员的拼音排序与索引。姓氏读音覆盖只在排序时应用，不改写姓名、系统热词或历史快照；ASR/TTS/aligner 不安装该依赖。
 

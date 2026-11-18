@@ -1,4 +1,4 @@
-"""Authenticated presentation uploads, editing and concise PDF downloads."""
+"""Authenticated presentation uploads, editing and offline transcript downloads."""
 from __future__ import annotations
 
 import asyncio
@@ -24,7 +24,7 @@ from .api_models import JobResponse, JobResultResponse, VideoSceneResponse
 from .asr_speakers import speaker_update_lock
 from .document_download import reader_lease
 from .transcript import scene_transcripts
-from .transcript_filename import transcript_filename
+from .transcript_filename import transcript_basename, transcript_filename
 from .video_detection import SceneDetectionSettings
 
 
@@ -135,8 +135,8 @@ class SceneEdit(StrictModel):
 
 def capabilities(config: Any) -> dict[str, Any]:
     from .video_detection import capability
-    return {'audio_formats': store.AUDIO_FORMATS, 'concise_pdf': True,
-            'transcript_export': {'formats': ['pdf', 'docx', 'json', 'txt', 'srt', 'vtt'], 'redact_default': True, 'max_replacements': 100},
+    return {'audio_formats': store.AUDIO_FORMATS, 'concise_pdf': False,
+            'transcript_export': {'formats': ['html', 'docx', 'json', 'txt', 'srt', 'vtt'], 'redact_default': True, 'max_replacements': 100},
             'video': {'supported': True, 'formats': store.VIDEO_FORMATS,
                       'max_upload_bytes': config.max_video_upload_bytes,
                       'chunk_bytes': config.video_upload_chunk_bytes,
@@ -380,39 +380,22 @@ def register(app: Any, api: Any) -> None:
             raise HTTPException(409, 'This task has no presentation analysis')
         return job
 
-    pdf_headers = {
-        'Content-Type': {'schema': {'type': 'string', 'const': 'application/pdf'}},
+    attachment_headers = {
         'Content-Length': {'description': '文件字节数 / File bytes', 'schema': {'type': 'integer'}},
         'Content-Disposition': {'description': '任务名主体加导出扩展名的 UTF-8 附件名 / UTF-8 attachment name: task basename plus export extension', 'schema': {'type': 'string'}},
     }
-    @app.head('/api/v1/jobs/{job_id}/transcript.pdf', tags=tags, response_class=Response,
-              responses={**errors, 200: {'description': '导出响应头，无响应体 / Export headers, no body', 'headers': pdf_headers}},
-              summary='准备简洁 PDF / Prepare concise PDF',
-              description='准备同一缓存导出并返回下载头，无响应体；附件按任务名主体加 .pdf 命名。\n\n**English:** Prepare the same cached export and return download headers without a body; name the attachment after the task basename plus .pdf.')
-    @app.get('/api/v1/jobs/{job_id}/transcript.pdf', tags=tags, response_class=Response, responses={**errors, 200: {'headers': pdf_headers, 'content': {'application/pdf': {'schema': {'type': 'string', 'format': 'binary'}}}}},
-             description='合并连续同说话人发言及时间范围，保留原文；视频按画面组织图文。附件按任务名主体加 .pdf 命名。仅已完成 ASR，内存缓存，繁忙时 429。\n\n**English:** Merge adjacent speech from the same speaker and its time range, preserving words. Videos include images and matching discussion. Attachment names use the task basename plus .pdf. Completed ASR only; memory cached, 429 when busy.',
-              summary='下载简洁转写 PDF / Download concise transcript PDF')
-    def pdf(job_id: str, request: Request, _: None = auth) -> Response:
-        from .transcript_pdf import download
-        try:
-            with speaker_update_lock(job_id), task_reader(job_id):
-                job = completed(job_id)
-                payload = download(job['display_name'], job['result'], config.jobs_dir / job_id / 'output')
-        except ValueError as exc:
-            raise HTTPException(413, str(exc)) from exc
-        except (BlockingIOError, RuntimeError) as exc:
-            raise HTTPException(429, str(exc), headers={'Retry-After': '2'}) from exc
-        filename = quote(transcript_filename(job['display_name'], job_id, 'pdf'), safe='')
-        return Response(payload if request.method != 'HEAD' else None, media_type='application/pdf', headers={'Content-Length': str(len(payload)), 'Content-Disposition': f"attachment; filename*=UTF-8''{filename}", 'Cache-Control': 'no-store'})
+    @app.api_route('/api/v1/jobs/{job_id}/transcript.pdf', methods=['GET', 'HEAD'], include_in_schema=False)
+    def retired_pdf(job_id: str, _: None = auth) -> Response:
+        raise HTTPException(410, 'Use POST transcript-export with format=html, then print to PDF.')
 
     @app.post('/api/v1/jobs/{job_id}/transcript-export', tags=tags, response_class=Response,
               operation_id='exportTranscript', summary='按需脱敏导出转写 / Export a transcript with optional redaction',
-              description='默认缩写姓名、遮盖备注；最多 100 对字面关键词替换（每项最多 8000 字）。关闭 redact 停止文字脱敏；任务中的导出隐藏画面标记仍生效，PDF/DOCX 显示占位框。附件始终使用任务名主体加导出扩展名，脱敏不隐藏文件名中的任务名称。只处理导出副本；原音视频和图片文件保持原样。\n\n**English:** Names are abbreviated and notes masked by default. Up to 100 literal replacements, 8000 characters per value. Disabling redact disables text transformations; saved export-hidden pictures still use PDF/DOCX placeholders. Attachments always use the task basename plus export extension; redaction does not hide the task name in the filename. Original media remains unchanged.',
+              description='默认缩写姓名、遮盖备注；最多 100 对字面关键词替换（每项最多 8000 字）。关闭 redact 停止文字脱敏；任务中的导出隐藏画面标记仍生效，HTML/DOCX 显示占位框。HTML 和 Word 标题使用上传文件名主体，包括脱敏导出。附件始终使用任务名主体加导出扩展名，脱敏不隐藏文件名中的任务名称。只处理导出副本；原音视频和图片文件保持原样。\n\n**English:** Names are abbreviated and notes masked by default. Up to 100 literal replacements, 8000 characters per value. Disabling redact disables text transformations; saved export-hidden pictures still use HTML/DOCX placeholders. HTML and Word titles use the upload basename even with redaction. Attachments always use the task basename plus export extension; redaction does not hide the task name in the filename. Original media remains unchanged.',
               responses={**errors, **api.NOT_FOUND_RESPONSE, **api.VALIDATION_RESPONSE,
-                         200: {'description': '所选格式的下载 / Download in the selected format', 'headers': {'Content-Disposition': pdf_headers['Content-Disposition'], 'Content-Length': pdf_headers['Content-Length']}, 'content': {mime: {'schema': api.BINARY_SCHEMA} for mime in ('application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/json', 'text/plain', 'application/x-subrip', 'text/vtt')}}})
-    def transcript_export(job_id: str, body: TranscriptExportRequest, _: None = auth) -> Response:
+                         200: {'description': '所选格式的下载 / Download in the selected format', 'headers': {'Content-Disposition': attachment_headers['Content-Disposition'], 'Content-Length': attachment_headers['Content-Length']}, 'content': {mime: {'schema': api.BINARY_SCHEMA} for mime in ('text/html', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/json', 'text/plain', 'application/x-subrip', 'text/vtt')}}})
+    def transcript_export(job_id: str, body: TranscriptExportRequest, request: Request, _: None = auth) -> Response:
         from .transcript_export import export_result, format_transcript, MIME_TYPES
-        from .transcript_pdf import download
+        from .transcript_html import download
         try:
             with speaker_update_lock(job_id), task_reader(job_id):
                 job = completed(job_id)
@@ -425,15 +408,14 @@ def register(app: Any, api: Any) -> None:
                 else:
                     from .transcript_export import optimized_export_result
                     result = optimized_export_result(job, body)
-                title = 'Transcript' if body.redact else job['display_name']
-                if body.format in ('pdf', 'docx'):
+                title = transcript_basename(job['request'].get('original_name') or job['display_name'], job_id)
+                if body.format == 'html':
+                    locale = 'en-US' if request.headers.get('accept-language', '').lower().startswith('en') else 'zh-CN'
+                    payload = download(title, result, config.jobs_dir / job_id / 'output', locale)
+                elif body.format == 'docx':
                     variant = hashlib.sha256(json.dumps([job['updated_at'], body.model_dump()], sort_keys=True).encode()).hexdigest()
-                    if body.format == 'docx':
-                        from .transcript_docx import download as download_docx
-                        renderer = download_docx
-                    else:
-                        renderer = download
-                    payload = renderer(title, result, config.jobs_dir / job_id / 'output', cache_variant=variant)
+                    from .transcript_docx import download as download_docx
+                    payload = download_docx(title, result, config.jobs_dir / job_id / 'output', cache_variant=variant)
                 else:
                     content = format_transcript(result, body.format)
                     if len(content) > 4_000_000:

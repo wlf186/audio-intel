@@ -12,12 +12,11 @@ import av
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
-from pypdf import PdfReader
 
 from audio_intel import api, db, purge, worker, video_uploads
 from audio_intel.config import settings
 from audio_intel.transcript import paragraphs, scene_transcripts
-from audio_intel.transcript_pdf import download
+from audio_intel.transcript_html import download
 from audio_intel.video_frames import PresentationDetector, probe
 from asr import pipeline
 
@@ -87,7 +86,7 @@ def test_pdf_lossless_merge_and_chinese(tmp_path):
     segments.append({**segments[0],'id':3,'speaker':'s1','start':6,'end':7,'text':'另一位同名人员。'})
     assert len(paragraphs(segments))==2
     payload=download('中文会议',{'segments':segments},tmp_path)
-    text=''.join(p.extract_text() for p in PdfReader(io.BytesIO(payload)).pages)
+    text=payload.decode()
     assert '张老师' in text and '我我我' in text and '知识工程' in text
     assert not list(tmp_path.iterdir())
 
@@ -145,13 +144,10 @@ def test_video_end_to_end_edit_pdf_and_idempotency(client,local,tmp_path):
     assert outcome['state']=='succeeded',result.get('error_message')
     video=result['result']['video'];assert len(video['scenes'])==2
     root='/api/v1/jobs/'+job['id']
-    pdf = client.get(root+'/transcript.pdf')
-    assert pdf.content.startswith(b'%PDF')
-    assert pdf.headers['content-type'] == 'application/pdf'
-    head = client.head(root+'/transcript.pdf')
-    assert head.content == b''
-    for header in ('content-type', 'content-length', 'content-disposition'):
-        assert head.headers[header] == pdf.headers[header]
+    document = client.post(root+'/transcript-export',json={})
+    assert document.content.startswith(b'<!doctype html>')
+    assert document.headers['content-type'].startswith('text/html')
+    assert client.head(root+'/transcript.pdf').status_code == 410
     assert client.get(root+'/video-scenes').json()['revision']==1
     image=video['scenes'][0]['image']
     frame = client.get(root+'/video-frames/'+image)
@@ -177,7 +173,7 @@ def test_limits_auth_schema_and_cancel(client,local):
     assert client.get(url,headers={'Authorization':'Bearer wrong'}).status_code==401
     assert client.delete(url).status_code==204
     assert not (local.jobs_dir/item['id']).exists()
-    with db.connect() as c:assert c.execute('SELECT MIN(version) FROM schema_meta').fetchone()[0]== 26
+    with db.connect() as c:assert c.execute('SELECT MIN(version) FROM schema_meta').fetchone()[0]== 27
 
 
 def test_slide_builds_roi_and_repeated_page(tmp_path):
@@ -309,10 +305,10 @@ def test_variable_frame_pts_and_delayed_audio_share_origin(tmp_path, client, loc
 
 
 def test_pdf_resource_budget(tmp_path,monkeypatch):
-    from audio_intel import transcript_pdf
-    monkeypatch.setattr(transcript_pdf,'_max_text_chars',2)
+    from audio_intel import transcript_html
+    monkeypatch.setattr(transcript_html,'_max_text_chars',2)
     with pytest.raises(ValueError,match='budget'):
-        transcript_pdf.render('large',{'segments':[{'text':'too long'}]},tmp_path)
+        transcript_html.render('large',{'segments':[{'text':'too long'}]},tmp_path)
 
 
 @pytest.mark.parametrize("gain,noise", [(False, False), (True, False), (False, True), (True, True)])

@@ -70,13 +70,15 @@ historical jobs without a saved original WAV show an unavailable explanation and
 
 ## 简洁导出与磁盘 / Concise export and disk use
 
-音视频提供主操作「简洁导出」，可选择 PDF 或 Word（DOCX），次级「明细与字幕」保留 JSON、TXT、SRT、VTT。原文版本的简洁 PDF/DOCX 将相同 speaker ID 的相邻发言合并为一段，保留第一句开始与最后一句结束时间，不删改口头语、不做总结；同名但不同 ID 的说话人不会误合并。优化稿和对照版的 PDF/Word 另含分组小结、画面标题与“关键词／原文要点”标记，使用相同脱敏及替换规则，详见[表达优化](EXPRESSION_OPTIMIZATION.md)。视频也支持 JSON、TXT、SRT、VTT，并提供图文简洁 PDF/DOCX，按画面分段，画面下展示相应讨论。PDF 内嵌本地简体中文字体，无云服务或系统字体依赖。
+导出转写默认生成自包含 HTML 文件。离线打开后可用目录跳转、搜索并高亮原文或优化稿、查看分段小结与核对说明。普通稿在 1280 px 起、对照版在 768 px 起将议题概述和全部发言、分段小结排在对应正文右侧。对照版从 960 px 起并排显示原文和优化稿，平板可在段内展开原文。HTML 和 Word 使用上传文件名主体作为文档标题，开启脱敏时同样显示。工具栏「小结」可从当前段附近连续查阅，点击小结时间直达发言，「返回全文」恢复原阅读位置。宽屏左侧保留细目录，手机从「目录」跳章。点击段落起始时间可查看完整起止范围；点击截图可放大，关闭后回到原段。「更多」提供打印，选择「打印／另存为 PDF」会打印完整的所选版本；隐藏画面不写入文件。离线阅读状态在关闭文件时清除。
 
-Audio and video offer a concise export menu with PDF and editable Word (DOCX) and a secondary details/subtitles menu. For original-text exports, adjacent speech with the same speaker ID merges with its combined time range; words and disfluencies are preserved. Optimized exports instead use the published reading paragraphs described in [expression optimization](EXPRESSION_OPTIMIZATION.md). Equal names with different IDs do not merge. Video offers illustrated concise PDF/DOCX, with images followed by their discussion. Optimized/comparison PDF/Word also include group summaries, scene titles and keyword/source-excerpt labels, using the same redaction and replacement rules. A bundled Chinese font keeps PDF rendering offline.
+「导出转写」提供 HTML、Word（DOCX）、JSON、TXT、SRT 和 VTT。原文版本的简洁 HTML/DOCX 将相同 speaker ID 的相邻发言合并为一段，保留第一句开始与最后一句结束时间，不删改口头语、不做总结；同名但不同 ID 的说话人不会误合并。优化稿和对照版的 HTML/Word 另含分组小结、画面标题与“关键词／原文要点”标记，使用相同脱敏及替换规则，详见[表达优化](EXPRESSION_OPTIMIZATION.md)。视频也支持 JSON、TXT、SRT、VTT，并提供图文简洁 HTML/DOCX，按画面分段，画面下展示相应讨论。HTML 使用本地系统字体，可离线阅读或打印为 PDF。
 
-上传直接顺序追加到一份文件，校验并 fsync 后才确认偏移；不创建分片文件再拼接、不预分配 25 GiB，不在重试时重写已确认数据。提交时同盘重命名。画面分析保存最终代表 JPEG；v2 另保存有上限、可重建的低分辨率压缩特征缓存，不保存高分辨率抽样序列。原音复用一份归一化 WAV；实际应用人声增强时另存一份增强 WAV，约每小时 115 MB，旁路时不增加；临时目录和数据目录在同一文件系统时完成阶段直接移动，否则跨盘移动需一次复制。失败/取消后的工作目录由现有 worker 清理。PDF 按需在内存生成，单渲染并发、64 MiB LRU 缓存（5 分钟）；单份 PDF 输入上限为 400 万文本字符、128 MiB JPEG，超过返回 413 并提示拆分。单帧预览最多两个解码器且不写图片；画面检测预览则拥有临时图片和进度文件。修改截图后清理不再被当前/原始分段引用的图片，删除任务清理其输入与结果。
+Use Export transcript to download offline HTML, editable Word (DOCX), JSON, TXT, SRT or VTT. For original-text exports, adjacent speech with the same speaker ID merges with its combined time range; words and disfluencies are preserved. Optimized exports instead use the published reading paragraphs described in [expression optimization](EXPRESSION_OPTIMIZATION.md). Equal names with different IDs do not merge. Video offers illustrated concise HTML/DOCX, with images followed by their discussion. Optimized/comparison HTML/Word also include group summaries, scene titles and keyword/source-excerpt labels, using the same redaction and replacement rules. HTML can be read and printed offline.
 
-Uploads append to one file and are acknowledged only after checksum verification and fsync: no chunk concatenation, full-size preallocation or acknowledged-byte rewrite. Submission renames on the same filesystem. Final JPEG representatives are saved; v2 also saves bounded, rebuildable compressed low-resolution features, not a full-resolution sampled-frame sequence. One normalized WAV preserves original playback; applied enhancement retains a separate WAV (about 115 MB/hour), while bypass adds no file. Keep temporary and data directories on the same filesystem for rename-only completion; crossing filesystems requires one copy. Existing worker cleanup removes failed/cancelled working directories. PDFs render on demand in memory, with one renderer and a 64 MiB, five-minute LRU. PDF inputs are limited to 4 million text characters and 128 MiB of JPEGs; larger exports return 413 with a split-source hint. At most two single-frame preview decoders run, without persisting images; scene-detection previews own temporary images and progress snapshots. Unreferenced edited images are removed, and task deletion removes owned inputs/results.
+上传直接顺序追加到一份文件，校验并 fsync 后才确认偏移；不创建分片文件再拼接、不预分配 25 GiB，不在重试时重写已确认数据。提交时同盘重命名。画面分析保存最终代表 JPEG；v2 另保存有上限、可重建的低分辨率压缩特征缓存，不保存高分辨率抽样序列。原音复用一份归一化 WAV；实际应用人声增强时另存一份增强 WAV，约每小时 115 MB，旁路时不增加；临时目录和数据目录在同一文件系统时完成阶段直接移动，否则跨盘移动需一次复制。失败/取消后的工作目录由现有 worker 清理。HTML 按需生成，一次渲染一份，限制为 400 万正文字符、128 MiB JPEG 和 256 MiB 输出，超过返回 413 并提示拆分。单帧预览最多两个解码器且不写图片；画面检测预览则拥有临时图片和进度文件。修改截图后清理不再被当前/原始分段引用的图片，删除任务清理其输入与结果。
+
+Uploads append to one file and are acknowledged only after checksum verification and fsync: no chunk concatenation, full-size preallocation or acknowledged-byte rewrite. Submission renames on the same filesystem. Final JPEG representatives are saved; v2 also saves bounded, rebuildable compressed low-resolution features, not a full-resolution sampled-frame sequence. One normalized WAV preserves original playback; applied enhancement retains a separate WAV (about 115 MB/hour), while bypass adds no file. Keep temporary and data directories on the same filesystem for rename-only completion; crossing filesystems requires one copy. Existing worker cleanup removes failed/cancelled working directories. HTML renders on demand, one document at a time. Budgets are 4 million text characters, 128 MiB of JPEGs and 256 MiB of final output; larger exports return 413 with a split-source hint. At most two single-frame preview decoders run, without persisting images; scene-detection previews own temporary images and progress snapshots. Unreferenced edited images are removed, and task deletion removes owned inputs/results.
 
 算法选择参考：[FFmpeg scdet](https://ffmpeg.org/ffmpeg-filters.html#scdet)、[PySceneDetect 检测器](https://www.scenedetect.com/docs/api/detectors.html)。后者提供内容/自适应切镜，但不直接判断 PPT 的同页动画，因此 v1 复用 FFmpeg 并加入幻灯片比较，v2 使用统一的面积／持续时间门槛；均不增加 OpenCV 或模型运行时。
 
@@ -84,7 +86,7 @@ Uploads append to one file and are acknowledged only after checksum verification
 
 ```bash
 AUDIO_INTEL_BASE_URL=http://127.0.0.1:20810 \
-  .runtime/api/bin/python scripts/submit_video.py lecture.mp4 --state tmp/lecture-upload.json --pdf tmp/lecture.pdf
+  .runtime/api/bin/python scripts/submit_video.py lecture.mp4 --state tmp/lecture-upload.json --html tmp/lecture.html
 ```
 
 Windows 使用 `.runtime\api\Scripts\python.exe`。可选 `--device cpu` / `--device gpu`；省略则采用部署默认。鉴权从 `AUDIO_INTEL_API_KEY` 读取。中断后使用同一 `--state` 和原文件重跑；收到 429 时按 `Retry-After` 等待后重跑。上传过期后使用新的状态文件。完整接口见 [API 文档](API.md) 与本地 `/docs`。
@@ -109,13 +111,13 @@ Resume first verifies local bytes against the server manifest. Verification perc
 
 The reading UI no longer exposes manual section editing. Picture detection shows current pictures, generates detection previews and manages export visibility. Manual section-editing APIs retain revision checks; existing manual edits remain intact.
 
-PDF/DOCX 下载通过一次 POST 接收完整内容后保存。429 按 Retry-After 等待后手动重试，413 表示超出导出上限，应拆分源文件重新转写；音频还可下载明细与字幕。401 重新登录后再导出，断网直接重试导出，无需重新转写。
+HTML/DOCX 下载通过一次 POST 接收完整内容后保存。429 按 Retry-After 等待后手动重试，413 表示超出导出上限，应拆分源文件重新转写；音频还可下载明细与字幕。401 重新登录后再导出，断网直接重试导出，无需重新转写。
 
-PDF/DOCX uses a single POST and saves after the full response arrives. For 429, wait for Retry-After then export manually; for 413, split the source and transcribe smaller files, or use audio detail/subtitle exports. Sign in again after 401. Retry an interrupted download without submitting a new transcription.
+HTML/DOCX uses a single POST and saves after the full response arrives. For 429, wait for Retry-After then export manually; for 413, split the source and transcribe smaller files, or use audio detail/subtitle exports. Sign in again after 401. Retry an interrupted download without submitting a new transcription.
 
-命令行 `--pdf` 期间续传文件还保存已接受的 `job_id`，直到 PDF 完整写入临时文件、关闭并原子替换目标文件后才清除。轮询中断、下载失败、任务失败或取消均保留记录，重跑只查询原任务；确需新任务时使用新的 `--state`。已有完整 PDF 不会被失败下载破坏。省略 `--pdf` 时，提交成功即清除记录。旧记录可继续使用；恢复时沿用记录中的转写设置。
+命令行 `--html` 期间续传文件还保存已接受的 `job_id`，直到 HTML 完整写入临时文件、关闭并原子替换目标文件后才清除。轮询中断、下载失败、任务失败或取消均保留记录，重跑只查询原任务；确需新任务时使用新的 `--state`。已有完整 HTML 不会被失败下载破坏。省略 `--html` 时，提交成功即清除记录。旧记录可继续使用；恢复时沿用记录中的转写设置。
 
-With CLI `--pdf`, the journal retains the accepted `job_id` until the download is fully written, closed and atomically replaces the destination. Interrupted polling/downloads and failed/cancelled jobs retain the journal; rerunning reads the same job. Use a new `--state` for an intentional new job. Failed downloads preserve existing complete PDFs. Without `--pdf`, successful submission clears the journal. Legacy journals remain readable and saved transcription parameters are retained on resume.
+With CLI `--html`, the journal retains the accepted `job_id` until the download is fully written, closed and atomically replaces the destination. Interrupted polling/downloads and failed/cancelled jobs retain the journal; rerunning reads the same job. Use a new `--state` for an intentional new job. Failed downloads preserve existing complete HTML files. Without `--html`, successful submission clears the journal. Legacy journals remain readable and saved transcription parameters are retained on resume.
 
 编辑模式 / Editing mode:
 
@@ -141,11 +143,11 @@ English: In **Illustrated reading**, choose **Add to voiceprint library** beside
 
 ## 分组与脱敏导出 / Groups and redacted export
 
-音视频任务均可选择多个声纹分组，默认全部，提交时固定人员 ID。PDF、DOCX、JSON、TXT、SRT、VTT 下载默认脱敏，可关闭；只处理下载副本，原始结果、音频和截图不改写。关键词每行 `原词=替换词`，最多 100 对，浏览器长期记忆开关和规则。具体算法、边界和接口见 [API 指南](API.md#on-demand-redacted-transcript-export--按需脱敏导出)。
+音视频任务均可选择多个声纹分组，默认全部，提交时固定人员 ID。HTML、DOCX、JSON、TXT、SRT、VTT 下载默认脱敏，可关闭；只处理下载副本，原始结果、音频和截图不改写。关键词每行 `原词=替换词`，最多 100 对，浏览器长期记忆开关和规则。具体算法、边界和接口见 [API 指南](API.md#on-demand-redacted-transcript-export--按需脱敏导出)。
 
-CLI 的 `--voiceprint-group ID` 可重复选择分组，省略使用全部；`--pdf` 默认脱敏，`--no-redact` 导出原文，`--replacements rules.json` 接收 UTF-8 `{source,target}` 数组。中断后沿用原续传记录和已接受任务，不重新计算任务范围；导出选项在下载时应用。
+CLI 的 `--voiceprint-group ID` 可重复选择分组，省略使用全部；`--html` 默认脱敏，`--no-redact` 导出原文，`--replacements rules.json` 接收 UTF-8 `{source,target}` 数组。中断后沿用原续传记录和已接受任务，不重新计算任务范围；导出选项在下载时应用。
 
-English: Select voiceprint groups for audio/video; eligible people are fixed at acceptance. All transcript formats default to redacted downloads, preserving original results/audio/images. CLI `--voiceprint-group ID` repeats, `--pdf` redacts by default, `--no-redact` exports raw, and `--replacements` reads a UTF-8 JSON array. Export options are applied at download time; resumed accepted jobs keep their scope.
+English: Select voiceprint groups for audio/video; eligible people are fixed at acceptance. All transcript formats default to redacted downloads, preserving original results/audio/images. CLI `--voiceprint-group ID` repeats, `--html` redacts by default, `--no-redact` exports raw, and `--replacements` reads a UTF-8 JSON array. Export options are applied at download time; resumed accepted jobs keep their scope.
 
 ## 阅读连续性与时间输入 / Reading continuity and time input
 
@@ -153,7 +155,7 @@ English: Select voiceprint groups for audio/video; eligible people are fixed at 
 
 手工更换截图、拆分和调整结束时间现在仅通过 API 提供，时间参数使用秒数。截图时刻允许等于分段起点，必须小于终点；拆分与边界必须严格在对应范围内。服务端继续校验范围与修订号。
 
-桌面保留 PDF 快捷按钮和“明细与字幕”菜单；窄屏使用“导出转写”弹窗统一选择 PDF/TXT/SRT/VTT/JSON、脱敏开关和替换规则。菜单支持点击外部或 Escape 关闭，不改变阅读滚动。规则错误即时显示；仅在脱敏开启时阻止下载，关闭开关可继续导出原文。声纹入库分两步，显示已选数量、固定操作区，回到上一步保留勾选。
+桌面和手机均使用「导出转写」弹窗选择内容版本、格式及脱敏规则。菜单支持点击外部或 Escape 关闭，不改变阅读滚动。规则错误即时显示；仅在脱敏开启时阻止下载，关闭开关可继续导出原文。声纹入库分两步，显示已选数量、固定操作区，回到上一步保留勾选。
 
 English: Each task/view retains its reading anchor and loaded count across navigation/reload, including segment filters. Edited sections restore a nearby ID/time anchor. Refresh keeps old content visible, disables editing and provides retry on failure. Current-tab sessionStorage clears on logout/auth invalidation. Manual frame/section edits are API-only and accept seconds; server time-range and revision validation remains authoritative. Narrow screens consolidate transcript formats/redaction/rules into one export dialog. Desktop menus dismiss on outside click/Escape. Invalid rules block downloads only when redaction is enabled. Enrollment preselects clicked-paragraph sentences, retains selections between its two steps and keeps footer actions reachable.
 
@@ -181,11 +183,11 @@ Audio processing is a compact status button beside downloads; its popover shows 
 
 在「任务与结果 → 图文阅读 → 画面检测」设置最小画面变化比例（默认 3%，0.5–50%）与新画面最短保持时间（默认 1 秒）。具体范围与默认值以 capabilities 为准。同页增量显示尽量合并。
 
-presentation-v3 将分段和截图确认分开：截图需要在同一分段内连续稳定达到用户配置的 `min_stable_seconds`，与音频、句子时长无关。截图使用独立的降噪容差（显著颜色变化面积低于 0.4%），小通知不能因低于分段面积阈值而绕过确认。多个合格区间采用最后一个区间的首个实际采样帧；短暂变化不覆盖已确认截图。无合格画面时 `image`、`frame_time` 和预览 `preview_url` 为 null，阅读界面与 PDF/DOCX 保留独立的文字和时间段，不显示大幅缺图占位；画面目录只列保留截图，缺图空文字段默认省略展示，检测明细仍可查看“无稳定画面”；这不是加载错误或导出隐藏。分段范围与截图时刻分别显示。
+presentation-v3 将分段和截图确认分开：截图需要在同一分段内连续稳定达到用户配置的 `min_stable_seconds`，与音频、句子时长无关。截图使用独立的降噪容差（显著颜色变化面积低于 0.4%），小通知不能因低于分段面积阈值而绕过确认。多个合格区间采用最后一个区间的首个实际采样帧；短暂变化不覆盖已确认截图。无合格画面时 `image`、`frame_time` 和预览 `preview_url` 为 null，阅读界面与 HTML/DOCX 保留独立的文字和时间段，不显示大幅缺图占位；画面目录只列保留截图，缺图空文字段默认省略展示，检测明细仍可查看“无稳定画面”；这不是加载错误或导出隐藏。分段范围与截图时刻分别显示。
 
 保持时间范围仍为 0.5–5 秒，输入步进 0.1 秒（如 0.6）；约每 0.5 秒抽样，按实际时间跨度确认，不提前、跨分段或在片尾补足时长，因此非抽样间隔整数倍的设置可能等到下一个抽样点。检测仍是有容差的视觉启发式，不进行 OCR/通知语义识别。自动截图遵守此规则；明确手工指定截图的 API 保留原有语义。
 
-Presentation-v3 separates sections from screenshot confirmation. Automatic pictures require a continuous sampled stable interval inside one section lasting at least the configured `min_stable_seconds`, independently of audio or sentence length. A separate noise tolerance (significant RGB changes over less than 0.4% of pixels) prevents section-area settings from bypassing screenshot confirmation. The first actual sample of the latest qualifying interval represents the section; brief changes cannot overwrite it. Without a qualifying picture, `image`, `frame_time` and preview `preview_url` are null. The reader and PDF/DOCX preserve unillustrated prose without large placeholders or picture headings; empty content blocks are omitted. The picture directory numbers retained pictures only, while detection details can still show No stable picture; this is distinct from loading failure and export hiding. Section ranges and capture times are labeled separately.
+Presentation-v3 separates sections from screenshot confirmation. Automatic pictures require a continuous sampled stable interval inside one section lasting at least the configured `min_stable_seconds`, independently of audio or sentence length. A separate noise tolerance (significant RGB changes over less than 0.4% of pixels) prevents section-area settings from bypassing screenshot confirmation. The first actual sample of the latest qualifying interval represents the section; brief changes cannot overwrite it. Without a qualifying picture, `image`, `frame_time` and preview `preview_url` are null. The reader and HTML/DOCX preserve unillustrated prose without large placeholders or picture headings; empty content blocks are omitted. The picture directory numbers retained pictures only, while detection details can still show No stable picture; this is distinct from loading failure and export hiding. Section ranges and capture times are labeled separately.
 
 Duration remains 0.5–5 seconds with a 0.1-second input step, including 0.6. Sampling remains about 0.5 seconds. Confirmation uses observed elapsed time without early acceptance, crossing sections or padding EOF; fractional settings may wait until the next sample. This remains a noise-tolerant visual heuristic without OCR or notification recognition. Explicit manual frame selection retains its API semantics.
 
@@ -213,19 +215,19 @@ AUDIO_INTEL_BASE_URL=http://127.0.0.1:20810 \
 
 “画面检测”的当前画面每批展示 12 张，接近底部自动加载下一批。可勾选一张或多张、全选已加载画面，再选择“导出时隐藏”或“恢复导出”；“全部恢复”恢复所有画面。操作立即随任务保存，刷新或换浏览器后仍有效。保存失败保留选择；修订冲突需关闭并重新打开。
 
-隐藏仅影响导出：PDF/DOCX 用“画面已隐藏”占位框替代图片，编号、时间和文字保留；JSON 携带隐藏标记，TXT/SRT/VTT 保持完整文字。图文阅读显示原图及“导出时隐藏”标记，时间轴和原媒体不变。文字脱敏关闭时，画面隐藏仍生效。
+隐藏仅影响导出：HTML/DOCX 用“画面已隐藏”占位框替代图片，编号、时间和文字保留；JSON 携带隐藏标记，TXT/SRT/VTT 保持完整文字。图文阅读显示原图及“导出时隐藏”标记，时间轴和原媒体不变。文字脱敏关闭时，画面隐藏仍生效。
 
 候选检测预览须先应用，再设置隐藏。修改任一检测参数并成功应用会清除旧标记；单纯修改输入、恢复默认输入、预览或取消均不清除。同参数重新应用仅保留时间范围、代表帧时间和图片均一致的标记。保存隐藏设置会使尚未应用的预览失效；参数保留，可重新预览。
 
-English: Picture detection immediately shows current pictures and export-hidden badges. It loads 12 pictures per batch automatically near the bottom. Select individual or loaded pictures, then Hide in exports, Restore in exports or Restore all. Changes are saved with the task across browsers. Failed saves retain selection; revision conflicts require closing and reopening. PDF/DOCX use a Picture hidden placeholder while retaining section numbers, times and text; JSON includes markers and text formats remain complete. Illustrated reading shows original pictures with export-hidden badges; timeline and source media remain unchanged. Picture hiding is independent of text redaction. Candidate previews must be applied before setting visibility. Applying changed detection parameters clears old markers; editing inputs, resetting inputs, previewing or cancelling does not. Unchanged parameters preserve markers only for identical time ranges, frame times and images. Saving visibility invalidates pending previews without clearing their input settings.
+English: Picture detection immediately shows current pictures and export-hidden badges. It loads 12 pictures per batch automatically near the bottom. Select individual or loaded pictures, then Hide in exports, Restore in exports or Restore all. Changes are saved with the task across browsers. Failed saves retain selection; revision conflicts require closing and reopening. HTML/DOCX use a Picture hidden placeholder while retaining section numbers, times and text; JSON includes markers and text formats remain complete. Illustrated reading shows original pictures with export-hidden badges; timeline and source media remain unchanged. Picture hiding is independent of text redaction. Candidate previews must be applied before setting visibility. Applying changed detection parameters clears old markers; editing inputs, resetting inputs, previewing or cancelling does not. Unchanged parameters preserve markers only for identical time ranges, frame times and images. Saving visibility invalidates pending previews without clearing their input settings.
 
 ### 可编辑 Word 导出 / Editable Word export
 
-简洁导出菜单的 Word（DOCX）使用与 PDF 相同的段落、时间范围和画面分组，文字可编辑。手机在现有导出弹窗选择 DOCX，默认仍为 PDF，不新增格式偏好存储。隐藏画面显示“画面已隐藏 / Picture hidden”，包内不嵌入被隐藏的原图，讨论文字保留；关闭文字脱敏也不会取消隐藏。历史已完成任务无需重新转写。
+简洁导出菜单的 Word（DOCX）使用与 HTML 相同的段落、时间范围和画面分组，文字可编辑。手机在现有导出弹窗选择 DOCX，默认使用 HTML，不新增格式偏好存储。隐藏画面显示“画面已隐藏 / Picture hidden”，包内不嵌入被隐藏的原图，讨论文字保留；关闭文字脱敏也不会取消隐藏。历史已完成任务无需重新转写。
 
 DOCX 完全本地生成，复用已安装的 python-docx 1.2.0，无新增依赖或数据库迁移。中文使用文档字体样式而非嵌入字体，Word/WPS 的字体替代和分页可能不同于 PDF。
 
-English: Choose Word (DOCX) in Concise export, or in the mobile format selector (PDF remains the default). Editable documents preserve the same paragraphs, times and picture grouping as PDF. Hidden pictures use brief notices without embedding their original bytes; text remains, independently of text redaction. Existing completed jobs work without retranscription. Generation is offline using the already pinned python-docx library, with no new dependencies, migration or browser-storage policy. Fonts are not embedded, so Word/WPS pagination may differ from PDF.
+English: Choose Word (DOCX) in Concise export, or in the mobile format selector (HTML is the default). Editable documents preserve the same paragraphs, times and picture grouping as HTML. Hidden pictures use brief notices without embedding their original bytes; text remains, independently of text redaction. Existing completed jobs work without retranscription. Generation is offline using the already pinned python-docx library, with no new dependencies, migration or browser-storage policy. Fonts are not embedded, so Word/WPS pagination may differ from PDF.
 
 ## 入库音轨 / Enrollment audio track
 
@@ -257,8 +259,8 @@ Each representative-image materialization reuses one source container, deduplica
 
 画面目录、缩略图和阅读编号只统计实际保留截图的出现次数，非相邻重复画面仍各自保留。缺图正文保持独立、通栏显示，不自动归入上一张图；截图过滤不代表话题没有变化。没有截图也没有当前版本正文、小结、标题或对照来源的区间不占阅读卡片或文档标题，原始分段及视频时间轴仍保留。图片加载失败提供重试，不按缺图处理。
 
-Word 每张截图只用一个主标题；缺图内容和其优化标题使用普通段落，不进入标题导航。PDF 使用相同规则。手动导出隐藏仍保留编号，以简短说明代替图片框。文字与逐词结果仅格式不一致（如 5.2/52、seven-day/sevenday、a.m./am、$5,000/5000）时，可在完整字符覆盖校验后分配到对应画面；字词和数字内容不一致时保持完整片段，不估计时间。原文、字幕和媒体不改写。
+Word 每张截图只用一个主标题；缺图内容和其优化标题使用普通段落，不进入标题导航。HTML 用目录链接定位到可读画面或段落。手动导出隐藏仍保留编号，以简短说明代替图片框。文字与逐词结果仅格式不一致（如 5.2/52、seven-day/sevenday、a.m./am、$5,000/5000）时，可在完整字符覆盖校验后分配到对应画面；字词和数字内容不一致时保持完整片段，不估计时间。原文、字幕和媒体不改写。
 
 缺图正文的“查看画面”仅点击后请求现有只读帧接口，在内存中解码为临时预览；不创建检测预览任务，不写图片或重写视频，不加入导出。关闭弹窗释放预览，失败可重试，繁忙时遵循 Retry-After。手机详细时间轴默认收起，展开状态仅在当前页面内存中保留，刷新恢复默认；原有阅读、筛选、导出和检测偏好寿命不变。
 
-English: The picture directory numbers retained picture occurrences only. Independent text without a picture remains chronological and is never implicitly assigned to the previous picture. Empty reading blocks are omitted while raw sections/timing remain intact. Word/PDF use one major heading per retained picture, with unillustrated prose and titles as ordinary paragraphs. Formatting-equivalent word alignment preserves original characters and offsets, falling back intact on content differences. Click-only frame previews decode into memory without media files or detection tasks. Mobile timeline expansion is page-memory-only and resets on reload; existing preference lifetimes are unchanged.
+English: The picture directory numbers retained picture occurrences only. Independent text without a picture remains chronological and is never implicitly assigned to the previous picture. Empty reading blocks are omitted while raw sections/timing remain intact. Word uses one major heading per retained picture, with unillustrated prose and titles as ordinary paragraphs. Formatting-equivalent word alignment preserves original characters and offsets, falling back intact on content differences. Click-only frame previews decode into memory without media files or detection tasks. Mobile timeline expansion is page-memory-only and resets on reload; existing preference lifetimes are unchanged.

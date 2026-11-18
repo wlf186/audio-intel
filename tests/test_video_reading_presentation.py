@@ -7,12 +7,11 @@ import json
 import pytest
 from test_video_transcription import client, local
 from docx import Document
-from pypdf import PdfReader
 
 from audio_intel.transcript import scene_transcripts, presentation_sections
 from audio_intel.optimization_engine import source_hash, prepare_units
 from audio_intel.transcript_docx import render as docx
-from audio_intel.transcript_pdf import render as pdf
+from audio_intel.transcript_html import render as pdf
 
 
 def result_for(text, tokens):
@@ -73,7 +72,7 @@ def test_exports_only_pictures_have_headings_and_text_stays_independent(tmp_path
     assert headings == ['画面 1', '画面 2']
     text = '\n'.join(p.text for p in word.paragraphs)
     assert 'Second.' in text and '无稳定画面' not in text and '无识别语音' not in text
-    pdf_text = '\n'.join(p.extract_text() for p in PdfReader(io.BytesIO(pdf('Reading', result, tmp_path))).pages)
+    pdf_text = pdf('Reading', result, tmp_path).decode()
     assert 'Second.' in pdf_text and 'No stable picture' not in pdf_text
     assert result == before
 

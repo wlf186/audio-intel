@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from audio_intel import document_store as store
-from audio_intel.utils import safe_filename
+from audio_intel.utils import atomic_json, safe_filename
 
 
 def file_hash(path: Path) -> str:
@@ -90,6 +90,7 @@ def process_loaded(context: Any, request: dict[str, Any], model: Any, device: st
             partial = context.output_dir / f"document-{item['id']}.partial"
             plan = manifest.get("plans", {}).get(item["id"])
             chunks = [c["text"] for c in plan] if plan is not None else pipeline.split_text(text[item["start_offset"]:item["end_offset"]])
+            reading_samples = []
             section_fallbacks = []
             index = 0; samples = 0; rate = 24000; section_actual = 1; peaks: list[float] = []
             try:
@@ -152,7 +153,9 @@ def process_loaded(context: Any, request: dict[str, Any], model: Any, device: st
                             if samples:
                                 pause = plan[index + batch_index]["pause_before_ms"] / 1000 if plan is not None else .18
                                 write(np.zeros(int(rate * pause), dtype=np.float32))
+                            start_sample = samples
                             write(audio)
+                            reading_samples.append([start_sample, samples])
                             peaks.append(round(float(np.max(np.abs(audio))), 4))
                             if len(peaks) > 480:
                                 peaks = [max(peaks[i:i + 2]) for i in range(0, len(peaks), 2)]
@@ -173,6 +176,11 @@ def process_loaded(context: Any, request: dict[str, Any], model: Any, device: st
                             "sha256": file_hash(path), "duration": round(samples / rate, 3), "sample_rate": rate,
                             "waveform": peaks, "batch_size": section_actual, "oom_fallbacks": section_fallbacks}
                 prepare_optional(path)
+                index_path = context.output_dir.parent / "reading" / (item["id"] + ".json")
+                try:
+                    atomic_json(index_path, {"version": 1, "sha256": artifact["sha256"], "samples": reading_samples})
+                except OSError:
+                    pass  # The audio checkpoint remains usable with section-level seeking.
                 store.checkpoint(context.job_id, item["id"], "complete", artifact)
             except pipeline.generation_guard.TtsGenerationGuardError:
                 store.checkpoint(context.job_id, item["id"], "pending")

@@ -37,13 +37,13 @@
 > [!IMPORTANT]
 > This is an independent, unofficial open-source project maintained on a non-commercial basis. It has not been authorized, sponsored, approved, or endorsed by CD PROJEKT RED, R. Talsorian Games, or any related rights holder. See the [brand and project status notice](BRAND_NOTICE.md).
 
-Separate audio/video creation tabs share the ASR queue. Audio keeps its 4 GiB limit; video supports resumable uploads up to 25 GiB, adjustable picture detection, export visibility controls and matching discussion, and illustrated PDF/Word (DOCX). Audio offers concise PDF/Word while retaining detailed exports. See the [video transcription guide](docs/VIDEO_TRANSCRIPTION.md).
+Separate audio/video creation tabs share the ASR queue. Audio keeps its 4 GiB limit; video supports resumable uploads up to 25 GiB, adjustable picture detection, export visibility controls and matching discussion, and illustrated HTML/Word (DOCX). Audio offers concise HTML/Word while retaining detailed exports. See the [video transcription guide](docs/VIDEO_TRANSCRIPTION.md).
 
 Video results include a zoomable picture-and-waveform timeline with horizontal scrolling and click-to-read navigation. Compact windows open the timeline in a panel to preserve reading space. Draft paragraphs support local source comparison without leaving the current reading position. Picture detection previews load as you scroll; hidden export pictures remain marked in illustrated reading. Task history shows per-job file usage and selected totals; enhancement details stay in a compact summary.
 
 Voiceprint libraries support groups, scoped ASR recognition and batch move/delete. Transcript downloads support default-on name/note redaction and up to 100 keyword replacements, with persistent browser preferences. ZIP v2 includes groups and imports remain compatible with v1. Upgrade backups cover only necessary data and must be removed after complete acceptance; see [the upgrade guide](docs/UPGRADE.md).
 
-Optional Chat Completions optimization offers three rewrite strengths, merged consecutive speech, complete side-by-side comparison and illustrated exports. New drafts include source-bound group summaries and video scene titles in reading and PDF/Word exports. Generation, bounded checks and automatic summary recovery publish together. Abnormal outputs receive bounded repair, then labelled keywords or source excerpts supply a fallback; accepted keywords finish the item. Paused or legacy missing insights retain an explicit recovery action. Small models can still miss or change facts, so retain source comparison. Voiceprint enrollment offers original or enhanced audio, defaulting to original. Reverified 9B profiles support multi-item source packets with every fine insight retained. New configurations default to a 100-call cap, with preflight estimates, one-run overrides and usage details; saved explicit limits remain unchanged. UI context/output budgets use K tokens. Optional recording topics group recurring discussions with source-linked playback intervals and PDF/Word directories; disabled by default. See [expression optimization](docs/EXPRESSION_OPTIMIZATION.md) and the [measured scope and quality limits](docs/EXPRESSION_OPTIMIZATION_PACKETS_VALIDATION.md).
+Optional Chat Completions optimization offers three rewrite strengths, merged consecutive speech, complete side-by-side comparison and illustrated exports. New drafts include source-bound group summaries and video scene titles in reading and HTML/Word exports. Generation, bounded checks and automatic summary recovery publish together. Abnormal outputs receive bounded repair, then labelled keywords or source excerpts supply a fallback; accepted keywords finish the item. Paused or legacy missing insights retain an explicit recovery action. Small models can still miss or change facts, so retain source comparison. Voiceprint enrollment offers original or enhanced audio, defaulting to original. Reverified 9B profiles support multi-item source packets with every fine insight retained. New drafts use the recommended call limit for each transcript. You can adjust it for one run and inspect actual usage afterward. UI context/output budgets use K tokens. Optional recording topics group recurring discussions with source-linked playback intervals and HTML/Word directories; disabled by default. See [expression optimization](docs/EXPRESSION_OPTIMIZATION.md) and the [measured scope and quality limits](docs/EXPRESSION_OPTIMIZATION_PACKETS_VALIDATION.md).
 
 ## Interface preview
 
@@ -67,11 +67,11 @@ Transcription results support entering speaker names and optional notes manually
 
 | Area | Capabilities |
 | --- | --- |
-| **Local speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, concise PDF/Word (DOCX), and detailed JSON/SRT/VTT/TXT export |
-| **Optional transcript cleanup** | User-configured OpenAI Chat Completions-compatible service, verified text/JSON generation, resumable reading drafts, original/draft comparison and redacted PDF/DOCX/TXT exports; disabled by default |
+| **Local speech recognition** | Qwen3-ASR 0.6B/1.7B, FSMN-VAD, CAM++ speaker diarization, sentence and word timestamps, concise HTML/Word (DOCX), and detailed JSON/SRT/VTT/TXT export |
+| **Optional transcript cleanup** | User-configured OpenAI Chat Completions-compatible service, verified text/JSON generation, resumable reading drafts, original/draft comparison and redacted HTML/DOCX/TXT exports; disabled by default |
 | **Speaker intelligence** | Voiceprints distinguish namesakes by notes and support named, renameable samples; custom and voiceprint-derived hotword lists improve domain vocabulary while completed tasks retain immutable snapshots |
 | **Local voice studio** | Qwen3-TTS 0.6B/1.7B, preset voices, one-off or library-based voice cloning with optional 3–30 second library reference ranges, 1.7B VoiceDesign, and WAV/FLAC/MP3 output |
-| **Document synthesis** | EPUB, TXT, Markdown, text PDF, DOCX, XLSX and PPTX; structural/length previews, reusable imports with bulk removal, checkpoint recovery, and album-tagged ZIP / complete MP3 downloads |
+| **Document synthesis** | EPUB, TXT, Markdown, text PDF, DOCX, XLSX and PPTX; structural/length previews, reusable imports with bulk removal, checkpoint recovery, and album-tagged MP3 downloads, and [HTML audiobooks](docs/DOCUMENT_TTS.md#有声书-html) for online listening, offline whole books or individual chapters in a ZIP |
 | **Durable task engine** | Persistent SQLite queues, upload and inference progress, local ETA history, SSE updates, cancellation, retry, task history, and safe purge |
 | **Web UI and APIs** | Bilingual local Web UI and Swagger guide, native asynchronous APIs, and OpenAI-compatible transcription and speech endpoints |
 | **Deployment-aware operation** | Recommended full CPU/GPU profile plus an optional CPU-only profile; the UI and API expose only devices and model controls available in the active deployment |
@@ -180,7 +180,7 @@ ASR audio and video use bounded, memory-first float32 caches. Samples spill only
         │           VAD → optional CPU enhancement + VAD union
         │           ├── original audio → speaker diarization
         │           └── recognition audio → Qwen3-ASR → forced alignment
-        │           └── PDF / DOCX / JSON / SRT / VTT / TXT
+        │           └── HTML / DOCX / JSON / SRT / VTT / TXT
         │
         └── SQLite WAL TTS queue ── TTS supervisor
                 └── reusable task executor

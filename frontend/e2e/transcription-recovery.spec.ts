@@ -112,16 +112,16 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
   await page.screenshot({path:testInfo.outputPath('reading.png'),fullPage:true})
   expect(errors).toEqual([])
  })
- test(`PDF recoverable errors and single POST ${width} ${locale}`,async({page},testInfo)=>{
+ test(`HTML recoverable errors and single POST ${width} ${locale}`,async({page},testInfo)=>{
   await page.setViewportSize({width,height:960})
   const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&!/429|413|401|ERR_FAILED/.test(m.text()))errors.push(m.text())})
   const f=await fixture(page,locale);let status=429;const methods:string[]=[]
   await page.route('**/transcript-export',route=>{
    methods.push(route.request().method())
-   expect(route.request().postDataJSON()).toEqual({format:'pdf',redact:true,replacements:[]})
+   expect(route.request().postDataJSON()).toEqual({format:'html',redact:true,replacements:[]})
    if(status===0)return route.abort('failed')
    if(status!==200)return route.fulfill({status,headers:{'Retry-After':'1'},json:{detail:'fixture'}})
-   return route.fulfill({contentType:'application/pdf',headers:{'Content-Disposition':"attachment; filename*=UTF-8''%E8%AE%B2%E5%BA%A7.pdf"},body:'%PDF-test'})
+   return route.fulfill({contentType:'text/html',headers:{'Content-Disposition':"attachment; filename*=UTF-8''%E8%AE%B2%E5%BA%A7.html"},body:'HTML-test'})
   })
   await f.open()
   await openTranscriptExport(page)
@@ -129,7 +129,7 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
   await downloadConcise(page);await expect(exportButton).toBeDisabled();await expect(page.locator('.transcript-export-modal [role=alert]')).toContainText(zh?'繁忙':'busy');await expect(exportButton).toBeEnabled()
   status=413;await downloadConcise(page);await expect(page.locator('.transcript-export-modal [role=alert]')).toContainText(zh?'上限':'limit')
   status=0;await downloadConcise(page);await expect(page.locator('.transcript-export-modal [role=alert]')).toContainText(zh?'中断':'interrupted')
-  status=200;const downloading=page.waitForEvent('download');await downloadConcise(page);const download=await downloading;expect(download.suggestedFilename()).toBe('讲座.pdf');expect(await download.failure()).toBeNull()
+  status=200;const downloading=page.waitForEvent('download');await downloadConcise(page);const download=await downloading;expect(download.suggestedFilename()).toBe('讲座.html');expect(await download.failure()).toBeNull()
   expect(methods).toEqual(['POST','POST','POST','POST'])
   await expect(page.locator('.transcript-export-modal [role=alert]')).toHaveCount(0)
   await page.screenshot({path:testInfo.outputPath('export.png'),fullPage:true})
@@ -138,10 +138,10 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
  })
 }
 
-test('switching tasks aborts a pending PDF without downloading stale content',async({page,responseGate})=>{
+test('switching tasks aborts a pending HTML without downloading stale content',async({page,responseGate})=>{
  const f=await fixture(page),held=responseGate();let downloads=0
  page.on('download',()=>downloads++)
- await page.route('**/transcript-export',async route=>{await held.hold();await route.fulfill({contentType:'application/pdf',body:'%PDF-old'}).catch(()=>undefined)})
+ await page.route('**/transcript-export',async route=>{await held.hold();await route.fulfill({contentType:'text/html',body:'HTML-old'}).catch(()=>undefined)})
  await f.open();const requested=page.waitForRequest('**/transcript-export')
  await downloadConcise(page);const request=await requested
  const failed=page.waitForEvent('requestfailed',{predicate:failed=>failed===request})

@@ -24,11 +24,14 @@ def main() -> None:
     parser.add_argument('--language', default='Auto')
     parser.add_argument('--scene-min-change-percent', type=float, help='Minimum changed picture area, 0.5–50 percent')
     parser.add_argument('--scene-min-stable-seconds', type=float, help='Minimum stable picture/screenshot duration, 0.5–5 seconds (0.1-second input step); no qualifying screenshot uses a placeholder')
-    parser.add_argument('--pdf', type=Path, help='Wait for completion and download the concise PDF')
+    parser.add_argument('--pdf', type=Path, help=argparse.SUPPRESS)
+    parser.add_argument('--html', type=Path, help='Wait for completion and download the offline HTML')
     parser.add_argument('--voiceprint-group', action='append', help='Eligible voiceprint group ID; repeat to select several, omit for all')
     parser.add_argument('--no-redact', action='store_true', help='Export original names, notes and text')
-    parser.add_argument('--replacements', type=Path, help='UTF-8 JSON array of source/target replacements for PDF export')
+    parser.add_argument('--replacements', type=Path, help='UTF-8 JSON array of source/target replacements for HTML export')
     args = parser.parse_args()
+    if args.pdf:
+        parser.error("--pdf retired; use --html and print to PDF")
     try:
         submit(args)
     except (httpx.HTTPError, OSError, ValueError, RuntimeError, KeyboardInterrupt) as exc:
@@ -109,28 +112,28 @@ def submit(args: argparse.Namespace) -> None:
         state['job_id'] = job['id']
         save()
         print('Job:', job['id'], flush=True)
-        if args.pdf:
+        if args.html:
             while job['state'] not in {'succeeded', 'failed', 'cancelled'}:
                 time.sleep(job.get('poll_after_seconds') or 2)
                 job = call('GET', '/api/v1/jobs/' + job['id'])
             if job['state'] != 'succeeded':
                 raise RuntimeError(job.get('error_message') or job['state'])
-            with client.stream('POST', f"/api/v1/jobs/{job['id']}/transcript-export", json={'format': 'pdf', 'redact': not getattr(args, 'no_redact', False), 'replacements': json.loads(args.replacements.read_text(encoding='utf-8')) if getattr(args, 'replacements', None) and not getattr(args, 'no_redact', False) else []}) as response:
+            with client.stream('POST', f"/api/v1/jobs/{job['id']}/transcript-export", json={'format': 'html', 'redact': not getattr(args, 'no_redact', False), 'replacements': json.loads(args.replacements.read_text(encoding='utf-8')) if getattr(args, 'replacements', None) and not getattr(args, 'no_redact', False) else []}) as response:
                 response.raise_for_status()
-                args.pdf.parent.mkdir(parents=True, exist_ok=True)
+                args.html.parent.mkdir(parents=True, exist_ok=True)
                 temporary = None
                 try:
-                    with tempfile.NamedTemporaryFile(mode='wb', dir=args.pdf.parent, prefix=args.pdf.name + '.', suffix='.partial', delete=False) as output:
+                    with tempfile.NamedTemporaryFile(mode='wb', dir=args.html.parent, prefix=args.html.name + '.', suffix='.partial', delete=False) as output:
                         temporary = Path(output.name)
                         for block in response.iter_bytes():
                             output.write(block)
                         output.flush()
                         os.fsync(output.fileno())
-                    os.replace(temporary, args.pdf)
+                    os.replace(temporary, args.html)
                 finally:
                     if temporary is not None:
                         temporary.unlink(missing_ok=True)
-            print('PDF:', args.pdf)
+            print('HTML:', args.html)
         args.state.unlink(missing_ok=True)
 
 

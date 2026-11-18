@@ -337,7 +337,7 @@ def test_v24_migration_preserves_sources_calls_and_legacy_plan_absence(local):
     assert calls.usage(run)['calls_used'] == 1
     assert packets.nodes(run) == []
     with db.connect() as connection:
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 26
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 27
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
 
 
@@ -582,9 +582,8 @@ def test_budget_exhaustion_is_a_pause_and_resume_keeps_all_failed_attempts(packe
 
 def test_every_fine_insight_is_delivered_and_exported_with_redaction(packet_model):
     from audio_intel.transcript_export import TranscriptExportRequest, optimized_export_result, format_transcript
-    from audio_intel import transcript_docx, transcript_pdf
+    from audio_intel import transcript_docx, transcript_html
     from docx import Document
-    from pypdf import PdfReader
     import io
     data = transcript(5, length=6)
     for item in data['segments']:
@@ -612,8 +611,8 @@ def test_every_fine_insight_is_delivered_and_exported_with_redaction(packet_mode
     assert format_transcript(exported, 'txt').count('Segment summary') == len(old)
     document = Document(io.BytesIO(transcript_docx.render('Fine insights', exported, db.settings.data_dir)))
     assert '\n'.join(p.text for p in document.paragraphs).count('Segment summary') == len(old)
-    pdf = PdfReader(io.BytesIO(transcript_pdf.render('Fine insights', exported, db.settings.data_dir)))
-    assert '\n'.join(page.extract_text() for page in pdf.pages).count('Segment summary') == len(old)
+    pdf = transcript_html.render('Fine insights', exported, db.settings.data_dir).decode()
+    assert pdf.count('分段小结') == len(old)
 
 
 def test_co_review_transport_retries_count_for_each_insight(packet_model, monkeypatch):
@@ -663,7 +662,7 @@ def test_insight_repair_cannot_reset_transport_allowance(packet_model, monkeypat
         assert all(item['generation_method'] == 'source_excerpt' for item in groups.values())
 
 
-def test_output_truncation_splits_packets_without_increasing_limits(packet_model, monkeypatch):
+def test_repeated_output_truncation_pauses_at_the_run_limit_and_resumes_split_packets(packet_model, monkeypatch):
     _, normal = packet_model
     attempts, truncated = [], []
     async def limited(connection, body, activity=None):
@@ -676,8 +675,22 @@ def test_output_truncation_splits_packets_without_increasing_limits(packet_model
     monkeypatch.setattr(provider, 'completion', limited)
     identifier = job(transcript(7, length=7))
     with TestClient(api.create_app()) as client:
+        root = url(identifier)
+        estimate = client.post(root + '/estimate', json={}).json()
         assert start(client, identifier).status_code == 202
-        run = wait(client, identifier, lambda value: bool(value['published']))['published']['id']
+        paused = wait(client, identifier, lambda value: (value['candidate'] or {}).get('state') == 'paused')['candidate']
+        run = paused['id']
+        assert paused['budget_error'] == 'exhausted'
+        assert paused['calls_used'] == len(attempts) == estimate['recommended_limit']
+        saved = {u['ordinal']: u['text'] for u in store.units(run) if u['text']}
+        assert saved
+        remaining = client.post(root + '/estimate', json={'run_id': run}).json()
+        assert remaining['max_llm_calls'] == paused['calls_used'] and not remaining['can_start']
+        resumed = client.post(root + '/resume', json={'run_id': run, 'max_llm_calls': remaining['recommended_limit']})
+        assert resumed.status_code == 200, resumed.text
+        done = wait(client, identifier, lambda value: bool(value['published']))['published']
+        assert done['id'] == run and done['calls_limit'] == remaining['recommended_limit']
+        assert all(u['text'] == saved[u['ordinal']] for u in store.units(run) if u['ordinal'] in saved)
         assert truncated
         assert set(attempts) == {4096}
         assert calls.usage(run)['calls_used'] == len(attempts)

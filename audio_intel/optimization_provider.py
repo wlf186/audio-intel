@@ -75,6 +75,8 @@ def request_body(config: dict, payload: dict) -> dict:
     if 'max_completion_tokens' in extra:
         body.pop('max_tokens')
     body.update(extra)
+    if config.get('token_usage_mode') == 'include_usage':
+        body['stream_options'] = {**body.get('stream_options', {}), 'include_usage': True}
     if config.get('budget_policy_version') or 'max_output_tokens' in config:
         field = 'max_completion_tokens' if 'max_completion_tokens' in extra else 'max_tokens'
         body.pop('max_tokens' if field == 'max_completion_tokens' else 'max_completion_tokens', None)
@@ -137,7 +139,7 @@ async def completion(connection: httpx.AsyncClient, body: dict, activity=None) -
         usage = item.get('usage')
         capture = usage_capture.get()
         if capture is not None and isinstance(usage, dict):
-            for key in ('prompt_tokens', 'completion_tokens'):
+            for key in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
                 value = usage.get(key)
                 if type(value) is int and value >= 0: capture[key] = value
         if item.get('error'):

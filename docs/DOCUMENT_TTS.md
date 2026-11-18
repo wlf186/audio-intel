@@ -186,3 +186,9 @@ English: New imports retain the complete extracted source and annotate high-conf
 在文档工作区，「调整分段」与「朗读处理」并排显示。已解析文档可在朗读设置底部重新分析，旧版文档可通过「启用朗读处理」进入。设置中显示整份文档识别到的数量；选段栏与提交区显示所选片段的原文及朗读字符数。连续阅读中的「原书第 … 页」指文档页码，预览翻页按当前分段的文本窗口计算。
 
 The document toolbar opens segmentation and narration settings in separate dialogs. Narration settings show document-wide detection counts and provide reanalysis. The selection and submission summaries count only the selected sections. Source page labels in continuous reading refer to the original document.
+
+### 有声书 HTML
+
+在成功的文档任务中点击「打开有声书」即可在线听读。下载完整 HTML 可离线跨段连播，分段 HTML ZIP 中每个文件都含本段音频，当前分段也可单独下载。手机需使用支持脚本和音频播放的浏览器打开文件。长书可解压 ZIP 后逐章打开。删除任务后在线页失效，已下载文件仍可独立使用。新合成分段使用采样边界高亮，历史录音支持章节定位。续听位置和倍速保存在当前浏览器的本地存储，清除网站数据会清除进度。「更多」可直接跳到上一片段、重播本片段或跳到下一片段。整书可跨章节跳转，缺少时间索引的历史录音按章跳转。
+
+同一受鉴权下载接口支持 mode=reader（在线页面）、html_complete、html_sections 和 html_section，最后一种需传 section_id。CLI 可用 `--download-mode html_complete --output book.html`。导出时分块读取已有 MP3 并直接发送，服务器仅额外保存朗读时间索引。

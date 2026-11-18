@@ -161,24 +161,25 @@ export function DocumentInput({capability,onChange}:{capability:DocumentCapabili
    <div className="document-selection-bar"><label className="document-select-all"><input ref={allInput} type="checkbox" checked={selected.length>0&&selected.length===preview.sections.filter(s=>s.speakable!==false).length} onChange={e=>setSelected(e.target.checked?preview.sections.filter(s=>s.speakable!==false).map(s=>s.id):[])}/>{t('document.all')}</label><p role="status">{t(spokenChars==null?'document.selected':'document.selectionSpoken',{count:selected.length,chars:selectedChars,spoken:spokenChars})}</p></div>
    <ol ref={listRef} className="document-sections" start={page*pageSize+1}>{preview.sections.slice(page*pageSize,page*pageSize+pageSize).map(section=><li key={section.id}><label><input type="checkbox" checked={chosen.has(section.id)} disabled={busy||section.speakable===false} onChange={e=>setSelected(ids=>e.target.checked?[...ids,section.id]:ids.filter(id=>id!==section.id))}/><span><b>{section.index}. {section.title}</b>{section.speakable===false?<small>{t('document.narration.empty')}</small>:null}<small className={section.basis==='forced'?'document-forced':undefined}>{t('document.chars',{count:section.char_count})} · {t(`document.sectionKind.${sectionKind(section.basis)}`)} · {sectionKind(section.basis)==='unknown'?section.basis:t(`document.basis.${section.basis}` as 'document.basis.heading')}</small></span></label><button type="button" onClick={()=>readSection(section)}>{t('document.preview')}</button></li>)}</ol>
    <div className="document-pagination"><button type="button" disabled={!page} onClick={()=>setPage(p=>p-1)}>{t('document.previous')}</button><span>{t('document.page',{current:page+1,total:pages})}</span><button type="button" disabled={page+1>=pages} onClick={()=>setPage(p=>p+1)}>{t('document.next')}</button></div>
-   {reading?<Modal title={reading.title} closeLabel={t('document.closeReader')} onClose={()=>{setReading(undefined);setNarrationDialog(false)}}><section className="document-text-preview">
+   {reading?<Modal title={reading.title} closeLabel={t('document.closeReader')} onClose={()=>setReading(undefined)}><section className="document-text-preview">
     {preview.sections.length>1?<div className="document-reader-navigation"><button type="button" disabled={readingIndex<=0} onClick={()=>readSection(preview.sections[readingIndex-1])}>{t('document.previousSection')}</button><span>{t('document.readerSection',{current:readingIndex+1,total:preview.sections.length})}</span><button type="button" disabled={readingIndex+1>=preview.sections.length} onClick={()=>readSection(preview.sections[readingIndex+1])}>{t('document.nextSection')}</button></div>:null}
-    <div className="document-reader-toolbar"><div className="document-reader-mode" role="tablist" aria-label={t('document.readerMode')} onKeyDown={handleTabKeys}>
+    <div className="document-reader-mode" role="tablist" aria-label={t('document.readerMode')} onKeyDown={handleTabKeys}>
      {(['original','flow'] as const).map(mode=><button key={mode} type="button" role="tab" id={`${readerId}-${mode}`} aria-selected={readerMode===mode} aria-controls={`${readerId}-panel`} tabIndex={readerMode===mode?0:-1} onClick={()=>setReaderMode(mode)}>{t(mode==='original'?'document.originalLines':'document.continuousReading')}</button>)}
     </div>
-    {narration?<button type="button" onClick={()=>setNarrationDialog(true)}>{t('document.narration.settings')}</button>:null}</div>
     <p className="document-reader-help">{t(preview.narration_options?'document.narration.readingHelp':readerMode==='original'?'document.originalHelp':'document.flowHelp')}</p>
     <div className="document-reader-body" ref={readerText} tabIndex={0} role="tabpanel" id={`${readerId}-panel`} aria-labelledby={`${readerId}-${readerMode}`}>
     {textError?<p role="alert">{textError}<button type="button" onClick={()=>setTextRetry(v=>v+1)}>{t('document.retry')}</button></p>:text===undefined?<p role="status">{t('document.loading')}</p>:<DocumentReaderText data={text} flow={readerMode==='flow'} options={preview.narration_options}/>}
     </div>
     {reading.end-reading.start>4000?<div className="document-reader-navigation"><button type="button" disabled={readStart<=reading.start} onClick={()=>setReadStart(n=>Math.max(reading.start,n-4000))}>{t('document.previous')}</button><span>{t('document.readerPage',{current:Math.floor((readStart-reading.start)/4000)+1,total:Math.max(1,Math.ceil((reading.end-reading.start)/4000))})}</span><button type="button" disabled={readStart+4000>=reading.end} onClick={()=>setReadStart(n=>n+4000)}>{t('document.next')}</button></div>:null}
    </section></Modal>:null}
-   {narrationDialog?<Modal title={t('document.narration.settings')} closeLabel={t('common.dialog.closeNamed',{title:t('document.narration.settings')})} onClose={()=>setNarrationDialog(false)}>
+   {narrationDialog?<Modal className="document-narration-dialog" title={t('document.narration.settings')} closeLabel={t('common.dialog.closeNamed',{title:t('document.narration.settings')})} onClose={()=>setNarrationDialog(false)}>
+    <p>{t('document.narration.scope')}</p>
     {narration?<DocumentNarrationControls options={narration} counts={preview.annotation_counts} disabled={busy} onChange={next=>void changeNarration(next)}/>:<p>{t('document.narration.analysisRequired')}</p>}
     {busy?<p role="status">{t('common.states.processing')}</p>:null}
-    <footer className="document-reanalysis"><button type="button" disabled={busy} onClick={()=>void reanalyze()}>{t('document.narration.reanalyze')}</button></footer>
-    {record?.metadata.reanalysis_error?<p role="alert">{record.metadata.reanalysis_error}</p>:null}
     {error?<p role="alert">{error} <button type="button" disabled={busy} onClick={()=>void retryFailed()}>{t('document.retry')}</button></p>:null}
+    <footer className="document-reanalysis"><button type="button" disabled={busy} onClick={()=>void reanalyze()}>{t('document.narration.reanalyze')}</button>
+    {record?.metadata.reanalysis_error?<p role="alert">{record.metadata.reanalysis_error}</p>:null}
+    </footer>
    </Modal>:null}
   </>:null}
  </section>

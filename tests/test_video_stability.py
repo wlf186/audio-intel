@@ -7,7 +7,6 @@ import zipfile
 
 import numpy as np
 import pytest
-from pypdf import PdfReader
 
 from audio_intel import db, worker
 from asr import pipeline
@@ -123,9 +122,9 @@ def test_empty_preview_apply_edit_restore_exports_and_schema(client, local):
     assert value['video']['original_scenes'] == original['video']['original_scenes']
     assert client.get(root).json()['result']['video']['scenes'][0]['image'] is None
     assert client.get(root + '/video-scenes').json()['scenes'][0]['image'] is None
-    pdf = client.get(root + '/transcript.pdf')
+    pdf = client.post(root+'/transcript-export',json={})
     assert pdf.status_code == 200
-    text = ''.join(p.extract_text() for p in PdfReader(io.BytesIO(pdf.content)).pages)
+    text = pdf.text
     assert 'No stable picture' not in text
     docx = client.post(root + '/transcript-export', json={'format': 'docx', 'redact': False})
     assert docx.status_code == 200, docx.text[:200]

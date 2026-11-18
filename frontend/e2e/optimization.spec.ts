@@ -113,6 +113,7 @@ for(const width of [1440,390])for(const action of ['pause','delete'] as const)te
  const old=responseGate(),fresh=responseGate()
  await page.route('**/transcript-optimization**',async route=>{
   const request=route.request()
+  if(new URL(request.url()).pathname.endsWith('/usage'))return route.fallback()
   if(request.method()==='POST'){candidate={...running,state:'paused',revision:2};await route.fulfill({json:{enabled:true,published:null,candidate}});return}
   if(request.method()==='DELETE'){candidate=null;await route.fulfill({status:204});return}
   reads++
@@ -266,6 +267,7 @@ for(const width of [1440,390])for(const declared of [false,true])test(`unsupport
  await page.getByRole('tab',{name:'任务与结果',exact:true}).click()
  await expect(page.locator('.video-section').first()).toBeVisible()
  await expect(page.getByRole('button',{name:'优化稿',exact:true})).toBeDisabled()
+ await expect(page.getByRole('button',{name:'表达优化',exact:true})).toHaveCount(0)
  await page.clock.runFor(4000)
  expect(reads).toBe(0)
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)

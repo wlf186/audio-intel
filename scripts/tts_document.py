@@ -26,7 +26,8 @@ def main() -> None:
     parser.add_argument("--list-imports", action="store_true")
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--retry-parse", action="store_true", help="Explicitly retry a failed retained import")
-    parser.add_argument("--download-mode", choices=("sections", "complete"), default="sections")
+    parser.add_argument("--section-id", help="Section for html_section (defaults to the first selected section)")
+    parser.add_argument("--download-mode", choices=("sections", "complete", "html_complete", "html_sections", "html_section"), default="sections")
     parser.add_argument("--base-url", default="http://127.0.0.1:20810")
     parser.add_argument("--device", choices=("cpu", "gpu"), default="gpu")
     parser.add_argument("--model", default="qwen3-tts-0.6b")
@@ -42,7 +43,7 @@ def main() -> None:
     parser.add_argument("--no-skip", action="store_true", help="Read auxiliary text too")
     parser.add_argument("--no-natural-pauses", action="store_true", help="Use legacy 180 ms chunk gaps")
     parser.add_argument("--waveform", action="store_true", help="Print the first section waveform using the authenticated artifact API")
-    parser.add_argument("--output", type=Path, help="Optional local ZIP destination")
+    parser.add_argument("--output", type=Path, help="Local destination for the selected HTML, MP3 or ZIP download")
     parser.add_argument("--inspect-tags", action="store_true", help="Read MP3 metadata from the saved download (requires --output)")
     args = parser.parse_args()
     reference = {}
@@ -138,12 +139,12 @@ def main() -> None:
             name = job["result"]["document"]["sections"][0]["artifact_name"]
             print(json.dumps(read(f"/api/v1/jobs/{job['id']}/artifacts/{quote(name, safe='')}/waveform")))
         if args.output:
-            with client.stream("GET", f"/api/v1/jobs/{job['id']}/document/download", params={"mode": args.download_mode}) as response:
+            with client.stream("GET", f"/api/v1/jobs/{job['id']}/document/download", params={"mode": args.download_mode, **({"section_id": args.section_id or job["result"]["document"]["sections"][0]["id"]} if args.download_mode=="html_section" else {})}) as response:
                 response.raise_for_status()
                 with args.output.open("wb") as target:
                     for chunk in response.iter_bytes(256 * 1024):
                         target.write(chunk)
-            if args.inspect_tags:
+            if args.inspect_tags and args.download_mode in {"sections", "complete"}:
                 import av
                 import zipfile
                 if args.download_mode == "sections":

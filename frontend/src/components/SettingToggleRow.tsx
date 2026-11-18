@@ -9,7 +9,7 @@ type SettingToggleRowProps={
  disabled?:boolean
  checked:boolean
  onChange:(checked:boolean)=>void
- help:string
+ help?:string
  helpLabel?:string
  children?:ReactNode
 }
@@ -21,7 +21,7 @@ export function SettingToggleRow({id,label,description,checked,disabled,onChange
     <span className="setting-toggle-title">{label}</span>
     <span className="setting-toggle-description" id={`${id}-description`}>{description}</span>
    </label>
-   <InfoTooltip id={`${id}-help`} text={help} label={helpLabel}/>
+   {help?<InfoTooltip id={`${id}-help`} text={help} label={helpLabel}/>:null}
    <label className="setting-toggle-hit" htmlFor={id}>
     <input id={id} type="checkbox" disabled={disabled} role="switch" aria-label={label} aria-describedby={`${id}-description`} checked={checked} onChange={event=>onChange(event.target.checked)}/>
     <span className="setting-toggle-track" aria-hidden="true"/>

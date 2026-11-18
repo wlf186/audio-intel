@@ -1,9 +1,9 @@
 import {useEffect,useId,useRef,type ReactNode} from 'react'
 import {X} from 'lucide-react'
 
-type Props={open?:boolean;className?:string;title:string;closeLabel:string;onClose:()=>void;children:ReactNode}
+type Props={open?:boolean;className?:string;title:string;focusTitle?:boolean;closeLabel:string;onClose:()=>void;children:ReactNode}
 
-export function Modal({title,closeLabel,onClose,children,className,open=true}:Props){
+export function Modal({title,closeLabel,onClose,children,className,open=true,focusTitle=false}:Props){
  const dialogRef=useRef<HTMLDialogElement>(null)
  const titleId=useId()
  useEffect(()=>{
@@ -19,7 +19,7 @@ export function Modal({title,closeLabel,onClose,children,className,open=true}:Pr
  },[open])
  return <dialog inert={!open} ref={dialogRef} className={`modal-card${className?` ${className}`:''}`} aria-labelledby={titleId} onCancel={event=>{event.preventDefault();onClose()}}>
   <button className="modal-close" aria-label={closeLabel} onClick={onClose}><X/></button>
-  <h2 id={titleId}>{title}</h2>
+  <h2 id={titleId} tabIndex={focusTitle?-1:undefined} data-initial-focus={focusTitle||undefined}>{title}</h2>
   {children}
  </dialog>
 }

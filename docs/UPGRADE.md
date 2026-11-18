@@ -1,5 +1,17 @@
 # 升级指南
 
+### ASR 离线 HTML 导出
+
+转写导出的默认格式更改为 HTML，三种文字版本均可离线阅读。浏览器打印可另存 PDF。旧 GET/HEAD transcript.pdf 返回 410，POST format=pdf 返回 422；脚本将 --pdf 改为 --html。已有导出格式偏好按版本迁移；搜索与展开状态仅在当前文档中有效。无数据库或历史文件迁移。同步 API 依赖并重建前端。
+
+
+
+## 表达优化用量概览 / Expression optimization usage
+
+SQLite v26 → v27 adds nullable processing-time and Token counters. Before the first startup, take a database-only snapshot using the upgrade backup procedure below. Historical drafts retain their recorded calls and tokens. New timing starts on the next execution. Rebuild the frontend and restart the previously running components.
+
+本次升级只需备份 SQLite。历史稿按现有记录显示，已保存的模型连接可通过重新验证并保存来启用已确认的 Token 回传能力。
+
 ## v0.1.48 升级总览
 
 同时修复 Windows 执行器退出时管道探测可能中断 supervisor 的问题；管道关闭交回既有进程退出、诊断和队列恢复流程，不改变推理参数或数据格式。
@@ -24,7 +36,7 @@ English: The additive SQLite v24→v25 migration preserves historical drafts, ch
 
 ## v0.1.48：表达优化调用预算
 
-数据迁移仅涉及数据库：SQLite v23→v24增量增加优化调用额度、实际计数、预估和调用记录，保留已有稿件、来源及检查点。不改写或删除媒体；按下文仅备份实际SQLite数据库。历史运行保留原策略，未记录的调用用量显示未知；新配置默认上限100次；已有显式额度与历史运行保持原值。验收包含额度耗尽后恢复、用量读取、窗口配置及全部服务来自最终源码，完成后清理本次临时备份。见[表达优化](EXPRESSION_OPTIMIZATION.md#调用预算与用量--call-budget-and-usage)。
+数据迁移仅涉及数据库：SQLite v23→v24增量增加优化调用额度、实际计数、预估和调用记录，保留已有稿件、来源及检查点。不改写或删除媒体；按下文仅备份实际SQLite数据库。历史运行保留原策略，未记录的调用用量显示未知；v0.1.48 发布时的系统默认值为 100 次。后续升级采用[按任务预估的上限](#表达优化默认调用预算--default-optimization-call-cap)。验收包含额度耗尽后恢复、用量读取、窗口配置及全部服务来自最终源码，完成后清理本次临时备份。见[表达优化](EXPRESSION_OPTIMIZATION.md#调用预算与用量--call-budget-and-usage)。
 
 ## v0.1.47：视频阅读、截图目录与导出体验
 
@@ -181,9 +193,9 @@ English: Choose the smallest necessary upgrade backup scope: no extra backup wit
 
 ## 表达优化默认调用预算 / Default optimization call cap
 
-新配置及缺少调用预算字段的配置默认上限改为100次，已有显式设置（包括300次）和历史任务额度、用量、检查点保持原值。保存配置时省略预算字段仍保留当前值。仅改调用上限无需重新验证；长期预算由用户在系统状态修改。此次默认值及文档更新没有数据库迁移、历史文件重写或额外升级备份需求。此前实测中的300次正式配置及10000次隔离试验上限是当时记录，不追改。
+升级后，新建和重新优化使用服务端为本任务计算的建议上限。以前依赖系统设置固定额度的脚本，可在创建请求中显式传 `max_llm_calls`。连接配置的旧字段仅供旧客户端读写，保存时省略会保留原值。既有任务按原额度和检查点继续，已迁移至当前数据库版本的实例无需额外升级备份。
 
-English: New/missing-field configurations default to 100 calls. Explicit saved limits, including 300, and historical run budgets/usage/checkpoints remain unchanged; omitting the field on save preserves the current value. Call-cap-only edits need no re-verification. Long-term settings remain user-controlled. This default/documentation change needs no schema migration, historical-file rewrite or extra upgrade backup. Historical benchmark settings remain as recorded.
+New and regenerated drafts use their own recommended limit. Clients that relied on a fixed settings value can send `max_llm_calls` on each creation request. The deprecated connection field still round-trips for older clients. Existing runs resume with their saved limits and checkpoints. This policy change requires no data migration.
 
 ## Local development and deployment
 

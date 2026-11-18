@@ -8,7 +8,7 @@ import uuid
 from typing import Any
 
 from fastapi import HTTPException
-from . import db, transcript_docx, transcript_pdf
+from . import db, transcript_docx
 from .optimization_policy import PROMPT_VERSION, DEFAULT_MODE
 
 SUMMARY = 'topic_state,topic_revision,topic_completed_nodes,topic_total_nodes,calls_limit,calls_used,budget_error,' + "COALESCE(json_extract(config_json, '$.prompt_version'), 1) AS prompt_version,COALESCE(json_extract(config_json, '$.reading_plan_version'), 1) AS reading_plan_version,json_extract(config_json, '$.rewrite_mode') AS rewrite_mode," + 'id,job_id,state,phase,review_failures,reviewed_parts,total_parts,published,model,total_chars,completed_chars,completed_units,total_units,needs_review_units,review_state,reviewed_units,uncertain_units,unavailable_units,basic_cleanup_units,review_error,activity_chars,error,revision,created_at,updated_at,summary_version,summary_state,summary_counts_json,summary_revision'
@@ -101,17 +101,18 @@ def migrate(connection: sqlite3.Connection) -> None:
         optimization_packet_store.migrate(connection)
         from . import optimization_topics
         optimization_topics.migrate(connection)
+        optimization_budget.migrate_usage(connection)
 
 
 def settings() -> dict:
-    from .optimization_budget import DEFAULT_LIMIT
+    from .optimization_budget import LEGACY_SETTINGS_LIMIT
     with db.connect() as connection:
         row = connection.execute('SELECT value_json FROM optimization_settings WHERE singleton=1').fetchone()
     if row:
         value = json.loads(row[0])
         advanced = value.get('extra_body', {})
-        return {'max_llm_calls': DEFAULT_LIMIT, 'max_output_tokens': advanced.get('max_completion_tokens', advanced.get('max_tokens', 4096)), **value}
-    return {'base_url': '', 'model': '', 'use_proxy': False, 'enabled': False, 'max_llm_calls': DEFAULT_LIMIT, 'max_output_tokens': 4096, 'context_length': 16384, 'protocol': 'openai_chat_completions', 'extra_body': {}}
+        return {'max_llm_calls': LEGACY_SETTINGS_LIMIT, 'max_output_tokens': advanced.get('max_completion_tokens', advanced.get('max_tokens', 4096)), **value}
+    return {'base_url': '', 'model': '', 'use_proxy': False, 'enabled': False, 'max_llm_calls': LEGACY_SETTINGS_LIMIT, 'max_output_tokens': 4096, 'context_length': 16384, 'protocol': 'openai_chat_completions', 'extra_body': {}}
 
 
 def credential(config: dict) -> str:
@@ -261,8 +262,8 @@ def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: s
         connection.execute('DELETE FROM transcript_optimizations WHERE job_id=? AND published=0', (job_id,))
         identifier, now = uuid.uuid4().hex, db.utcnow()
         connection.execute('''INSERT INTO transcript_optimizations
-            (id,job_id,key_hash,fingerprint,state,model,config_json,hotwords_json,source_hash,total_chars,total_units,created_at,updated_at)
-            VALUES(?,?,?,?,'queued',?,?,?,?,?,?,?,?)''',
+            (id,job_id,key_hash,fingerprint,state,model,config_json,hotwords_json,source_hash,total_chars,total_units,created_at,updated_at,active_ms)
+            VALUES(?,?,?,?,'queued',?,?,?,?,?,?,?,?,0)''',
             (identifier, job_id, key_hash, fingerprint, config['model'], encode(config), encode(hotwords), source_hash,
              sum(len(p['original_text']) for p in paragraphs), len(paragraphs), now, now))
         if config.get('budget_policy_version'):
@@ -360,10 +361,9 @@ def delete(job_id: str) -> None:
 
 
 def clear_export_caches() -> None:
-    for module in (transcript_docx, transcript_pdf):
-        with module._lock:
-            module._cache_generation += 1
-            module._cache.clear()
+    with transcript_docx._lock:
+        transcript_docx._cache_generation += 1
+        transcript_docx._cache.clear()
 
 
 def parts(run_id: str, ordinal: int) -> list[dict]:

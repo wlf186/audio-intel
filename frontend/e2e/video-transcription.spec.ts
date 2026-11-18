@@ -2,6 +2,7 @@ import {showAudioOptions} from './asr-helpers'
 import {downloadConcise,openTranscriptExport,closeTranscriptExport} from './ux-helpers'
 import {capabilitiesFor,expect,test} from './fixtures'
 import path from 'node:path'
+import {pathToFileURL} from 'node:url'
 import {execFileSync} from 'node:child_process'
 
 const root=path.resolve('..')
@@ -13,7 +14,7 @@ test.beforeAll(async({},workerInfo)=>{
 })
 import {expandAsrAdvanced} from './asr-helpers'
 
-for(const width of [1440,390])test(`video upload, illustrated edits and PDF at ${width}px`,async({page})=>{
+for(const width of [1440,390])test(`video upload, illustrated edits and offline HTML at ${width}px`,async({page})=>{
  test.setTimeout(90000)
  await page.setViewportSize({width,height:960})
  const errors:string[]=[]
@@ -91,7 +92,25 @@ for(const width of [1440,390])test(`video upload, illustrated edits and PDF at $
  await downloadConcise(page)
  const download=await downloadPromise
  expect(await download.failure()).toBeNull()
- expect(download.suggestedFilename()).toMatch(/\.pdf$/)
+ expect(download.suggestedFilename()).toMatch(/\.html$/)
+ const localPath=test.info().outputPath('transcript.html')
+ await download.saveAs(localPath)
+ const offline=await page.context().browser()!.newContext({offline:true,viewport:{width,height:900}})
+ try{
+  const reader=await offline.newPage()
+  await reader.goto(pathToFileURL(localPath).href)
+  await expect(reader.locator('article')).toContainText('画面已隐藏')
+  await expect(reader.locator('article img')).toHaveCount(1)
+  expect(await reader.locator('article img').evaluate(image=>(image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+  const enlarge=reader.getByRole('button',{name:'放大画面'})
+  await enlarge.click()
+  await expect(reader.getByRole('dialog')).toBeVisible()
+  expect(await reader.locator('dialog img').getAttribute('src')).toBe(await reader.locator('article img').getAttribute('src'))
+  await reader.locator('#zoom').click()
+  await reader.keyboard.press('Escape')
+  await expect(reader.getByRole('dialog')).toBeHidden()
+  await expect(enlarge).toBeFocused()
+ }finally{await offline.close()}
  const wordPromise=page.waitForEvent('download')
  await downloadConcise(page,'docx')
  const word=await wordPromise

@@ -9,13 +9,12 @@ import threading
 from docx import Document
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from pypdf import PdfReader
 import httpx
 import pytest
 
 from audio_intel import api, db, optimization_api as routes, optimization_engine as engine, optimization_store as store, optimization_summaries as insights
 from audio_intel.transcript_export import TranscriptExportRequest, optimized_export_result, format_transcript
-from audio_intel import transcript_docx, transcript_pdf
+from audio_intel import transcript_docx, transcript_html
 from test_optimization import configured, local, job, source, start, url, wait, PROFILE
 
 
@@ -163,7 +162,7 @@ def test_v19_migration_is_additive_and_legacy_runs_do_not_generate(configured):
     with TestClient(api.create_app()) as client:
         assert client.post(url(identifier)+'/summaries/retry', json={'run_id': run}, headers={'Idempotency-Key': 'legacy-summary-retry'}).status_code == 409
     with db.connect() as c:
-        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 26
+        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 27
         assert not c.execute('PRAGMA foreign_key_check').fetchall()
 
 
@@ -261,8 +260,8 @@ def test_exports_include_redacted_summaries_once_below_comparison(configured, mo
     assert text.count('小结 / Summary：项目X预算15万元。')==1
     assert '项目X预算' in text
     assert all('小结' not in cell.text for table in document.tables for row in table.rows for cell in row.cells)
-    pdf=PdfReader(io.BytesIO(transcript_pdf.render('Meeting',result,configured.data_dir)))
-    text='\n'.join(page.extract_text() for page in pdf.pages)
+    pdf = transcript_html.render('Meeting',result,configured.data_dir).decode()
+    text=pdf
     assert '项目X预算15万元' in text and '小结' in text
     assert 'Summary' not in format_transcript(result,'txt')
 

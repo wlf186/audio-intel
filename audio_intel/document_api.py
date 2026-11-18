@@ -10,7 +10,7 @@ import sys
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
 import psutil
@@ -132,7 +132,7 @@ def capabilities(config: Any) -> dict[str, Any]:
             "default_target_section_chars": 10000, "min_target_section_chars": 1000, "max_target_section_chars": 50000,
             "narration": {"version": 1, "skip_kinds": list(narration.KINDS), "defaults": narration.NarrationOptions().model_dump(), "reanalysis": True, "max_overrides": 1000, "offset_unit": "unicode_codepoint"},
             "segmentation_modes": ["auto", "length"], "audio_format": "mp3", "resume": True,
-            "download_modes": ["sections", "complete"], "streaming_downloads": True, "batch_download_range": False}
+            "download_modes": ["sections", "complete", "html_complete", "html_sections", "html_section"], "streaming_downloads": True, "batch_download_range": False}
 
 
 def import_root(config: Any, identifier: str) -> Path:
@@ -202,7 +202,7 @@ def snapshot(config: Any, job_id: str, prepared: dict[str, Any]) -> None:
                 if options.natural_pauses:
                     pause = 700 if following["start"] != section["end"] or boundaries.get(following["start"]) == "chapter" else 350 if boundaries.get(following["start"]) == "paragraph" else 180
                 section["trailing_pause_ms"] = pause
-            manifest.update(narration_version=1, annotations=prepared["parsed"]["annotations"],
+            manifest.update(narration_version=1, headings=prepared['parsed'].get('headings', []), annotations=prepared["parsed"]["annotations"],
                             boundaries=prepared["parsed"]["boundaries"], narration_options=options.model_dump(), plans=plans)
             manifest["plan_hash"] = narration.digest([plans, manifest["sections"], manifest["narration_options"]])
         atomic_json(root / "document.json", manifest)
@@ -519,12 +519,19 @@ def register(app: FastAPI, api: Any) -> None:
         return {"items": items[offset:offset + limit], "total": len(items), "offset": offset, "limit": limit}
 
     @app.get("/api/v1/jobs/{job_id}/document/download", tags=[api.TTS_TAG], response_class=StreamingResponse,
-              responses={**responses, **api.ADMISSION_RESPONSE, 200: {"description": "Streaming ZIP64 or MP3; no Range or stored export", "content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}, "audio/mpeg": {"schema": {"type": "string", "format": "binary"}}}}})
-    async def download(job_id: str, mode: Literal["sections", "complete"], _: None = auth):
+              responses={**responses, **api.ADMISSION_RESPONSE, 200: {"description": "Streaming audio or independent audiobook HTML downloads", "content": {"text/html": {"schema": {"type": "string"}}, "application/zip": {"schema": {"type": "string", "format": "binary"}}, "audio/mpeg": {"schema": {"type": "string", "format": "binary"}}}}})
+    async def download(job_id: str, mode: Literal["sections", "complete", "html_complete", "html_sections", "html_section", "reader"], section_id: str | None = None, _: None = auth):
         from .document_download import lease, zip_stream, mp3_stream, validate_mp3
         job = await run_in_threadpool(api.job_or_404, job_id)
         if job["request"].get("purpose") != "tts_document" or job["state"] != "succeeded":
             raise HTTPException(409, "Document synthesis has not completed")
+        if (mode == "html_section") != (section_id is not None):
+            raise HTTPException(422, "Only html_section requires section_id")
+        selected_name = None
+        if section_id is not None:
+            selected_name = next((s["artifact_name"] for s in job["result"]["document"]["sections"] if s["id"] == section_id), None)
+            if selected_name is None:
+                raise HTTPException(404, "Unknown document section")
         guard = lease(job_id, config.max_document_downloads)
         try:
             guard.__enter__()
@@ -533,6 +540,8 @@ def register(app: FastAPI, api: Any) -> None:
         try:
             files = []
             for artifact in job["result"]["artifacts"]:
+                if selected_name and artifact["name"] != selected_name:
+                    continue
                 path = Path(artifact["path"]).resolve()
                 if (config.jobs_dir / job_id / "output").resolve() not in path.parents or not path.is_file() or path.stat().st_size != artifact["size_bytes"]:
                     raise HTTPException(404, "Document audio is missing or changed")
@@ -542,9 +551,23 @@ def register(app: FastAPI, api: Any) -> None:
                     await run_in_threadpool(validate_mp3, files)
                 except (ValueError, OSError) as exc:
                     raise HTTPException(409, "Document audio is invalid or incompatible") from exc
-            from .document_metadata import tags
-            metadata = tags(job["request"], job["request"]["document"]["title"] + " · 完整音频")
-            iterator = zip_stream(files) if mode == "sections" else mp3_stream(files, metadata)
+            zipped = mode in {"sections", "html_sections"}
+            media_type = "application/zip" if zipped else "audio/mpeg"
+            filename = api.safe_filename(job["display_name"]) + (".zip" if zipped else ".mp3")
+            if mode in {"complete", "sections"}:
+                from .document_metadata import tags
+                metadata = tags(job["request"], job["request"]["document"]["title"] + " · 完整音频")
+                iterator = zip_stream(files) if zipped else mp3_stream(files, metadata)
+            else:
+                from .audiobook import Book
+                try:
+                    book = await run_in_threadpool(Book, job, config.jobs_dir / job_id, files, section_id)
+                except (OSError, ValueError) as exc:
+                    raise HTTPException(409, "Document snapshot unavailable") from exc
+                iterator = book.archive() if zipped else book.html(book.sections, online=mode=="reader", single=bool(selected_name))
+                media_type = "application/zip" if zipped else "text/html"
+                filename = (Path(selected_name).with_suffix(".html").name if selected_name else
+                            api.safe_filename(book.title) + ("-HTML.zip" if zipped else ".html"))
 
             def next_chunk():
                 return next(iterator, None)
@@ -562,9 +585,8 @@ def register(app: FastAPI, api: Any) -> None:
                     with anyio.CancelScope(shield=True):
                         await run_in_threadpool(iterator.close)
                         guard.__exit__(None, None, None)
-            filename = api.safe_filename(job["display_name"]) + (".zip" if mode == "sections" else ".mp3")
-            return StreamingResponse(body(), media_type="application/zip" if mode == "sections" else "audio/mpeg",
-                headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(filename), "Cache-Control": "no-store", "Accept-Ranges": "none", "X-Accel-Buffering": "no"})
+            return StreamingResponse(body(), media_type=media_type,
+                headers={"Content-Disposition": ("inline" if mode=="reader" else "attachment") + "; filename*=UTF-8''" + quote(filename), "Cache-Control": "no-store", "Accept-Ranges": "none", "X-Accel-Buffering": "no"})
         except BaseException:
             guard.__exit__(None, None, None)
             raise
@@ -581,7 +603,7 @@ def enrich_document_docs(schema: dict[str, Any]) -> None:
         ("/api/v1/tts/document-imports/{identifier}/text", "get"): ("按偏移读取正文，每次最多 20000 字符。", "Lazily read canonical text by character offset, at most 20000 characters per response."),
         ("/api/v1/tts/document-jobs", "post"): ("提交文档分段 TTS，共享现有队列及音色能力。完成段持久化为 MP3，重试时保留。", "Submit document_import_id, preview_revision and unique section_ids with the preview segmentation settings. One shared model, language, device and voice configuration; existing voice capabilities apply. Reject undeclared fields. MP3 only; completed sections persist across manual retry. Requires Idempotency-Key (202/200/409) and normal queue/disk admission (429). Full text is snapshotted on disk rather than request JSON."),
         ("/api/v1/jobs/{job_id}/document/sections", "get"): ("分页查看分段检查点及完成状态。", "Read paginated section checkpoints, including pending/generating/complete state, retry count and completed artifact metadata."),
-        ("/api/v1/jobs/{job_id}/document/download", "get"): ("即时流式下载分段 ZIP 或完整 MP3，不生成缓存文件，不支持 Range。", "Stream ZIP_STORED ZIP64 sections or packet-remuxed complete MP3. No re-synthesis, re-encoding or stored export. Batch downloads do not support Range; restart interrupted batch downloads from the beginning. Individual MP3 artifacts support Range. Bounded backpressure, download concurrency admission (429), disconnect cleanup and purge exclusion apply."),
+        ("/api/v1/jobs/{job_id}/document/download", "get"): ("按需流式下载 MP3、有声书 HTML 或各自的分段 ZIP。reader 在线阅读，html_section 需 section_id。", "Stream ZIP64 sections, complete MP3, self-contained HTML or a ZIP of independent section HTML files. Mode reader opens an inline audiobook; html_section requires section_id. No re-synthesis, re-encoding or stored export. Batch downloads do not support Range; restart interrupted batch downloads from the beginning. Individual MP3 artifacts support Range. Bounded backpressure, download concurrency admission (429), disconnect cleanup and purge exclusion apply."),
     }
     for (path, method), (zh, en) in descriptions.items():
         operation = schema["paths"][path][method]

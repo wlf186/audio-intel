@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from .asr_speakers import speaker_identity, speaker_label
 from .utils import timecode
 
-MIME_TYPES = {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "pdf": "application/pdf", "json": "application/json", "txt": "text/plain", "srt": "application/x-subrip", "vtt": "text/vtt"}
+MIME_TYPES = {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "html": "text/html", "json": "application/json", "txt": "text/plain", "srt": "application/x-subrip", "vtt": "text/vtt"}
 
 
 class Replacement(BaseModel):
@@ -33,7 +33,7 @@ class Replacement(BaseModel):
 
 class TranscriptExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    format: Literal["pdf", "docx", "json", "txt", "srt", "vtt"] = "pdf"
+    format: Literal["html", "docx", "json", "txt", "srt", "vtt"] = "html"
     organization: Literal["chronological", "topic"] = "chronological"
     merge_repeated_topics: bool | None = None
     text_version: Literal["original", "optimized", "comparison"] = "original"
@@ -41,18 +41,25 @@ class TranscriptExportRequest(BaseModel):
     redact: bool = Field(True, description="缩写姓名、遮盖备注并替换正文 / Abbreviate names, mask notes and replace transcript keywords")
     replacements: list[Replacement] = Field(default_factory=list, max_length=100)
 
+    @field_validator("format", mode="before")
+    @classmethod
+    def retired_pdf(cls, value):
+        if value == "pdf":
+            raise ValueError("Use format=html, then print to PDF")
+        return value
+
     @model_validator(mode="after")
     def unique(self):
         if self.text_version != 'original':
             if not self.optimization_id:
                 raise ValueError('optimization_id is required for optimized exports')
-            allowed = ('pdf', 'docx') if self.text_version == 'comparison' else ('pdf', 'docx', 'txt')
+            allowed = ('html', 'docx') if self.text_version == 'comparison' else ('html', 'docx', 'txt')
             if self.format not in allowed:
                 raise ValueError('This format requires the original transcript')
         elif self.optimization_id and self.organization != 'topic':
             raise ValueError('optimization_id requires an optimized text_version')
-        if self.organization == 'topic' and (self.format not in ('pdf', 'docx') or not self.optimization_id):
-            raise ValueError('Topic organization requires PDF/Word and optimization_id')
+        if self.organization == 'topic' and (self.format not in ('html', 'docx') or not self.optimization_id):
+            raise ValueError('Topic organization requires HTML/Word and optimization_id')
         if len({rule.source for rule in self.replacements}) != len(self.replacements):
             raise ValueError("Duplicate replacement source")
         return self

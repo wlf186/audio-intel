@@ -97,7 +97,8 @@ def test_verify_negotiates_only_explicit_format_failures(monkeypatch, model):
     value=asyncio.run(engine.verify({**CONFIG, 'model': model, 'packet_presence_penalty': 0}))
     assert value['structured_output_mode']=='json_object'
     assert value['observed_context_length'] is None and value['model_digest'] is None
-    assert calls==['/gateway/v1/chat/completions']*3
+    assert value['token_usage_mode'] == 'unavailable'
+    assert calls==['/gateway/v1/chat/completions']*4
 
 
 def test_key_binding_rotation_and_snapshots(local,monkeypatch):
@@ -152,7 +153,7 @@ def test_v21_upgrade_retains_historical_snapshots(local):
     assert db.get_job(job['id'])['state']=='succeeded'
     assert store.get(run)['config'] == snapshot and store.parts(run, 0) == before
     assert store.get(run)['state'] == 'paused'
-    with db.connect() as c:assert c.execute('SELECT version FROM schema_meta').fetchone()[0]== 26
+    with db.connect() as c:assert c.execute('SELECT version FROM schema_meta').fetchone()[0]== 27
 
 
 def test_stream_cancellation_closes_response():
@@ -187,3 +188,31 @@ def test_outgoing_key_is_bound_to_endpoint(local):
     asyncio.run(run())
     with pytest.raises(ValueError,match='endpoint mismatch'):
         store.credential({**saved,'base_url':'https://other.invalid/v1'})
+
+
+@pytest.mark.parametrize('behavior,mode,probes', [
+    ('native','automatic',0), ('on_request','include_usage',1), ('reject','unavailable',1),
+    ('missing','unavailable',1), ('opt_out','unavailable',0),
+])
+def test_verification_negotiates_usage_only_on_synthetic_requests(monkeypatch, behavior, mode, probes):
+    seen = []
+    def handle(request):
+        body = json.loads(request.content)
+        flag = body.get('stream_options', {}).get('include_usage')
+        seen.append(flag)
+        if flag and behavior == 'reject':
+            return httpx.Response(400, json={'error':'unsupported stream_options'})
+        content = '{"ok":true}' if body.get('response_format') else '预算15万元，不是50万元。这个暂时还没有确认。'
+        events = stream(content)
+        if behavior == 'native' or (flag and behavior == 'on_request'):
+            events = events.replace('data: [DONE]', 'data: {"choices":[],"usage":{"total_tokens":17}}\n\ndata: [DONE]')
+        return httpx.Response(200, text=events, headers={'content-type':'text/event-stream'})
+    monkeypatch.setattr(engine, 'client', lambda c:httpx.AsyncClient(base_url=CONFIG['base_url']+'/',transport=httpx.MockTransport(handle)))
+    extra = {'stream_options': {'include_usage': False}} if behavior == 'opt_out' else {}
+    config = {**CONFIG, 'extra_body':extra}
+    verified = asyncio.run(engine.verify(config))
+    assert verified['token_usage_mode'] == mode and seen.count(True) == probes
+    assert verified['extra_body'] == extra
+    new_request = provider.request_body(verified, {'messages':[]})
+    assert bool(new_request.get('stream_options', {}).get('include_usage')) == (mode == 'include_usage')
+    assert not provider.request_body(config, {'messages':[]}).get('stream_options', {}).get('include_usage')

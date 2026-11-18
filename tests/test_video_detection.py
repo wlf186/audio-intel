@@ -289,14 +289,13 @@ def test_v2_picture_detection_preserves_decoded_audio(tmp_path):
 
 def test_export_visibility_validation_persistence_and_pdf(client, local):
     import io
-    from pypdf import PdfReader
     job = completed_video(client, local)
     root = f"/api/v1/jobs/{job['id']}"
     video = job['result']['video']
     ids = [scene['id'] for scene in video['scenes']]
     frames = local.jobs_dir / job['id'] / 'output/frames'
     original_files = {p.name: p.read_bytes() for p in frames.glob('*.jpg')}
-    original_pdf = client.get(root + '/transcript.pdf').content
+    original_pdf = client.post(root+'/transcript-export',json={}).content
     def update(revision, hidden):
         return client.patch(root + '/video-scenes', json={'revision': revision, 'action': 'set_export_visibility', 'export_hidden_scene_ids': hidden})
     assert update(1, ['missing']).status_code == 422
@@ -316,22 +315,20 @@ def test_export_visibility_validation_persistence_and_pdf(client, local):
     for redact in (False, True):
         exported = client.post(root+'/transcript-export', json={'format':'json', 'redact':redact}).json()
         assert exported['video']['export_hidden_scene_ids'] == ids
-        pdf = client.post(root+'/transcript-export', json={'format':'pdf','redact':redact})
+        pdf = client.post(root+'/transcript-export', json={'format':'html','redact':redact})
         assert pdf.status_code == 200
-        reader = PdfReader(io.BytesIO(pdf.content))
-        assert sum(len(page.images) for page in reader.pages) == 0
-        assert 'Picture hidden' in ''.join(page.extract_text() for page in reader.pages)
-    hidden_pdf = client.get(root+'/transcript.pdf').content
+        assert 'data:image/jpeg;base64,' not in pdf.text
+        assert '画面已隐藏' in pdf.text
+    hidden_pdf = client.post(root+'/transcript-export',json={}).content
     assert hidden_pdf != original_pdf
-    reader = PdfReader(io.BytesIO(hidden_pdf))
-    text = ''.join(page.extract_text() for page in reader.pages)
+    text = hidden_pdf.decode()
     for segment in saved['segments']:
         assert segment['text'] in text
     assert {p.name:p.read_bytes() for p in frames.glob('*.jpg')} == original_files
     assert update(2, []).json()['video']['export_hidden_scene_ids'] == []
-    restored = PdfReader(io.BytesIO(client.get(root+'/transcript.pdf').content))
-    assert sum(len(page.images) for page in restored.pages) > 0
-    assert 'Picture hidden' not in ''.join(page.extract_text() for page in restored.pages)
+    restored = client.post(root+'/transcript-export',json={}).text
+    assert 'data:image/jpeg;base64,' in restored
+    assert '画面已隐藏' not in restored
 
 
 def test_detection_visibility_preserved_only_for_unchanged_parameters_and_frames(client, local):

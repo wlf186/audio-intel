@@ -1,51 +1,56 @@
 import {useEffect,useState} from 'react'
 import {useTranslation} from 'react-i18next'
 import {request} from '../lib/api'
-import {optimizationPath,type CallEstimate,type CallUsage,type RewriteMode} from '../lib/optimization'
+import {optimizationPath,type CallEstimate,type RewriteMode} from '../lib/optimization'
 
-export function OptimizationBudget({jobId,runId,mode,planning,defaultLimit,limit,onLimit,onReady,revision,onEstimate,analyzeTopics=false}:{jobId?:string;runId?:string;mode:RewriteMode;planning:boolean;defaultLimit:number;revision?:number;limit?:number;onLimit:(limit:number)=>void;onReady:(ready:boolean)=>void;onEstimate?:(fingerprint:string)=>void;analyzeTopics?:boolean}){
+export type BudgetChoice={limit?:number;fingerprint:string}
+type Props={
+ jobId:string;runId?:string;mode:RewriteMode;analyzeTopics:boolean
+ adjust:boolean;onPlan:(plan:BudgetChoice|undefined)=>void
+}
+
+export function OptimizationBudget({jobId,runId,mode,analyzeTopics,adjust,onPlan}:Props){
  const {t}=useTranslation()
  const [estimate,setEstimate]=useState<CallEstimate>()
- const [usage,setUsage]=useState<CallUsage>()
+ const [override,setOverride]=useState<number>()
  const [error,setError]=useState('')
  const [reload,setReload]=useState(0)
+ const [expanded,setExpanded]=useState(adjust)
+
  useEffect(()=>{
-  if(!jobId)return
   const abort=new AbortController()
-  setEstimate(undefined);setUsage(undefined);setError('');onReady(!planning)
-  const root=optimizationPath(jobId)
-  const load=async()=>{
-   try{
-    if(planning){
-     const next=await request<CallEstimate>(`${root}/estimate`,{method:'POST',signal:abort.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({rewrite_mode:mode,...(analyzeTopics?{analyze_topics:true}:{}),...(runId?{run_id:runId}:{})})})
-     if(!Number.isSafeInteger(next.minimum_limit))throw new Error(t('optimization.estimateError'))
-     if(!abort.signal.aborted){setEstimate(next);onEstimate?.(next.fingerprint);if(defaultLimit<next.recommended_limit)onLimit(next.recommended_limit)}
-    }
-    if(runId){const next=await request<CallUsage>(`${root}/usage?run_id=${runId}`,{signal:abort.signal});if(!abort.signal.aborted)setUsage(next)}
-   }catch(cause){if(!abort.signal.aborted)setError((cause as Error).message)}
-  }
-  void load()
-  return()=>abort.abort()
- },[jobId,runId,mode,analyzeTopics,planning,defaultLimit,revision,reload,onLimit,onReady,onEstimate,t])
- const effective=limit??defaultLimit
- const valid=Number.isSafeInteger(effective)&&effective>=Math.max(estimate?.minimum_limit??1,usage?.max_llm_calls??1)
- useEffect(()=>{onReady(!planning||Boolean(estimate&&valid))},[planning,estimate,valid,onReady])
+  setEstimate(undefined)
+  setError('')
+  void request<CallEstimate>(optimizationPath(jobId)+'/estimate',{
+   method:'POST',signal:abort.signal,headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({rewrite_mode:mode,...(analyzeTopics?{analyze_topics:true}:{}),...(runId?{run_id:runId}:{})}),
+  }).then(value=>{
+   if(![value.minimum_limit,value.recommended_limit,value.max_llm_calls].every(Number.isSafeInteger))throw new Error(t('optimization.estimateError'))
+   if(!abort.signal.aborted)setEstimate(value)
+  }).catch(cause=>{if(!abort.signal.aborted)setError((cause as Error).message)})
+  return ()=>abort.abort()
+ },[jobId,runId,mode,analyzeTopics,reload,t])
+
+ const savedLimit=runId?estimate?.max_llm_calls:undefined
+ const minimum=Math.max(1,estimate?.minimum_limit??1,savedLimit??1)
+ const limit=override??(savedLimit!==undefined&&savedLimit>=minimum?savedLimit:estimate?.recommended_limit)
+ const valid=limit!==undefined&&Number.isSafeInteger(limit)&&limit>=minimum&&limit<=2147483647
+ const requestedLimit=runId&&limit!==savedLimit?limit:override
+ useEffect(()=>{
+  onPlan(estimate&&valid?{limit:requestedLimit,fingerprint:estimate.fingerprint}:undefined)
+ },[estimate,requestedLimit,valid,onPlan])
+
  return <section className="optimization-budget">
-  <strong>{t('optimization.callBudget')}</strong>
-  {planning?<>
-   {!estimate&&!error?<p role="status">{t('optimization.estimating')}</p>:null}
-   {estimate?<p>{t('optimization.estimateSummary',{count:estimate.estimated_calls,recommended:estimate.recommended_limit})}</p>:null}
-   <label>{t('optimization.runCallLimit')}<input type="number" min={Math.max(estimate?.minimum_limit??1,usage?.max_llm_calls??1)} step={1} value={effective||''} aria-invalid={!valid} onChange={event=>onLimit(Number(event.target.value))}/></label>
-   <small>{t('optimization.temporaryLimit')}</small>
-   {estimate&&effective<estimate.recommended_limit?<p role="status">{t('optimization.lowCallBudget')}</p>:null}
-  </>:null}
-  {usage?<details><summary>{t('optimization.usageDetails')}</summary>{usage.recorded?<>
-   <p>{t('optimization.usageSummary',{used:usage.calls_used,limit:usage.max_llm_calls,remaining:usage.remaining_calls})}</p>
-   {usage.estimate?<p>{t('optimization.estimateSummary',{count:usage.estimate.estimated_calls,recommended:usage.estimate.recommended_limit})}</p>:null}
-   {Object.entries(usage.stages).map(([stage,count])=><p key={stage}>{t(`optimization.callStages.${stage}`,{defaultValue:stage})}: {count}</p>)}
-   {usage.token_usage?<><p>{t('optimization.tokenInput',{tokens:usage.token_usage.prompt_tokens??t('optimization.unknownTokens'),known:usage.token_usage.input_recorded,total:usage.token_usage.attempts})}</p><p>{t('optimization.tokenOutput',{tokens:usage.token_usage.completion_tokens??t('optimization.unknownTokens'),known:usage.token_usage.output_recorded,total:usage.token_usage.attempts})}</p></>:null}
-   <p>{t('optimization.failedCalls',{count:usage.failed_or_interrupted})}</p>
-  </>:<p>{t('optimization.usageUnrecorded')}</p>}</details>:null}
+  {!estimate&&!error?<p role="status">{t('optimization.estimating')}</p>:null}
   {error?<p role="alert">{error} <button className="button" onClick={()=>setReload(n=>n+1)}>{t('common.actions.retry')}</button></p>:null}
+  {estimate?<><div className="optimization-budget-line">
+   <span className="optimization-budget-estimate"><span>{t('optimization.metrics.estimatedCalls',{count:estimate.estimated_calls})}</span>
+    <span aria-hidden="true"> · </span><span>{t('optimization.metrics.effectiveLimit',{limit})}</span></span>
+   <button className="button" aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{t('optimization.metrics.adjust')}</button></div>
+   {expanded?<div className="optimization-limit"><label>{t('optimization.runCallLimit')}
+    <input type="number" min={minimum} max={2147483647} step={1} value={limit||''} aria-invalid={!valid} onChange={event=>setOverride(Number(event.target.value))}/></label>
+    <small>{t('optimization.metrics.minimum',{minimum,recommended:estimate.recommended_limit})}</small></div>:null}
+   {limit!==undefined&&limit<estimate.recommended_limit?<small role="status">{t('optimization.lowCallBudget')}</small>:null}
+  </>:null}
  </section>
 }

@@ -3,15 +3,20 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import datetime
 import json
 import math
+import time
 from functools import wraps
 
 from fastapi import HTTPException
 
 from . import db
 
-DEFAULT_LIMIT = 100
+# Kept for the deprecated field on the connection settings API.
+LEGACY_SETTINGS_LIMIT = 100
+CALL_BUDGET_CAPABILITY = {'supported': True, 'default_policy': 'per_run_estimate', 'default_limit': None,
+                          'counts_failed_attempts': True, 'temporary_override': True}
 # Only unrecorded historical runs retain the old estimate fallback.
 LEGACY_LIMIT = 300
 DEFAULT_OUTPUT = 4096
@@ -37,6 +42,52 @@ def migrate(c):
         max_calls INTEGER, PRIMARY KEY(job_id,key_hash))''')
     c.execute('CREATE INDEX IF NOT EXISTS idx_optimization_calls_run ON optimization_calls(run_id,id)')
     c.execute('UPDATE schema_meta SET version=24 WHERE version<24')
+
+
+def migrate_usage(c):
+    for table, fields in (
+        ('transcript_optimizations', {'active_ms': 'INTEGER', 'active_since': 'TEXT',
+                                      'timing_partial': 'INTEGER NOT NULL DEFAULT 0'}),
+        ('optimization_calls', {'total_tokens': 'INTEGER'}),
+    ):
+        columns = {row[1] for row in c.execute(f'PRAGMA table_info({table})')}
+        for name, declaration in fields.items():
+            if name not in columns:
+                c.execute(f'ALTER TABLE {table} ADD COLUMN {name} {declaration}')
+    c.execute('UPDATE schema_meta SET version=27 WHERE version<27')
+
+
+def elapsed_ms(start: str, end: str) -> int:
+    return max(0, round((datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() * 1000))
+
+
+@contextmanager
+def processing_time(run_id: str):
+    """One interval per manager dispatch, including published-draft follow-up work."""
+    with db.connect() as c:
+        c.execute('''UPDATE transcript_optimizations SET active_since=?, timing_partial=(timing_partial OR active_ms IS NULL),
+                     active_ms=coalesce(active_ms,0) WHERE id=?''', (db.utcnow(), run_id))
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        duration = round((time.monotonic() - started) * 1000)
+        with db.connect() as c:
+            c.execute('''UPDATE transcript_optimizations SET active_ms=active_ms+?,active_since=NULL,
+                         revision=revision+1 WHERE id=? AND active_since IS NOT NULL''', (duration, run_id))
+
+
+def recover_processing(c):
+    """After a crash only charge time up to the last durable sign of work."""
+    for row in c.execute('''SELECT id,active_since,updated_at,
+                            (SELECT max(coalesce(finished_at,created_at)) FROM optimization_calls
+                             WHERE run_id=r.id) AS last_call
+                            FROM transcript_optimizations r WHERE active_since IS NOT NULL''').fetchall():
+        last = max(row['updated_at'], row['last_call'] or row['active_since'])
+        c.execute('''UPDATE transcript_optimizations SET active_ms=active_ms+?,active_since=NULL,
+                     timing_partial=1,revision=revision+1 WHERE id=?''',
+                  (elapsed_ms(row['active_since'], last), row['id']))
+    c.execute("UPDATE optimization_calls SET state='interrupted' WHERE state='started'")
 
 
 @contextmanager
@@ -86,9 +137,9 @@ def reserve() -> int | None:
 def finish(call_id: int | None, error: BaseException | None, usage: dict | None = None):
     if call_id is not None:
         with db.connect() as c:
-            c.execute('UPDATE optimization_calls SET state=?,error=?,finished_at=?,prompt_tokens=?,completion_tokens=?,request_bytes=?,response_bytes=? WHERE id=?',
+            c.execute('UPDATE optimization_calls SET state=?,error=?,finished_at=?,prompt_tokens=?,completion_tokens=?,total_tokens=?,request_bytes=?,response_bytes=? WHERE id=?',
                       ('completed' if error is None else 'interrupted' if isinstance(error, BaseException) and not isinstance(error, Exception) else 'failed',
-                       type(error).__name__ if error else None, db.utcnow(), *((usage or {}).get(k) for k in ('prompt_tokens','completion_tokens','request_bytes','response_bytes')), call_id))
+                       type(error).__name__ if error else None, db.utcnow(), *((usage or {}).get(k) for k in ('prompt_tokens','completion_tokens','total_tokens','request_bytes','response_bytes')), call_id))
 
 
 def pause(run_id: str):
@@ -99,12 +150,24 @@ def pause(run_id: str):
 
 def usage(run_id: str) -> dict:
     with db.connect() as c:
-        r = c.execute('SELECT calls_limit,calls_used,estimate_json,budget_error FROM transcript_optimizations WHERE id=?', (run_id,)).fetchone()
+        c.execute('BEGIN')
+        r = c.execute('SELECT calls_limit,calls_used,estimate_json,active_since,active_ms,timing_partial FROM transcript_optimizations WHERE id=?', (run_id,)).fetchone()
+        if r is None:
+            raise HTTPException(404, 'Optimization not found')
         stages = {stage: count for stage, count in c.execute('SELECT stage,count(*) FROM optimization_calls WHERE run_id=? GROUP BY stage', (run_id,))}
-        token_row = c.execute('SELECT count(*),count(prompt_tokens),count(completion_tokens),sum(prompt_tokens),sum(completion_tokens),sum(request_bytes),sum(response_bytes) FROM optimization_calls WHERE run_id=?', (run_id,)).fetchone()
-        token_usage = dict(zip(('attempts','input_recorded','output_recorded','prompt_tokens','completion_tokens','request_bytes','response_bytes'), token_row))
-        failures = c.execute("SELECT count(*) FROM optimization_calls WHERE run_id=? AND state IN ('failed','interrupted','started')", (run_id,)).fetchone()[0]
-    return {'run_id': run_id, 'token_usage': token_usage, 'recorded': r['calls_limit'] is not None, 'max_llm_calls': r['calls_limit'],
+        token_usage = dict(c.execute('''SELECT count(*) AS attempts,count(prompt_tokens) AS input_recorded,
+            count(completion_tokens) AS output_recorded,sum(prompt_tokens) AS prompt_tokens,
+            sum(completion_tokens) AS completion_tokens,sum(request_bytes) AS request_bytes,sum(response_bytes) AS response_bytes,
+            count(coalesce(total_tokens,prompt_tokens+completion_tokens)) AS total_recorded,
+            sum(coalesce(total_tokens,prompt_tokens+completion_tokens,prompt_tokens,completion_tokens)) AS total_tokens
+            FROM optimization_calls WHERE run_id=?''', (run_id,)).fetchone())
+        failures, pending = c.execute("""SELECT count(*) FILTER (WHERE state IN ('failed','interrupted')),
+            count(*) FILTER (WHERE state='started') FROM optimization_calls WHERE run_id=?""", (run_id,)).fetchone()
+    duration = r['active_ms']
+    if r['active_since']:
+        duration += elapsed_ms(r['active_since'], db.utcnow())
+    return {'run_id': run_id, 'active_duration_ms': duration, 'timing_partial': bool(r['timing_partial']),
+            'in_progress_calls': pending, 'token_usage': token_usage, 'recorded': r['calls_limit'] is not None, 'max_llm_calls': r['calls_limit'],
             'calls_used': r['calls_used'] if r['calls_limit'] is not None else None,
             'remaining_calls': max(0, r['calls_limit'] - r['calls_used']) if r['calls_limit'] is not None else None,
             'estimate': json.loads(r['estimate_json']) if r['estimate_json'] else None,
@@ -152,7 +215,6 @@ def _legacy_breakdown(config: dict, units: list[dict], hotwords: list[str], pend
 def estimate(config: dict, units: list[dict], hotwords: list[str], *, used: int = 0, limit: int | None = None, pending_insights: set[tuple[str, str]] | None = None, topic_atoms: list[dict] | None = None, topic_run_id: str | None = None) -> dict:
     from . import optimization_engine as engine, optimization_store as store
     from . import optimization_batch as batching, optimization_summary_policy as policy
-    limit = limit if limit is not None else config.get('max_llm_calls', DEFAULT_LIMIT)
     breakdown = {}
     if config.get('packet_version') == 1:
         from . import optimization_packet_policy as packets, optimization_packet_store as packet_store
@@ -203,6 +265,8 @@ def estimate(config: dict, units: list[dict], hotwords: list[str], *, used: int 
         generation = breakdown['generation']
         recovery = generation + math.ceil((expected - generation) * .5)
     recommended = math.ceil((used + expected + max(5, recovery)) / 10) * 10
+    if limit is None:
+        limit = recommended
     return {'estimated_calls': expected, 'used_calls': used, 'minimum_limit': used + expected,
             'recommended_limit': recommended, 'max_llm_calls': limit, 'sufficient': limit >= recommended,
             'can_start': limit >= used + expected, 'breakdown': breakdown,

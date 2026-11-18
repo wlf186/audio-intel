@@ -146,7 +146,7 @@ for(const width of [1440,390])test(`redaction export preference, validation and 
  const openRules=async()=>{if(!await panel.locator('.export-replacement-options').getAttribute('open').then(value=>value!==null))await panel.locator('.export-replacement-options summary').click();await expect(page.locator('.transcript-rule-editor')).toContainText('导出隐藏画面的设置仍生效')}
  await openRules();await editor.fill('广东移动=gy\ncontact=reach')
  let downloading=page.waitForEvent('download');await downloadConcise(page);await downloading
- expect(state.exports.at(-1)).toEqual({format:'pdf',redact:true,replacements:[{source:'广东移动',target:'gy'},{source:'contact',target:'reach'}]})
+ expect(state.exports.at(-1)).toEqual({format:'html',redact:true,replacements:[{source:'广东移动',target:'gy'},{source:'contact',target:'reach'}]})
  await expect(page.locator('.transcript-export-modal')).toHaveCount(0)
  await openTranscriptExport(page)
  await panel.getByRole('checkbox',{name:'脱敏导出',exact:true}).uncheck()
@@ -159,7 +159,7 @@ for(const width of [1440,390])test(`redaction export preference, validation and 
  await expect(panel.getByRole('checkbox',{name:'脱敏导出',exact:true})).not.toBeChecked()
  await openRules();await expect(editor).toHaveValue('bad syntax')
  await panel.getByRole('checkbox',{name:'脱敏导出',exact:true}).check()
- await page.locator('.transcript-export-modal .export-format').selectOption('pdf')
+ await page.locator('.transcript-export-modal .export-format').selectOption('html')
  await expect(page.locator('.transcript-export-modal .modal-actions .primary')).toBeDisabled()
  await openRules()
  await expect(page.getByRole('alert')).toContainText('第 1 行')
