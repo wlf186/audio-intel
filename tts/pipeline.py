@@ -41,19 +41,7 @@ def aligner_python() -> Path:
     return settings.root / ".runtime" / "aligner" / scripts / executable
 
 
-def split_text(text: str, limit: int = 300) -> list[str]:
-    sentences = [item.strip() for item in re.split(r"(?<=[。！？!?；;.!])\s*", text) if item.strip()]
-    chunks: list[str] = []
-    current = ""
-    for sentence in sentences or [text]:
-        if current and len(current) + len(sentence) > limit:
-            chunks.append(current); current = ""
-        while len(sentence) > limit:
-            chunks.append(sentence[:limit]); sentence = sentence[limit:]
-        current += sentence
-    if current:
-        chunks.append(current)
-    return chunks
+from audio_intel.tts_text import split_text
 
 
 def _release_cpu_models() -> None:

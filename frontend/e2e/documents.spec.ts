@@ -93,12 +93,12 @@ for(const extension of ['md','pdf','docx','xlsx','pptx']){
    await page.locator('.document-sections li').first().getByRole('button',{name:'预览正文'}).click()
    await expect(page.locator('.document-text-preview pre')).not.toBeEmpty()
    await page.getByRole('button',{name:'关闭正文预览'}).click()
-   await page.locator('.document-input details summary').click()
-   await expect(page.locator('.document-input details')).toHaveAttribute('open','')
+   await page.locator('.document-warnings summary').click()
+   await expect(page.locator('.document-warnings')).toHaveAttribute('open','')
   }
   if(extension==='pptx'){
    await expect(page.locator('.document-sections li')).toHaveCount(12)
-   await expect(page.locator('.document-input details')).toContainText('Slide 2')
+   await expect(page.locator('.document-warnings')).toContainText('Slide 2')
    await expect(page.locator('.document-sections li').first()).toContainText('幻灯片')
   }
   await page.screenshot({path:`/tmp/office-${extension}-desktop.png`,fullPage:true})

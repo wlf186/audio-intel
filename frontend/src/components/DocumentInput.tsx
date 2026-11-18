@@ -1,12 +1,15 @@
 import {useEffect,useId,useMemo,useRef,useState} from 'react'
 import {useTranslation} from 'react-i18next'
-import {api} from '../lib/api'
+import {api,createIdempotencyKey} from '../lib/api'
 import {handleTabKeys} from '../lib/tabs'
 import {sectionKind,segmentationSummary} from '../lib/documentPresentation'
 import type {SubmissionProgress} from '../lib/api'
 import {DocumentLibrary} from './DocumentLibrary'
 import type {DocumentCapability,DocumentImport,DocumentPreview,DocumentSection,DocumentSelection} from '../lib/types'
 import {Modal} from './Modal'
+import {DocumentReaderText} from './DocumentReaderText'
+import {DocumentNarrationControls} from './DocumentNarrationControls'
+import type {DocumentText,NarrationOptions} from '../lib/types'
 import './document.css'
 
 const storageKey='audio-intel:document-draft'
@@ -40,10 +43,13 @@ export function DocumentInput({capability,onChange}:{capability:DocumentCapabili
  const allInput=useRef<HTMLInputElement>(null)
  const listRef=useRef<HTMLOListElement>(null)
  const [reading,setReading]=useState<DocumentSection>()
+ const [narrationDialog,setNarrationDialog]=useState(false)
  const [readerMode,setReaderMode]=useState<'original'|'flow'>('original')
  const readerId=useId()
  const [readStart,setReadStart]=useState(0)
- const [text,setText]=useState<string>()
+ const [text,setText]=useState<DocumentText>()
+ const [narration,setNarration]=useState<NarrationOptions|undefined>(saved.current.narration_options)
+ const reanalysisKey=useRef<string|undefined>(undefined)
  const [textError,setTextError]=useState('')
  const [textRetry,setTextRetry]=useState(0)
  const epoch=useRef(0)
@@ -60,25 +66,25 @@ export function DocumentInput({capability,onChange}:{capability:DocumentCapabili
    if(item.state==='queued'||item.state==='running'){timer=setTimeout(()=>void poll(),1000);return}
    if(item.state==='failed'){setErrorPhase('parse');setError(item.error||t('document.previewError'));return}
    setErrorPhase('preview')
-   const value=await api.documentPreview(id,saved.current.importId===id?saved.current.segmentation_mode||'auto':'auto',saved.current.importId===id?saved.current.target_section_chars||capability.default_target_section_chars:capability.default_target_section_chars)
+   const value=await api.documentPreview(id,saved.current.importId===id?saved.current.segmentation_mode||'auto':'auto',saved.current.importId===id?saved.current.target_section_chars||capability.default_target_section_chars:capability.default_target_section_chars,saved.current.importId===id?saved.current.narration_options:undefined)
    if(stopped||epoch.current!==current)return
-   setPreview(value);setMode(value.segmentation_mode);setTarget(value.target_section_chars)
-   const valid=new Set(value.sections.map(s=>s.id))
-   setSelected(saved.current.importId===id&&saved.current.preview_revision===value.preview_revision?(saved.current.section_ids||[]).filter(s=>valid.has(s)):value.sections.map(s=>s.id))
+   setPreview(value);setNarration(value.narration_options||undefined);setMode(value.segmentation_mode);setTarget(value.target_section_chars)
+   const valid=new Set(value.sections.filter(s=>s.speakable!==false).map(s=>s.id))
+   setSelected(saved.current.importId===id&&saved.current.preview_revision===value.preview_revision?(saved.current.section_ids||[]).filter(s=>valid.has(s)):value.sections.filter(s=>s.speakable!==false).map(s=>s.id))
   }catch(cause){if(!stopped&&epoch.current===current)setError((cause as Error).message)}}
   void poll()
   return()=>{stopped=true;clearTimeout(timer);epoch.current++}
  },[id,retry,capability.default_target_section_chars])
  useEffect(()=>{
-  const draft=preview?{version:2,importId:id,name:record?.name||preview.title,preview_revision:preview.preview_revision,segmentation_mode:preview.segmentation_mode,target_section_chars:preview.target_section_chars,section_ids:selected}:{...saved.current,importId:id,section_ids:selected}
-  onChange(busy||libraryBusy||error||!preview||!selected.length?undefined:{selected_chars:preview.sections.reduce((n,section)=>n+(chosen.has(section.id)?section.char_count:0),0),importId:id,name:record?.name||preview.title,section_ids:selected,preview_revision:preview.preview_revision,segmentation_mode:preview.segmentation_mode,target_section_chars:preview.target_section_chars})
+  const draft=preview?{version:3,narration_options:preview.narration_options||undefined,importId:id,name:record?.name||preview.title,preview_revision:preview.preview_revision,segmentation_mode:preview.segmentation_mode,target_section_chars:preview.target_section_chars,section_ids:selected}:{...saved.current,importId:id,section_ids:selected}
+  onChange(busy||libraryBusy||error||!preview||!selected.length?undefined:{narration_options:preview.narration_options||undefined,selected_chars:preview.sections.reduce((n,section)=>n+(chosen.has(section.id)?section.char_count:0),0),importId:id,name:record?.name||preview.title,section_ids:selected,preview_revision:preview.preview_revision,segmentation_mode:preview.segmentation_mode,target_section_chars:preview.target_section_chars})
   if(id&&(!saved.current.importId||saved.current.importId===id||preview)){saved.current=draft;sessionStorage.setItem(storageKey,JSON.stringify(draft))}
 
  },[id,preview,selected,record,busy,libraryBusy,error,mode,target,onChange,chosen])
  useEffect(()=>{
   let active=true
   setText(undefined);setTextError('')
-  if(reading)void api.documentText(id,readStart,Math.min(4000,reading.end-readStart)).then(value=>{if(active)setText(value.text)}).catch(cause=>{if(active)setTextError((cause as Error).message)})
+  if(reading)void api.documentText(id,readStart,Math.min(4000,reading.end-readStart)).then(value=>{if(active)setText({...value,start:value.start??readStart})}).catch(cause=>{if(active)setTextError((cause as Error).message)})
   return()=>{active=false}
  },[reading,id,readStart,textRetry])
  useEffect(()=>{if(readerText.current)readerText.current.scrollTop=0},[text,readerMode])
@@ -91,8 +97,18 @@ export function DocumentInput({capability,onChange}:{capability:DocumentCapabili
   const controller=new AbortController();uploadController.current=controller
   try{const data=new FormData();data.set('file',file);const value=await api.submitDocumentImport(data,{signal:controller.signal,onProgress:setProgress});epoch.current++;pendingFile.current=undefined;saved.current={importId:value.id};setPreview(undefined);setRecord(undefined);setSelected([]);setId(value.id);setRetry(v=>v+1);setPage(0);setLibraryRevision(v=>v+1)}catch(cause){setUploadError((cause as Error).message)}finally{uploadController.current=undefined;setProgress(undefined);setBusy(false)}
  }
- const split=async()=>{setErrorPhase('preview');setBusy(true);setError('');setReading(undefined);const current=++epoch.current;try{const value=await api.documentPreview(id,mode,target);if(current!==epoch.current)return;setPreview(value);setSelected(value.sections.map(s=>s.id));setPage(0);setSplitOpen(false)}catch(cause){if(epoch.current===current)setError((cause as Error).message)}finally{if(epoch.current===current)setBusy(false)}}
+ const split=async()=>{setErrorPhase('preview');setBusy(true);setError('');setReading(undefined);const current=++epoch.current;try{const value=await api.documentPreview(id,mode,target,narration);if(current!==epoch.current)return;setPreview(value);setSelected(value.sections.filter(s=>s.speakable!==false).map(s=>s.id));setPage(0);setSplitOpen(false)}catch(cause){if(epoch.current===current)setError((cause as Error).message)}finally{if(epoch.current===current)setBusy(false)}}
 
+ const changeNarration=async(next:NarrationOptions)=>{
+  setNarration(next);setBusy(true);setError('');setErrorPhase('preview')
+  const current=++epoch.current
+  try{const value=await api.documentPreview(id,preview!.segmentation_mode,preview!.target_section_chars,next);if(current!==epoch.current)return;setPreview(value);setSelected(ids=>ids.filter(id=>value.sections.some(s=>s.id===id&&s.speakable!==false)))}catch(cause){if(current===epoch.current)setError((cause as Error).message)}finally{if(current===epoch.current)setBusy(false)}
+ }
+ const reanalyze=async()=>{
+  if(busy)return
+  setBusy(true);setError('');reanalysisKey.current ||= createIdempotencyKey()
+  try{await api.reanalyzeDocumentImport(id,reanalysisKey.current);reanalysisKey.current=undefined;setReading(undefined);setPreview(undefined);saved.current={importId:id,segmentation_mode:mode,target_section_chars:target,narration_options:narration?{skip_enabled:narration.skip_enabled,skip_kinds:narration.skip_kinds,natural_pauses:narration.natural_pauses}:undefined};setRetry(v=>v+1);setLibraryRevision(v=>v+1)}catch(cause){setError((cause as Error).message)}finally{setBusy(false)}
+ }
  const forget=()=>{epoch.current++;setId('');setRecord(undefined);setPreview(undefined);setSelected([]);setReading(undefined);setError('');setUploadError('');pendingFile.current=undefined;saved.current={};sessionStorage.removeItem(storageKey)}
  const retryFailed=async()=>{if(errorPhase==='preview'){await split();return}if(errorPhase==='parse'){setBusy(true);try{await api.retryDocumentImport(id);setRetry(v=>v+1);setLibraryRevision(v=>v+1)}catch(cause){setError((cause as Error).message)}finally{setBusy(false)}return}setRetry(v=>v+1)}
  useEffect(()=>{
@@ -133,22 +149,35 @@ export function DocumentInput({capability,onChange}:{capability:DocumentCapabili
     <small>{t('document.resetNotice')}</small>
    </div>
   </section>:null}
+  {record?.state==='ready'?<div className="document-narration-settings">
+   <button type="button" disabled={busy} onClick={()=>void reanalyze()}>{t('document.narration.reanalyze')}</button>
+   {preview?.analysis_required?<p>{t('document.narration.analysisRequired')}</p>:null}
+   {record.metadata.reanalysis_error?<p role="alert">{record.metadata.reanalysis_error}</p>:null}
+   {preview?.narration_options&&narration?<details><summary>{t('document.narration.settings')}</summary>
+    <DocumentNarrationControls options={narration} disabled={busy} onChange={next=>void changeNarration(next)}/>
+   </details>:null}
+  </div>:null}
   {preview?<>
    {preview.warnings.length?<details className="document-warnings"><summary>{t('document.warnings',{count:preview.warnings.length})}</summary><ul>{preview.warnings.map((warning,i)=><li key={i}>{warning}</li>)}</ul></details>:null}
-   <div className="document-selection-bar"><label className="document-select-all"><input ref={allInput} type="checkbox" checked={selected.length===preview.sections.length} onChange={e=>setSelected(e.target.checked?preview.sections.map(s=>s.id):[])}/>{t('document.all')}</label><p role="status">{t('document.selected',{count:selected.length,chars:selectedChars})}</p></div>
-   <ol ref={listRef} className="document-sections" start={page*pageSize+1}>{preview.sections.slice(page*pageSize,page*pageSize+pageSize).map(section=><li key={section.id}><label><input type="checkbox" checked={chosen.has(section.id)} onChange={e=>setSelected(ids=>e.target.checked?[...ids,section.id]:ids.filter(id=>id!==section.id))}/><span><b>{section.index}. {section.title}</b><small className={section.basis==='forced'?'document-forced':undefined}>{t('document.chars',{count:section.char_count})} · {t(`document.sectionKind.${sectionKind(section.basis)}`)} · {sectionKind(section.basis)==='unknown'?section.basis:t(`document.basis.${section.basis}` as 'document.basis.heading')}</small></span></label><button type="button" onClick={()=>readSection(section)}>{t('document.preview')}</button></li>)}</ol>
+   <div className="document-selection-bar"><label className="document-select-all"><input ref={allInput} type="checkbox" checked={selected.length>0&&selected.length===preview.sections.filter(s=>s.speakable!==false).length} onChange={e=>setSelected(e.target.checked?preview.sections.filter(s=>s.speakable!==false).map(s=>s.id):[])}/>{t('document.all')}</label><p role="status">{t('document.selected',{count:selected.length,chars:selectedChars})}</p></div>
+   <ol ref={listRef} className="document-sections" start={page*pageSize+1}>{preview.sections.slice(page*pageSize,page*pageSize+pageSize).map(section=><li key={section.id}><label><input type="checkbox" checked={chosen.has(section.id)} disabled={busy||section.speakable===false} onChange={e=>setSelected(ids=>e.target.checked?[...ids,section.id]:ids.filter(id=>id!==section.id))}/><span><b>{section.index}. {section.title}</b>{section.speakable===false?<small>{t('document.narration.empty')}</small>:null}<small className={section.basis==='forced'?'document-forced':undefined}>{t('document.chars',{count:section.char_count})} · {t(`document.sectionKind.${sectionKind(section.basis)}`)} · {sectionKind(section.basis)==='unknown'?section.basis:t(`document.basis.${section.basis}` as 'document.basis.heading')}</small></span></label><button type="button" onClick={()=>readSection(section)}>{t('document.preview')}</button></li>)}</ol>
    <div className="document-pagination"><button type="button" disabled={!page} onClick={()=>setPage(p=>p-1)}>{t('document.previous')}</button><span>{t('document.page',{current:page+1,total:pages})}</span><button type="button" disabled={page+1>=pages} onClick={()=>setPage(p=>p+1)}>{t('document.next')}</button></div>
-   {reading?<Modal title={reading.title} closeLabel={t('document.closeReader')} onClose={()=>setReading(undefined)}><section className="document-text-preview">
+   {reading?<Modal title={reading.title} closeLabel={t('document.closeReader')} onClose={()=>{setReading(undefined);setNarrationDialog(false)}}><section className="document-text-preview">
     <div className="document-reader-navigation"><button type="button" disabled={readingIndex<=0} onClick={()=>readSection(preview.sections[readingIndex-1])}>{t('document.previousSection')}</button><span>{t('document.readerSection',{current:readingIndex+1,total:preview.sections.length})}</span><button type="button" disabled={readingIndex+1>=preview.sections.length} onClick={()=>readSection(preview.sections[readingIndex+1])}>{t('document.nextSection')}</button></div>
-    <div className="document-reader-mode" role="tablist" aria-label={t('document.readerMode')} onKeyDown={handleTabKeys}>
+    <div className="document-reader-toolbar"><div className="document-reader-mode" role="tablist" aria-label={t('document.readerMode')} onKeyDown={handleTabKeys}>
      {(['original','flow'] as const).map(mode=><button key={mode} type="button" role="tab" id={`${readerId}-${mode}`} aria-selected={readerMode===mode} aria-controls={`${readerId}-panel`} tabIndex={readerMode===mode?0:-1} onClick={()=>setReaderMode(mode)}>{t(mode==='original'?'document.originalLines':'document.continuousReading')}</button>)}
     </div>
-    <p className="document-reader-help">{t(readerMode==='original'?'document.originalHelp':'document.flowHelp')}</p>
+    {narration?<button type="button" onClick={()=>setNarrationDialog(true)}>{t('document.narration.settings')}</button>:null}</div>
+    <p className="document-reader-help">{t(preview.narration_options?'document.narration.readingHelp':readerMode==='original'?'document.originalHelp':'document.flowHelp')}</p>
     <div className="document-reader-body" ref={readerText} tabIndex={0} role="tabpanel" id={`${readerId}-panel`} aria-labelledby={`${readerId}-${readerMode}`}>
-    {textError?<p role="alert">{textError}<button type="button" onClick={()=>setTextRetry(v=>v+1)}>{t('document.retry')}</button></p>:text===undefined?<p role="status">{t('document.loading')}</p>:readerMode==='original'?<pre>{text}</pre>:<div className="document-reader-flow">{text.split(/\n[^\S\n]*\n+/).map((paragraph,index)=><p key={index}>{paragraph}</p>)}</div>}
+    {textError?<p role="alert">{textError}<button type="button" onClick={()=>setTextRetry(v=>v+1)}>{t('document.retry')}</button></p>:text===undefined?<p role="status">{t('document.loading')}</p>:<DocumentReaderText data={text} flow={readerMode==='flow'} options={preview.narration_options}/>}
     </div>
     <div className="document-reader-navigation"><button type="button" disabled={readStart<=reading.start} onClick={()=>setReadStart(n=>Math.max(reading.start,n-4000))}>{t('document.previous')}</button><span>{t('document.readerPage',{current:Math.floor((readStart-reading.start)/4000)+1,total:Math.max(1,Math.ceil((reading.end-reading.start)/4000))})}</span><button type="button" disabled={readStart+4000>=reading.end} onClick={()=>setReadStart(n=>n+4000)}>{t('document.next')}</button></div>
    </section></Modal>:null}
+   {reading&&narrationDialog&&narration?<Modal title={t('document.narration.settings')} closeLabel={t('common.dialog.closeNamed',{title:t('document.narration.settings')})} onClose={()=>setNarrationDialog(false)}>
+    <DocumentNarrationControls options={narration} disabled={busy} onChange={next=>void changeNarration(next)}/>
+    {error?<p role="alert">{error}</p>:null}
+   </Modal>:null}
   </>:null}
  </section>
 }

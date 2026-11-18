@@ -13,6 +13,16 @@ API_DESCRIPTION = r"""
 >
 > 本项目是独立、非官方、以非商业方式维护的开源项目，未获得 CD PROJEKT RED、R. Talsorian Games 或任何相关权利方的授权、赞助、认可或背书，与其不存在隶属关系。`Sandevistan` 名称及相关第三方知识产权的权利归各自权利人所有。 / This is an independent, unofficial open-source project maintained on a non-commercial basis. It has not been authorized, sponsored, approved, or endorsed by CD PROJEKT RED, R. Talsorian Games, or any related rights holder, and is not affiliated with them. Rights in the Sandevistan name and related third-party intellectual property remain with their respective owners.
 
+## 文档朗读处理 / Document narration processing
+
+新文档预览接受 `narration_options` JSON 对象，文档任务提交接受同名 JSON 字符串表单字段。默认跳过有证据的 `page_number`、`note_reference`、`note_body`，原文保留并在预览中区分样式；普通数字和参考文献条目保留。`natural_pauses` 默认开启，段落／章节增加 350／700 ms 静音，普通块间隔仍为 180 ms。API 的 `overrides` 使用原文 Unicode code point `[start,end)` 偏移及 `speak`／`skip`，最多 1000 项，必须绑定当前 `analysis_revision`。预览和提交选项必须一致；过期版本 409，非法范围 422。
+
+New previews accept a `narration_options` JSON object and document submissions accept the same options as a JSON form string. High-confidence page numbers, note references and note bodies are skipped by default while retained in the annotated source preview. Ordinary numbers and bibliography entries remain. Natural pauses add 350/700 ms at paragraphs/chapters; ordinary chunks retain 180 ms. API-only range overrides use Unicode code-point offsets, not UTF-16 or byte offsets, and require the current analysis revision. Options are part of preview identity and idempotency. Capability discovery publishes categories and defaults; text windows return annotations and boundaries.
+
+旧导入可通过 `POST /api/v1/tts/document-imports/{identifier}/reanalyze`（必需 `Idempotency-Key`）显式重新分析，失败保留旧解析。新任务快照固定处理结果；旧任务、重试检查点和历史音频不自动改写。
+
+Reanalyze retained imports explicitly with `POST /api/v1/tts/document-imports/{identifier}/reanalyze` and an `Idempotency-Key`. Failed reanalysis preserves the last successful parse. New snapshots freeze the narration plan; existing jobs, retry checkpoints and audio are not rewritten.
+
 ## ASR 分块输入 / ASR chunk input
 
 ASR 转写和对齐默认按原采样边界读取已保存的 16 kHz 单声道 PCM16 原音或增强音，不再重复生成分块 WAV；音频量化结果、VAD 分块、模型精度和批次规则保持一致。服务端 `AUDIO_INTEL_ASR_CHUNK_INPUT` 未设置或空值使用 `range`；`wav` 恢复旧分块文件路径，其他值启动报错，修改后须按维护流程重启。它不是 HTTP 请求参数，也不改变请求／结果结构。原始上传、归一化音轨、实际增强音及最终产物仍正常保存，分块免落盘不表示任务总写入为零。

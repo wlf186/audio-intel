@@ -20,12 +20,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 
 from . import document_store as store
-from .document_text import FORMATS, digest, segment
+from .document_text import FORMATS, digest
 from .utils import atomic_json
+from . import document_narration as narration
 
 
 class PreviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    narration_options: narration.NarrationOptions | None = None
     segmentation_mode: Literal["auto", "length"] = "auto"
     target_section_chars: int = Field(10000, ge=1000, le=50000)
 
@@ -43,6 +45,8 @@ class DocumentImportResponse(BaseModel):
 
 
 class DocumentSection(BaseModel):
+    spoken_chars: int | None = None
+    speakable: bool = True
     id: str
     index: int
     title: str
@@ -55,6 +59,11 @@ class DocumentSection(BaseModel):
 
 
 class DocumentPreview(BaseModel):
+    analysis_revision: str | None = None
+    analysis_required: bool = False
+    narration_options: narration.NarrationOptions | None = None
+    spoken_chars: int | None = None
+    annotation_counts: dict[str, int] = Field(default_factory=dict)
     preview_revision: str
     segmentation_mode: Literal["auto", "length"]
     target_section_chars: int
@@ -66,6 +75,10 @@ class DocumentPreview(BaseModel):
 
 
 class DocumentText(BaseModel):
+    analysis_revision: str | None = None
+    annotations: list[dict[str, Any]] = Field(default_factory=list)
+    boundaries: list[dict[str, Any]] = Field(default_factory=list)
+    source_format: str | None = None
     text: str
     start: int
     total_chars: int
@@ -97,7 +110,8 @@ def public_import(config: Any, item: dict[str, Any]) -> dict[str, Any]:
             size += (root / name).stat().st_size
         except FileNotFoundError:
             pass
-    return {**item, "storage_bytes": size}
+    metadata = {k:v for k,v in (item.get("metadata") or {}).items() if k != "reanalysis_keys"}
+    return {**item, "metadata": metadata, "storage_bytes": size}
 
 
 def validate_snapshot(config: Any, job_id: str) -> None:
@@ -116,6 +130,7 @@ def capabilities(config: Any) -> dict[str, Any]:
             "max_upload_bytes": min(config.max_document_bytes, config.max_upload_bytes),
             "max_total_chars": config.max_document_chars, "max_sections": config.max_document_sections,
             "default_target_section_chars": 10000, "min_target_section_chars": 1000, "max_target_section_chars": 50000,
+            "narration": {"version": 1, "skip_kinds": list(narration.KINDS), "defaults": narration.NarrationOptions().model_dump(), "reanalysis": True, "max_overrides": 1000, "offset_unit": "unicode_codepoint"},
             "segmentation_modes": ["auto", "length"], "audio_format": "mp3", "resume": True,
             "download_modes": ["sections", "complete"], "streaming_downloads": True, "batch_download_range": False}
 
@@ -127,22 +142,25 @@ def import_root(config: Any, identifier: str) -> Path:
 
 
 def load_document(config: Any, identifier: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    record = store.get_import(identifier)
-    if record is None:
-        raise HTTPException(404, "Document import not found")
-    if record["state"] != "ready":
-        raise HTTPException(409, "Document parsing is not ready")
-    try:
-        parsed = json.loads((import_root(config, identifier) / "parsed.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise HTTPException(409, "Parsed document is unavailable; upload it again") from exc
+    with store.import_files():
+        record = store.get_import(identifier)
+        if record is None:
+            raise HTTPException(404, "Document import not found")
+        if record["state"] != "ready":
+            raise HTTPException(409, "Document parsing is not ready")
+        try:
+            parsed = json.loads((import_root(config, identifier) / "parsed.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise HTTPException(409, "Parsed document is unavailable; upload it again") from exc
     return record, parsed
 
 
-def prepare(config: Any, identifier: str, revision: str, section_ids: list[str], mode: str, target: int) -> dict[str, Any]:
+def prepare(config: Any, identifier: str, revision: str, section_ids: list[str], mode: str, target: int, narration_options: narration.NarrationOptions | None = None) -> dict[str, Any]:
     record, parsed = load_document(config, identifier)
     try:
-        preview = segment(parsed, mode, target, config.max_document_sections)
+        preview = narration.preview(parsed, mode, target, config.max_document_sections, narration_options)
+    except LookupError as exc:
+        raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     if preview["preview_revision"] != revision:
@@ -153,11 +171,15 @@ def prepare(config: Any, identifier: str, revision: str, section_ids: list[str],
     sections = [p for p in preview["sections"] if p["id"] in chosen]
     if len(sections) != len(chosen):
         raise HTTPException(422, "Unknown document section ID")
+    if any(not p.get("speakable", True) for p in sections):
+        raise HTTPException(422, "Selected section contains no speakable text / 所选章节没有可朗读正文")
     total = sum(p["char_count"] for p in sections)
     if not 0 < total <= config.max_document_chars:
         raise HTTPException(422, "Document text exceeds the configured limit")
     return {"record": record, "parsed": parsed, "sections": sections, "request": {
-        "contract_version": 1, "import_id": identifier, "preview_revision": revision,
+        "contract_version": 2 if preview.get("narration_options") else 1,
+        "narration_options": preview.get("narration_options"), "analysis_revision": parsed.get("analysis_revision"),
+        "import_id": identifier, "preview_revision": revision,
         "segmentation_mode": mode, "target_section_chars": target, "section_ids": [p["id"] for p in sections],
         "total_chars": total, "section_count": len(sections), "title": parsed["title"], "text_hash": parsed["text_hash"],
     }}
@@ -168,7 +190,22 @@ def snapshot(config: Any, job_id: str, prepared: dict[str, Any]) -> None:
         root = config.jobs_dir / job_id / "input"
         root.mkdir(parents=True, exist_ok=True)
         (root / "document.txt").write_text(prepared["parsed"]["text"], encoding="utf-8")
-        atomic_json(root / "document.json", {"contract_version": 1, "sections": prepared["sections"]})
+        manifest = {"contract_version": prepared["request"]["contract_version"], "sections": prepared["sections"]}
+        if manifest["contract_version"] == 2:
+            from .tts_text import split_text
+            options = narration.NarrationOptions.model_validate(prepared["request"]["narration_options"])
+            plans = {s["id"]: narration.chunks_for(prepared["parsed"], s, options, split_text) for s in prepared["sections"]}
+            boundaries = {b["offset"]: b["kind"] for b in prepared["parsed"]["boundaries"]}
+            for index, section in enumerate(prepared["sections"][:-1]):
+                following = prepared["sections"][index+1]
+                pause = 180
+                if options.natural_pauses:
+                    pause = 700 if following["start"] != section["end"] or boundaries.get(following["start"]) == "chapter" else 350 if boundaries.get(following["start"]) == "paragraph" else 180
+                section["trailing_pause_ms"] = pause
+            manifest.update(narration_version=1, annotations=prepared["parsed"]["annotations"],
+                            boundaries=prepared["parsed"]["boundaries"], narration_options=options.model_dump(), plans=plans)
+            manifest["plan_hash"] = narration.digest([plans, manifest["sections"], manifest["narration_options"]])
+        atomic_json(root / "document.json", manifest)
         record = prepared["record"]
         shutil.copy2(import_root(config, record["id"]) / ("source" + record["suffix"]), root / ("document-source" + record["suffix"]))
 
@@ -216,7 +253,7 @@ class ImportManager:
         try:
             with (root / "parse.log").open("wb") as log:
                 process = subprocess.Popen([sys.executable, "-m", "audio_intel.document_store", str(root / ("source" + item["suffix"])),
-                    "--max-chars", str(self.config.max_document_chars), "--archive-limit", str(self.config.document_archive_bytes)],
+                    "--max-chars", str(self.config.max_document_chars), "--archive-limit", str(self.config.document_archive_bytes), "--output-name", "parsed.next.json"],
                     cwd=self.config.root, stdout=log, stderr=subprocess.STDOUT, start_new_session=os.name != "nt")
                 probe = psutil.Process(process.pid)
                 identity = {"pid": process.pid, "created_at": probe.create_time(), "executable": probe.exe()}
@@ -236,11 +273,12 @@ class ImportManager:
                 with (root / "parse.log").open("rb") as log:
                     log.seek(max(0, log.seek(0, 2) - 2000))
                     raise RuntimeError(log.read().decode("utf-8", errors="replace"))
-            parsed = json.loads((root / "parsed.json").read_text(encoding="utf-8"))
+            parsed = json.loads((root / "parsed.next.json").read_text(encoding="utf-8"))
             if parsed["title"] == "source":
                 parsed["title"] = Path(item["name"]).stem
+            with store.import_files():
                 atomic_json(root / "parsed.json", parsed)
-            metadata = {"title": parsed["title"], "total_chars": len(parsed["text"]), "warnings": parsed["warnings"]}
+            metadata = {**(item.get("metadata") or {}), "title": parsed["title"], "total_chars": len(parsed["text"]), "warnings": parsed["warnings"], "analysis_revision": parsed.get("analysis_revision"), "narration_version": parsed.get("narration_version"), "reanalysis_error": None}
             store.update_import(item["id"], state="ready", metadata_json=json.dumps(metadata), error=None, process_json=None)
         except asyncio.CancelledError:
             await asyncio.to_thread(_stop_process, identity)
@@ -248,12 +286,18 @@ class ImportManager:
             raise
         except Exception as exc:
             await asyncio.to_thread(_stop_process, identity)
-            store.update_import(item["id"], state="failed", error=str(exc)[-2000:], process_json=None)
+            if (root / "parsed.json").is_file() and item.get("metadata", {}).get("reanalysis_keys"):
+                metadata = {**item["metadata"], "reanalysis_error": str(exc)[-2000:]}
+                store.update_import(item["id"], state="ready", metadata_json=json.dumps(metadata), error=None, process_json=None)
+            else:
+                store.update_import(item["id"], state="failed", error=str(exc)[-2000:], process_json=None)
         finally:
             await asyncio.to_thread(_stop_process, identity)
             if process is not None:
                 await asyncio.to_thread(process.wait)
             (root / "parsed.json.partial").unlink(missing_ok=True)
+            (root / "parsed.next.json").unlink(missing_ok=True)
+            (root / "parsed.next.json.partial").unlink(missing_ok=True)
 
 
 def register(app: FastAPI, api: Any) -> None:
@@ -368,6 +412,46 @@ def register(app: FastAPI, api: Any) -> None:
             with anyio.CancelScope(shield=True):
                 await app.state.admission.release_upload()
 
+    @app.post("/api/v1/tts/document-imports/{identifier}/reanalyze", status_code=202, tags=[api.TTS_TAG],
+              response_model=DocumentImportResponse, responses={**responses, **api.IDEMPOTENCY_RESPONSES, **api.ADMISSION_RESPONSE},
+              description="复用保留的源文件重新分析；失败保留上次解析，已有任务不变。需要 Idempotency-Key，重放返回 200。\n\n**English:** Reanalyze the retained source. Failure preserves the previous parse; existing jobs are unchanged. Requires Idempotency-Key; replay returns 200.",
+              summary="重新分析已保留文档 / Reanalyze a retained document", operation_id="reanalyzeTtsDocumentImport")
+    async def reanalyze(identifier: str, response: Response,
+                        idempotency_key: str = Header(..., alias="Idempotency-Key"), _: None = auth):
+        from .db import connect, utcnow
+        api.ensure_service("tts")
+        key = api.idempotency_key_hash(api.validate_idempotency_key(idempotency_key))
+        decision = await app.state.admission.reserve_upload(0)
+        if not decision.accepted:
+            raise api.admission_problem(decision, "tts")
+        try:
+            with store.import_files(), connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                row = db.execute("SELECT * FROM document_imports WHERE id=?", (identifier,)).fetchone()
+                if row is None:
+                    raise HTTPException(404, "Document import not found")
+                metadata = json.loads(row["metadata_json"] or '{}')
+                keys = metadata.setdefault("reanalysis_keys", [])
+                if key in keys:
+                    response.status_code = 200
+                    response.headers["Idempotency-Replayed"] = "true"
+                else:
+                    if row["state"] != "ready":
+                        raise HTTPException(409, "Document parsing is already active or failed")
+                    if not (import_root(config, identifier) / ("source" + row["suffix"])).is_file():
+                        raise HTTPException(409, "Document source is missing; upload again")
+                    keys.append(key)
+                    metadata["reanalysis_error"] = None
+                    db.execute("UPDATE document_imports SET state='queued',metadata_json=?,error=NULL,updated_at=? WHERE id=?",
+                               (json.dumps(metadata), utcnow(), identifier))
+                db.execute("COMMIT")
+            manager.wake.set()
+            return public_import(config, store.get_import(identifier))
+        finally:
+            import anyio
+            with anyio.CancelScope(shield=True):
+                await app.state.admission.release_upload()
+
     @app.get("/api/v1/tts/document-imports", tags=[api.TTS_TAG], response_model=list[DocumentImportResponse], responses=responses)
     def list_imports(offset: int = Query(0, ge=0), limit: int | None = Query(None, ge=1, le=100), _: None = auth):
         return [public_import(config, item) for item in store.imports(offset, limit)]
@@ -400,7 +484,9 @@ def register(app: FastAPI, api: Any) -> None:
     def preview(identifier: str, payload: PreviewRequest, _: None = auth) -> dict[str, Any]:
         _, document = load_document(config, identifier)
         try:
-            result = segment(document, payload.segmentation_mode, payload.target_section_chars, config.max_document_sections)
+            result = narration.preview(document, payload.segmentation_mode, payload.target_section_chars, config.max_document_sections, payload.narration_options)
+        except LookupError as exc:
+            raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         return {**result, "title": document["title"], "warnings": document["warnings"]}
@@ -408,7 +494,10 @@ def register(app: FastAPI, api: Any) -> None:
     @app.get("/api/v1/tts/document-imports/{identifier}/text", tags=[api.TTS_TAG], response_model=DocumentText, responses=responses)
     def text(identifier: str, start: int = Query(0, ge=0), limit: int = Query(4000, ge=1, le=20000), _: None = auth) -> dict[str, Any]:
         _, document = load_document(config, identifier)
-        return {"text": document["text"][start:start + limit], "start": start, "total_chars": len(document["text"])}
+        return {"text": document["text"][start:start + limit], "start": start, "total_chars": len(document["text"]),
+                "analysis_revision": document.get("analysis_revision"), "source_format": document.get("source_format"),
+                "annotations": [a for a in document.get("annotations", []) if a["end"] > start and a["start"] < start+limit],
+                "boundaries": [b for b in document.get("boundaries", []) if start <= b["offset"] < start+limit]}
 
     @app.get("/api/v1/jobs/{job_id}/document/sections", tags=[api.TTS_TAG], response_model=JobDocumentSections, responses=responses)
     def job_sections(job_id: str, offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100), _: None = auth) -> dict[str, Any]:

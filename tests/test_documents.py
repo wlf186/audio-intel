@@ -135,7 +135,7 @@ def test_document_contract_checkpoint_resume_streams_and_purge(document_client,m
     def fail_second(text):
         nonlocal calls
         calls+=1
-        if calls==2:raise MemoryError('test oom')
+        if text.startswith('Two'):raise MemoryError('test oom')
         return original(text)
     monkeypatch.setattr(pipeline,'mock_speech',fail_second)
     with pytest.raises(MemoryError):pipeline.process_job(context)
@@ -663,3 +663,103 @@ def test_quality_failure_keeps_completed_sections_without_resource_retry(documen
     assert second['retries']==0
     assert not list(context.output_dir.glob('*.partial'))
     assert retry_delay(claimed,TtsGenerationGuardError('failed')) is None
+
+
+def test_narration_api_snapshot_options_and_audio_gaps(document_client, monkeypatch):
+    from audio_intel import db
+    from audio_intel.worker import JobContext
+    import tts.pipeline as pipeline
+    from audio_intel.document_narration import digest
+    client, local = document_client
+    identifier, base = import_document(client, '# First\n\n正文[^a]。\n\n[^a]: 不要朗读 85。\n\n# Second\n\n下一章。')
+    assert base['annotation_counts']['note_body'] == 1
+    root = f'/api/v1/tts/document-imports/{identifier}'
+    source = client.get(root+'/text').json()
+    assert '[^a]' in source['text'] and source['annotations']
+    options = {'skip_enabled': True, 'skip_kinds': ['page_number','note_reference','note_body'], 'natural_pauses': True}
+    selected = client.post(root+'/preview', json={'narration_options': options}).json()
+    job, payload = submit_document(client, identifier, selected, narration_options=json.dumps(options))
+    manifest = json.loads((local.jobs_dir/job['id']/'input/document.json').read_text(encoding='utf-8'))
+    assert manifest['contract_version'] == 2 and digest([manifest['plans'],manifest['sections'],manifest['narration_options']]) == manifest['plan_hash']
+    assert '不要朗读' in (local.jobs_dir/job['id']/'input/document.txt').read_text(encoding='utf-8')
+    assert '不要朗读' not in ''.join(c['text'] for plan in manifest['plans'].values() for c in plan)
+    spoken = []
+    original = pipeline.mock_speech
+    def record(text):
+        spoken.append(text)
+        return original(text)
+    monkeypatch.setattr(pipeline, 'mock_speech', record)
+    result = pipeline.process_job(JobContext(db.get_job(job['id']), 'test'))
+    assert result['document']['sections'] and all('85' not in t and '[^a]' not in t for t in spoken)
+    expected = sum(len(original(t)[0])/24000 for t in spoken)
+    pause = sum(c['pause_before_ms'] for plan in manifest['plans'].values() for c in plan)+sum(s.get('trailing_pause_ms',0) for s in manifest['sections'])
+    assert result['duration'] == pytest.approx(expected+pause/1000, abs=.002)
+    changed = client.post(root+'/preview', json={'narration_options':{**options,'skip_enabled':False}}).json()
+    assert changed['sections'][0]['id'] == selected['sections'][0]['id']
+    assert changed['preview_revision'] != selected['preview_revision']
+    assert client.post('/api/v1/tts/document-jobs',data={**payload,'narration_options':json.dumps({**options,'skip_enabled':False})},headers={'Idempotency-Key':uuid.uuid4().hex}).status_code == 409
+    bad = {**options,'analysis_revision':source['analysis_revision'],'overrides':[{'start':0,'end':len(source['text'])+1,'action':'skip'}]}
+    assert client.post(root+'/preview',json={'narration_options':bad}).status_code == 422
+    bad['analysis_revision']='stale'
+    assert client.post(root+'/preview',json={'narration_options':bad}).status_code == 409
+
+
+def test_reanalysis_replay_and_failure_preserves_last_good_parse(document_client, monkeypatch):
+    client, local = document_client
+    identifier, preview = import_document(client)
+    root = f'/api/v1/tts/document-imports/{identifier}'
+    source = local.data_dir/'documents'/identifier/'parsed.json'
+    before = source.read_bytes()
+    headers={'Idempotency-Key':uuid.uuid4().hex}
+    assert client.post(root+'/reanalyze',headers=headers).status_code == 202
+    replay=client.post(root+'/reanalyze',headers=headers)
+    assert replay.status_code == 200 and replay.headers['Idempotency-Replayed']=='true'
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline:
+        item=client.get(root).json()
+        if item['state']=='ready':break
+        time.sleep(.05)
+    assert item['state']=='ready'
+    # Missing retained source is a visible, non-destructive rejection.
+    path=local.data_dir/'documents'/identifier/'source.md'
+    path.unlink()
+    response=client.post(root+'/reanalyze',headers={'Idempotency-Key':uuid.uuid4().hex})
+    assert response.status_code==409
+    assert source.read_bytes()==before
+    # Invalid retained input fails in the parser child; the previous ready parse survives.
+    path.write_bytes(b'\x00invalid')
+    assert client.post(root+'/reanalyze',headers={'Idempotency-Key':uuid.uuid4().hex}).status_code==202
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline:
+        item=client.get(root).json()
+        if item['state']=='ready':break
+        time.sleep(.05)
+    assert item['state']=='ready' and item['metadata']['reanalysis_error']
+    assert source.read_bytes()==before
+    assert client.get(root+'/text').status_code==200
+
+
+def test_legacy_snapshot_retains_legacy_chunking_after_library_changes(document_client,monkeypatch):
+    from audio_intel import db
+    from audio_intel.worker import JobContext
+    import tts.pipeline as pipeline
+    client,local=document_client
+    identifier,_=import_document(client,'# One\n\n第一段。\n\n第二段。\n\n# Two\n\n尾声。')
+    parsed_path=local.data_dir/'documents'/identifier/'parsed.json'
+    parsed=json.loads(parsed_path.read_text(encoding='utf-8'))
+    for field in ('narration_version','analysis_revision','annotations','boundaries'):parsed.pop(field,None)
+    parsed['version']=2
+    parsed_path.write_text(json.dumps(parsed,ensure_ascii=False),encoding='utf-8')
+    preview=client.post(f'/api/v1/tts/document-imports/{identifier}/preview',json={}).json()
+    assert preview['analysis_required']
+    job,_=submit_document(client,identifier,preview)
+    manifest=json.loads((local.jobs_dir/job['id']/'input/document.json').read_text(encoding='utf-8'))
+    assert manifest['contract_version']==1 and 'plans' not in manifest
+    # Replacing the mutable library text cannot change this job's saved input.
+    parsed['text']='replacement';parsed_path.write_text(json.dumps(parsed),encoding='utf-8')
+    seen=[];original=pipeline.mock_speech
+    def record(text):seen.append(text);return original(text)
+    monkeypatch.setattr(pipeline,'mock_speech',record)
+    result=pipeline.process_job(JobContext(db.get_job(job['id']),'test'))
+    assert len(seen)==2 and '第一段。第二段。' in seen[0]
+    assert result['document']['sections']

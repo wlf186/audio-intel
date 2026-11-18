@@ -138,9 +138,10 @@ def main() -> None:
     parser.add_argument("source", type=Path)
     parser.add_argument("--max-chars", type=int, required=True)
     parser.add_argument("--archive-limit", type=int, required=True)
+    parser.add_argument("--output-name", choices=("parsed.json", "parsed.next.json"), default="parsed.json")
     args = parser.parse_args()
     result = extract(args.source, args.max_chars, args.archive_limit)
-    atomic_json(args.source.parent / "parsed.json", result)
+    atomic_json(args.source.parent / args.output_name, result)
 
 
 if __name__ == "__main__":

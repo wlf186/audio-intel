@@ -142,3 +142,43 @@ API 和 CLI 参数见 [API：手动声纹区间](API.md#manual-voiceprint-refere
 ```
 
 脚本预热后交替比较相同种子的原始调用和保护调用，输出音频哈希、耗时、显存及恢复次数；默认写入独立临时目录。GPU 测试共享原有 GPU 锁，检测到生产任务时停止。正式回归应使用至少 30 组配对案例；CPU 可通过 `--device cpu` 单独验证。该工具不向生产队列提交任务，不更换模型或公开采样参数。
+
+## 辅助文本与自然停顿 / Narration annotations and pauses
+
+新解析保留完整提取正文，并记录辅助文本和语义边界；不从预览原文中删除字符。默认跳过 `page_number`（页码）、`note_reference`（脚注／引用标记）、`note_body`（脚注正文）。网页提供总开关和类别多选，默认全选；不提供逐项编辑。连续阅读把页码移至段后辅助标记，引用显示为上标，脚注正文显示为注释。原文换行模式仍保留原位置，以辅助样式标明不朗读内容。
+
+PDF 页码需要页边位置和相邻页面编号规律等证据；引用标记需要引用关系等依据。仅有数字、方括号或较小字号不充分。普通数字、金额、日期、列表、表格及参考文献条目默认保留。不能可靠判断的内容继续朗读，可通过 API 纠正。文本 PDF 的排版折行和跨页续句连接；真实段落与标题由结构或保守布局证据确定。扫描 PDF 仍需先做 OCR。
+
+新文档默认开启自然停顿：段落增加约 350 ms，章节增加约 700 ms，标题与正文之间增加约 350 ms；长段落内普通生成块保留 180 ms 间隔。重合边界不累加，换页本身不增加段落停顿。这些是新增静音量，模型自身的停顿仍保留。关闭自然停顿恢复原有分块间隔，不关闭辅助文本过滤。跨章节音频文件的停顿写入前一文件末尾，整本最后不补停顿，完整 MP3 下载不重复添加。
+
+`POST .../document-imports/{id}/preview` 接受可选的 `narration_options` JSON 对象；`POST /api/v1/tts/document-jobs` 使用同名 JSON **字符串表单字段**。两次调用使用相同选项及返回的 `preview_revision`。能力接口 `tts.document_jobs.narration` 公布类别、默认值、版本及纠正数量上限。
+
+```json
+{
+  "skip_enabled": true,
+  "skip_kinds": ["page_number", "note_reference", "note_body"],
+  "natural_pauses": true,
+  "analysis_revision": "从预览或正文接口取得的版本",
+  "overrides": [
+    {"start": 10, "end": 14, "action": "speak"},
+    {"start": 80, "end": 82, "action": "skip"}
+  ]
+}
+```
+
+`overrides` 仅供 API，最多 1,000 项；使用完整提取原文的 Unicode code point `[start,end)` 偏移，**不是 UTF-8 字节或 JavaScript UTF-16 下标**。显式纠正优先于自动规则。必须绑定 `analysis_revision`；非法、越界、重叠或未知字段返回 422，过期版本返回 409。前端无此精细纠正编辑器。预览返回 `spoken_chars`、`speakable`、`annotation_counts`；正文分页返回相交的完整 `annotations` 范围和窗口内 `boundaries`，偏移始终是全局原文位置。过滤后没有可朗读正文的章节不能提交。选项变化改变预览版本和幂等请求指纹；只改变朗读选项不改变章节 ID。
+
+旧导入显示 `analysis_required`，仍能按旧规则合成。点击“重新分析文档”，或发送带 `Idempotency-Key` 的 `POST /api/v1/tts/document-imports/{id}/reanalyze`，复用保留的源文件生成新解析；首次接受 202，同键重放 200，活动解析冲突 409，准入受限 429。分析期间不能新建该文档任务。失败保留上次成功解析，`metadata.reanalysis_error` 提供可重试错误；源文件缺失需重新上传。成功后须重新预览。
+
+新任务保存 v2 内部快照，包括原文、标记、设置和确定的生成块／停顿计划；现有结果契约保持兼容。重试使用任务快照及已完成章节，不重新读取文档库，不将新规则应用到历史任务或音频。网页文档草稿增加朗读选项并升级到 v3，仍使用同一 `sessionStorage` 键与原有保存／清理期限；不新增长期浏览器偏好。
+
+```bash
+# Reanalyze a retained import and inspect the new preview.
+.runtime/api/bin/python scripts/tts_document.py --import-id IMPORT_ID --reanalyze --preview-only --base-url http://127.0.0.1:20810
+# Supply API-only corrections from UTF-8 JSON; use current analysis_revision.
+.runtime/api/bin/python scripts/tts_document.py --import-id IMPORT_ID --narration-options options.json --device gpu
+# Explicit opt-outs for a newly imported document.
+.runtime/api/bin/python scripts/tts_document.py book.pdf --no-skip --no-natural-pauses --device gpu
+```
+
+English: New imports retain the complete extracted source and annotate high-confidence page numbers, note/citation markers and note bodies, skipped by default. Ordinary numeric content and bibliography entries remain spoken. The browser offers category checkboxes and a natural-pause toggle; source-range overrides are API-only and bound to the analysis revision. PDF layout wraps and page continuations are distinct from paragraph breaks. Natural pauses add 350 ms at paragraphs and 700 ms at chapters; ordinary chunk gaps stay 180 ms. Reanalysis is explicit and uses the retained source, preserves the previous successful parse on failure, and never rewrites historical jobs/audio. Snapshot v2 freezes the narration plan for retries. Draft storage remains session-scoped. See the JSON and CLI examples above for request shape, offset units and opt-outs.

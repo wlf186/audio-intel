@@ -37,6 +37,10 @@ def main() -> None:
     parser.add_argument("--mode", choices=("auto", "length"), default="auto")
     parser.add_argument("--target", type=int, default=10000)
     parser.add_argument("--preview-only", action="store_true")
+    parser.add_argument("--reanalyze", action="store_true", help="Reanalyze a retained import without changing existing jobs")
+    parser.add_argument("--narration-options", type=Path, help="UTF-8 JSON narration options, including optional range overrides")
+    parser.add_argument("--no-skip", action="store_true", help="Read auxiliary text too")
+    parser.add_argument("--no-natural-pauses", action="store_true", help="Use legacy 180 ms chunk gaps")
     parser.add_argument("--waveform", action="store_true", help="Print the first section waveform using the authenticated artifact API")
     parser.add_argument("--output", type=Path, help="Optional local ZIP destination")
     parser.add_argument("--inspect-tags", action="store_true", help="Read MP3 metadata from the saved download (requires --output)")
@@ -54,6 +58,11 @@ def main() -> None:
         parser.error("Provide a document file or --import-id")
     if args.retry_parse and not args.import_id:
         parser.error("--retry-parse requires --import-id")
+    if args.reanalyze and not args.import_id:
+        parser.error("--reanalyze requires --import-id")
+    narration = json.loads(args.narration_options.read_text(encoding="utf-8")) if args.narration_options else {}
+    if args.no_skip: narration['skip_enabled'] = False
+    if args.no_natural_pauses: narration['natural_pauses'] = False
     headers = {"Authorization": "Bearer " + os.environ["AUDIO_INTEL_API_KEY"]} if os.getenv("AUDIO_INTEL_API_KEY") else {}
     with httpx.Client(base_url=args.base_url, headers=headers, timeout=120) as client:
         def read(path: str) -> dict:
@@ -68,6 +77,10 @@ def main() -> None:
             return
         if args.import_id:
             imported = read("/api/v1/tts/document-imports/" + args.import_id)
+            if args.reanalyze:
+                response = client.post(f"/api/v1/tts/document-imports/{args.import_id}/reanalyze", headers={"Idempotency-Key":uuid.uuid4().hex})
+                response.raise_for_status()
+                imported = response.json()
             if args.retry_parse:
                 response = client.post(f"/api/v1/tts/document-imports/{args.import_id}/retry")
                 response.raise_for_status()
@@ -94,7 +107,7 @@ def main() -> None:
             imported = read("/api/v1/tts/document-imports/" + imported["id"])
         if imported["state"] != "ready":
             raise RuntimeError(imported.get("error"))
-        response = client.post(f"/api/v1/tts/document-imports/{imported['id']}/preview", json={"segmentation_mode": args.mode, "target_section_chars": args.target})
+        response = client.post(f"/api/v1/tts/document-imports/{imported['id']}/preview", json={"segmentation_mode": args.mode, "target_section_chars": args.target, **({"narration_options":narration} if narration else {})})
         response.raise_for_status()
         preview = response.json()
         for warning in preview["warnings"]:
@@ -103,10 +116,13 @@ def main() -> None:
             print(section["index"], section["title"], section["char_count"], section["basis"])
         if args.preview_only:
             return
+        if not any(s.get("speakable", True) for s in preview["sections"]):
+            raise RuntimeError("No speakable sections; change narration options")
         response = client.post("/api/v1/tts/document-jobs", headers={"Idempotency-Key": uuid.uuid4().hex}, data={
             "document_import_id": imported["id"], "preview_revision": preview["preview_revision"],
             "segmentation_mode": args.mode, "target_section_chars": args.target,
-            "section_ids": [s["id"] for s in preview["sections"]], "model": args.model,
+            "section_ids": [s["id"] for s in preview["sections"] if s.get("speakable", True)],
+            **({"narration_options":json.dumps(preview["narration_options"])} if preview.get("narration_options") else {}), "model": args.model,
             **voice, "compute_device": args.device,
             "display_name": Path(imported["name"]).stem,
         })

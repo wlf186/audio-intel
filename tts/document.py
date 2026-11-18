@@ -24,7 +24,7 @@ def file_hash(path: Path) -> str:
 def initialize(context: Any) -> None:
     from .pipeline import settings
     manifest = json.loads((settings.jobs_dir / context.job_id / "input/document.json").read_text(encoding="utf-8"))
-    if manifest.get("contract_version") != 1:
+    if manifest.get("contract_version") not in {1, 2}:
         raise ValueError("Unsupported document snapshot version")
     store.ensure_sections(context.job_id, manifest["sections"])
 
@@ -60,6 +60,12 @@ def process_loaded(context: Any, request: dict[str, Any], model: Any, device: st
     text = (config.jobs_dir / context.job_id / "input/document.txt").read_text(encoding="utf-8")
     if hashlib.sha256(text.encode()).hexdigest() != request["document"]["text_hash"]:
         raise ValueError("Document text snapshot checksum mismatch")
+    manifest = json.loads((config.jobs_dir / context.job_id / "input/document.json").read_text(encoding="utf-8"))
+    if manifest.get("contract_version") == 2:
+        from audio_intel.document_narration import digest
+        if digest([manifest.get("plans"), manifest["sections"], manifest["narration_options"]]) != manifest.get("plan_hash"):
+            raise ValueError("Document narration plan checksum mismatch")
+    sections_by_id = {s["id"]: s for s in manifest["sections"]}
     items = store.sections(context.job_id)
     prompt = None
     if model is not None and request["voice_mode"] not in {"preset", "voice_design"}:
@@ -82,7 +88,8 @@ def process_loaded(context: Any, request: dict[str, Any], model: Any, device: st
                 title = title[:-1]
             path = context.output_dir / f"{number:0{max(3, len(str(len(items))))}d}_{title}.mp3"
             partial = context.output_dir / f"document-{item['id']}.partial"
-            chunks = pipeline.split_text(text[item["start_offset"]:item["end_offset"]])
+            plan = manifest.get("plans", {}).get(item["id"])
+            chunks = [c["text"] for c in plan] if plan is not None else pipeline.split_text(text[item["start_offset"]:item["end_offset"]])
             section_fallbacks = []
             index = 0; samples = 0; rate = 24000; section_actual = 1; peaks: list[float] = []
             try:
@@ -141,9 +148,10 @@ def process_loaded(context: Any, request: dict[str, Any], model: Any, device: st
                                 continue
                         if len(generated) != len(batch):
                             raise RuntimeError("TTS returned the wrong number of document chunks")
-                        for audio in generated:
+                        for batch_index, audio in enumerate(generated):
                             if samples:
-                                write(np.zeros(int(rate * .18), dtype=np.float32))
+                                pause = plan[index + batch_index]["pause_before_ms"] / 1000 if plan is not None else .18
+                                write(np.zeros(int(rate * pause), dtype=np.float32))
                             write(audio)
                             peaks.append(round(float(np.max(np.abs(audio))), 4))
                             if len(peaks) > 480:
@@ -152,6 +160,9 @@ def process_loaded(context: Any, request: dict[str, Any], model: Any, device: st
                         index += len(batch)
                     if stream is None:
                         raise ValueError("Document section contains no speakable text")
+                    trailing = sections_by_id[item["id"]].get("trailing_pause_ms", 0)
+                    if trailing:
+                        write(np.zeros(int(rate * trailing / 1000), dtype=np.float32))
                     for packet in stream.encode():
                         output.mux(packet)
                 # Windows _commit requires a writable descriptor, even after PyAV closed the writer.

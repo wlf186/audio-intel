@@ -515,6 +515,7 @@ export function TtsPage({
       if (inputMode === 'document' && documentSelection) {
         data.set('document_import_id', documentSelection.importId)
         data.set('preview_revision', documentSelection.preview_revision)
+        if(documentSelection.narration_options)data.set('narration_options',JSON.stringify(documentSelection.narration_options))
         data.set('segmentation_mode', documentSelection.segmentation_mode)
         data.set('target_section_chars', String(documentSelection.target_section_chars))
         documentSelection.section_ids.forEach(id=>data.append('section_ids',id))

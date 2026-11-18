@@ -244,3 +244,19 @@
 .modal-card:has(>.document-removal-names)>h2{padding-right:48px;min-height:44px}
 .modal-card:has(>.document-removal-names)>.modal-close{width:44px;height:44px;min-height:44px;display:grid;place-items:center}
 .modal-card:has(>.document-removal-names) .modal-actions button{white-space:normal;height:auto;min-height:44px;padding:10px 12px}
+.document-narration-settings{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.document-narration-settings details{min-width:0;flex:1}
+.document-narration-settings summary,.document-narration-settings label{min-height:44px;display:flex;align-items:center;gap:8px}
+.document-narration-settings button{min-height:44px}
+.document-narration-settings p{font-size:12px;color:var(--muted);max-width:70ch}
+.document-narration-kinds{display:flex;flex-wrap:wrap;gap:8px 16px}
+.document-annotation.is-skipped{color:var(--muted);background:var(--panel);font-size:.85em;text-decoration:underline dotted;text-underline-offset:3px}
+.document-reader-flow .document-annotation-note_reference{vertical-align:super;font-size:.75em}
+.document-reader-notes{font-size:.85em;color:var(--muted);border-left:2px solid var(--line);padding:4px 10px;margin:0 0 1em;overflow-wrap:anywhere}
+.document-flow-paragraph{margin:0 0 1em}
+.document-text-preview .document-flow-paragraph p{margin-bottom:.25em}
+.document-reader-toolbar{display:flex;align-items:center;gap:8px;flex:none;flex-wrap:wrap}
+.document-reader-toolbar>.document-reader-mode{flex:1;min-width:0}
+.document-reader-toolbar>button{min-height:44px}
+.document-narration-controls label{min-height:44px;display:flex;align-items:center;gap:8px}
+.document-narration-controls p{font-size:12px;color:var(--muted)}

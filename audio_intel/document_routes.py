@@ -44,7 +44,7 @@ def document_route_class(config: Any) -> type[APIRoute]:
                     return message
 
                 request._receive = bounded_receive
-                async with request.form(max_files=1, max_fields=config.max_document_sections + 20) as form:
+                async with request.form(max_files=1, max_fields=config.max_document_sections + 32) as form:
                     if sum(len(str(value).encode("utf-8")) for _, value in form.multi_items() if isinstance(value, str)) > 1024**2:
                         raise HTTPException(413, "Document form fields exceed the limit")
                     return await handler(request)

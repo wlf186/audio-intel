@@ -79,6 +79,18 @@ def docx_text(path: Path, limit: int) -> dict[str, Any]:
     document = Document(path)
     output = SpokenText(limit)
     fields: list[bool] = []
+    notes: dict[str, str] = {}
+    used_notes: list[str] = []
+    with zipfile.ZipFile(path) as archive:
+        for member, tag in [('word/footnotes.xml', 'footnote'), ('word/endnotes.xml', 'endnote')]:
+            if member not in archive.namelist(): continue
+            for node in ET.fromstring(archive.read(member)):
+                identifier = node.get(W+'id', '')
+                if node.get(W+'type') in {'separator','continuationSeparator'} or identifier.startswith('-'): continue
+                # Only visible text nodes, never field instructions/XML metadata.
+                value = ' '.join(''.join(t.text or '' for t in p.iter(W+'t')) for p in node.findall(W+'p'))
+                notes[tag+identifier] = value
+
     has_toc = any(re.match(r'\s*TOC\b', n.text or '') for n in document.element.iter(W + 'instrText')) or any(re.match(r'\s*TOC\b', n.get(W + 'instr', '')) for n in document.element.iter(W + 'fldSimple'))
 
     def visible(node: Any) -> str:
@@ -102,6 +114,12 @@ def docx_text(path: Path, limit: int) -> dict[str, Any]:
                 fields[-1] = True
             return ''
         if tag == W + 'fldSimple' and re.match(r'\s*TOC\b', node.get(W + 'instr', '')):
+            return ''
+        if tag in {W+'footnoteReference', W+'endnoteReference'}:
+            identifier = ('footnote' if tag == W+'footnoteReference' else 'endnote') + node.get(W+'id', '')
+            if identifier in notes:
+                if identifier not in used_notes: used_notes.append(identifier)
+                return '[^' + identifier + ']'
             return ''
         if tag == W + 't':
             return '' if any(fields) else node.text or ''
@@ -158,6 +176,8 @@ def docx_text(path: Path, limit: int) -> dict[str, Any]:
             elif node.tag in {W + 'sdt', W + 'sdtContent', W + 'ins', W + 'moveTo'}:
                 blocks(node)
     blocks(document.element.body)
+    for identifier in used_notes:
+        output.append('[^' + identifier + ']: ' + notes[identifier])
     if has_toc:
         output.warnings.append('Word: automatic table of contents omitted / 自动目录未重复朗读')
     return output.result(document.core_properties.title or path.stem)
@@ -345,12 +365,14 @@ def pptx_text(path: Path, limit: int) -> dict[str, Any]:
     presentation = Presentation(path)
     output = SpokenText(limit)
     offsets = []
+    annotations = []
     for number, slide in enumerate(presentation.slides, 1):
         offsets.append(output.length)
         if slide._element.get('show') in {'0', 'false'}:
             output.warnings.append(f'Slide {number}: hidden slide omitted / 隐藏幻灯片未朗读')
             continue
         units: list[tuple[float, float, float, int, str]] = []
+        page_fields: set[int] = set()
 
         def collect(shapes: Any, sx: float = 1, sy: float = 1, dx: float = 0, dy: float = 0) -> None:
             for shape in shapes:
@@ -362,8 +384,9 @@ def pptx_text(path: Path, limit: int) -> dict[str, Any]:
                     gx, gy = shape.width / transform.chExt.cx, shape.height / transform.chExt.cy
                     collect(shape.shapes, sx * gx, sy * gy, dx + sx * (shape.left - gx * transform.chOff.x), dy + sy * (shape.top - gy * transform.chOff.y))
                     continue
-                if shape.is_placeholder and shape.placeholder_format.type in {PP_PLACEHOLDER.DATE, PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.SLIDE_NUMBER}:
+                if shape.is_placeholder and shape.placeholder_format.type in {PP_PLACEHOLDER.DATE, PP_PLACEHOLDER.FOOTER}:
                     continue
+                page_field = shape.is_placeholder and shape.placeholder_format.type == PP_PLACEHOLDER.SLIDE_NUMBER
                 if shape.has_table:
                     rows = []
                     for row in shape.table.rows:
@@ -377,6 +400,7 @@ def pptx_text(path: Path, limit: int) -> dict[str, Any]:
                     output.warnings.append(f'Slide {number}: image/chart/embedded object omitted / 图片、图表或嵌入对象未朗读')
                     continue
                 if text:
+                    if page_field: page_fields.add(len(units))
                     units.append((dy + sy * shape.top, dx + sx * shape.left, sy * shape.height, len(units), text))
         collect(slide.shapes)
         units.sort(key=lambda u: (u[0], u[1], u[3]))
@@ -397,10 +421,14 @@ def pptx_text(path: Path, limit: int) -> dict[str, Any]:
         title = title_shape.text.strip() if title_shape is not None else ordered[0][4].splitlines()[0]
         start = output.length
         for unit in ordered:
+            at = output.length
             output.append(unit[4])
+            if unit[3] in page_fields:
+                annotations.append({'start':at,'end':output.length-2,'kind':'page_number','reason':'slide_number_field','page':number})
         output.headings.append({'offset': start, 'title': f'{number}. {title}'[:200], 'level': 1, 'basis': 'slide'})
     result = output.result(presentation.core_properties.title or path.stem)
     result['page_offsets'] = offsets
+    result['annotations'] = annotations
     return result
 
 

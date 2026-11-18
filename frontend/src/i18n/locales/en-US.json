@@ -1354,6 +1354,22 @@
       "fallback": "No reliable structure found. Split with a target of {{count, number}} characters.",
       "length": "Split with a target of {{count, number}} characters.",
       "unknown": "Preview ready. Review the split basis shown for each section."
+    },
+    "narration": {
+      "settings": "Narration processing",
+      "skip": "Skip auxiliary text",
+      "page_number": "Page numbers",
+      "note_reference": "Footnote / citation markers",
+      "note_body": "Footnote text",
+      "pauses": "Natural paragraph and chapter pauses",
+      "help": "The full extracted text remains visible. Only well-supported auxiliary text is skipped; ordinary numbers and bibliography entries remain. Paragraph and chapter gaps add about 350 and 700 ms.",
+      "reanalyze": "Reanalyze document",
+      "analysisRequired": "This document uses an older parser. Reanalyze to enable annotations and natural pauses. Existing jobs and audio remain unchanged.",
+      "empty": "No speakable text",
+      "skipped": "Not spoken: auxiliary text",
+      "retained": "Auxiliary text: spoken",
+      "page": "Page",
+      "readingHelp": "Auxiliary styling identifies skipped text; the source remains intact. Continuous reading joins layout wraps and page continuations, with page numbers and notes after the paragraph."
     }
   },
   "library": {

@@ -1655,6 +1655,7 @@ def create_app() -> FastAPI:
         text: str | None = Form(None, description="需要合成的文本 / Text to synthesize", json_schema_extra={"minLength": 1, "maxLength": settings.max_tts_chars}),
         document_import_id: str | None = Form(None),
         preview_revision: str | None = Form(None),
+        narration_options: str | None = Form(None, description="Document narration options as JSON; offsets use Unicode code points / 文档朗读选项 JSON"),
         section_ids: list[str] | None = Form(None, max_length=settings.max_document_sections),
         segmentation_mode: str = Form("auto"),
         target_section_chars: int = Form(10000, ge=1000, le=50000),
@@ -1688,9 +1689,16 @@ def create_app() -> FastAPI:
         is_document = http_request.url.path.endswith("/document-jobs")
         operation = "submit_tts_document" if is_document else "submit_tts"
         prepared_document = None
+        parsed_narration = None
+        if narration_options is not None:
+            from .document_narration import NarrationOptions
+            try:
+                parsed_narration = NarrationOptions.model_validate_json(narration_options)
+            except ValueError as exc:
+                raise HTTPException(422, "Invalid narration_options: " + str(exc)) from exc
         if is_document:
             form = await http_request.form()
-            allowed = {"document_import_id", "preview_revision", "section_ids", "segmentation_mode", "target_section_chars",
+            allowed = {"document_import_id", "preview_revision", "narration_options", "section_ids", "segmentation_mode", "target_section_chars",
                 "model", "language", "voice_mode", "speaker", "voice_profile_id", "voiceprint_sample_id", "reference_audio",
                 "reference_text", "reference_job_id", "reference_language", "instruct", "response_format", "display_name",
                 "compute_device", "accelerate_single_task", "reference_start_seconds", "reference_end_seconds"}
@@ -1704,7 +1712,7 @@ def create_app() -> FastAPI:
                 raise HTTPException(422, "Too many selected document sections")
             response_format = "mp3"
 
-        elif document_import_id is not None or section_ids is not None or preview_revision is not None:
+        elif document_import_id is not None or section_ids is not None or preview_revision is not None or narration_options is not None:
             raise HTTPException(422, "Use /api/v1/tts/document-jobs for documents")
         range_form = await http_request.form()
         if any(len(range_form.getlist(field)) > 1 for field in reference_ranges.RANGE_FIELDS):
@@ -1740,6 +1748,8 @@ def create_app() -> FastAPI:
             if not section_ids or len(section_ids) != len(set(section_ids)):
                 raise HTTPException(422, "Choose unique document section IDs")
             caller = {key: value for key, value in request_data.items() if key not in {"text", "compute_device_name"}}
+            if parsed_narration is not None:
+                caller["narration_options"] = parsed_narration.model_dump()
             caller.update(document_import_id=document_import_id, preview_revision=preview_revision,
                           section_ids=sorted(section_ids), segmentation_mode=segmentation_mode,
                           target_section_chars=target_section_chars, voiceprint_sample_id=voiceprint_sample_id,
@@ -1763,7 +1773,7 @@ def create_app() -> FastAPI:
                 response.headers["Idempotency-Replayed"] = "true"
                 return public_job(replay)
             from .document_api import prepare
-            prepared_document = await run_in_threadpool(prepare, settings, document_import_id or "", preview_revision or "", section_ids, segmentation_mode, target_section_chars)
+            prepared_document = await run_in_threadpool(prepare, settings, document_import_id or "", preview_revision or "", section_ids, segmentation_mode, target_section_chars, parsed_narration)
             request_data.pop("text")
             request_data.update(purpose="tts_document", document=prepared_document["request"])
         if voice_mode == "voiceprint":
@@ -3028,7 +3038,7 @@ def create_app() -> FastAPI:
         from .document_api import enrich_document_docs
         enrich_document_docs(schema)
         schemas = schema["components"]["schemas"]
-        document_fields = {"document_import_id", "preview_revision", "section_ids", "segmentation_mode", "target_section_chars"}
+        document_fields = {"document_import_id", "preview_revision", "narration_options", "section_ids", "segmentation_mode", "target_section_chars"}
         for path, document in (("/api/v1/tts/jobs", False), ("/api/v1/tts/document-jobs", True)):
             body_ref = schema["paths"][path]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"]
             body = schemas[body_ref.rsplit("/", 1)[-1]]

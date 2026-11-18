@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-VERSION = 2
+VERSION = 3
 FORMATS = {".epub", ".txt", ".pdf", ".md", ".markdown", ".docx", ".xlsx", ".pptx"}
 CHAPTER = re.compile(r"^(?:第[〇零一二三四五六七八九十百千万两\d]+[章节回卷部篇]|(?:chapter|part|section)\s+(?:\d+|[ivxlcdm]+)\b|\d+(?:\.\d+){0,3}[、.．\s]+\S)", re.I)
 ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "fig", "no", "e.g", "i.e"}
@@ -42,7 +42,7 @@ def decode_text(data: bytes) -> str:
 
 class HtmlText(HTMLParser):
     """Preserve block boundaries without splitting inline spans into paragraphs."""
-    blocks = {"p", "div", "section", "article", "li", "blockquote", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
+    blocks = {"p", "div", "aside", "section", "article", "li", "blockquote", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -53,6 +53,8 @@ class HtmlText(HTMLParser):
         self.current_heading: tuple[str, int, int] | None = None
         self.skip = 0
         self.omitted = 0
+        self.annotations: list[dict[str, Any]] = []
+        self.note_stack: list[tuple[str, int, str | None]] = []
 
     def append(self, text: str) -> None:
         self.parts.append(text)
@@ -72,6 +74,10 @@ class HtmlText(HTMLParser):
             return
         if tag in self.blocks:
             self.boundary()
+        semantic = (attributes.get('epub:type', '') + ' ' + attributes.get('role', '')).split()
+        kind = 'note_body' if any(v in semantic for v in ('footnote','endnote','rearnote','doc-footnote','doc-endnote')) else 'note_reference' if any(v in semantic for v in ('noteref','doc-noteref')) else None
+        if tag not in {'br','img','hr','input','meta','link'}:
+            self.note_stack.append((tag, self.length, kind))
         if tag == "br":
             self.append("\n")
         if tag in {"td", "th"}:
@@ -90,6 +96,10 @@ class HtmlText(HTMLParser):
             return
         if self.skip:
             return
+        if self.note_stack and self.note_stack[-1][0] == tag:
+            _, start, kind = self.note_stack.pop()
+            if kind and self.length > start:
+                self.annotations.append({'start':start,'end':self.length,'kind':kind,'reason':'semantic_html_note'})
         if self.current_heading and self.current_heading[0] == tag:
             _, start, part_index = self.current_heading
             title = "".join(self.parts[part_index:]).strip()
@@ -135,6 +145,7 @@ def _epub(path: Path, max_chars: int, archive_limit: int) -> dict[str, Any]:
         parts: list[str] = []
         headings: list[dict[str, Any]] = []
         files: list[dict[str, Any]] = []
+        annotations: list[dict[str, Any]] = []
         anchors: dict[tuple[str, str], int] = {}
         warnings: list[str] = []
         length = 0
@@ -155,6 +166,7 @@ def _epub(path: Path, max_chars: int, archive_limit: int) -> dict[str, Any]:
                 warnings.append(f"{name}: no spoken text; images omitted / 此文件无可读文字，图片未朗读")
                 continue
             files.append({"offset": length, "title": parser.headings[0]["title"] if parser.headings else f"Part {len(files) + 1}", "basis": "spine", "level": 1})
+            annotations.extend({**a, "start":length+a["start"], "end":length+a["end"]} for a in parser.annotations)
             headings.extend({**h, "offset": length + h["offset"]} for h in parser.headings)
             if parser.omitted:
                 warnings.append(f"{name}: {parser.omitted} image/navigation/code elements omitted / 图片、导航或代码未朗读")
@@ -206,12 +218,16 @@ def _epub(path: Path, max_chars: int, archive_limit: int) -> dict[str, Any]:
                     walk_ncx(child, level)
 
             walk_ncx(_xml(archive.read(name)))
-        return {"title": title, "text": "".join(parts), "headings": toc or headings or files, "warnings": warnings}
+        return {"title": title, "text": "".join(parts), "headings": toc or headings or files, "warnings": warnings, "annotations": annotations}
 
 
 def _markdown(text: str) -> dict[str, Any]:
     from markdown_it import MarkdownIt
     text, citation_count = re.subn(r"\ue200cite\ue202[^\ue200\ue201\n]*\ue201", "", text)
+    # CommonMark otherwise consumes footnote-looking definitions as invisible
+    # link definitions. Keep their content in the extraction/annotation surface.
+    text = re.sub(r'(?m)^\[\^([^\]\n]+)\]:([^\n]*(?:\n[ \t]+[^\n]+)*)',
+                  lambda m: '\\[^' + m[1] + ']:' + re.sub(r'\n[ \t]+', ' ', m[2]), text)
     tokens = MarkdownIt("commonmark").enable("table").parse(text)
     parts: list[str] = []
     headings: list[dict[str, Any]] = []
@@ -284,10 +300,13 @@ def extract(path: Path, max_chars: int, archive_limit: int) -> dict[str, Any]:
         reader = PdfReader(path)
         if reader.is_encrypted:
             raise ValueError("Encrypted PDFs are unsupported / 不支持加密 PDF")
-        pages = []; offsets = []; length = 0; warnings = []
+        pages = []; offsets = []; length = 0; warnings = []; layouts = []
+        from .document_pdf import page_text, analyze
         for number, page in enumerate(reader.pages, 1):
             offsets.append(length)
-            text = (page.extract_text() or "").replace("\r", "") + "\n\n"
+            text, layout = page_text(page)
+            layouts.append(layout)
+            text += "\n\n"
             text = re.sub(r"[\u2f00-\u2fdf]", lambda m: unicodedata.normalize("NFKC", m[0]), text)
             if not text.strip():
                 warnings.append(f"Page {number}: no text; OCR may be required / 此页无文字，可能需要 OCR")
@@ -312,6 +331,7 @@ def extract(path: Path, max_chars: int, archive_limit: int) -> dict[str, Any]:
         outline(reader.outline)
         text = "".join(pages)
         result = {"text": text, "headings": headings or _plain_headings(text, pdf=True), "warnings": warnings, "page_offsets": offsets}
+        analyze(result, layouts)
     else:
         text = decode_text(path.read_bytes())
         result = _markdown(text) if suffix in {".md", ".markdown"} else {"text": text, "headings": _plain_headings(text), "warnings": []}
@@ -323,6 +343,9 @@ def extract(path: Path, max_chars: int, archive_limit: int) -> dict[str, Any]:
     result["version"] = VERSION
     result["text_hash"] = hashlib.sha256(result["text"].encode()).hexdigest()
     result["warnings"] = list(dict.fromkeys(result["warnings"]))
+    result["source_format"] = suffix.lstrip(".")
+    from .document_narration import finish_analysis
+    finish_analysis(result)
     return result
 
 

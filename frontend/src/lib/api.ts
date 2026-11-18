@@ -1,4 +1,4 @@
-import type {LibraryImport,LibraryMode,LibraryPreview,DocumentSectionPage,DocumentImport,DocumentPreview,AuthSession,BatchDeleteResult,Capabilities,Health,HotwordList,Job,JobListQuery,JobListResponse,JobResult,Probe,TlsBootstrap,VoiceprintGroup,VoiceprintPerson,VoiceprintSample} from './types'
+import type {NarrationOptions,DocumentText,LibraryImport,LibraryMode,LibraryPreview,DocumentSectionPage,DocumentImport,DocumentPreview,AuthSession,BatchDeleteResult,Capabilities,Health,HotwordList,Job,JobListQuery,JobListResponse,JobResult,Probe,TlsBootstrap,VoiceprintGroup,VoiceprintPerson,VoiceprintSample} from './types'
 import type {TFunction} from 'i18next'
 import i18n from '../i18n'
 
@@ -128,11 +128,12 @@ export const api={
   analyzeCloneReference:(data:FormData,options?:SubmissionOptions)=>submitForm<Job>('/api/v1/tts/clone-references',data,options),
   submitDocumentImport:(data:FormData,options?:SubmissionOptions)=>submitForm<DocumentImport>('/api/v1/tts/document-imports',data,options),
   documentImports:(offset=0,limit=21)=>request<DocumentImport[]>(`/api/v1/tts/document-imports?offset=${offset}&limit=${limit}`),
+  reanalyzeDocumentImport:(id:string,key:string)=>request<DocumentImport>(`/api/v1/tts/document-imports/${id}/reanalyze`,{method:'POST',headers:{'Idempotency-Key':key}}),
   retryDocumentImport:(id:string)=>request<DocumentImport>(`/api/v1/tts/document-imports/${id}/retry`,{method:'POST'}),
   documentImport:(id:string)=>request<DocumentImport>(`/api/v1/tts/document-imports/${id}`),
   removeDocumentImport:(id:string)=>request<void>(`/api/v1/tts/document-imports/${id}`,{method:'DELETE'}),
-  documentPreview:(id:string,mode:'auto'|'length',target:number)=>request<DocumentPreview>(`/api/v1/tts/document-imports/${id}/preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({segmentation_mode:mode,target_section_chars:target})}),
-  documentText:(id:string,start:number,limit:number)=>request<{text:string}>(`/api/v1/tts/document-imports/${id}/text?start=${start}&limit=${limit}`),
+  documentPreview:(id:string,mode:'auto'|'length',target:number,narration_options?:NarrationOptions)=>request<DocumentPreview>(`/api/v1/tts/document-imports/${id}/preview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({segmentation_mode:mode,target_section_chars:target,narration_options})}),
+  documentText:(id:string,start:number,limit:number)=>request<DocumentText>(`/api/v1/tts/document-imports/${id}/text?start=${start}&limit=${limit}`),
   documentSections:(id:string,offset=0,limit=50)=>request<DocumentSectionPage>(`/api/v1/jobs/${id}/document/sections?offset=${offset}&limit=${limit}`),
   submitTtsDocument:(data:FormData)=>submitForm<Job>('/api/v1/tts/document-jobs',data),
   submitTts:(data:FormData,options?:SubmissionOptions)=>submitForm<Job>('/api/v1/tts/jobs',data,options),
