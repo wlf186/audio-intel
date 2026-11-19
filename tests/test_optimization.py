@@ -83,7 +83,7 @@ def test_v15_migration_clears_legacy_optimization_preserving_source(configured):
     db.init_db()
     with db.connect() as connection:
         assert before and not connection.execute('SELECT 1 FROM optimization_units').fetchall()
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 27
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 28
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
     assert store.status(identifier) == {'published': None, 'candidate': None}
     assert db.get_job(identifier)['result'] == source(2)
@@ -224,7 +224,7 @@ def test_v14_migration_preserves_history_queue_and_idempotency(local):
     assert {identifier: db.get_job(identifier) for identifier in before} == before
     assert not store.settings()['enabled']
     with db.connect() as connection:
-        assert connection.execute('SELECT min(version) FROM schema_meta').fetchone()[0] == 27
+        assert connection.execute('SELECT min(version) FROM schema_meta').fetchone()[0] == 28
         assert tuple(connection.execute('SELECT * FROM job_idempotency').fetchone()) == receipt
         assert tuple(connection.execute('SELECT * FROM queue_sequence').fetchone()) == sequence
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
@@ -536,4 +536,58 @@ def test_v16_migration_clears_legacy_candidate_preserving_source(configured):
     assert before and store.units(run) == []
     assert db.get_job(identifier)['result'] == source(1)
     with db.connect() as connection:
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0]== 27
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0]== 28
+
+
+@pytest.mark.parametrize('video', [False, True])
+def test_submission_followup_survives_restart(configured, monkeypatch, tmp_path, video):
+    from test_video_transcription import upload, video_file
+    from audio_intel.optimization_followup import status
+
+    async def generate(profile, batch, *args):
+        return [(p['ordinal'], p['original_text']) for p in batch]
+    monkeypatch.setattr(engine, 'generate', generate)
+    headers = {'Idempotency-Key': 'followup-submit-0001'}
+    options = {'rewrite_mode': 'polish', 'analyze_topics': False}
+    with TestClient(api.create_app()) as client:
+        if video:
+            item = upload(client, video_file(tmp_path / 'test.mp4'))
+            def submit(value):
+                return client.post('/api/v1/asr/video-jobs', headers=headers, json={
+                    'upload_id': item['id'], 'compute_device': 'cpu', 'optimization_after_transcription': value})
+        else:
+            def submit(value):
+                return client.post('/api/v1/asr/jobs', headers=headers, files={'file': ('test.wav', b'mock')},
+                                   data={'compute_device': 'cpu', 'optimization_after_transcription': json.dumps(value)})
+        response = submit(options)
+        assert response.status_code == 202, response.text
+        identifier = response.json()['id']
+        assert submit(options).status_code == 200
+        assert submit({**options, 'analyze_topics': True}).status_code == 409
+        assert status(identifier) == {'error': None}
+        assert store.status(identifier)['candidate'] is None
+    db.finish_job(identifier, 'succeeded', result_json=source(2))
+    with TestClient(api.create_app()) as client:
+        done = wait(client, identifier, lambda value: value['published'])
+        assert done['published']['rewrite_mode'] == 'polish'
+        assert done['followup'] is None
+        assert client.delete(url(identifier) + '?purge=true').status_code == 204
+        assert status(identifier) is None
+
+
+def test_followup_service_change_requires_manual_start(configured):
+    from audio_intel.optimization_followup import SERVICE_CHANGED, status
+    with TestClient(api.create_app()) as client:
+        def submit(key, options):
+            return client.post('/api/v1/asr/jobs', headers={'Idempotency-Key': key},
+                               files={'file': ('test.wav', b'mock')}, data={'compute_device': 'cpu',
+                               'optimization_after_transcription': json.dumps(options)})
+        earlier = submit('before-service-change', {}).json()['id']
+        assert status(earlier) == {'error': None}
+        store.save_settings({**PROFILE, 'model': 'new-model'})
+        assert status(earlier)['error'] == SERVICE_CHANGED
+        uploading = submit('during-service-change', {'expected_service': {
+            'base_url': PROFILE['base_url'], 'model': PROFILE['model']}}).json()['id']
+        db.finish_job(uploading, 'succeeded', result_json=source(2))
+        result = client.get(url(uploading)).json()
+        assert result['candidate'] is None and result['followup']['error'] == SERVICE_CHANGED

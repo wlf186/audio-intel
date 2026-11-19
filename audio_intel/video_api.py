@@ -25,6 +25,7 @@ from .asr_speakers import speaker_update_lock
 from .document_download import reader_lease
 from .transcript import scene_transcripts
 from .transcript_filename import transcript_basename, transcript_filename
+from .optimization_followup import OptimizationOptions
 from .video_detection import SceneDetectionSettings
 
 
@@ -103,6 +104,7 @@ class VideoJobRequest(StrictModel):
     background_denoise: bool | None = Field(None, description='兼容独立降噪参数；默认开启，不能与总开关混用 / Compatible independent denoising control; defaults to true, cannot mix with the combined control', json_schema_extra={'default': True})
     speech_enhancement_strength: float | None = Field(None, ge=0, le=2, allow_inf_nan=False, description="自动人声增益力度，默认 1；0 跳过 / Automatic gain strength, default 1; zero skips")
     background_denoise_strength: float | None = Field(None, ge=0, le=1, allow_inf_nan=False, description="降噪混合比例，GTCRN 默认 0.5；0 跳过 / Denoising mix, GTCRN default 0.5; zero skips")
+    optimization_after_transcription: OptimizationOptions | None = Field(None, description="原文完成后自动优化 / Automatically optimize the completed transcript")
     video_roi: VideoRegion | None = None
     video_scene_detail: Literal['concise', 'balanced', 'detailed'] | None = None
     video_scene_mode: Literal['auto', 'custom'] | None = Field(None, description='新任务默认自动；仅传旧式检测参数启用自定义 / New submissions default to auto; numeric settings imply custom')
@@ -329,6 +331,8 @@ def register(app: Any, api: Any) -> None:
         api.ensure_service('asr')
         key = api.validate_idempotency_key(idempotency_key)
         caller = body.model_dump(mode='json')
+        if body.optimization_after_transcription is None:
+            caller.pop('optimization_after_transcription', None)
         if body.video_scene_detail is None:
             caller.pop('video_scene_detail', None)
         if body.video_scene_mode is None:

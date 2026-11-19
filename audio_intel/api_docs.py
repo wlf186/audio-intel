@@ -1369,7 +1369,7 @@ def _capabilities_example() -> dict[str, Any]:
             "transcript_optimization": {
                 "supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096, "batching": {"supported": True, "enabled": True, "max_items": 12, "reason": "source_packets", "eligible_models": ["qwen3.5:9b"], "packet_version": 1, "retains_fine_insights": True, "independent_prose_review": True}, "call_budget": CALL_BUDGET_CAPABILITY,
                 "text_versions": ["original", "optimized", "comparison"],
-                "rewrite_modes": ["polish", "rewrite", "editorial"], "default_rewrite_mode": "rewrite",
+                "rewrite_modes": ["polish", "rewrite", "editorial"], "after_transcription": True, "default_rewrite_mode": "rewrite",
                 "summaries": {"version": 2, "automatic_fallback": True, "max_model_calls_per_node": 3,
                     "node_timeout_seconds": 60, "group_sentences": 2, "continuous_script_chars": 50,
                     "word_script_words": 30, "scene_title_chars": 20, "scene_title_words": 10, "retry_missing": True},

@@ -1,4 +1,10 @@
 {
+  "uploadOptions": {
+    "optimize": "转写完成后自动优化",
+    "remember": "记住此选择，可在结果页暂停或继续。",
+    "unavailable": "服务尚未启用。关闭自动优化即可只提交转写。",
+    "pending": "已预约自动优化，等待进入优化队列。"
+  },
   "enrollmentTrack": {
     "label": "入库音频",
     "original": "原音",

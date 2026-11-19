@@ -337,7 +337,7 @@ def test_v24_migration_preserves_sources_calls_and_legacy_plan_absence(local):
     assert calls.usage(run)['calls_used'] == 1
     assert packets.nodes(run) == []
     with db.connect() as connection:
-        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 27
+        assert connection.execute('SELECT version FROM schema_meta').fetchone()[0] == 28
         assert not connection.execute('PRAGMA foreign_key_check').fetchall()
 
 

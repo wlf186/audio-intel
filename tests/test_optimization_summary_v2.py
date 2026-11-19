@@ -213,7 +213,7 @@ def test_v20_additive_migration_preserves_published_v1_and_checkpoints(configure
     db.init_db(); db.init_db()
     assert store.units(run) == before and insights.read(run) == value
     with db.connect() as c:
-        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 27
+        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 28
         assert not c.execute('PRAGMA foreign_key_check').fetchall()
 
 

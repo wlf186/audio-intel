@@ -721,6 +721,9 @@ def create_job_idempotent(
                 _next_queue_seq(db), now, now,
             ),
         )
+        if operation == "submit_asr":
+            from .optimization_followup import schedule
+            schedule(db, job_id, request)
         db.execute(
             "INSERT INTO job_idempotency(operation,key_hash,request_hash,job_id,created_at) VALUES(?,?,?,?,?)",
             (operation, key_hash, request_hash, job_id, now),

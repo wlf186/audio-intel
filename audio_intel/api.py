@@ -1309,7 +1309,7 @@ def create_app() -> FastAPI:
                 "default_model": default_model["public_id"],
                 "models": model_capabilities,
                 "diarization": "CAM++ single-active-speaker",
-                "transcript_optimization": {"topics": {"supported": True, "version": 3, "outline_supported": True, "default": False, "granularity": "main", "input": "transcript", "fusion_enabled": False}, "supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096, "batching": optimization_batching, "call_budget": optimization_budget.CALL_BUDGET_CAPABILITY, "text_versions": ["original", "optimized", "comparison"], "rewrite_modes": ["polish", "rewrite", "editorial"], "default_rewrite_mode": "rewrite", "summaries": {"version": 2, "automatic_fallback": True, "max_model_calls_per_node": 3, "node_timeout_seconds": 60, "group_sentences": 2, "continuous_script_chars": 50, "word_script_words": 30, "scene_title_chars": 20, "scene_title_words": 10, "retry_missing": True}},
+                "transcript_optimization": {"topics": {"supported": True, "version": 3, "outline_supported": True, "default": False, "granularity": "main", "input": "transcript", "fusion_enabled": False}, "supported": True, "provider": "openai_chat_completions", "minimum_context": 16384, "output_tokens": 4096, "batching": optimization_batching, "call_budget": optimization_budget.CALL_BUDGET_CAPABILITY, "text_versions": ["original", "optimized", "comparison"], "rewrite_modes": ["polish", "rewrite", "editorial"], "after_transcription": True, "default_rewrite_mode": "rewrite", "summaries": {"version": 2, "automatic_fallback": True, "max_model_calls_per_node": 3, "node_timeout_seconds": 60, "group_sentences": 2, "continuous_script_chars": 50, "word_script_words": 30, "scene_title_chars": 20, "scene_title_words": 10, "retry_missing": True}},
                 "speaker_count": {"min": 1, "max": 15, "default": "auto"},
                 "voiceprint_library": True,
                 "languages": ASR_LANGUAGES,
@@ -1519,6 +1519,7 @@ def create_app() -> FastAPI:
         speaker_count: str = Form("auto", description="auto 或 1–15 / auto or an integer from 1 to 15", json_schema_extra={"enum": ["auto", *[str(value) for value in range(1, 16)]]}),
         diarize: bool = Form(True, description="启用说话人分离 / Enable speaker diarization"),
         align: bool = Form(True, description="返回支持语言的精确时间戳 / Produce precise timestamps for supported languages"),
+        optimization_after_transcription: str | None = Form(None, description='完成后自动优化 / Automatic optimization options JSON, e.g. {"rewrite_mode":"rewrite","analyze_topics":true}'),
         context: str = Form("", description="一次性识别上下文；所选词表的 Vocabulary 段会追加在其后 / One-off recognition context followed by the Vocabulary section generated from selected lists"),
         hotword_list_ids: str = Form("", description="逗号分隔的本地词表 ID，最多 8 个；留空禁用已保存词表 / Comma-separated local list IDs, maximum 8; empty disables stored lists"),
         export_formats: str = Form("json,srt,vtt,txt", description="逗号分隔：json,srt,vtt,txt / Comma-separated export formats"),
@@ -1536,6 +1537,11 @@ def create_app() -> FastAPI:
     ) -> dict[str, Any]:
         ensure_service("asr")
         idempotency_key = validate_idempotency_key(idempotency_key)
+        from .optimization_followup import OptimizationOptions
+        try:
+            followup = OptimizationOptions.model_validate_json(optimization_after_transcription) if optimization_after_transcription is not None else None
+        except ValueError as exc:
+            raise HTTPException(422, "Invalid optimization_after_transcription") from exc
         language = validate_asr_language(language)
         selected_model, compute_device, compute_device_name = await run_in_threadpool(
             validate_asr_model_device, model, compute_device,
@@ -1572,6 +1578,7 @@ def create_app() -> FastAPI:
             "compute_device_name": compute_device_name, "use_voiceprint_library": use_voiceprint_library,
             "accelerate_single_task": accelerate_single_task,
             **enhancement_request,
+            **({"optimization_after_transcription": followup.model_dump()} if followup else {}),
             **hotword_data, **voiceprint_data,
         }
         job, replayed = idempotent_job(

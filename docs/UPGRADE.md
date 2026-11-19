@@ -725,3 +725,8 @@ English: No migration or historical media/draft rewrite is required on v23; no a
 本次无新增数据库迁移、自动历史解析更新或历史音频改写，无需额外升级备份。新解析保存原文上的辅助文本标记与语义边界；新任务使用 v2 内部快照。历史任务重试仍使用原提交快照，完成章节继续复用。旧文档通过显式“重新分析文档”启用新能力，失败保留旧解析。模型、精度、环境和依赖锁不变。前端文档草稿为 v3，仍使用原 `sessionStorage` 键、期限和清理规则。重建前端后按维护流程恢复 API、supervisor 和 executor，并验证文档提交与历史任务读取。详细 API 与默认停顿见 [文档合成](DOCUMENT_TTS.md#辅助文本与自然停顿--narration-annotations-and-pauses)。
 
 English: No new database migration, automatic historical parse refresh or audio rewrite is required. New jobs freeze annotations, options and pauses in v2 snapshots; old retries retain their submitted semantics. Reanalysis is explicit and preserves the last successful parse on failure. Model environments and dependency locks are unchanged. Rebuild the frontend and complete process/deployment acceptance. Draft v3 retains the existing session-storage lifetime and clearing rules.
+
+### 上传时预约表达优化 / Optimization at upload
+
+SQLite v28 新增自动优化预约记录。升级前使用 SQLite 一致性备份，验收成功后清理该临时备份。历史转写和媒体继续使用原有数据。
+SQLite v28 adds pending optimization requests. Take a consistent database-only backup before upgrade and remove the temporary backup after deployment acceptance.

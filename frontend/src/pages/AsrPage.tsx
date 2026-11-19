@@ -8,6 +8,8 @@ import {ReadingWorkspace,OrderedAudio} from '../components/ReadingWorkspace'
 import {TopicDirectory} from '../components/TopicDirectory'
 import {SceneDetection} from '../components/SceneDetection'
 import {OptimizationReader} from '../components/OptimizationReader'
+import {request} from '../lib/api'
+import {readAutoOptimize,saveAutoOptimize,readRewriteMode,saveRewriteMode,readAnalyzeTopics,saveAnalyzeTopics,rewriteModes,needsServiceNotice,optimizationSettingsPath,type OptimizationConfiguration,type FollowupOptions,type RewriteMode} from '../lib/optimization'
 import {SceneDetectionFields,SceneModeChoice,SceneDetailChoice} from '../components/SceneDetectionFields'
 import {loadSceneDetail,saveSceneDetail,type SceneDetail,loadSceneMode,saveSceneMode,loadDetection,saveDetection,detectionDefaults,validDetection,type SceneDetectionSettings} from '../lib/sceneDetection'
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
@@ -148,6 +150,7 @@ type Props = {
   denoiseAvailable?: boolean
   gainStrengthCapability?: AsrStrengthCapability
   noiseStrengthCapability?: AsrStrengthCapability
+  followupSupported?: boolean
   optimizationSupported?: boolean
   topicsSupported?: boolean
   transcriptExportFormats?: import('../lib/types').TranscriptExportFormat[]
@@ -170,7 +173,7 @@ type Props = {
   onRevealHandled: (token: number) => void
 }
 
-export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, restoreState, restoreError, restoreSelected, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, gainAvailable, denoiseAvailable, gainStrengthCapability, noiseStrengthCapability, videoCapability, optimizationSupported = false, topicsSupported = false, transcriptExportFormats, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, voiceprintGroups, voiceprintGroupsState, refreshVoiceprintGroups, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
+export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, restoreState, restoreError, restoreSelected, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, gainAvailable, denoiseAvailable, gainStrengthCapability, noiseStrengthCapability, videoCapability, followupSupported, optimizationSupported = false, topicsSupported = false, transcriptExportFormats, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, voiceprintGroups, voiceprintGroupsState, refreshVoiceprintGroups, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const { t, i18n } = useTranslation()
   const [view, setView] = useState<'create'|'video'|'results'>(()=>readAsrSession().view)
   const [compact, setCompact] = useState(()=>matchMedia('(max-width: 1023px)').matches)
@@ -202,7 +205,13 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const [videoEnrollment,setVideoEnrollment]=useState<{jobId:string;speakerId:string;segmentIds:number[]}>()
   useEffect(()=>setVideoEnrollment(undefined),[selectedJobId])
   const isVideoTab=view==='video'
+  const [autoOptimize,setAutoOptimize]=useState(readAutoOptimize)
+  const [rewriteMode,setRewriteMode]=useState(readRewriteMode)
+  const [topics,setTopics]=useState(readAnalyzeTopics)
   const [sceneDraft,setSceneDraft]=useState<SceneDetectionSettings>()
+  const [connection,setConnection]=useState<OptimizationConfiguration>()
+  const [connectionError,setConnectionError]=useState('')
+  const [reloadConnection,setReloadConnection]=useState(0)
   const locked=isVideoTab?resume:undefined
   const sceneCapability=videoCapability?.scene_detection
   const sceneSettings=sceneCapability?(locked?(locked.params.video_scene_detection as SceneDetectionSettings??detectionDefaults(sceneCapability)):sceneDraft??loadDetection(sceneCapability)):undefined
@@ -211,10 +220,24 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const [preferredMode,setPreferredMode]=useState(loadSceneMode)
   const sceneMode=!sceneCapability?.modes?'custom':locked?(locked.params.video_scene_mode==='auto'?'auto':'custom'):preferredMode
   const invalidScene=sceneMode==='custom'&&Boolean(isVideoTab&&sceneSettings&&sceneCapability&&!validDetection(sceneSettings,sceneCapability))
+  const savedOptions=locked?.params.optimization_after_transcription as FollowupOptions|undefined
+  const wantsOptimization=locked?Boolean(savedOptions):autoOptimize
+  const options:FollowupOptions|undefined=followupSupported&&wantsOptimization?(savedOptions??{...(connection?.enabled?{expected_service:{base_url:connection.base_url,model:connection.model}}:{}),rewrite_mode:rewriteMode,analyze_topics:Boolean(topicsSupported&&topics)}):undefined
+  const waitingForConfiguration=Boolean(options&&!locked&&!connection?.enabled)
   useEffect(()=>{
     if(view==='results'){setSceneDraft(undefined);return}
     setPreferredMode(loadSceneMode());setPreferredDetail(loadSceneDetail())
+    setRewriteMode(readRewriteMode());setTopics(readAnalyzeTopics())
   },[view])
+  useEffect(()=>{
+    if(!followupSupported||!wantsOptimization||view==='results'||locked)return
+    const controller=new AbortController()
+    setConnection(undefined);setConnectionError('')
+    void request<OptimizationConfiguration>(optimizationSettingsPath,{signal:controller.signal})
+      .then(value=>{if(!controller.signal.aborted)setConnection(value)})
+      .catch(error=>{if(!controller.signal.aborted)setConnectionError(error.message)})
+    return ()=>controller.abort()
+  },[view,wantsOptimization,followupSupported,locked,reloadConnection])
   function updateScene(value:SceneDetectionSettings){
     setSceneDraft(value)
     if(sceneCapability&&validDetection(value,sceneCapability))saveDetection(value)
@@ -523,6 +546,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       const controller=new AbortController()
       uploadController.current=controller
       const data = new FormData()
+      if(options)data.set('optimization_after_transcription',JSON.stringify(options))
       data.set('file', file)
       data.set('model', model)
       data.set('language', language)
@@ -538,7 +562,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       const strengthParams=gainStrengthCapability&&noiseStrengthCapability?{speech_enhancement_strength:preferences.speechEnhancementStrength,background_denoise_strength:preferences.backgroundDenoiseStrength}:{}
       for(const [name,value] of Object.entries(strengthParams))data.set(name,String(value))
       if (selectedHotwordIds.size) data.set('hotword_list_ids', [...selectedHotwordIds].join(','))
-      const job = isVideoTab?await submitVideo(file,{model,language,speaker_count:speakers==='auto'?null:Number(speakers),diarize:true,align,use_voiceprint_library:useVoiceprints,...(manualGroups?{voiceprint_group_ids:preferences.voiceprintGroupIds}:{}),compute_device:effectiveComputeDevice,accelerate_single_task:accelerateSingleTask,audio_enhancement:preferences.audioEnhancement,...strengthParams,hotword_list_ids:[...selectedHotwordIds],video_roi:videoRoi||null,...(videoCapability?.scene_detection?(sceneMode==='auto'?{video_scene_mode:'auto',...(sceneCapability?.detail_levels?{video_scene_detail:sceneDetail}:{})}:{video_scene_detection:sceneSettings}):{})},{signal:controller.signal,onProgress:setUploadProgress}):await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
+      const job = isVideoTab?await submitVideo(file,{...(options?{optimization_after_transcription:options}:{}),model,language,speaker_count:speakers==='auto'?null:Number(speakers),diarize:true,align,use_voiceprint_library:useVoiceprints,...(manualGroups?{voiceprint_group_ids:preferences.voiceprintGroupIds}:{}),compute_device:effectiveComputeDevice,accelerate_single_task:accelerateSingleTask,audio_enhancement:preferences.audioEnhancement,...strengthParams,hotword_list_ids:[...selectedHotwordIds],video_roi:videoRoi||null,...(videoCapability?.scene_detection?(sceneMode==='auto'?{video_scene_mode:'auto',...(sceneCapability?.detail_levels?{video_scene_detail:sceneDetail}:{})}:{video_scene_detection:sceneSettings}):{})},{signal:controller.signal,onProgress:setUploadProgress}):await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
       onJobSubmitted(job)
       setLastSubmitted(job)
       onSelect(job)
@@ -768,6 +792,15 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
         <p>{t('video.uploadLimit',{limit:size(uploadLimit||0,i18n.resolvedLanguage)})}</p>
         <p>{t(isVideoTab?'video.uploadHelp':'asr.subtitle')}</p>
         {isVideoTab&&resume?<div className="video-resume"><p>{t('video.resumeNotice',{name:resume.name})}</p><button className="button" disabled={busy} onClick={()=>setDiscardOpen(true)}>{t('video.discard')}</button></div>:null}
+        {followupSupported?<fieldset className="upload-followup" disabled={busy||Boolean(locked)}>
+          <legend>{t('optimization.title')}</legend>
+          <SettingToggleRow id="asr-auto-optimize" label={t('uploadOptions.optimize')} description={t('uploadOptions.remember')} checked={wantsOptimization} onChange={value=>{setAutoOptimize(value);saveAutoOptimize(value)}}/>
+          {options?<><label>{t('optimization.chooseMode')}<select value={options.rewrite_mode} onChange={event=>{const mode=event.target.value as RewriteMode;setRewriteMode(mode);saveRewriteMode(mode)}}>
+            {rewriteModes.map(mode=><option key={mode} value={mode}>{t(`optimization.rewriteModes.${mode}.label`)}</option>)}</select></label>
+            {topicsSupported?<SettingToggleRow id="asr-auto-topics" label={t('optimization.topics.option')} description={t('optimization.topics.help')} checked={options.analyze_topics} onChange={value=>{setTopics(value);saveAnalyzeTopics(value)}}/>:null}
+            {!locked?(connectionError?<p role="alert">{connectionError} <button className="button" onClick={()=>setReloadConnection(n=>n+1)}>{t('common.actions.retry')}</button></p>:!connection?<p role="status">{t('common.states.loading')}</p>:connection.enabled?<p>{t('optimization.model')} · {connection.model}{needsServiceNotice(connection.base_url)?<> · {connection.base_url}<br/>{t('optimization.metrics.serviceNotice')}</>:null}</p>:<p>{t('uploadOptions.unavailable')} <a href="#system">{t('optimization.configure')}</a></p>):null}
+          </>:null}
+        </fieldset>:null}
         {isVideoTab&&sceneCapability&&sceneSettings?<fieldset className="upload-followup" disabled={busy||Boolean(locked)}>
           <legend>{t('sceneDetection.title')}</legend>
           {sceneCapability.modes?<SceneModeChoice value={sceneMode} disabled={busy||Boolean(locked)} onChange={mode=>{setPreferredMode(mode);saveSceneMode(mode)}}/>:null}
@@ -876,7 +909,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           ) : null}
           {lastSubmitted?<div className="asr-submitted"><span>{lastSubmitted.display_name}</span><button className="button" onClick={()=>{onSelect(lastSubmitted);setView('results')}}>{t('asr.workspace.viewSubmitted')}</button></div>:null}
           {uploadProgress?<SubmissionProgress label={t('asr.uploadLabel')} progress={uploadProgress} onCancel={()=>uploadController.current?.abort()} cancelLabel={isVideoTab?t('video.pause'):undefined}/>:null}
-          <button className="primary" disabled={busy || invalidScene || !chosenModel.installed || Boolean(selectedHotwordIssue) || Boolean(groupSelectionIssue) || Boolean(fileLimitError) || (selectedHotwordIds.size>0&&hotwordsState!=='ready')} aria-describedby={selectedHotwordIssue ? 'asr-hotword-submit-error' : undefined} onClick={submit}>
+          <button className="primary" disabled={busy || invalidScene || waitingForConfiguration || !chosenModel.installed || Boolean(selectedHotwordIssue) || Boolean(groupSelectionIssue) || Boolean(fileLimitError) || (selectedHotwordIds.size>0&&hotwordsState!=='ready')} aria-describedby={selectedHotwordIssue ? 'asr-hotword-submit-error' : undefined} onClick={submit}>
             <Play size={18} />
             {submitLabel}
           </button>

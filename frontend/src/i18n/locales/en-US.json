@@ -1,4 +1,10 @@
 {
+  "uploadOptions": {
+    "optimize": "Optimize after transcription",
+    "remember": "Remember this choice. Pause or resume from the results.",
+    "unavailable": "The service is disabled. Turn off automatic optimization to submit transcription alone.",
+    "pending": "Automatic optimization is waiting to enter the optimization queue."
+  },
   "enrollmentTrack": {
     "label": "Audio to import",
     "original": "Original",

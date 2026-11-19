@@ -187,7 +187,12 @@ class OptimizationSummary(BaseModel):
     updated_at: str
 
 
+class FollowupStatus(BaseModel):
+    error: str | None = None
+
+
 class OptimizationStatus(BaseModel):
+    followup: FollowupStatus | None = None
     enabled: bool
     published: OptimizationSummary | None
     candidate: OptimizationSummary | None
@@ -332,7 +337,8 @@ def parent(job_id: str) -> dict:
 
 
 def public_status(job_id: str) -> dict:
-    return {**store.status(job_id), 'enabled': bool(store.settings().get('enabled'))}
+    from .optimization_followup import status
+    return {'followup': status(job_id), **store.status(job_id), 'enabled': bool(store.settings().get('enabled'))}
 
 
 def owned(job_id: str, run_id: str) -> dict:
@@ -364,6 +370,7 @@ class Manager:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.gate = asyncio.Lock()
         self.wake = asyncio.Event()
+        self.dispatch_followup = None
 
     async def stop(self, job_id: str, deleting: bool = False):
         values = store.status(job_id)
@@ -558,6 +565,8 @@ class Manager:
         try:
             while True:
                 self.wake.clear()
+                if self.dispatch_followup:
+                    await self.dispatch_followup()
                 if store.settings().get('enabled') and not self.gate.locked():
                     with db.connect() as connection:
                         generation = connection.execute("SELECT id,state FROM transcript_optimizations WHERE state='queued' OR (published=1 AND (summary_state='queued' OR topic_state='queued')) ORDER BY COALESCE(summary_requested_at,created_at),id LIMIT 1").fetchone()
@@ -780,6 +789,57 @@ def register(app, api):
         owned(job_id, run_id)
         return calls.usage(run_id)
 
+    async def enqueue(job_id, key, body):
+        config = {**store.settings(), 'prompt_version': engine.PROMPT_VERSION, 'rewrite_mode': body.rewrite_mode, 'summary_version': insights.VERSION,
+                  'analyze_topics': body.analyze_topics, 'reading_plan_version': 2 if body.analyze_topics else 1, 'request_policy_version': 2 if insights.VERSION == 2 else 1, 'source_assignment_version': 2, 'budget_policy_version': 1, 'packet_version': packet_policy.VERSION, 'batch_max_items': store.settings().get('batch_max_items', batching.DEFAULT_MAX_ITEMS), 'call_limit_override': body.max_llm_calls}
+        packet_policy.configure(config)
+        if not config.get('enabled'):
+            raise HTTPException(409, '请在系统状态启用表达优化 / Enable expression optimization in System')
+        candidate = store.status(job_id)['candidate']
+        if body.regenerate and candidate and candidate['requires_regeneration']:
+            await manager.stop(job_id)
+        def prepare():
+            with reader_lease(job_id), speaker_update_lock(job_id):
+                job = parent(job_id)
+                config['summary_scene_ids'] = [s['id'] for s in (job['result'].get('video') or {}).get('scenes', [])]
+                hotwords = list(dict.fromkeys(term for item in job['request'].get('hotword_lists', []) for term in item.get('terms', [])))
+                if config.get('packet_version'):
+                    units = packet_policy.prepare(config, job['result'], hotwords)
+                else:
+                    units = engine.prepare_units(job['result'])
+                    engine.validate_budget(config, units, hotwords)
+                config['call_estimate'] = calls.estimate(config, units, hotwords, limit=body.max_llm_calls,
+                                                         topic_atoms=topics.sources(job['result']) if body.analyze_topics else None)
+                config['max_llm_calls'] = config['call_estimate']['max_llm_calls']
+                if body.estimate_fingerprint and body.estimate_fingerprint != config['call_estimate']['fingerprint']:
+                    raise api.ApiProblem(409, 'optimization_estimate_stale', '来源或配置已变化，请刷新预估 / Source or configuration changed; refresh estimate', extras={'estimate': config['call_estimate']})
+                calls.admit(config['call_estimate'])
+                return store.create(job_id, key, body.regenerate, config, engine.source_hash(job['result']), hotwords, units, api.settings.min_free_disk_bytes, topic_result=job['result'] if body.analyze_topics else None)
+        try:
+            _, replayed = await asyncio.to_thread(prepare)
+        except (ValueError, FileNotFoundError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return replayed
+
+    async def dispatch_followup():
+        async with manager.gate:
+            with db.connect() as connection:
+                row = connection.execute("""SELECT f.job_id,f.options FROM optimization_followups f
+                    CROSS JOIN jobs j ON j.id=f.job_id WHERE f.error IS NULL AND f.retry_at<=?
+                    AND j.state='succeeded' ORDER BY j.finished_at,j.id LIMIT 1""", (time.time(),)).fetchone()
+            if row is None:
+                return
+            try:
+                await enqueue(row['job_id'], 'automatic-' + row['job_id'], CreateRequest.model_validate_json(row['options']))
+            except Exception as exc:
+                retry = isinstance(exc, HTTPException) and exc.status_code == 429
+                delay = int((exc.headers or {}).get('Retry-After', 5)) if retry else 0
+                with db.connect() as connection:
+                    connection.execute('UPDATE optimization_followups SET error=?,retry_at=? WHERE job_id=?',
+                                       (None if retry else error_message(exc), time.time() + delay, row['job_id']))
+
+    manager.dispatch_followup = dispatch_followup
+
     @app.post(jobs, summary='创建优化任务 / Create optimization', description=api.bilingual('要求 Idempotency-Key；档位默认 rewrite 并保存快照。首次 202、重放 200、冲突 409、队列满 429。', 'Requires Idempotency-Key. rewrite_mode selects polish/rewrite/editorial (default rewrite), saved in the run snapshot and idempotency fingerprint. Returns 202 on creation, 200 on replay, 409 on conflict and 429 at queue capacity.'), operation_id='createTranscriptOptimization', tags=[TAG], response_model=OptimizationStatus, status_code=202, responses=errors)
     async def create(job_id: str, body: CreateRequest, response: Response, idempotency_key: str = Header(..., alias='Idempotency-Key'), _: None = auth):
         key = api.validate_idempotency_key(idempotency_key)
@@ -787,35 +847,7 @@ def register(app, api):
             if store.replay(job_id, key, body.regenerate, body.rewrite_mode if 'rewrite_mode' in body.model_fields_set else None, body.max_llm_calls, body.analyze_topics):
                 response.status_code = 200
                 return public_status(job_id)
-            config = {**store.settings(), 'prompt_version': engine.PROMPT_VERSION, 'rewrite_mode': body.rewrite_mode, 'summary_version': insights.VERSION,
-                      'analyze_topics': body.analyze_topics, 'reading_plan_version': 2 if body.analyze_topics else 1, 'request_policy_version': 2 if insights.VERSION == 2 else 1, 'source_assignment_version': 2, 'budget_policy_version': 1, 'packet_version': packet_policy.VERSION, 'batch_max_items': store.settings().get('batch_max_items', batching.DEFAULT_MAX_ITEMS), 'call_limit_override': body.max_llm_calls}
-            packet_policy.configure(config)
-            if not config.get('enabled'):
-                raise HTTPException(409, '请在系统状态启用表达优化 / Enable expression optimization in System')
-            candidate = store.status(job_id)['candidate']
-            if body.regenerate and candidate and candidate['requires_regeneration']:
-                await manager.stop(job_id)
-            def prepare():
-                with reader_lease(job_id), speaker_update_lock(job_id):
-                    job = parent(job_id)
-                    config['summary_scene_ids'] = [s['id'] for s in (job['result'].get('video') or {}).get('scenes', [])]
-                    hotwords = list(dict.fromkeys(term for item in job['request'].get('hotword_lists', []) for term in item.get('terms', [])))
-                    if config.get('packet_version'):
-                        units = packet_policy.prepare(config, job['result'], hotwords)
-                    else:
-                        units = engine.prepare_units(job['result'])
-                        engine.validate_budget(config, units, hotwords)
-                    config['call_estimate'] = calls.estimate(config, units, hotwords, limit=body.max_llm_calls,
-                                                             topic_atoms=topics.sources(job['result']) if body.analyze_topics else None)
-                    config['max_llm_calls'] = config['call_estimate']['max_llm_calls']
-                    if body.estimate_fingerprint and body.estimate_fingerprint != config['call_estimate']['fingerprint']:
-                        raise api.ApiProblem(409, 'optimization_estimate_stale', '来源或配置已变化，请刷新预估 / Source or configuration changed; refresh estimate', extras={'estimate': config['call_estimate']})
-                    calls.admit(config['call_estimate'])
-                    return store.create(job_id, key, body.regenerate, config, engine.source_hash(job['result']), hotwords, units, api.settings.min_free_disk_bytes, topic_result=job['result'] if body.analyze_topics else None)
-            try:
-                _, replayed = await asyncio.to_thread(prepare)
-            except (ValueError, FileNotFoundError) as exc:
-                raise HTTPException(409, str(exc)) from exc
+            replayed = await enqueue(job_id, key, body)
             manager.wake.set()
             if replayed:
                 response.status_code = 200

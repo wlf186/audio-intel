@@ -173,6 +173,8 @@ def complete(config: Any, row: dict[str, Any], request: dict[str, Any], key_hash
         try:
             connection.execute("INSERT INTO jobs(id,kind,display_name,request_json,queue_seq,stage_code,created_at,updated_at) VALUES(?,'asr',?,?,?,'queued',?,?)",
                                (row['id'], row['name'], json.dumps(request, ensure_ascii=False), db._next_queue_seq(connection), now, now))
+            from .optimization_followup import schedule
+            schedule(connection, row["id"], request)
             connection.execute("INSERT INTO job_idempotency VALUES('submit_video',?,?,?,?)", (key_hash, fingerprint, row['id'], now))
             connection.execute('UPDATE video_uploads SET job_id=? WHERE id=?', (row['id'], row['id']))
             connection.execute('DELETE FROM video_upload_chunks WHERE upload_id=?', (row['id'],))

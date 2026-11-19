@@ -102,6 +102,8 @@ def migrate(connection: sqlite3.Connection) -> None:
         from . import optimization_topics
         optimization_topics.migrate(connection)
         optimization_budget.migrate_usage(connection)
+        from .optimization_followup import migrate as migrate_followups
+        migrate_followups(connection)
 
 
 def settings() -> dict:
@@ -142,6 +144,9 @@ def save_settings(value: dict) -> None:
                                (reference, value['base_url'], key))
             value['credential_ref'] = reference
         connection.execute('INSERT INTO optimization_settings VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET value_json=excluded.value_json', (encode(value),))
+        from .optimization_followup import SERVICE_CHANGED
+        connection.execute('UPDATE optimization_followups SET error=? WHERE error IS NULL AND (?=0 OR base_url IS NOT ? OR model IS NOT ?)',
+                           (SERVICE_CHANGED, bool(value.get('enabled')), value.get('base_url'), value.get('model')))
         # Keep credentials while any historical run can retry its insights.
         connection.execute("DELETE FROM optimization_credentials WHERE id != COALESCE(?, '') AND id NOT IN (SELECT json_extract(config_json, '$.credential_ref') FROM transcript_optimizations WHERE json_extract(config_json, '$.credential_ref') IS NOT NULL)", (value.get('credential_ref'),))
         connection.commit()
@@ -277,6 +282,7 @@ def create(job_id: str, key: str, regenerate: bool, config: dict, source_hash: s
                     [(identifier, ordinal, i, encode(part)) for i, part in enumerate(parts)])
         from .optimization_summaries import initialize
         initialize(connection, identifier, config, paragraphs)
+        connection.execute('DELETE FROM optimization_followups WHERE job_id=?', (job_id,))
         if config.get('packet_version') == 1:
             from . import optimization_packet_store
             optimization_packet_store.initialize(connection, identifier, config, paragraphs, hotwords)
@@ -356,6 +362,7 @@ def activity(run_id: str, count: int) -> None:
 
 def delete(job_id: str) -> None:
     with db.connect() as connection:
+        connection.execute('DELETE FROM optimization_followups WHERE job_id=?', (job_id,))
         connection.execute('DELETE FROM transcript_optimizations WHERE job_id=?', (job_id,))
     clear_export_caches()
 

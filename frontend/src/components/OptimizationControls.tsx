@@ -97,6 +97,7 @@ export function OptimizationControls({controller,video,topicsSupported=false,onR
   {tools?<div className="optimization-filter-row">{tools}</div>:null}
   {open?<Modal focusTitle className="optimization-mode-modal optimization-dialog" title={t('optimization.title')} closeLabel={t('common.actions.close')} onClose={close}>
    {error||controller.insightsError?<p className="error" role="alert">{error||controller.insightsError} <button className="button" onClick={controller.retry}>{t('common.actions.retry')}</button></p>:null}
+   {status?.followup?<p role="status">{status.followup.error||t('uploadOptions.pending')}</p>:null}
    {!status&&!error?<p role="status">{t('common.states.loading')}</p>:null}
    {action&&jobId?<OptimizationSetup key={action} action={action} jobId={jobId} controller={controller}
     run={action==='resume'?current:published??current} requestTopics={requestTopics} topicsSupported={topicsSupported}

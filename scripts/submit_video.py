@@ -26,12 +26,16 @@ def main() -> None:
     parser.add_argument('--scene-mode', choices=('auto', 'custom'))
     parser.add_argument('--scene-min-change-percent', type=float, help='Minimum changed picture area, 0.5–50 percent')
     parser.add_argument('--scene-min-stable-seconds', type=float, help='Minimum stable picture/screenshot duration, 0.5–5 seconds (0.1-second input step); no qualifying screenshot uses a placeholder')
+    parser.add_argument('--optimize', choices=('polish', 'rewrite', 'editorial'), help='Optimize after transcription')
+    parser.add_argument('--analyze-topics', action='store_true', help='Include topic analysis with --optimize')
     parser.add_argument('--pdf', type=Path, help=argparse.SUPPRESS)
     parser.add_argument('--html', type=Path, help='Wait for completion and download the offline HTML')
     parser.add_argument('--voiceprint-group', action='append', help='Eligible voiceprint group ID; repeat to select several, omit for all')
     parser.add_argument('--no-redact', action='store_true', help='Export original names, notes and text')
     parser.add_argument('--replacements', type=Path, help='UTF-8 JSON array of source/target replacements for HTML export')
     args = parser.parse_args()
+    if args.analyze_topics and not args.optimize:
+        parser.error('--analyze-topics requires --optimize')
     if args.pdf:
         parser.error("--pdf retired; use --html and print to PDF")
     try:
@@ -63,6 +67,8 @@ def submit(args: argparse.Namespace) -> None:
     else:
         state = {'file': identity, 'create_key': uuid.uuid4().hex, 'job_key': uuid.uuid4().hex,
                  'parameters': {'language': args.language, 'compute_device': args.device, **({'voiceprint_group_ids': args.voiceprint_group} if getattr(args, 'voiceprint_group', None) else {})}}
+        if getattr(args, 'optimize', None):
+            state['parameters']['optimization_after_transcription'] = {'rewrite_mode': args.optimize, 'analyze_topics': args.analyze_topics}
         controls = {key: getattr(args, argument) for key, argument in (
             ('min_change_percent', 'scene_min_change_percent'), ('min_stable_seconds', 'scene_min_stable_seconds'))
             if getattr(args, argument, None) is not None}

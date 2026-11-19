@@ -1,0 +1,56 @@
+import {test,expect} from './fixtures'
+import {uxFixture} from './ux-fixtures'
+
+for(const width of [1440,390])test(`upload settings are shared and remembered at ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:900})
+ const {errors}=await uxFixture(page)
+ await page.route('**/settings/transcript-optimization',route=>route.fulfill({json:{enabled:true,model:'upload-test',base_url:'http://localhost/v1'}}))
+ await page.goto('/#asr')
+ await page.getByRole('tab',{name:'新建音频转写',exact:true}).click()
+ const toggle=page.getByRole('switch',{name:'转写完成后自动优化'})
+ await expect(toggle).not.toBeChecked()
+ await toggle.check()
+ await expect(page.locator('.upload-followup')).toContainText('upload-test')
+ await page.locator('.upload-followup select').selectOption('editorial')
+ await page.getByRole('tab',{name:'新建视频转写',exact:true}).click()
+ await expect(toggle).toBeChecked()
+ const mode=page.getByRole('group',{name:'检测模式'})
+ await expect(mode.getByRole('button',{name:'自动检测'})).toHaveAttribute('aria-pressed','true')
+ await expect(page.locator('.upload-followup input[type=number]')).toHaveCount(0)
+ await mode.getByRole('button',{name:'自定义参数'}).click()
+ const change=page.locator('.upload-followup input[type=number]').first()
+ await change.fill('4.5')
+ await page.reload()
+ await expect(change).toHaveValue('4.5')
+ await expect(page.locator('.upload-followup select').filter({has:page.locator('option[value=editorial]')})).toHaveValue('editorial')
+ await expect(toggle).toBeChecked()
+ await expect(page.locator('.upload-followup').getByRole('button',{name:'恢复默认值'})).toBeVisible()
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+ expect(errors).toEqual([])
+})
+
+test('resuming a video displays the frozen options while audio keeps its own draft',async({page})=>{
+ const {errors}=await uxFixture(page)
+ await page.addInitScript(()=>{
+  sessionStorage.setItem('audio-intel:video-upload:v1',JSON.stringify({name:'paused.mp4',size:200,createKey:'upload-creation-key',jobKey:'video-job-key',params:{
+   video_scene_detection:{min_change_percent:8,min_stable_seconds:2},
+   optimization_after_transcription:{rewrite_mode:'polish',analyze_topics:true}
+  }}))
+ })
+ await page.goto('/#asr')
+ await page.getByRole('tab',{name:'新建视频转写',exact:true}).click()
+ const toggle=page.getByRole('switch',{name:'转写完成后自动优化'})
+ await expect(toggle).toBeChecked()
+ await expect(toggle).toBeDisabled()
+ await expect(page.locator('.upload-followup select').filter({has:page.locator('option[value=polish]')})).toHaveValue('polish')
+ await expect(page.getByRole('button',{name:'自定义参数'})).toHaveAttribute('aria-pressed','true')
+ await expect(page.getByRole('button',{name:'自定义参数'})).toBeDisabled()
+ const change=page.locator('.upload-followup input[type=number]').first()
+ await expect(change).toHaveValue('8')
+ await expect(change).toBeDisabled()
+ await page.getByRole('tab',{name:'新建音频转写',exact:true}).click()
+ await expect(toggle).not.toBeChecked()
+ await expect(toggle).toBeEnabled()
+ await expect(change).toHaveCount(0)
+ expect(errors).toEqual([])
+})

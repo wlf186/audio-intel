@@ -391,3 +391,21 @@ v2只在全局归并时发送从已有画面标题中去重、限量提取的主
 该服务商没有返回token用量，因此不推算token降幅；JSON字节不是token计数。单轮耗时易受模型服务状态影响，不能推广为整体提速保证；净写入也不等于SSD内部磨损。另一个开发中间版本因进程中断产生过一次未完成调用，利用检查点继续，未重跑成功议题/正文；未把该中间版本混入以上最终候选数据。
 
 “对照此段”在优化稿内独立展开该段原文与优化稿，顶部“对照”仍用于整篇比较。局部展开不改变播放位置或搜索优化稿的范围，仅保存在当前阅读组件内；刷新、切换任务、整篇模式或优化运行后收起，不新增浏览器存储。
+
+### 上传时预约优化 / Schedule optimization at upload
+
+在上传框下开启「转写完成后自动优化」，选择档位和议题。音视频共用这三个浏览器偏好，刷新、关闭和重新登录后保留，首次默认关闭。续传使用上传开始时的选择。原文完成后服务端按正文估算额度并启动优化，关闭网页也会执行。在「任务与结果 → 表达优化」可查看耗时、暂停或继续。服务停用或更换地址、模型后，打开此处确认配置并手动启动。
+
+Enable optimization under the upload field and select a rewrite mode and optional topic analysis. Audio and video share these browser preferences across reloads and sign-ins. The default is off. The backend estimates the call budget after transcription and can continue with the browser closed. Pause or resume from the result's optimization dialog.
+
+音频表单示例 / Audio multipart example (set BASE_URL, API_KEY and FILE first):
+
+```sh
+curl -H "Authorization: Bearer $API_KEY" -H "Idempotency-Key: $(uuidgen)" \
+  -F "file=@$FILE" -F 'optimization_after_transcription={"rewrite_mode":"polish","analyze_topics":true}' \
+  "$BASE_URL/api/v1/asr/jobs"
+```
+
+Video JSON accepts the same options as an object. Example: `scripts/submit_video.py lecture.mp4 --optimize rewrite --analyze-topics --scene-min-change-percent 4`. Omit the optimization field for transcription alone. The job-specific optimization status includes a nullable `followup` while scheduling is pending or needs attention.
+
+The optional `expected_service` object binds an upload to the displayed `base_url` and `model`. A mismatch leaves the transcript available and asks the user to confirm the service in the results dialog.

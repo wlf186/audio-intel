@@ -154,7 +154,7 @@ def test_v25_migration_is_additive(configured):
     db.init_db(); db.init_db()
     assert before == db.get_job(identifier)
     with db.connect() as c:
-        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 27
+        assert c.execute('SELECT version FROM schema_meta').fetchone()[0] == 28
         assert not c.execute('PRAGMA foreign_key_check').fetchall()
 
 
