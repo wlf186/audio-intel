@@ -457,6 +457,7 @@
       "failed": "异常"
     },
     "noWorkers": "当前未发现工作进程",
+    "optimizationSettings": "表达优化服务设置",
     "localDirectories": "本地目录"
   },
   "errors": {

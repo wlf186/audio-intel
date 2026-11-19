@@ -55,6 +55,7 @@ for(const width of [1440,390])test(`settings omit the legacy cap and preserve to
   await route.fulfill({json:config})
  })
  await page.goto('/#system')
+ await page.getByText('表达优化服务设置',{exact:true}).click()
  const panel=page.locator('.optimization-settings')
  await expect(panel.getByLabel('总上下文预算（K tokens）')).toHaveValue('32')
  await expect(panel.getByLabel('单次最大输出（K tokens）')).toHaveValue('4')

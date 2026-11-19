@@ -2,10 +2,10 @@
   box-sizing: border-box;
 }
 :root {
-  --ink:#232321;
-  --muted:#64645e;
-  --line:#e6e5df;
-  --paper:#fff;
+  --ink:var(--reader-ink);
+  --muted:var(--reader-secondary);
+  --line:var(--reader-rule);
+  --paper:var(--reader-paper);
   --measure:690px;
   scroll-padding-top: 72px;
 }
@@ -121,11 +121,11 @@ input[type=search] {
 button:hover,
 summary:hover,
 nav a:hover {
-  color: #111;
+  color: var(--shadow-color);
   text-decoration: underline;
 }
 :focus-visible {
-  outline: 2px solid #496b80;
+  outline: 2px solid var(--reader-link);
   outline-offset: 2px;
 }
 .tools {
@@ -163,7 +163,7 @@ nav a:hover {
   font-size: 16px;
   padding: 4px;
   border: 0;
-  border-bottom: 1px solid #888;
+  border-bottom: 1px solid var(--reader-secondary);
 }
 #options {
   position: absolute;
@@ -173,7 +173,7 @@ nav a:hover {
   background: white;
   border: 1px solid var(--line);
   border-radius: 8px;
-  box-shadow: 0 8px 24px #2221;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--reader-ink) 7%, transparent);
 }
 #options label,
 #options button {
@@ -203,7 +203,7 @@ nav a {
 nav a[aria-current] {
   color: var(--ink);
   font-weight: 650;
-  border-color: #363632;
+  border-color: var(--reader-ink);
 }
 nav .level-3 {
   padding-left: 16px;
@@ -230,7 +230,7 @@ nav .level-3 {
   width: min(82vw, 320px);
   z-index: 4;
   background: white;
-  box-shadow: 0 0 0 100vw #15151245;
+  box-shadow: 0 0 0 100vw color-mix(in srgb, var(--reader-ink) 27%, transparent);
 }
 #closemenu {
   float: right;
@@ -275,11 +275,11 @@ article {
   color: var(--ink);
 }
 .warn {
-  color: #815415;
+  color: var(--reader-warning);
 }
 .warn::before {
   content: "• ";
-  color: #ac750f;
+  color: var(--reader-warning);
 }
 details summary {
   font-size: 14px;
@@ -364,7 +364,7 @@ dialog {
   overflow: auto;
 }
 dialog::backdrop {
-  background: #181916cc;
+  background: color-mix(in srgb, var(--reader-ink) 80%, transparent);
 }
 .viewer-tools {
   display: flex;
@@ -388,10 +388,10 @@ dialog img {
   object-fit: contain;
 }
 ::highlight(matches) {
-  background: #ffedaf;
+  background: var(--reader-rule);
 }
 ::highlight(current) {
-  background: #ffca5c;
+  background: var(--reader-rule);
   text-decoration: underline;
 }
 [hidden],
@@ -559,7 +559,7 @@ dialog img {
 }
 .margin-note {
   min-width: 0;
-  color: #28654b;
+  color: var(--reader-accent);
   font-size: 15px;
   line-height: 1.65;
   overflow-wrap: anywhere;
@@ -665,6 +665,6 @@ dialog img {
     width:14px;
     left:-23px;
     top:.75em;
-    border-top:1px solid #a9a9a1;
+    border-top:1px solid var(--reader-rule);
   }
 }

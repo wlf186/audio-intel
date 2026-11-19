@@ -1113,6 +1113,19 @@ def create_app() -> FastAPI:
                 "docExpansion": "none", "defaultModelsExpandDepth": 1,
             },
         )
+        navigation = """<nav class="docs-navigation" aria-label="文档导航 / Documentation">
+<button type="button" data-section="quick">快速开始 · Quick start</button>
+<button type="button" data-section="groups">接口分组 · API groups</button></nav>
+<script>
+document.querySelector('.docs-navigation').addEventListener('click', event => {
+  const section = event.target.dataset.section
+  const target = section === 'groups' ? document.querySelector('.opblock-tag') :
+    Array.from(document.querySelectorAll('.swagger-ui h2')).find(node => node.textContent.includes('Quick start'))
+  if (target) { target.tabIndex = -1; target.focus(); target.scrollIntoView() }
+})
+</script>"""
+        return_body = response.body.decode().replace('<div id="swagger-ui">', navigation + '<div id="swagger-ui">')
+        response = HTMLResponse(return_body)
         response.headers.update({
             "Cache-Control": "no-store",
             "Content-Security-Policy": (

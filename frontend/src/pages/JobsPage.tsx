@@ -1,3 +1,4 @@
+import {ResourceStatePanel} from '../components/ResourceStatePanel'
 import {useCallback,useEffect,useMemo,useRef,useState,type Dispatch,type SetStateAction} from 'react'
 import {Check,ChevronLeft,ChevronRight,ChevronsLeft,ChevronsRight,CircleAlert,Copy,Eye,LoaderCircle,RotateCcw,Search,Trash2,XCircle} from 'lucide-react'
 import {useJobStorage} from '../hooks/useJobStorage'
@@ -87,6 +88,7 @@ export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJob
  const {t}=useTranslation()
  const locale=resolvedLocale()
  const [page,setPage]=useState<JobListResponse>()
+ const [loadError,setLoadError]=useState('')
  const [search,setSearch]=useState(query.search)
  const [selected,setSelected]=useState<Set<string>>(()=>new Set())
  const [busy,setBusy]=useState(false)
@@ -108,13 +110,14 @@ export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJob
  const requestPage=useCallback(async()=>{
   const sequence=++requestSequence.current
   setLoading(true)
+  setLoadError('')
   try{
    const response=await api.jobs({kind:query.kind==='all'?undefined:query.kind,state:query.state==='all'?undefined:query.state,q:query.search.trim()||undefined,limit:query.limit,offset:query.offset})
    if(sequence!==requestSequence.current)return
    if(response.total>0&&query.offset>=response.total){setQuery(current=>({...current,offset:Math.floor((response.total-1)/query.limit)*query.limit}));return}
    setPage(response)
-   setError('')
-  }catch(cause){if(sequence===requestSequence.current)setError((cause as Error).message)}finally{if(sequence===requestSequence.current)setLoading(false)}
+   setLoadError('')
+  }catch(cause){if(sequence===requestSequence.current)setLoadError((cause as Error).message)}finally{if(sequence===requestSequence.current)setLoading(false)}
  },[query,setQuery])
 
  useEffect(()=>{void requestPage()},[requestPage,reloadVersion])
@@ -190,7 +193,7 @@ export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJob
  const queuedDeletes=deleteTargets.filter(job=>job.state==='queued').length
 
  return <section className="page-pad jobs-page hud-page" data-module="TASK_HISTORY / LOG_03">
-  <div className="jobs-navigation workspace-toolbar"><p className="jobs-summary">{loading&&!page?t('jobs.history.loading'):t('jobs.history.summary',{count:total})}</p><div className="filter" role="group" aria-label={t('jobs.history.kindFilter')}>{kinds.map(value=><button type="button" aria-pressed={query.kind===value} className={query.kind===value?'active':''} onClick={()=>updateQuery({kind:value})} key={value}>{t(`jobs.history.kind.${value}`)}</button>)}</div></div>
+  <div className="jobs-navigation workspace-toolbar"><p className="jobs-summary">{!page?(loading?t('jobs.history.loading'):''):t('jobs.history.summary',{count:total})}</p><div className="filter" role="group" aria-label={t('jobs.history.kindFilter')}>{kinds.map(value=><button type="button" aria-pressed={query.kind===value} className={query.kind===value?'active':''} onClick={()=>updateQuery({kind:value})} key={value}>{t(`jobs.history.kind.${value}`)}</button>)}</div></div>
   <div className="job-query-bar">
    <label className="job-search"><span>{t('jobs.history.search')}</span><span className="search-field"><Search aria-hidden="true"/><input value={search} maxLength={128} placeholder={t('jobs.history.searchPlaceholder')} onChange={event=>setSearch(event.target.value)}/></span></label>
    <label><span>{t('jobs.history.status')}</span><select value={query.state} onChange={event=>updateQuery({state:event.target.value as JobHistoryQuery['state']})}><option value="all">{t('jobs.history.allStates')}</option>{states.map(value=><option key={value} value={value}>{t(`jobs.history.state.${value}`)}</option>)}</select></label>
@@ -198,6 +201,7 @@ export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJob
   </div>
   {hasNewJobs?<div className="new-jobs-banner" role="region" aria-label={t('jobs.history.newJobsRegion')}><span>{t('jobs.history.newJobs')}</span><button type="button" onClick={showNewest}>{t('jobs.history.showNewest')}</button></div>:null}
   {selected.size?<div className="selection-bar" role="region" aria-label={t('jobs.history.batchActions')}><span><b>{selected.size}</b> {t('jobs.history.selected',{count:selected.size})} · {storageTotal([...selected])}</span><button disabled={busy} onClick={()=>void remove([...selected])}>{busy?<LoaderCircle className="spin"/>:<Trash2/>}{busy?t('jobs.history.cleaning'):t('jobs.history.deleteSelected')}</button></div>:null}
+  {loadError?<ResourceStatePanel state="error" loadingLabel={t('jobs.history.loading')} errorLabel={loadError} retry={()=>void requestPage()}/>:null}
   {notice?<p className="notice" role="status">{notice}</p>:null}{error?<p className="error" role="alert">{error}</p>:null}{copiedId?<span className="sr-only" role="status" aria-live="polite">{t('jobs.history.copiedId',{id:copiedId})}</span>:null}
   <div className="job-storage-toolbar"><span>{t('jobs.history.storageScope')}</span><button type="button" className="button" disabled={storage.waiting||!items.length} onClick={storage.retry}>{t('jobs.history.refreshStorage')}</button></div>
   <div className="jobs-table" role="table" aria-label={t('jobs.history.title')} aria-busy={loading}><div className="table-head" role="row"><span className="select-cell" role="columnheader"><input ref={selectAll} type="checkbox" aria-label={t('jobs.history.selectAll')} checked={allSelected} disabled={!eligible.length||busy} onChange={toggleAll}/></span><span role="columnheader">{t('jobs.history.columns.task')}</span><span role="columnheader">{t('jobs.history.columns.kind')}</span><span role="columnheader">{t('jobs.history.columns.status')}</span><span role="columnheader">{t('jobs.history.columns.created')}</span><span role="columnheader">{t('jobs.history.columns.elapsed')}</span><span role="columnheader">{t('jobs.history.columns.progress')}</span><span role="columnheader" className="job-storage-heading">{t('jobs.history.columns.storage')}</span><span role="columnheader">{t('jobs.history.columns.actions')}</span></div>{items.map(job=>{
@@ -219,7 +223,7 @@ export function JobsPage({liveJobs,liveJobsReady,query,setQuery,refreshRecentJob
     <span className="job-storage" role="cell" data-label={t('jobs.history.columns.storage')} title={storage.items[job.id]?.checked_at}>{storageText(job.id)}</span>
     <span className="actions" role="cell">{job.state==='succeeded'?<button title={t('jobs.history.viewResult')} aria-label={t('jobs.history.viewTaskResult',{name:job.display_name})} onClick={()=>openJob(job)}><Eye/></button>:null}{job.state==='failed'?<button title={t('jobs.history.viewFailure')} aria-label={t('jobs.history.viewTaskFailure',{name:job.display_name})} onClick={()=>setFailureDetails(job)}><CircleAlert/></button>:null}{['queued','running'].includes(job.state)?<button title={stopping?t('jobs.safelyStopping'):t('jobs.history.cancelTask')} aria-label={t(stopping?'jobs.history.stoppingNamed':'jobs.history.cancelNamed',{name:job.display_name})} disabled={stopping} onClick={()=>void cancelJob(job)}>{stopping?<LoaderCircle className="spin"/>:<XCircle/>}</button>:null}{['failed','cancelled'].includes(job.state)?<button title={t('common.actions.retry')} aria-label={t('jobs.history.retryNamed',{name:job.display_name})} onClick={()=>void act(()=>api.retry(job.id))}><RotateCcw/></button>:null}{canDelete?<button title={t('common.actions.deletePermanently')} aria-label={t('jobs.history.deleteNamed',{name:job.display_name})} disabled={busy} onClick={()=>void remove([job.id])}><Trash2/></button>:null}</span>
    </div>
-  })}{loading&&!items.length?<div className="jobs-loading" role="status"><LoaderCircle className="spin"/>{t('jobs.history.loadingTasks')}</div>:!loading&&!items.length?<div className="jobs-empty"><p>{hasFilters?t('jobs.history.noMatches'):t('jobs.history.empty')}</p><span>{hasFilters?t('jobs.history.adjustFilters'):t('jobs.history.emptyHelp')}</span></div>:null}</div>
+  })}{loading&&!items.length?<div className="jobs-loading" role="status"><LoaderCircle className="spin"/>{t('jobs.history.loadingTasks')}</div>:!loading&&!loadError&&page&&!items.length?<div className="jobs-empty"><p>{hasFilters?t('jobs.history.noMatches'):t('jobs.history.empty')}</p><span>{hasFilters?t('jobs.history.adjustFilters'):t('jobs.history.emptyHelp')}</span></div>:null}</div>
   {total>0?<nav className="job-pagination" aria-label={t('jobs.history.pagination')}><span>{t('jobs.history.pageSummary',{current:currentPage,total:Math.ceil(total/query.limit),count:total})}</span><div><button aria-label={t('jobs.history.firstPage')} disabled={currentPage===1} onClick={()=>goToPage(1)}><ChevronsLeft/></button><button aria-label={t('jobs.history.previousPage')} disabled={currentPage===1} onClick={()=>goToPage(currentPage-1)}><ChevronLeft/></button>{pages.map((value,index)=><span key={value} className={`page-number-slot ${value===currentPage?'current':''}`}>{index>0&&value-pages[index-1]>1?<i aria-hidden="true">…</i>:null}<button aria-label={t('jobs.history.pageNumber',{value})} aria-current={value===currentPage?'page':undefined} className={value===currentPage?'active':''} onClick={()=>goToPage(value)}>{value}</button></span>)}<button aria-label={t('jobs.history.nextPage')} disabled={currentPage===totalPages} onClick={()=>goToPage(currentPage+1)}><ChevronRight/></button><button aria-label={t('jobs.history.lastPage')} disabled={currentPage===totalPages} onClick={()=>goToPage(totalPages)}><ChevronsRight/></button></div></nav>:null}
   {pendingDelete.length?<ConfirmDialog title={t('jobs.history.deleteTitle')} description={t('jobs.history.deleteDescription',{count:deleteTargets.length,queued:queuedDeletes?t('jobs.history.queuedDelete',{count:queuedDeletes}):''})+' '+storageTotal(deleteTargets.map(job=>job.id))+'. '+t('jobs.history.storageEstimate')} confirmLabel={t('common.actions.deletePermanently')} danger busy={busy} onClose={()=>setPendingDelete([])} onConfirm={()=>void confirmRemove()}/>:null}
   {failureDetails?<Modal title={t('jobs.history.failureDetails')} closeLabel={t('jobs.history.closeFailure')} onClose={()=>setFailureDetails(undefined)}><div className="failure-details"><h3>{jobFailurePresentation(failureDetails,t).title}</h3><p>{jobFailurePresentation(failureDetails,t).advice}</p><dl><div><dt>{t('jobs.history.columns.task')}</dt><dd>{failureDetails.display_name}</dd></div><div><dt>{t('jobs.history.errorCode')}</dt><dd><code>{failureDetails.error_code||'UnknownError'}</code></dd></div></dl><label>{t('jobs.history.technicalDetails')}<textarea readOnly value={failureDetails.error_message||t('jobs.history.noErrorDetails')}/></label><div className="modal-actions"><button className="button" onClick={()=>setFailureDetails(undefined)}>{t('common.actions.close')}</button></div></div></Modal>:null}

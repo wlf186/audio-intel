@@ -88,7 +88,8 @@ export function VideoTimeline({jobId,duration,currentTime,enhanced,available,sce
   if(!data)return
   const offset=(data.start-start)/span*rect.width
   const step=(data.end-data.start)/span*rect.width/data.waveform.length
-  data.waveform.forEach((value,index)=>{const h=Math.max(1,value*rect.height*.85);ctx.fillStyle='#00aab2';ctx.fillRect(offset+index*step,(rect.height-h)/2,Math.max(1,step*.65),h)})
+  ctx.fillStyle=getComputedStyle(node).getPropertyValue('--waveform-signal').trim()
+  data.waveform.forEach((value,index)=>{const h=Math.max(1,value*rect.height*.85);ctx.fillRect(offset+index*step,(rect.height-h)/2,Math.max(1,step*.65),h)})
  },[data,width,start,span])
  useEffect(()=>{
   if(!preview)return

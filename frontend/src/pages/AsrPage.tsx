@@ -1,3 +1,4 @@
+import {useCompactWorkspace} from '../hooks/useCompactWorkspace'
 import {MediaTimeline} from '../components/MediaTimeline'
 import {OriginalBlocks} from '../components/ReadingBlocks'
 import {EnrollmentTrack,type EnrollmentAudioTrack} from '../components/EnrollmentTrack'
@@ -176,8 +177,7 @@ type Props = {
 export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, onManageJobs, jobs, jobDetails, loadJobDetail, onJobSubmitted, onJobResultUpdated, selectedJobId, restoreState, restoreError, restoreSelected, onSelect, gpuAvailable, defaultComputeDevice, maxSpeakers, maxUploadBytes, gainAvailable, denoiseAvailable, gainStrengthCapability, noiseStrengthCapability, videoCapability, followupSupported, optimizationSupported = false, topicsSupported = false, transcriptExportFormats, audioFormats, asrLanguages = publicAsrLanguages, alignerLanguages = publicAlignerLanguages, asrModels, hotwordLists, hotwordsState, hotwordLimits, voiceprints, voiceprintsState, voiceprintGroups, voiceprintGroupsState, refreshVoiceprintGroups, refreshVoiceprints, refreshPeopleAndHotwords, revealRequest, onRevealHandled }: Props) {
   const { t, i18n } = useTranslation()
   const [view, setView] = useState<'create'|'video'|'results'>(()=>readAsrSession().view)
-  const [compact, setCompact] = useState(()=>matchMedia('(max-width: 1023px)').matches)
-  useEffect(()=>{const media=matchMedia('(max-width: 1023px)');const change=()=>setCompact(media.matches);media.addEventListener('change',change);return()=>media.removeEventListener('change',change)},[])
+  const compact=useCompactWorkspace()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [advancedOpen,setAdvancedOpen]=useState(false)
   const [hotwordsOpen, setHotwordsOpen] = useState(false)

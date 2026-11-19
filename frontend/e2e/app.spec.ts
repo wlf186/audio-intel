@@ -172,6 +172,11 @@ test('local API docs load offline and execute the health probe',{tag:'@timing'},
  expect(schema.ok()).toBe(true)
  expect(await schema.finished()).toBeNull()
  await expect(page.getByText('快速开始 / Quick start')).toBeVisible()
+ const docsNav=page.getByRole('navigation',{name:'文档导航 / Documentation'})
+ await docsNav.getByRole('button',{name:'快速开始 · Quick start'}).click()
+ await expect(page.getByText('快速开始 / Quick start',{exact:true})).toBeFocused()
+ await docsNav.getByRole('button',{name:'接口分组 · API groups'}).click()
+ await expect(page.locator('.opblock-tag').first()).toBeFocused()
  await expect(page.getByText('Use the recommended combined control',{exact:false})).toBeVisible()
  await page.getByText('Use the recommended combined control',{exact:false}).scrollIntoViewIfNeeded()
  await page.screenshot({path:'/tmp/audio-intel-enhancement-docs-desktop.png',fullPage:false})
@@ -619,6 +624,10 @@ test('hotword library supports create and mobile layout without overflow',async(
  await expect(page.getByLabel('场景名称')).toHaveValue('')
  await expect(page.locator('.hotword-editor textarea')).toHaveValue('')
  await page.setViewportSize({width:390,height:844})
+ for(const action of await page.locator('.hotword-list article .icon-button:visible').all()){
+  const box=(await action.boundingBox())!
+  expect(Math.min(box.width,box.height)).toBeGreaterThanOrEqual(44)
+ }
  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
  await page.screenshot({path:'/tmp/audio-intel-hotwords-mobile.png',fullPage:false})
  expect(errors).toEqual([])

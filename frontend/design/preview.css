@@ -1,0 +1,6 @@
+body{overflow:auto}
+.design-preview{max-width:1080px;margin:auto;padding:24px;display:grid;gap:24px}
+.design-preview section{min-width:0;padding:16px;background:var(--surface-panel);border:1px solid var(--border-subtle)}
+.preview-actions{display:flex;align-items:center;gap:var(--control-gap);margin-block:12px}
+.design-preview figure{margin:16px 0}
+.design-preview img{max-width:100%;height:auto}

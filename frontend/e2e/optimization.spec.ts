@@ -43,6 +43,7 @@ for(const width of [1440,390])test(`optimization settings ${width}`,async({page}
  await page.route('**/settings/transcript-optimization/discover',route=>route.fulfill({json:{models:[{name:'qwen3.5:9b'}]}}))
  await page.route('**/settings/transcript-optimization/verify',route=>route.fulfill({json:{...config,...route.request().postDataJSON(),verified_at:'2026-10-23',verification_token:'verified'}}))
  await page.goto('/#system')
+ await page.getByText('表达优化服务设置',{exact:true}).click()
  const panel=page.locator('.optimization-settings')
  await panel.getByLabel('服务地址').fill('http://iollama:11434')
  await panel.getByRole('button',{name:'获取模型',exact:true}).click()
@@ -193,6 +194,7 @@ for(const width of [1440,390])test(`optimization settings retry and obsolete ver
   try{await route.fulfill({json:{...config,model:'test-model',verified_at:'2026-10-25',verification_token:'old-profile',context_length:16384,model_context_length:32768}})}finally{verificationDone=true}
  })
  await page.goto('/#system')
+ await page.getByText('表达优化服务设置',{exact:true}).click()
  const panel=page.locator('.optimization-settings')
  await first.arrived
  await expect(panel.getByRole('status')).toBeVisible()
@@ -426,6 +428,7 @@ for(const width of [1440,1280,390])test(`optimization endpoint notice ${width}`,
  const {errors}=await uxFixture(page)
  await page.route('**/api/v1/settings/transcript-optimization',route=>route.fulfill({json:{base_url:'http://iollama:11434',model:'',enabled:false,use_proxy:false}}))
  await page.goto('/#system')
+ await page.getByText('表达优化服务设置',{exact:true}).click()
  const panel=page.locator('.optimization-settings'),field=panel.getByLabel('服务地址'),note=panel.getByRole('note')
  await expect(note).toContainText('热词')
  for(const address of ['http://localhost:11434','http://LOCALHOST.:11434','http://127.0.0.1','http://127.0.0.2','http://[::1]:11434','','invalid']){

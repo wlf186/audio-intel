@@ -99,6 +99,12 @@ for(const width of [1440,390])test(`primary audio downloads retain readable cont
    if(width<1024)await page.getByRole('combobox',{name:'选择任务',exact:true}).selectOption('text-result')
    else await page.locator('.tts-recent-jobs').getByRole('button').filter({hasText:'文本任务'}).click()
   }
+  if(width===390&&kind==='text'){
+   const play=page.locator('.audio-card .transport-row .round')
+   await expect(play).toBeVisible()
+   const bounds=(await play.boundingBox())!
+   expect(Math.min(bounds.width,bounds.height)).toBeGreaterThanOrEqual(44)
+  }
   const downloads=kind==='document'
    ? [page.getByRole('link',{name:'打开有声书',exact:true}),page.getByRole('link',{name:'下载分段 ZIP',exact:true})]
    : [page.locator('.audio-card a.primary')]

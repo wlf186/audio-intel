@@ -12,4 +12,4 @@ for(const name of ['swagger-ui.css','swagger-ui.css.map','swagger-ui-bundle.js',
  const path=join(source,name)
  if(existsSync(path))copyFileSync(path,join(target,name))
 }
-appendFileSync(join(target,'swagger-ui.css'),`\n${readFileSync(join(root,'docs','swagger-overrides.css'),'utf8')}\n`)
+appendFileSync(join(target,'swagger-ui.css'),`\n${readFileSync(join(root,'../audio_intel/assets/theme.css'),'utf8') + '\n' + readFileSync(join(root,'docs','swagger-overrides.css'),'utf8')}\n`)

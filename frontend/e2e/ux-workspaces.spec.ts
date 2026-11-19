@@ -28,6 +28,7 @@ for(const width of [1440,390]){
   await root.evaluate(element=>element.scrollTop=element.scrollHeight);await expect(page.locator('.video-section')).toHaveCount(40)
   const target=page.locator('.video-section').nth(25);await target.scrollIntoViewIfNeeded()
   await page.getByRole('button',{name:'画面检测',exact:true}).click()
+  await page.getByRole('dialog').getByRole('button',{name:'管理导出画面',exact:true}).click()
   await page.getByRole('checkbox',{name:'选择画面 1',exact:true}).check()
   const before=await target.boundingBox()
   const gate=responseGate();state.sceneHold=gate.hold

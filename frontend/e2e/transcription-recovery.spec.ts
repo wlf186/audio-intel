@@ -45,6 +45,7 @@ for(const width of [1440,390])test(`visibility save waits for refreshed scenes b
  await page.setViewportSize({width,height:960})
  const f=await fixture(page);await f.open();f.state.advanceSceneOnSave=true
  await page.getByRole('button',{name:'画面检测',exact:true}).click()
+  await page.getByRole('dialog').getByRole('button',{name:'管理导出画面',exact:true}).click()
  await page.getByRole('checkbox',{name:'选择画面 1',exact:true}).check()
  const held=Promise.withResolvers<void>();f.state.sceneDelay=held.promise
  try{
@@ -57,6 +58,7 @@ for(const width of [1440,390])test(`visibility save waits for refreshed scenes b
   held.resolve()
   await expect(page.locator('.video-section').first().getByRole('img',{name:'00:00:02 的视频画面',exact:true})).toBeVisible()
   await restore.click()
+  await page.getByRole('button',{name:'管理导出画面',exact:true}).click()
   const dialog=page.getByRole('dialog',{name:'画面检测',exact:true})
   await expect(dialog).toBeVisible()
   await dialog.getByRole('button',{name:'全部恢复',exact:true}).click()
@@ -79,6 +81,7 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
   expect(await page.locator('.video-section .video-scene-actions').count()).toBe(0)
   await expect(page.getByRole('button',{name:zh?'编辑分段':'Edit sections',exact:true})).toHaveCount(0)
   await page.getByRole('button',{name:zh?'画面检测':'Picture detection',exact:true}).click()
+  await page.getByRole('dialog').getByRole('button',{name:zh?'管理导出画面':'Manage export pictures',exact:true}).click()
   const dialog=page.getByRole('dialog')
   const input=dialog.getByRole('spinbutton').first()
   await input.fill('4')
@@ -91,18 +94,20 @@ for(const width of [1440,390])for(const locale of ['zh-CN','en-US']){
   expect(f.state.patches).toHaveLength(0)
   await page.keyboard.press('Escape')
   await page.getByRole('button',{name:zh?'画面检测':'Picture detection',exact:true}).click()
+  await page.getByRole('dialog').getByRole('button',{name:zh?'管理导出画面':'Manage export pictures',exact:true}).click()
   await dialog.getByRole('checkbox').first().check()
   f.state.conflict=true
   const hide=dialog.getByRole('button',{name:zh?'导出时隐藏':'Hide in exports',exact:true})
   await hide.click();await expect(hide).toBeDisabled()
   expect(f.state.patches.at(-1)).toMatchObject({revision:2,action:'set_export_visibility'})
   await expect(dialog.getByRole('checkbox').first()).toBeChecked()
-  // Disabled actions can also mean an in-flight save; wait for the close guard to release.
-  await expect(dialog.locator('.scene-detection-actions').getByRole('button',{name:zh?'关闭':'Close',exact:true})).toBeEnabled()
+  // Wait for the failed request and reconciliation before dismissing the dialog.
+  await expect(dialog.locator('.scene-detection-footer [role=alert]')).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
   f.state.conflict=false
   await page.getByRole('button',{name:zh?'画面检测':'Picture detection',exact:true}).click()
+  await page.getByRole('dialog').getByRole('button',{name:zh?'管理导出画面':'Manage export pictures',exact:true}).click()
   await dialog.getByRole('checkbox').first().check();await hide.click()
   await expect(dialog.locator('.scene-hidden-badge')).toHaveCount(1)
   await page.keyboard.press('Escape')

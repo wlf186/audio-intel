@@ -5,6 +5,7 @@ from html import escape
 from pathlib import Path
 from threading import Lock
 
+from .ui_theme import stylesheet
 from .reading_outline import sections, export_headings
 from .transcript import comparison_source_text, insight_label, paragraphs, join_text
 from .transcript_diff import text_changes
@@ -194,7 +195,7 @@ def render(title: str, result: dict, output_dir: Path, locale: str = 'zh-CN') ->
     title = escape(title)
     summary_control = (f'<button id="brief" data-full="{tr("返回全文","Full text")}" '
                        f'aria-pressed="false">{tr("小结","Summaries")}</button>') if has_summary else ''
-    css = (_assets / 'reader.css').read_text(encoding='utf-8')
+    css = stylesheet() + (_assets / 'reader.css').read_text(encoding='utf-8')
     js = (_assets / 'reader.js').read_text(encoding='utf-8')
     script_hash = base64.b64encode(sha256(js.encode()).digest()).decode()
     duration = ' · ' + short_time(result['duration']) if result.get('duration') is not None else ''

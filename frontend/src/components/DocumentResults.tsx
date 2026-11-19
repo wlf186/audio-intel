@@ -44,7 +44,7 @@ export function DocumentResults({jobId,result,artifacts,active=true}:{jobId:stri
     <a className="button" onClick={e=>{e.preventDefault();download('html_sections')}} href={`/api/v1/jobs/${jobId}/document/download?mode=html_sections`}>{t('document.sectionHtmlZip',{count:result.sections.length})}{estimate}</a>
     {item&&<a className="button" onClick={e=>{e.preventDefault();download('html_section',item.id)}} href={`/api/v1/jobs/${jobId}/document/download?mode=html_section&section_id=${encodeURIComponent(item.id)}`}>{t('document.oneHtml')}</a>}
    </details></div>
-  <div className="document-downloads"><a className="button primary" href={`/api/v1/jobs/${jobId}/document/download?mode=sections`} onClick={event=>{event.preventDefault();download('sections')}}>{t('document.zip')}</a><a className="button" href={`/api/v1/jobs/${jobId}/document/download?mode=complete`} onClick={event=>{event.preventDefault();download('complete')}}>{t('document.complete')}</a></div>
+  <div className="document-downloads"><a className="button" href={`/api/v1/jobs/${jobId}/document/download?mode=sections`} onClick={event=>{event.preventDefault();download('sections')}}>{t('document.zip')}</a><a className="button" href={`/api/v1/jobs/${jobId}/document/download?mode=complete`} onClick={event=>{event.preventDefault();download('complete')}}>{t('document.complete')}</a></div>
   {error?<p role="alert">{error}</p>:requested?<p role="status">{t('document.downloadRequested')}</p>:null}
   <details><summary>{t('document.downloadHelp')}</summary><p>{t('document.streamNote')}</p></details>
  </section>

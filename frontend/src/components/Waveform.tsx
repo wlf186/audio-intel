@@ -9,7 +9,41 @@ export const Waveform=memo(function Waveform({peaks=[],currentTime=0,duration=0,
   const redraw=useRef<()=>void>(()=>{})
   const progress=duration?Math.max(0,Math.min(1,currentTime/duration)):0
   const interactive=Boolean(onSeek&&duration>0)
-  useEffect(()=>{const canvas=ref.current;if(!canvas)return;const draw=()=>{const pixelRatio=devicePixelRatio||1;const rect=canvas.getBoundingClientRect();canvas.width=Math.max(1,Math.round(rect.width*pixelRatio));canvas.height=Math.max(1,Math.round(rect.height*pixelRatio));const ctx=canvas.getContext('2d');if(!ctx)return;ctx.scale(pixelRatio,pixelRatio);ctx.clearRect(0,0,rect.width,rect.height);if(!peaks.length){const y=Math.max(0,Math.round(rect.height/2));ctx.fillStyle='#344345';ctx.fillRect(0,y,rect.width,1);if(progress){ctx.fillStyle='#f4ed00';ctx.fillRect(0,y,rect.width*progress,1)}return}const step=rect.width/peaks.length;peaks.forEach((value,index)=>{const height=Math.max(2,value*(rect.height*.8));ctx.fillStyle=index/peaks.length<=progress?'#f4ed00':'#00aab2';ctx.fillRect(index*step,(rect.height-height)/2,Math.max(1,step*.48),height)});};redraw.current=draw;draw()},[peaks,progress])
+  useEffect(()=>{
+    const canvas=ref.current
+    if(!canvas)return
+    const draw=()=>{
+      const pixelRatio=devicePixelRatio||1
+      const rect=canvas.getBoundingClientRect()
+      canvas.width=Math.max(1,Math.round(rect.width*pixelRatio))
+      canvas.height=Math.max(1,Math.round(rect.height*pixelRatio))
+      const ctx=canvas.getContext('2d')
+      if(!ctx)return
+      const style=getComputedStyle(canvas)
+      const played=style.getPropertyValue('--action-primary').trim()
+      const signal=style.getPropertyValue('--waveform-signal').trim()
+      ctx.scale(pixelRatio,pixelRatio)
+      ctx.clearRect(0,0,rect.width,rect.height)
+      if(!peaks.length){
+        const y=Math.max(0,Math.round(rect.height/2))
+        ctx.fillStyle=style.getPropertyValue('--border-strong').trim()
+        ctx.fillRect(0,y,rect.width,1)
+        if(progress){
+          ctx.fillStyle=played
+          ctx.fillRect(0,y,rect.width*progress,1)
+        }
+        return
+      }
+      const step=rect.width/peaks.length
+      peaks.forEach((value,index)=>{
+        const height=Math.max(2,value*rect.height*.8)
+        ctx.fillStyle=index/peaks.length<=progress?played:signal
+        ctx.fillRect(index*step,(rect.height-height)/2,Math.max(1,step*.48),height)
+      })
+    }
+    redraw.current=draw
+    draw()
+  },[peaks,progress])
   useEffect(()=>{const canvas=ref.current;if(!canvas)return;const observer=new ResizeObserver(()=>redraw.current());observer.observe(canvas);return()=>observer.disconnect()},[])
   const seekSeconds=(value:number)=>{if(!onSeek||!duration)return;onSeek(Math.max(0,Math.min(duration,value))/duration)}
   return <canvas ref={ref} className={`waveform${peaks.length?'':' waveform-empty'}`} role={interactive?'slider':'img'} tabIndex={interactive?0:undefined} aria-label={interactive?t('audio.position'):peaks.length?t('audio.waveform'):t('audio.noWaveform')} aria-valuemin={interactive?0:undefined} aria-valuemax={interactive?duration:undefined} aria-valuenow={interactive?Math.max(0,Math.min(duration,currentTime)):undefined} aria-valuetext={interactive?`${timeText(currentTime)} / ${timeText(duration)}`:undefined} onClick={event=>{if(!interactive)return;const rect=event.currentTarget.getBoundingClientRect();onSeek?.((event.clientX-rect.left)/rect.width)}} onKeyDown={event=>{if(!interactive)return;let next:number|undefined;if(event.key==='ArrowLeft'||event.key==='ArrowDown')next=currentTime-5;else if(event.key==='ArrowRight'||event.key==='ArrowUp')next=currentTime+5;else if(event.key==='PageDown')next=currentTime-duration*.1;else if(event.key==='PageUp')next=currentTime+duration*.1;else if(event.key==='Home')next=0;else if(event.key==='End')next=duration;if(next===undefined)return;event.preventDefault();seekSeconds(next)}}/>

@@ -25,3 +25,9 @@ html,body{max-width:100%;overflow-x:hidden}
  .swagger-ui .responses-table .response-control-media-type{max-width:100%;padding-right:0}
  .swagger-ui .responses-table pre{white-space:pre;word-break:normal;overflow-wrap:normal;overflow-x:auto}
 }
+.docs-navigation{max-width:1460px;margin:auto;padding:8px 16px;display:flex;gap:var(--control-gap);font-family:var(--font-reading)}
+.docs-navigation button{min-height:var(--control-target);background:var(--reader-paper);color:var(--reader-ink);border:1px solid var(--reader-rule);cursor:pointer}
+.docs-navigation button:focus-visible{outline:2px solid var(--reader-accent)}
+.swagger-ui .info,.swagger-ui .info p,.swagger-ui .info li{font-family:var(--font-reading);color:var(--reader-ink)}
+.swagger-ui .info .description{max-width:88ch}
+.swagger-ui a[href="/openapi.json"]{display:inline-flex;align-items:center;min-height:var(--control-target)}

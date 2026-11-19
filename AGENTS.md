@@ -81,3 +81,5 @@ TTS generation protection must retain per-original-chunk retry allowances across
 ## Reading workspace contract
 
 New result controls, progress, diagnostics and navigation must use the shared reading workspace/toolbar or an overlay; never append unbounded blocks above the transcript. At desktop widths and viewport heights >=720 CSS px, verify the actual visible transcript area (intersection with the viewport and every clipping ancestor) is >=360 px and >=60% of the result panel height. An element's bounding height alone is insufficient. A selected picture and its heading must fit without cropping. Exercise expanded navigation, progress, warnings, long labels and 390 px layouts when adding result features; keep directory and diagnostic scrolling independent of transcript scrolling.
+
+For UI changes follow the [workbench design guide](docs/UI_DESIGN.md). Reuse the reading, editing or management reference and verify its narrow-layout behavior.

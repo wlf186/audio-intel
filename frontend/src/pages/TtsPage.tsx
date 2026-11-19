@@ -1,3 +1,4 @@
+import {useCompactWorkspace} from '../hooks/useCompactWorkspace'
 import {SettingToggleRow} from '../components/SettingToggleRow'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -165,8 +166,7 @@ export function TtsPage({
     if(view === 'document') setDocumentVisited(true)
   }
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [compactWorkspace, setCompactWorkspace] = useState(()=>matchMedia('(max-width:1023px)').matches)
-  useEffect(()=>{const media=matchMedia('(max-width:1023px)');const update=()=>setCompactWorkspace(media.matches);media.addEventListener('change',update);return()=>media.removeEventListener('change',update)},[])
+  const compactWorkspace=useCompactWorkspace()
   const [documentSelection, setDocumentSelection] = useState<DocumentSelection>()
   const [preferences, setPreferences] =
     useState<TtsPreferences>(()=>loadTtsPreferences(defaultComputeDevice))

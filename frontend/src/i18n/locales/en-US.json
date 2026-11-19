@@ -457,6 +457,7 @@
       "failed": "Failed"
     },
     "noWorkers": "No workers found",
+    "optimizationSettings": "Transcript optimization settings",
     "localDirectories": "Local directories"
   },
   "errors": {

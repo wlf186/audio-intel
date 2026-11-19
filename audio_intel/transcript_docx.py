@@ -10,6 +10,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
+from .ui_theme import print_color
 from .transcript import comparison_source_text, reading_sections, insight_label, presentation_sections, group_insight_lines
 from .transcript_diff import text_changes
 from .utils import timecode
@@ -54,15 +55,15 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
     normal.font.size = Pt(11)
     normal.paragraph_format.space_after = Pt(8)
     normal.paragraph_format.line_spacing = 1.2
-    ink = RGBColor.from_string('232321')
-    muted = RGBColor.from_string('64645E')
+    ink = RGBColor.from_string(print_color('ink'))
+    muted = RGBColor.from_string(print_color('secondary'))
     for name, color, bold in [('Heading 1', ink, True), ('Heading 2', muted, False)]:
         font = document.styles[name].font
         font.color.rgb = color
         font.bold = bold
     summary_style = document.styles.add_style('Transcript Summary', WD_STYLE_TYPE.PARAGRAPH)
     summary_style.base_style = normal
-    summary_style.font.color.rgb = RGBColor.from_string('28654B')
+    summary_style.font.color.rgb = RGBColor.from_string(print_color('accent'))
     document.add_heading(title, 0)
     hidden = set((result.get('video') or {}).get('export_hidden_scene_ids') or [])
     from .reading_outline import export_headings, sections as outline_sections
@@ -218,7 +219,7 @@ def render(title: str, result: dict[str, Any], output_dir: Path) -> bytes:
                     for text, changed in parts:
                         run = content.add_run(text)
                         if changed:
-                            run.font.color.rgb = RGBColor.from_string('9C3A32' if index == 0 else '12634B')
+                            run.font.color.rgb = RGBColor.from_string(print_color('removed' if index == 0 else 'added'))
                             run.font.strike = index == 0
                 document.add_paragraph().paragraph_format.space_after = Pt(4)
             else:

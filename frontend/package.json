@@ -5,6 +5,7 @@
   "packageManager": "pnpm@10.34.5",
   "type": "module",
   "scripts": {
+    "design": "node scripts/frontend.mjs design",
     "dev": "node scripts/frontend.mjs dev",
     "check:i18n": "node scripts/check-i18n.mjs",
     "typecheck": "node scripts/check-i18n.mjs && tsc --noEmit -p tsconfig.app.json",

@@ -8,6 +8,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
+from .ui_theme import stylesheet
 from .document_download import Sink
 from .document_narration import NarrationOptions, skipped_ranges
 from .tts_text import split_text
@@ -103,7 +104,7 @@ class Book:
     def html(self, sections, *, online=False, single=False):
         title = sections[0]['title'] if single else self.title
         js = (ASSETS/'book.js').read_text(encoding='utf-8')
-        css = (ASSETS/'book.css').read_text(encoding='utf-8')
+        css = stylesheet() + (ASSETS/'book.css').read_text(encoding='utf-8')
         digest = base64.b64encode(hashlib.sha256(js.encode()).digest()).decode()
         media = "'self'" if online else "data: blob:"
         nav_items = []
