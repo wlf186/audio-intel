@@ -72,6 +72,7 @@ async function fixture(page:Page,withPeaks=true,partial=false,strengths=false,tr
   return route.continue()
  })
  await page.goto('/#asr')
+ await page.locator('#asr-tab-results').waitFor()
  return {errors,state}
 }
 test('enhanced waveform loads, shows a failure and retries without fabricated peaks',async({page,responseGate})=>{

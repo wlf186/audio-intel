@@ -22,8 +22,8 @@ button:active{transform:translateY(1px)}
 ::-webkit-scrollbar-thumb{background:var(--border-control);border:2px solid var(--surface-canvas)}
 ::-webkit-scrollbar-thumb:hover{background:var(--cyan-dim)}
 
-.app-shell{height:100vh;display:grid;grid-template-rows:72px minmax(0,1fr) 44px;overflow:hidden;background:radial-gradient(circle at 68% -20%,var(--surface-interactive) 0,transparent 34%),var(--void);position:relative}
-.app-shell::after{content:"";position:absolute;inset:72px 0 44px;z-index:0;pointer-events:none;background-image:linear-gradient(color-mix(in srgb, var(--border-subtle) 13%, transparent) 1px,transparent 1px),linear-gradient(90deg,color-mix(in srgb, var(--border-subtle) 11%, transparent) 1px,transparent 1px);background-size:42px 42px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.52),transparent 72%)}
+.app-shell{--header-height:72px;height:100vh;display:grid;grid-template-rows:var(--header-height) minmax(0,1fr) 44px;overflow:hidden;background:radial-gradient(circle at 68% -20%,var(--surface-interactive) 0,transparent 34%),var(--void);position:relative}
+.app-shell::after{content:"";position:absolute;inset:var(--header-height) 0 44px;z-index:0;pointer-events:none;background-image:linear-gradient(color-mix(in srgb, var(--border-subtle) 13%, transparent) 1px,transparent 1px),linear-gradient(90deg,color-mix(in srgb, var(--border-subtle) 11%, transparent) 1px,transparent 1px);background-size:42px 42px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.52),transparent 72%)}
 .app-shell>header{z-index:20;display:flex;align-items:stretch;min-width:0;border-bottom:1px solid var(--line);background:color-mix(in srgb, var(--surface-canvas) 96%, transparent);box-shadow:0 8px 28px color-mix(in srgb, var(--shadow-color) 53%, transparent);position:relative}
 .app-shell>header::after{content:"";position:absolute;left:0;right:0;bottom:-3px;height:2px;background:linear-gradient(90deg,var(--yellow) 0 19%,transparent 19% 64%,var(--cyan) 64% 78%,transparent 78%);opacity:.7}
 .brand{width:342px;flex:0 0 342px;border:0;border-right:1px solid var(--line);background:var(--surface-inset);display:flex;align-items:center;padding:0 20px;color:var(--text);text-align:left;clip-path:var(--shape-brand)}
@@ -33,7 +33,7 @@ button:active{transform:translateY(1px)}
 .brand-type{min-width:0;display:block}
 .brand-type b{display:block;color:var(--yellow);font-size:15px;line-height:1;letter-spacing:.025em;white-space:nowrap;font-stretch:condensed}
 .brand-type small{display:block;color:var(--text-subtle);font:9px/1.3 var(--font-numeric);letter-spacing:.08em;margin-top:7px;white-space:nowrap}
-.app-shell>header>nav{display:flex;height:72px;min-width:0}
+.app-shell>header>nav{display:flex;height:var(--header-height);min-width:0}
 .app-shell>header>nav button{min-width:146px;position:relative;border:0;border-right:1px solid var(--border-subtle);border-bottom:3px solid transparent;background:var(--surface-inset);color:var(--text-subtle);display:grid;grid-template-columns:24px 20px minmax(0,1fr);align-items:center;gap:var(--control-gap);padding:0 18px;font-weight:700;font-size:15px;letter-spacing:.04em;white-space:nowrap}
 .app-shell>header>nav button::after{content:"";position:absolute;right:8px;bottom:7px;width:20px;height:2px;background:var(--border-control);transform:skewX(-35deg)}
 .app-shell>header>nav button:hover{background:var(--surface-hover);color:white}

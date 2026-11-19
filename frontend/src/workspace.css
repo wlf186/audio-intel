@@ -395,6 +395,7 @@ h1{text-shadow:none}
  .asr-workspace.view-results .result-panel:has(.reading-workspace) {height:100%;min-height:0}
 }
 @media (min-width:1024px) and (min-height:720px) and (max-height:760px) {
+ .app-shell:has(.asr-workspace.view-results .reading-workspace) {--header-height:60px}
  .asr-workspace.workbench.hud-page.view-results {padding-block:0!important;row-gap:0!important}
 }
 @media (max-width:600px) {
