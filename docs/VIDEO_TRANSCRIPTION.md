@@ -199,9 +199,9 @@ Opening Picture detection shows current pictures immediately. Browse the chronol
 
 After successful apply, the two settings are saved in the browser's independent `audio-intel:video-scene-detection:v1` localStorage, surviving reload, browser close and sign-out, and used for subsequent videos submitted from that browser. Existing tasks display their own applied settings. Restore defaults changes only the pending controls; preview and apply to update the task and preference. Closing the dialog discards unapplied drafts. The video upload form remembers valid edits and uses them for the initial detection pass. Resumed uploads retain their original submission snapshot.
 
-首次分析顺带生成分块压缩的本地特征缓存，旧任务首次预览时补建。缓存位于任务目录，计入任务空间占用，删除任务时一起清理；每任务最多 512 MiB，超限或缓存失败可重新扫描，不影响转写成功。预览在独立 CPU 进程运行，全局最多一个，最多保留八份已完成预览；30 分钟或服务重启后失效。取消等待进程退出。全部图片、缓存和计算都留在本地。
+自动检测首次扫描可为三个档位共建时间索引。切档时可复用匹配的索引与已有截图，新增代表图仍可能需要解码和写盘。自定义检测使用分块压缩的特征缓存。缓存位于任务目录，计入任务空间占用，删除任务时一起清理；每任务最多 512 MiB，超限或缓存失败可重新扫描，不影响转写成功。预览在独立 CPU 进程运行，全局最多一个，最多保留八份已完成预览；30 分钟或服务重启后失效。取消等待进程退出。全部图片、缓存和计算都留在本地。
 
-Initial analysis builds a chunk-compressed local feature cache; legacy tasks build it on first preview. Job-owned caches count toward storage and are deleted with the job. The 512 MiB per-job budget is optional: cache failure/exhaustion falls back to scanning without failing transcription. A separate CPU process handles previews, with one active computation and at most eight completed previews. Previews expire after 30 minutes or a service restart; cancellation waits for process exit. Pictures, caches and computation remain local.
+Automatic detection can index all three levels in one scan. Switching levels can reuse a matching index and pictures, while additional pictures may require decoding and disk writes. Custom detection uses a chunk-compressed feature cache. Job-owned caches count toward storage and are deleted with the job. The 512 MiB per-job budget is optional: cache failure/exhaustion falls back to scanning without failing transcription. A separate CPU process handles previews, with one active computation and at most eight completed previews. Previews expire after 30 minutes or a service restart; cancellation waits for process exit. Pictures, caches and computation remain local.
 
 ```bash
 # Replace the example ID with a completed local video job; omit --apply to inspect only.
@@ -267,19 +267,17 @@ English: The picture directory numbers retained picture occurrences only. Indepe
 
 ## 自动或自定义检测 / Automatic and custom detection
 
-新视频默认使用 presentation-v6 自动检测，无需设置数值。检测稳定的局部内容替换、同页追加和滚动停止后的画面。选择「自定义参数」使用 presentation-v3 的变化面积和保持时间。浏览器记住主动选择的模式，升级前的数值作为自定义初值。旧任务仍使用提交时的版本重试。
+新视频默认使用 presentation-v6 自动检测，无需设置数值。检测稳定的局部内容替换、同页追加和滚动停止后的画面。选择「自定义参数」使用 presentation-v3 的变化面积和保持时间。浏览器记住主动选择的模式，升级前的数值作为自定义初值。旧任务重试沿用提交时的版本。对于已完成并保留源视频的历史任务，可在结果页选择自动模式，用当前算法预览画面。
 
-New submissions default to automatic detection. Use video_scene_mode=custom for presentation-v3. Supplying only video_scene_detection also selects custom, including an empty object. Explicit auto with numeric settings returns 422. Results retain actual sample timestamps and may have no stable screenshot.
+Completed jobs with their source video can preview the current detector from the result page. Retrying a failed job retains its submitted detector. New submissions default to automatic detection. Use video_scene_mode=custom for presentation-v3. Supplying only video_scene_detection also selects custom, including an empty object. Explicit auto with numeric settings returns 422. Results retain actual sample timestamps and may have no stable screenshot.
 
 结果弹窗按播放位置初始化三分钟选区，可修改秒数或切换整片。局部试算用额外前后文，跨界段标为延续。仅完整预览可以应用；POST 预览可传 mode 和 time_range（原时间轴的起止秒），相同版本和参数可复用自动快照。局部预览不会修改原文或已应用画面。
 
 The preview endpoint accepts mode and an optional [start, end] time_range in media seconds. Only whole-video previews can be applied. Local previews use boundary context and are advisory. To compare a three-minute interval beginning one hour into a recording:
 
 ```bash
-.runtime/api/bin/python scripts/preview_video_scenes.py JOB_ID --mode auto --time-range 3600 3780
+.runtime/api/bin/python scripts/preview_video_scenes.py JOB_ID --mode auto --scene-detail concise --time-range 3600 3780
 .runtime/api/bin/python scripts/preview_video_scenes.py JOB_ID --mode custom --min-change-percent 2 --min-stable-seconds 1 --apply
 ```
 
 六小时转写、预览耗时、磁盘写入和真实片段画面命中数据见[画面检测验证记录](VIDEO_DETECTION_VALIDATION.md)。
-
-自动检测 v5 支持截图详略。提交视频或创建预览时可传 `video_scene_detail`（`concise`、默认 `balanced`、`detailed`），自定义模式混传返回 422。历史任务重试沿用原版本。首次完整分析建立共享时间索引；切档只对所选代表图取图。仅整片预览可以应用并合并相邻讲解时段。浏览器记住上传时选择或成功应用的档位。

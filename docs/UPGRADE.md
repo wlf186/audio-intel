@@ -1,5 +1,11 @@
 # 升级指南
 
+## 从 v0.1.48 升级当前源码 / Upgrading from v0.1.48
+
+SQLite 从 v26 依次迁移到 v27（优化耗时与 Token 统计）和 v28（转写完成后的优化预约）。首次启动前停服，按[升级备份范围](#upgrade-backup-scope)创建 SQLite 一致快照即可；迁移保留已有稿件和媒体。完成部署验收后清理此次临时备份。旧优化稿的一次性清理仅发生在从 v18 或更早版本跨入 v19 时。
+
+Upgrading from v0.1.48 applies database-only migrations for optimization usage (v27) and pending requests (v28). Stop the service and snapshot SQLite before the first startup. Remove the temporary snapshot after deployment acceptance. Existing drafts and media are preserved.
+
 ## 视频画面自动检测 / Automatic picture detection
 
 新上传默认使用 presentation-v6 自动检测的均衡档；旧任务重试沿用持久化的检测器版本。自定义参数仍使用 presentation-v3。此项改动无需 SQLite 迁移或重写历史媒体。按下方本地维护流程重建前端、恢复原有 API 和 worker，并核验进程身份。长视频基准应使用独立服务目录。

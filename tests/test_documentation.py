@@ -277,7 +277,7 @@ def test_current_transcription_documentation_matches_public_entrypoints():
     assert lifecycle.count('- `POST ') == 8
     for name in ('INSTALL.md', 'WINDOWS.md'):
         text = (ROOT / 'docs' / name).read_text(encoding='utf-8')
-        assert '自动迁移到 schema v19' in text
+        assert '仅从 v18 或更早版本跨入 v19' in text and 'UPGRADE.md' in text
         assert '自动迁移到 schema v11' not in text
     guide = (ROOT / 'docs/VIDEO_TRANSCRIPTION.md').read_text(encoding='utf-8')
     for suffix in video_uploads.VIDEO_FORMATS:

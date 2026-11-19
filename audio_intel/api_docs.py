@@ -1447,7 +1447,7 @@ REQUEST_EXAMPLES.update({
         "default": {"summary": "预览新的画面分段 / Preview new picture sections",
                     "value": {"revision": 1, "settings": {"min_change_percent": 3, "min_stable_seconds": 1}}},
         "auto_range": {"summary": "自动检测局部试算 / Automatic interval preview",
-                       "value": {"revision": 1, "mode": "auto", "time_range": [30, 90]}},
+                       "value": {"revision": 1, "mode": "auto", "video_scene_detail": "concise", "time_range": [30, 90]}},
         "decimal_duration": {"summary": "小数保持时间 / Fractional stable duration",
                              "value": {"revision": 1, "settings": {"min_change_percent": 3, "min_stable_seconds": .6}}},
     },
@@ -1479,6 +1479,15 @@ REQUEST_EXAMPLES[("/api/v1/asr/video-jobs", "post")]["enhancement_off"] = {
     "summary": "关闭视频人声增强 / Disable video speech enhancement",
     "value": {**REQUEST_EXAMPLES[("/api/v1/asr/video-jobs", "post")]["lecture"]["value"],
               "audio_enhancement": "off"},
+}
+REQUEST_EXAMPLES[("/api/v1/asr/jobs", "post")]["optimize_after"] = {
+    "summary": "转写后润色并分析议题 / Polish and analyze topics after transcription",
+    "value": {"file": "meeting.wav", "optimization_after_transcription": '{"rewrite_mode":"polish","analyze_topics":true}'},
+}
+REQUEST_EXAMPLES[("/api/v1/asr/video-jobs", "post")]["optimize_after"] = {
+    "summary": "精简截图并预约润色 / Concise pictures and scheduled polishing",
+    "value": {"upload_id": VIDEO_UPLOAD_EXAMPLE["id"], "video_scene_detail": "concise",
+              "optimization_after_transcription": {"rewrite_mode": "polish", "analyze_topics": True}},
 }
 for _gain, _noise in ((False, False), (True, False), (False, True), (True, True)):
     REQUEST_EXAMPLES[("/api/v1/asr/video-jobs", "post")][f"audio_controls_{int(_gain)}_{int(_noise)}"] = {

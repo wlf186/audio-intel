@@ -632,6 +632,20 @@ def test_video_binary_contracts_and_examples(tmp_path, monkeypatch):
             model.model_validate(example['value'])
         if model is SceneEdit:
             assert set(examples) == {'merge_next', 'split', 'boundary', 'frame', 'restore', 'apply_detection', 'set_export_visibility'}
+    from audio_intel.optimization_followup import OptimizationOptions
+    from audio_intel.video_previews import PreviewRequest
+
+    def examples(path, media):
+        return paths[path]['post']['requestBody']['content'][media]['examples']
+
+    audio = examples('/api/v1/asr/jobs', 'multipart/form-data')['optimize_after']['value']
+    video = examples('/api/v1/asr/video-jobs', 'application/json')['optimize_after']['value']
+    options = OptimizationOptions.model_validate_json(audio['optimization_after_transcription'])
+    assert options == VideoJobRequest.model_validate(video).optimization_after_transcription
+    assert options.rewrite_mode == 'polish' and options.analyze_topics
+    previews = examples('/api/v1/jobs/{job_id}/video-scene-previews', 'application/json')
+    preview = PreviewRequest.model_validate(previews['auto_range']['value'])
+    assert (preview.mode, preview.video_scene_detail, preview.time_range) == ('auto', 'concise', (30, 90))
     for name, model in [('VideoUploadResponse', VideoUploadResponse), ('VideoScenesResponse', VideoScenesResponse)]:
         model.model_validate(schema['components']['schemas'][name]['example'])
     JobResultResponse.model_validate(RESULT_EXAMPLES['asr_video']['value'])

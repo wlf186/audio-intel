@@ -125,13 +125,13 @@ Configure an explicitly selected Chat Completions service in System → Expressi
 - Capability discovery adds `asr.transcript_optimization`, including `rewrite_modes`, `default_rewrite_mode`, packet eligibility in `batching`, and the call budget policy in `call_budget`. Browsers request optimizer resources only after authentication and an explicit `supported=true`; missing/unsupported capability snapshots retain original reading without optimizer requests. Job lists and SSE carry optimization summaries only, without draft/source text. Original ASR results, timed subtitles and voiceprint references are unchanged.
 - `POST /api/v1/jobs/{job_id}/transcript-export` accepts `text_version="original"` (default), `"optimized"`, or `"comparison"`. Non-original requests require the published `optimization_id`; optimized exports allow HTML/DOCX/TXT and comparisons HTML/DOCX. HTML comparisons use responsive columns, with per-paragraph source disclosure on narrow screens. DOCX comparisons use landscape A4, timed original sources on the left and readable prose on the right, with equal-sized text and repeating column headers across page breaks. Legacy drafts retain change highlighting. Pending workflow checks prevent publication and download of the new candidate (409). Once checks finish, unavailable checks are disclosed without preventing download of the published draft. Unsupported combinations return 422, unfinished or stale drafts 409. Redaction and replacements apply to both sides and review explanations. Filenames append `-优化稿` or `-对照版` to the task basename.
 
-- Call budgets: `POST .../estimate` computes `estimated_calls`, `minimum_limit`, `recommended_limit`, stage `breakdown` and `fingerprint` without LLM calls. `GET .../usage?run_id=...` returns durable attempts and stage counts; unrecorded historical totals remain null. New and regenerated drafts default to `recommended_limit` including retry headroom. The estimate returns the effective `max_llm_calls`. Existing runs keep their saved allowance and usage. Capabilities report `default_policy=per_run_estimate` and `default_limit=null`.
+- Call budgets: `POST .../estimate` computes `estimated_calls`, `minimum_limit`, `recommended_limit`, stage `breakdown` and `fingerprint` without LLM calls. `GET .../usage?run_id=...` returns durable attempts and stage counts, active processing time in `active_duration_ms` (null if unknown, a lower bound when `timing_partial` is true), and Token coverage in `token_usage` (compare `total_recorded` with `attempts`); unrecorded historical totals remain null. New and regenerated drafts default to `recommended_limit` including retry headroom. The estimate returns the effective `max_llm_calls`. Existing runs keep their saved allowance and usage. Capabilities report `default_policy=per_run_estimate` and `default_limit=null`.
 - Creation additionally accepts one-run `max_llm_calls` and optional `estimate_fingerprint`; stale estimates return 409 `optimization_estimate_stale` with a refreshed estimate. Resume and summary retry may raise the existing run's total cap, without resetting usage or successful checkpoints. All actual attempts, including failures, share the cap. Insufficient budget returns 409 `optimization_budget_insufficient` with `estimate`; queue/disk rejection remains 429.
 - `max_output_tokens` defaults to 4096. `context_length` includes input, output and safety allowance; UI values use K tokens (1K=1024), API fields remain integer tokens. Advanced output fields must agree with the explicit cap. Packet sizing respects both limits; truncation can split packets without silently increasing either cap. New-run reading/export paragraph breaks change whitespace only and do not rewrite stored or historical drafts.
 
 中文：新建和重新优化采用本次建议上限，可在提交时手动设限。已有稿件沿用已存额度和用量。总上下文默认16K、输出默认4K（1K=1024），API仍传整数tokens。新验证9B请求包保留全部细分小结；其他模型与旧稿沿用原策略。实测调用下降不代表所有内容质量无损或任意超长稿具有线性耗时、恒定内存或更低崩溃率，范围和未达标项见[实测报告](EXPRESSION_OPTIMIZATION_PACKETS_VALIDATION.md)。
 
-中文：在系统状态选择并验证 Chat Completions 后保存启用；独立单并发队列，最多 5 个排队任务。生成、自动检查、发布是一次流程，检查仅标注；原文始终保留，重新生成期间旧稿保留至新稿整体完成。正式应用新检测划分会事务性清理旧优化。正文策略 v7、小结策略 v2 与当前 SQLite v25 是独立版本。仅 v18 及更早版本迁往 v19 时一次性清理旧优化；v19→v20→v21→v22→v23→v24→v25 为增量迁移，保留历史稿和检查点。升级按实际跨越范围备份 SQLite，原始任务、媒体及模型配置保留。浏览器阅读／来源明细偏好属于当前会话，最多 200 个任务，退出登录和删除任务时清理。
+中文：在系统状态选择并验证 Chat Completions 后保存启用；独立单并发队列，最多 5 个排队任务。生成、自动检查、发布是一次流程，检查仅标注；原文始终保留，重新生成期间旧稿保留至新稿整体完成。正式应用新检测划分会事务性清理旧优化。正文策略 v7 和小结策略 v2 独立于数据库版本。数据库迁移与备份范围见[升级指南](UPGRADE.md)。浏览器阅读／来源明细偏好属于当前会话，最多 200 个任务，退出登录和删除任务时清理。
 
 ```bash
 # First configure and enable a verified model in System; use a completed ASR task.
@@ -196,6 +196,22 @@ curl --fail-with-body -sS \
 Omit the `Authorization` header when authentication is disabled. Supported explicit aligned languages are Chinese, English, Cantonese, French, German, Italian, Japanese, Korean, Portuguese, Russian, and Spanish. `Auto` can detect other model languages, but those results remain at sentence/segment timestamp granularity.
 
 Saved hotword lists are selected through one comma-separated `hotword_list_ids` form field as described by `/docs`. A task stores an immutable hotword snapshot, so later library edits do not rewrite history.
+
+### 上传时预约表达优化 / Schedule optimization at submission
+
+省略 `optimization_after_transcription` 即仅转写。原生音频 multipart 传 JSON 字符串；原生视频提交传 JSON 对象。以下示例需设置 BASE_URL、凭据及已完成上传的 UPLOAD_ID。 / Omit the field for transcription alone. To schedule optimization, send JSON text in the audio form or a nested object in the video request.
+
+```bash
+curl --fail-with-body -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
+  -F file=@meeting.wav -F 'optimization_after_transcription={"rewrite_mode":"polish","analyze_topics":true}' "$BASE_URL/api/v1/asr/jobs"
+
+curl --fail-with-body -H "Authorization: Bearer $AUDIO_INTEL_API_KEY" -H "Idempotency-Key: $(python3 -c 'import uuid; print(uuid.uuid4())')" \
+  -H 'Content-Type: application/json' --data "{\"upload_id\":\"$UPLOAD_ID\",\"optimization_after_transcription\":{\"rewrite_mode\":\"polish\",\"analyze_topics\":true}}" "$BASE_URL/api/v1/asr/video-jobs"
+```
+
+转写成功后，即使关闭浏览器，服务端也会继续调度。查询优化状态时，`followup` 对象内的 `error` 为空表示等待调度，有错误消息时需处理；`followup` 本身为空表示没有待处理预约。服务停用或变更时原文仍可读取，确认配置后可手动启动优化。
+
+After transcription succeeds, the server schedules optimization even with the browser closed. Read `GET /api/v1/jobs/{job_id}/transcript-optimization`: `followup: {"error":null}` means pending, an error needs attention, and `followup:null` means no outstanding reservation. If the service is disabled or changed, confirm its settings and start optimization from the result page. The transcript remains available. See [optimization at upload](EXPRESSION_OPTIMIZATION.md#上传时预约优化--schedule-optimization-at-upload).
 
 ### Submit preset TTS
 
@@ -919,13 +935,13 @@ Set `AUDIO_INTEL_BASE_URL` and optional `AUDIO_INTEL_API_KEY` in the client shel
 
 ### 视频画面检测预览 / Video picture detection previews
 
-New video jobs default to `video_scene_mode="auto"` (presentation-v6). For presentation-v3, send `video_scene_mode="custom"` or supply `video_scene_detection` alone, including `{}`. Custom settings are discoverable under `asr.video.scene_detection` in capabilities. Combining explicit auto with numeric settings returns 422. Historical retries, idempotent replays and paused uploads retain their saved choices.
+New video jobs default to `video_scene_mode="auto"` (presentation-v6). For presentation-v3, send `video_scene_mode="custom"` or supply `video_scene_detection` alone, including `{}`. Automatic submissions and previews accept `video_scene_detail`: `concise`, `balanced` (default), or `detailed`. Combining detail with custom settings returns 422. Custom settings are discoverable under `asr.video.scene_detection` in capabilities. Combining explicit auto with numeric settings returns 422. Historical retries, idempotent replays and paused uploads retain their saved choices.
 
-新视频省略模式与参数时启用自动检测。自定义模式允许设置变化比例（默认 3%，范围 0.5–50%）和保持时间（默认 1 秒，范围 0.5–5 秒）。创建预览可传 `mode`、自定义 `settings` 和可选的 `time_range`，例如 `{"revision":1,"mode":"auto","time_range":[3600,3780]}`。时间区间以原视频秒数表示，仅用于对照。应用局部预览或过期修订返回 409，只有完整预览支持应用。就绪预览的 `cache_source` 说明使用的检测数据来源。
+新视频省略模式与参数时启用自动检测。自定义模式允许设置变化比例（默认 3%，范围 0.5–50%）和保持时间（默认 1 秒，范围 0.5–5 秒）。创建预览可传 `mode`、自定义 `settings` 和可选的 `time_range`，例如 `{"revision":1,"mode":"auto","video_scene_detail":"concise","time_range":[3600,3780]}`。时间区间以原视频秒数表示，仅用于对照。应用局部预览或过期修订返回 409，只有完整预览支持应用。就绪预览的 `cache_source` 说明使用的检测数据来源。
 
 | Method / 方法 | Path / 路径 | Contract / 契约 |
 | --- | --- | --- |
-| POST | `/api/v1/jobs/{job_id}/video-scene-previews` | Required `Idempotency-Key`; JSON `revision`, optional `mode`, `settings`, `time_range`. First 202, same-request replay 200, conflict 409, busy/disk limit 429 with Retry-After. / 创建预览，不改原结果。 |
+| POST | `/api/v1/jobs/{job_id}/video-scene-previews` | Required `Idempotency-Key`; JSON `revision`, optional `mode`, `video_scene_detail`, `settings`, `time_range`. First 202, same-request replay 200, conflict 409, busy/disk limit 429 with Retry-After. / 创建预览，不改原结果。 |
 | GET | `/api/v1/jobs/{job_id}/video-scene-previews/{preview_id}` | State, settings and measured phase progress; ready includes candidate scenes and protected preview URLs. / 查询真实进度与候选画面。 |
 | GET | `/api/v1/jobs/{job_id}/video-scene-previews/{preview_id}/frames/{name}` | Generated preview JPEG only. / 仅该预览生成的图片。 |
 | DELETE | `/api/v1/jobs/{job_id}/video-scene-previews/{preview_id}` | Wait for child exit, discard preview, 204. / 等待进程退出后清理。 |
@@ -1144,5 +1160,3 @@ HTML/Word topic exports accept optional `merge_repeated_topics:false` to use chr
 Browser-local paragraph comparison and compact timeline panels reuse existing result/media reads; they add no endpoints or request fields. Paragraph comparison does not submit optimization, seek media or change export scope. / 浏览器单段对照和紧凑时间轴复用既有读取接口，不新增端点或字段，不提交优化、不改变播放时间或导出范围。
 
 Document narration options are accepted by segmentation preview as a JSON object and by document submission as the `narration_options` JSON form string. New imports default to skipping high-confidence page numbers, note references and note bodies, with short structural pauses. API-only source-range overrides use Unicode code-point offsets and require the current analysis revision. Retained imports can be explicitly reanalyzed using `POST /api/v1/tts/document-imports/{identifier}/reanalyze` with `Idempotency-Key`; old jobs and audio remain unchanged. See [narration annotations and pauses](DOCUMENT_TTS.md#辅助文本与自然停顿--narration-annotations-and-pauses) for fields, errors, defaults and executable examples.
-
-自动检测 v5 支持截图详略。提交视频或创建预览时可传 `video_scene_detail`（`concise`、默认 `balanced`、`detailed`），自定义模式混传返回 422。历史任务重试沿用原版本。首次完整分析建立共享时间索引；切档只对所选代表图取图。仅整片预览可以应用并合并相邻讲解时段。浏览器记住上传时选择或成功应用的档位。
