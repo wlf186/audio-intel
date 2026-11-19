@@ -8,7 +8,8 @@ import {ReadingWorkspace,OrderedAudio} from '../components/ReadingWorkspace'
 import {TopicDirectory} from '../components/TopicDirectory'
 import {SceneDetection} from '../components/SceneDetection'
 import {OptimizationReader} from '../components/OptimizationReader'
-import {loadDetection} from '../lib/sceneDetection'
+import {SceneDetectionFields,SceneModeChoice,SceneDetailChoice} from '../components/SceneDetectionFields'
+import {loadSceneDetail,saveSceneDetail,type SceneDetail,loadSceneMode,saveSceneMode,loadDetection,saveDetection,detectionDefaults,validDetection,type SceneDetectionSettings} from '../lib/sceneDetection'
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {ActionPopover} from '../components/ActionPopover'
 import {activeIntervalIndex,readingIndex,revealReadingNode} from '../lib/readerNavigation'
@@ -201,6 +202,23 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
   const [videoEnrollment,setVideoEnrollment]=useState<{jobId:string;speakerId:string;segmentIds:number[]}>()
   useEffect(()=>setVideoEnrollment(undefined),[selectedJobId])
   const isVideoTab=view==='video'
+  const [sceneDraft,setSceneDraft]=useState<SceneDetectionSettings>()
+  const locked=isVideoTab?resume:undefined
+  const sceneCapability=videoCapability?.scene_detection
+  const sceneSettings=sceneCapability?(locked?(locked.params.video_scene_detection as SceneDetectionSettings??detectionDefaults(sceneCapability)):sceneDraft??loadDetection(sceneCapability)):undefined
+  const [preferredDetail,setPreferredDetail]=useState(loadSceneDetail)
+  const sceneDetail=locked?(locked.params.video_scene_detail as SceneDetail??'balanced'):preferredDetail
+  const [preferredMode,setPreferredMode]=useState(loadSceneMode)
+  const sceneMode=!sceneCapability?.modes?'custom':locked?(locked.params.video_scene_mode==='auto'?'auto':'custom'):preferredMode
+  const invalidScene=sceneMode==='custom'&&Boolean(isVideoTab&&sceneSettings&&sceneCapability&&!validDetection(sceneSettings,sceneCapability))
+  useEffect(()=>{
+    if(view==='results'){setSceneDraft(undefined);return}
+    setPreferredMode(loadSceneMode());setPreferredDetail(loadSceneDetail())
+  },[view])
+  function updateScene(value:SceneDetectionSettings){
+    setSceneDraft(value)
+    if(sceneCapability&&validDetection(value,sceneCapability))saveDetection(value)
+  }
   const file=isVideoTab?videoFile:audioFile
   const setFile=(next:File|undefined)=>{if(isVideoTab){setVideoFile(next);if(!resume)setVideoRoi(undefined)}else setAudioFile(next)}
   const formats=isVideoTab?videoCapability?.formats:audioFormats
@@ -520,7 +538,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
       const strengthParams=gainStrengthCapability&&noiseStrengthCapability?{speech_enhancement_strength:preferences.speechEnhancementStrength,background_denoise_strength:preferences.backgroundDenoiseStrength}:{}
       for(const [name,value] of Object.entries(strengthParams))data.set(name,String(value))
       if (selectedHotwordIds.size) data.set('hotword_list_ids', [...selectedHotwordIds].join(','))
-      const job = isVideoTab?await submitVideo(file,{model,language,speaker_count:speakers==='auto'?null:Number(speakers),diarize:true,align,use_voiceprint_library:useVoiceprints,...(manualGroups?{voiceprint_group_ids:preferences.voiceprintGroupIds}:{}),compute_device:effectiveComputeDevice,accelerate_single_task:accelerateSingleTask,audio_enhancement:preferences.audioEnhancement,...strengthParams,hotword_list_ids:[...selectedHotwordIds],video_roi:videoRoi||null,...(videoCapability?.scene_detection?{video_scene_detection:loadDetection(videoCapability.scene_detection)}:{})},{signal:controller.signal,onProgress:setUploadProgress}):await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
+      const job = isVideoTab?await submitVideo(file,{model,language,speaker_count:speakers==='auto'?null:Number(speakers),diarize:true,align,use_voiceprint_library:useVoiceprints,...(manualGroups?{voiceprint_group_ids:preferences.voiceprintGroupIds}:{}),compute_device:effectiveComputeDevice,accelerate_single_task:accelerateSingleTask,audio_enhancement:preferences.audioEnhancement,...strengthParams,hotword_list_ids:[...selectedHotwordIds],video_roi:videoRoi||null,...(videoCapability?.scene_detection?(sceneMode==='auto'?{video_scene_mode:'auto',...(sceneCapability?.detail_levels?{video_scene_detail:sceneDetail}:{})}:{video_scene_detection:sceneSettings}):{})},{signal:controller.signal,onProgress:setUploadProgress}):await api.submitAsr(data,{signal:controller.signal,onProgress:setUploadProgress})
       onJobSubmitted(job)
       setLastSubmitted(job)
       onSelect(job)
@@ -750,6 +768,13 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
         <p>{t('video.uploadLimit',{limit:size(uploadLimit||0,i18n.resolvedLanguage)})}</p>
         <p>{t(isVideoTab?'video.uploadHelp':'asr.subtitle')}</p>
         {isVideoTab&&resume?<div className="video-resume"><p>{t('video.resumeNotice',{name:resume.name})}</p><button className="button" disabled={busy} onClick={()=>setDiscardOpen(true)}>{t('video.discard')}</button></div>:null}
+        {isVideoTab&&sceneCapability&&sceneSettings?<fieldset className="upload-followup" disabled={busy||Boolean(locked)}>
+          <legend>{t('sceneDetection.title')}</legend>
+          {sceneCapability.modes?<SceneModeChoice value={sceneMode} disabled={busy||Boolean(locked)} onChange={mode=>{setPreferredMode(mode);saveSceneMode(mode)}}/>:null}
+          {sceneMode==='auto'&&sceneCapability.detail_levels?<SceneDetailChoice value={sceneDetail} disabled={busy||Boolean(locked)} onChange={v=>{setPreferredDetail(v);saveSceneDetail(v)}}/>:null}
+          {sceneMode==='custom'?<><SceneDetectionFields values={sceneSettings} capability={sceneCapability} disabled={busy||Boolean(locked)} onChange={updateScene}/>
+          <button className="button" onClick={()=>updateScene(detectionDefaults(sceneCapability))}>{t('sceneDetection.reset')}</button></>:null}
+        </fieldset>:null}
         {isVideoTab&&file?<VideoRegionPicker file={file} value={videoRoi} onChange={setVideoRoi} disabled={busy||Boolean(resume)}/>:null}
       </div>
       <WorkbenchDivider workbench="asr"/>
@@ -851,7 +876,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
           ) : null}
           {lastSubmitted?<div className="asr-submitted"><span>{lastSubmitted.display_name}</span><button className="button" onClick={()=>{onSelect(lastSubmitted);setView('results')}}>{t('asr.workspace.viewSubmitted')}</button></div>:null}
           {uploadProgress?<SubmissionProgress label={t('asr.uploadLabel')} progress={uploadProgress} onCancel={()=>uploadController.current?.abort()} cancelLabel={isVideoTab?t('video.pause'):undefined}/>:null}
-          <button className="primary" disabled={busy || !chosenModel.installed || Boolean(selectedHotwordIssue) || Boolean(groupSelectionIssue) || Boolean(fileLimitError) || (selectedHotwordIds.size>0&&hotwordsState!=='ready')} aria-describedby={selectedHotwordIssue ? 'asr-hotword-submit-error' : undefined} onClick={submit}>
+          <button className="primary" disabled={busy || invalidScene || !chosenModel.installed || Boolean(selectedHotwordIssue) || Boolean(groupSelectionIssue) || Boolean(fileLimitError) || (selectedHotwordIds.size>0&&hotwordsState!=='ready')} aria-describedby={selectedHotwordIssue ? 'asr-hotword-submit-error' : undefined} onClick={submit}>
             <Play size={18} />
             {submitLabel}
           </button>
@@ -960,7 +985,7 @@ export function AsrPage({ jobsReady, jobsError, refreshJobs, refreshHotwords, on
             </div></details>}</MediaTimeline>
             <OptimizationControls key={'optimization:'+selected.id} actionsTarget={resultActions} regenerateTrigger={fullRegenerateTrigger} onRequestTopics={()=>setTopicTrigger(n=>n+1)} topicsSupported={topicsSupported} onModeChange={changeReadingMode} controller={optimization} video={Boolean(result.video)} videoReading={videoReading} onOriginal={()=>changeVideoReading(true)} onDetails={()=>changeVideoReading(false)}>{result.video&&videoCapability?.scene_detection?.preview?<button className="button" disabled={!videoScenes.data||videoScenes.loading||Boolean(videoScenes.error)} onClick={()=>setSceneDetectionOpen(true)}>{t('sceneDetection.title')}</button>:null}</OptimizationControls>
 
-            {sceneDetectionOpen&&result.video&&videoCapability?.scene_detection?<SceneDetection jobId={selected.id} result={result} capability={videoCapability.scene_detection} onClose={()=>setSceneDetectionOpen(false)} onUpdated={updateVideoResult}/>:null}
+            {sceneDetectionOpen&&result.video&&videoCapability?.scene_detection?<SceneDetection position={currentTime} jobId={selected.id} result={result} capability={videoCapability.scene_detection} onClose={()=>setSceneDetectionOpen(false)} onUpdated={updateVideoResult}/>:null}
             <ReadingWorkspace filterTools={segmentTools} onOutlineReady={onOutlineReady} jobId={selected.id} run={optimization.status?.published} onSeek={navigateReading} notices={alignmentDowngraded?<p className="notice alignment-notice" role="note">{t('asr.results.alignmentDowngraded',{language:result.language})}</p>:null} management={topicsSupported?<TopicDirectory onRegenerate={optimization.status?.published?.reading_plan_version===2?()=>setFullRegenerateTrigger(n=>n+1):undefined} trigger={topicTrigger} jobId={selected.id} run={optimization.status?.published} enabled={Boolean(optimization.status?.enabled)} result={result} onSeek={navigateReading} onUpdated={optimization.retry}/>:null}>
 
             {optimization.view?<OptimizationReader reveal={sceneReveal} illustrated={videoReading} onModeChange={()=>changeReadingMode('comparison')} key={`${optimization.mode}:${selected.id}`} job={selected} controller={optimization} query={query} speaker={speakerFilter} onSeek={seekWord}/>:<OriginalBlocks job={selected} query={deferredQuery} speaker={speakerFilter} illustrated={videoReading} reveal={sceneReveal} render={segment=><SegmentRow query={deferredQuery} segment={segment} speaker={speakerById.get(segment.speaker)} active={currentTime>=segment.start&&currentTime<segment.end} currentTime={currentTime} onPlay={playSegment} onSeekWord={seekWord} selected={selectedSegments.has(segment.id)} selectionSpeaker={selectionSpeaker} onToggle={toggleSegment} onRename={openRename}/>}>{result.video&&videoReading?<VideoTranscript query={query} speakerFilter={speakerFilter} key={`video-transcript:${selected.id}`} job={selected} resource={videoScenes} reveal={sceneReveal} currentTime={currentTime} onUpdated={(id,next)=>{updateVideoResult(id,next);if(next.video?.applied_preview_id&&next.video.applied_preview_id!==result.video?.applied_preview_id)setSceneReveal({time:currentTime,token:++navigationSequence.current})}} onSeek={seekVideo} onEnroll={enrollVideo} onRename={renameVideo}/>:<>

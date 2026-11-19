@@ -968,7 +968,7 @@ def _process_job(context: JobContext) -> dict[str, Any]:
         normalized = context.work_dir / "normalized.wav"
         audio, rate, video_result = decode_video(source, normalized, context.work_dir / "frames", request.get("video_roi"), context,
             request.get("video_scene_detection") if request.get("video_detector") in {"presentation-v2", "presentation-v3"} else None,
-            request.get("video_detector"))
+            request.get("video_detector"), request.get("video_scene_detail", "balanced"))
     else:
         audio, rate = _mock_audio(source, normalized) if settings.mock_mode else decode_audio(source, normalized)
     duration = len(audio) / rate
@@ -1263,6 +1263,9 @@ def _process_job(context: JobContext) -> dict[str, Any]:
         shutil.move(str(normalized), str(context.output_dir / "playback.wav"))
         shutil.rmtree(context.output_dir / "frames", ignore_errors=True)
         shutil.move(str(context.work_dir / "frames"), str(context.output_dir / "frames"))
+        from audio_intel.video_auto_index import NAME as auto_index_name
+        if (context.work_dir / auto_index_name).is_file():
+            shutil.move(str(context.work_dir / auto_index_name), str(context.output_dir / auto_index_name))
         if (context.work_dir / "scene-features").exists():
             shutil.rmtree(context.output_dir / "scene-features", ignore_errors=True)
             shutil.move(str(context.work_dir / "scene-features"), str(context.output_dir / "scene-features"))

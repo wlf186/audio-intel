@@ -20,7 +20,7 @@ import psutil
 from fastapi import Depends, Header, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import db
+from . import db, video_detail
 from .asr_speakers import speaker_update_lock
 from .document_download import reader_lease
 from .video_detection import SceneDetectionSettings, VERSION
@@ -32,7 +32,10 @@ TTL = 1800
 class PreviewRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     revision: int = Field(ge=1)
-    settings: SceneDetectionSettings
+    settings: SceneDetectionSettings | None = None
+    video_scene_detail: Literal['concise', 'balanced', 'detailed'] | None = None
+    mode: Literal['auto', 'custom'] | None = None
+    time_range: tuple[float, float] | None = None
 
 
 class PreviewProgress(BaseModel):
@@ -51,12 +54,16 @@ class PreviewResponse(BaseModel):
     job_id: str
     revision: int
     state: Literal['running', 'ready', 'failed', 'cancelled', 'applying', 'applied']
-    settings: SceneDetectionSettings
+    settings: SceneDetectionSettings | None = None
+    video_scene_detail: Literal['concise', 'balanced', 'detailed'] | None = None
+    mode: Literal['auto', 'custom'] | None = None
+    time_range: tuple[float, float] | None = None
     expires_at: float
     progress: PreviewProgress | None = None
     error: str | None = None
     scenes: list[PreviewScene] | None = None
     cache_hit: bool | None = None
+    cache_source: Literal['snapshot', 'auto_index', 'features', 'source'] | None = None
 
 
 @contextmanager
@@ -98,6 +105,8 @@ class PreviewManager:
                         pass
                 for partial in (self.config.jobs_dir / path.parent.parent.name / 'output').glob('scene-features.partial-*'):
                     shutil.rmtree(partial, ignore_errors=True)
+                for partial in (self.config.jobs_dir / path.parent.parent.name / 'output').glob('scene-auto-*.bin.partial-*'):
+                    partial.unlink(missing_ok=True)
                 shutil.rmtree(path, ignore_errors=True)
         self.sweeper = asyncio.create_task(self.sweep())
 
@@ -123,8 +132,8 @@ class PreviewManager:
         self.items.clear()
 
     def public(self, item: dict) -> dict:
-        result = {k: item[k] for k in ('id', 'job_id', 'revision', 'state', 'settings', 'expires_at')}
-        for key in ('progress', 'error', 'cache_hit'):
+        result = {k: item[k] for k in ('id', 'job_id', 'revision', 'state', 'mode', 'video_scene_detail', 'time_range', 'settings', 'expires_at')}
+        for key in ('progress', 'error', 'cache_hit', 'cache_source'):
             if key in item:
                 result[key] = item[key]
         if item['state'] in {'ready', 'applied'}:
@@ -143,6 +152,16 @@ class PreviewManager:
     def create(self, job_id: str, body: PreviewRequest, key: str) -> tuple[dict, bool]:
         with self.lock, task_reader(job_id):
             job = completed(job_id)
+            video = job['result']['video']
+            mode = body.mode or ('custom' if body.settings is not None else 'auto')
+            if body.video_scene_detail and mode != 'auto':
+                raise HTTPException(422, 'Picture detail requires automatic detection')
+            detail = (body.video_scene_detail or 'balanced') if mode == 'auto' else None
+            if mode == 'auto' and body.settings is not None:
+                raise HTTPException(422, 'Automatic detection takes no numeric settings')
+            if body.time_range and not 0 <= body.time_range[0] < body.time_range[1] <= video['duration']:
+                raise HTTPException(422, 'Invalid preview time range')
+            settings = (body.settings or SceneDetectionSettings()).model_dump() if mode == 'custom' else None
             fingerprint = hashlib.sha256(json.dumps(body.model_dump(), sort_keys=True).encode()).hexdigest()
             key_hash = hashlib.sha256(key.encode()).hexdigest()
             for item in self.items.values():
@@ -174,10 +193,20 @@ class PreviewManager:
                        'existing_frames': str(root / 'output/frames'),
                        'existing_scenes': video['scenes'] + video['original_scenes'] + (video.get('automatic_scenes') or []),
                        'roi': video.get('roi'), 'duration': video['duration'], 'time_origin': video.get('time_origin', 0),
-                       'settings': body.settings.model_dump(), 'min_free': self.config.min_free_disk_bytes}
+                       'settings': settings, 'mode': mode, 'video_scene_detail': detail, 'time_range': body.time_range, 'min_free': self.config.min_free_disk_bytes}
+            version = video_detail.VERSION if mode == 'auto' else VERSION
+            if video.get('detector') == version and video.get('video_scene_detail') == detail and video.get('scene_detection') == settings:
+                request['snapshot'] = video.get('automatic_scenes') or video['original_scenes']
+            elif job['request'].get('video_detector') == version and job['request'].get('video_scene_detail') == detail and job['request'].get('video_scene_detection') == settings:
+                request['snapshot'] = video['original_scenes']
+            if 'snapshot' in request:
+                if body.time_range:
+                    start, end = body.time_range
+                    request['snapshot'] = [s for s in request['snapshot'] if s['end'] > start and s['start'] < end]
+                request.pop('existing_scenes')
             (folder / 'request.json').write_text(json.dumps(request), encoding='utf-8')
             item = {'id': identifier, 'job_id': job_id, 'revision': body.revision, 'state': 'running',
-                    'settings': body.settings.model_dump(), 'expires_at': time.time() + TTL, 'folder': folder,
+                    'settings': settings, 'mode': mode, 'video_scene_detail': detail, 'time_range': body.time_range, 'expires_at': time.time() + TTL, 'folder': folder,
                     'key_hash': key_hash, 'fingerprint': fingerprint}
             self.items[identifier] = item
             self.tasks[identifier] = asyncio.create_task(self.run(item))
@@ -222,7 +251,7 @@ class PreviewManager:
                 raise RuntimeError('Video analysis failed; retry the preview')
             result = json.loads((folder / 'result.json').read_text(encoding='utf-8'))
             with self.lock:
-                item.update(state='ready', scenes=result['scenes'], cache_hit=result['cache_hit'], expires_at=time.time() + TTL)
+                item.update(state='ready', scenes=result['scenes'], cache_hit=result['cache_hit'], cache_source=result.get('cache_source'), expires_at=time.time() + TTL)
         except asyncio.CancelledError:
             if identity:
                 await asyncio.to_thread(_stop_process, identity)
@@ -241,6 +270,9 @@ class PreviewManager:
             # A killed builder's unpublished cache is not reusable.
             for path in (self.config.jobs_dir / item['job_id'] / 'output').glob('scene-features.partial-*'):
                 shutil.rmtree(path, ignore_errors=True)
+
+            for path in (self.config.jobs_dir / item['job_id'] / 'output').glob('scene-auto-*.bin.partial-*'):
+                path.unlink(missing_ok=True)
 
     def drain(self, item: dict):
         paths = list((item['folder'] / '.progress').glob('progress-*.json'))
@@ -280,6 +312,8 @@ class PreviewManager:
     def apply(self, job_id: str, identifier: str | None, revision: int) -> dict:
         with self.lock:
             item = self.get(job_id, identifier or '')
+            if item.get('time_range'):
+                raise HTTPException(409, 'Create a whole-video preview before applying')
             if item['state'] != 'ready':
                 raise HTTPException(409, 'Preview is not ready')
             item['state'] = 'applying'
@@ -303,12 +337,17 @@ class PreviewManager:
                     target = folder / scene['image']
                     if not target.exists():
                         created.append(target)
-                        shutil.copyfile(item['folder'] / 'frames' / scene['image'], target)
+                        original = item['folder'] / 'frames' / scene['image']
+                        try:
+                            os.link(original, target)
+                        except OSError:
+                            shutil.copyfile(original, target)
                 from .video_visibility import retained_hidden
-                hidden = retained_hidden(video, item['scenes']) if video.get('scene_detection') == item['settings'] else []
+                same_mode = video.get('detector') == (video_detail.VERSION if item['mode'] == 'auto' else VERSION) and video.get('video_scene_detail') == item['video_scene_detail']
+                hidden = retained_hidden(video, item['scenes']) if same_mode and video.get('scene_detection') == item['settings'] else []
                 video.update(export_hidden_scene_ids=hidden)
                 video.update(scenes=copy.deepcopy(item['scenes']), automatic_scenes=copy.deepcopy(item['scenes']),
-                             scene_detection=item['settings'], detector=VERSION, contract_version=2, revision=revision + 1,
+                             scene_detection=item['settings'], scene_detection_mode=item['mode'], video_scene_detail=item['video_scene_detail'], detector=video_detail.VERSION if item['mode']=='auto' else VERSION, contract_version=2, revision=revision + 1,
                              applied_preview_id=item['id'])
                 with db.connect() as connection:
                     connection.execute("BEGIN IMMEDIATE")

@@ -159,14 +159,21 @@ def probe(source: Path) -> dict[str, Any]:
 
 
 def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | None, context: Any,
-           detection_settings: dict | None = None, detector_version: str | None = None) -> tuple[Any, int, dict]:
+           detection_settings: dict | None = None, detector_version: str | None = None, scene_detail: str = 'balanced') -> tuple[Any, int, dict]:
     import soundfile as sf
 
     detector = PresentationDetector(frame_directory)
+    from . import video_auto, video_detail
+    auto = detector_version in video_detail.DETECTORS
+    if auto:
+        from .video_auto_index import SampleIndex, NAME
+        from .config import settings
+        detector = video_detail.DETECTORS[detector_version]()
+        index = SampleIndex()
     writer = None
-    if detection_settings is not None:
-        from .video_detection import Detector, FeatureWriter, thumbnail
-        detector = Detector(detection_settings)
+    if detection_settings is not None and not auto:
+        from .video_detection import Detector, FeatureWriter, LEGACY_VERSION, StableDetector, thumbnail
+        detector = Detector(detection_settings) if detector_version == LEGACY_VERSION else StableDetector(detection_settings)
         from .config import settings
         writer = FeatureWriter(frame_directory.parent / 'scene-features', source, roi, settings.min_free_disk_bytes)
     samples = AudioStore(normalized.with_suffix(".f32"))
@@ -181,6 +188,8 @@ def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | No
             check_resources(memory=video.width * video.height * 64, stage='video_analysis')
             origin = float(container.start_time or 0) / av.time_base
             duration = float(container.duration or 0) / av.time_base
+            if writer is not None:
+                writer.duration_hint = duration
             resampler = av.AudioResampler(format='fltp', layout='mono', rate=16000)
 
             def add_audio(converted: Any) -> None:
@@ -206,7 +215,10 @@ def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | No
                         timestamp = max(0.0, float(frame.time or 0) - origin)
                         video_end = max(video_end, timestamp + float(frame.duration or 0) * float(frame.time_base))
                         if timestamp - last_sample >= .49:
-                            if writer is not None:
+                            if auto:
+                                detector.feed(video_auto.sample(frame, roi), timestamp)
+                                index.add(timestamp, detector.since)
+                            elif writer is not None:
                                 rgb = thumbnail(frame, roi)
                                 detector.feed(rgb, timestamp)
                                 writer.add(rgb, timestamp)
@@ -219,7 +231,7 @@ def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | No
                             last_progress = time.monotonic()
             for converted in resampler.resample(None):
                 add_audio(converted)
-        if not len(samples) or (detector.anchor is None if writer is not None else detector.picture is None):
+        if not len(samples) or (detector.previous is None if auto else detector.anchor is None if writer is not None else detector.picture is None):
             raise ValueError('Video has no decodable audio or picture')
         end = max(video_end, sample_count / 16000)
         padding = round(end * 16000) - sample_count
@@ -227,16 +239,26 @@ def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | No
             samples.silence(padding)
         values = samples.finish(normalized)
         detector.flush(end)
+        if auto:
+            from .video_detection import materialize
+            extra = {}
+            if detector_version in {video_detail.LEGACY_VERSION, video_detail.VERSION}:
+                detector.scenes = detector.result(scene_detail)
+                index.save(frame_directory.parent/NAME, source, roi, detector.outputs, settings.min_free_disk_bytes, version=video_detail.INDEX_VERSIONS[detector_version])
+                extra["video_scene_detail"] = scene_detail
+            else:
+                index.save(frame_directory.parent/NAME, source, roi, detector.scenes, settings.min_free_disk_bytes)
+            frame_directory.mkdir(parents=True, exist_ok=True)
+            materialize(source, detector.scenes, frame_directory, roi, origin, lambda *args: None)
+            return values, 16000, dict(contract_version=2, revision=1, duration=end, time_origin=origin, roi=roi, **extra, detector=detector_version, scene_detection_mode="auto", scenes=detector.scenes, original_scenes=[dict(s) for s in detector.scenes], automatic_scenes=[dict(s) for s in detector.scenes])
         if writer is not None:
-            from .video_detection import LEGACY_VERSION, VERSION, materialize, stable_representatives
+            from .video_detection import LEGACY_VERSION, VERSION, materialize
             writer.finish(end, origin)
             strict = detector_version != LEGACY_VERSION
-            if strict:
-                stable_representatives(source, frame_directory.parent / 'scene-features', roi, detector.scenes,
-                                       detector.settings.min_stable_seconds, lambda *args: None)
             materialize(source, detector.scenes, frame_directory, roi, origin, lambda *args: None)
             return values, 16000, {'contract_version': 2 if strict else 1, 'revision': 1, 'duration': end, 'time_origin': origin,
                                   'roi': roi, 'detector': VERSION if strict else LEGACY_VERSION, 'scene_detection': detection_settings,
+                                      'scene_detection_mode': 'custom',
                                   'scenes': detector.scenes, 'automatic_scenes': [dict(s) for s in detector.scenes],
                                   'original_scenes': [dict(s) for s in detector.scenes]}
         return values, 16000, {'contract_version': 1, 'revision': 1, 'duration': end, 'time_origin': origin,

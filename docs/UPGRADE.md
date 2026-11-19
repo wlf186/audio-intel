@@ -1,5 +1,12 @@
 # 升级指南
 
+## 视频画面自动检测 / Automatic picture detection
+
+新上传默认使用 presentation-v6 自动检测的均衡档；旧任务重试沿用持久化的检测器版本。自定义参数仍使用 presentation-v3。此项改动无需 SQLite 迁移或重写历史媒体。按下方本地维护流程重建前端、恢复原有 API 和 worker，并核验进程身份。长视频基准应使用独立服务目录。
+
+New video submissions default to automatic detection. Existing jobs retain the detector used at submission. Rebuild the frontend and restore the original service components through local deployment acceptance. This change adds no database migration or required historical file conversion.
+
+
 ### ASR 离线 HTML 导出与 TTS 有声书
 
 已完成的文档 TTS 任务可按需导出整书 HTML 或分章 ZIP。新合成章节保存时间索引，历史音频支持按章定位，无需重新合成。

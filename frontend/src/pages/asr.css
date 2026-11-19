@@ -430,3 +430,39 @@
  .asr-workspace.view-results .segments,
  .asr-workspace.view-results .optimization-reader{min-height:220px}
 }
+.upload-followup{min-inline-size:0;margin:16px 0 0;padding:12px;border:1px solid var(--line);display:grid;gap:10px}
+.upload-followup legend{padding:0 5px;font-weight:600}
+.upload-followup select{display:block;max-width:100%;min-height:44px}
+.upload-followup .scene-detection-controls{grid-template-columns:repeat(auto-fit,minmax(min(100%,140px),1fr))}
+.upload-followup .button,.upload-followup input[type=number]{min-height:44px}
+
+.scene-detection-modal fieldset label{display:inline-flex;align-items:center;gap:6px;min-height:44px;max-width:100%}
+.scene-detection-modal fieldset input[type=number]{width:7em;max-width:100%;min-height:44px}
+.scene-detection-modal select,.upload-followup select{min-height:44px;max-width:100%}
+.scene-setup,.scene-gallery-head,.scene-setting-head,.scene-clock-fields{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.scene-setup{padding:10px 0 14px;border-bottom:1px solid var(--line)}
+.scene-setup .scene-detection-controls{flex-basis:100%;margin:0}
+.scene-gallery-head,.scene-setting-head{justify-content:space-between;margin:8px 0}
+.scene-choice button,.scene-setup button,.scene-gallery-head button,.scene-setting-head button,.scene-detection-count button,.scene-focus button{min-height:44px}
+.scene-clock-fields label{flex:1;min-width:110px}
+.scene-detection-count{margin:8px 0;color:var(--muted);font-size:13px}
+.scene-thumb{position:relative}.scene-thumb>button:last-child{position:absolute;inset:0;background:transparent;width:100%;border:0;cursor:zoom-in}.scene-thumb:has(>button:first-child)>button:last-child{display:none}
+.scene-focus{display:grid;min-height:0;align-content:center;gap:10px;text-align:center}.scene-focus img{width:100%;max-height:60dvh;object-fit:contain}.scene-focus button{margin:0 3px}
+.scene-detection-modal [hidden]{display:none!important}
+.scene-detection-footer .scene-detection-actions{justify-content:flex-end}
+@media(max-width:600px){.scene-choice{flex:0 1 auto}.scene-choice button{flex:0 1 auto}.scene-setup{gap:6px}.scene-gallery-head .button{font-size:12px}}
+
+.scene-focus-image{min-height:0;overflow:auto;max-height:60dvh}
+.scene-focus-image.native img{display:block;width:auto;height:auto;max-width:none;max-height:none;margin:auto}
+.scene-gallery-head{position:sticky;top:0;background:var(--panel);z-index:1}
+
+.scene-choice-field{display:grid;grid-template-rows:auto 1fr;gap:4px;min-width:0}
+.scene-choice{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);border:1px solid var(--line)}
+.scene-choice button{min-height:44px;padding:6px 10px;color:var(--muted);background:transparent;border:0;font:inherit}
+.scene-choice button+button{border-inline-start:1px solid var(--line)}
+.scene-choice button[aria-pressed=true]{background:var(--cyan);color:var(--ink);font-weight:700}
+.scene-choice button:focus-visible{outline:2px solid var(--yellow);outline-offset:-3px}
+.scene-choice button:disabled{opacity:.5}
+.scene-setup{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:stretch}
+.scene-setup>:not(.scene-choice-field){grid-column:1/-1;justify-self:start}
+@media(max-width:600px){.scene-setup{grid-template-columns:minmax(0,1fr)}}

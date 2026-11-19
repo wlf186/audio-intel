@@ -19,7 +19,7 @@ from fastapi import Depends, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 
-from . import db, video_uploads as store
+from . import db, video_detail, video_uploads as store
 from .api_models import JobResponse, JobResultResponse, VideoSceneResponse
 from .asr_speakers import speaker_update_lock
 from .document_download import reader_lease
@@ -104,6 +104,17 @@ class VideoJobRequest(StrictModel):
     speech_enhancement_strength: float | None = Field(None, ge=0, le=2, allow_inf_nan=False, description="自动人声增益力度，默认 1；0 跳过 / Automatic gain strength, default 1; zero skips")
     background_denoise_strength: float | None = Field(None, ge=0, le=1, allow_inf_nan=False, description="降噪混合比例，GTCRN 默认 0.5；0 跳过 / Denoising mix, GTCRN default 0.5; zero skips")
     video_roi: VideoRegion | None = None
+    video_scene_detail: Literal['concise', 'balanced', 'detailed'] | None = None
+    video_scene_mode: Literal['auto', 'custom'] | None = Field(None, description='新任务默认自动；仅传旧式检测参数启用自定义 / New submissions default to auto; numeric settings imply custom')
+
+    @model_validator(mode='after')
+    def validate_scene_mode(self):
+        if self.video_scene_detail and (self.video_scene_mode == 'custom' or self.video_scene_detection is not None):
+            raise ValueError('Picture detail requires automatic detection')
+        if self.video_scene_mode == 'auto' and self.video_scene_detection is not None:
+            raise ValueError('Automatic detection takes no numeric settings')
+        return self
+
     video_scene_detection: SceneDetectionSettings | None = Field(None, description='画面检测参数；省略使用推荐值 / Picture detection settings; omission uses recommended defaults')
 
 
@@ -318,6 +329,10 @@ def register(app: Any, api: Any) -> None:
         api.ensure_service('asr')
         key = api.validate_idempotency_key(idempotency_key)
         caller = body.model_dump(mode='json')
+        if body.video_scene_detail is None:
+            caller.pop('video_scene_detail', None)
+        if body.video_scene_mode is None:
+            caller.pop('video_scene_mode', None)
         if body.video_scene_detection is None:
             caller.pop('video_scene_detection', None)
         if body.voiceprint_group_ids is None:
@@ -360,9 +375,13 @@ def register(app: Any, api: Any) -> None:
             try:
                 payload = {**caller, **hotwords, **scope, 'video_caller': caller, 'purpose': 'video_transcription',
                            'video_scene_detection': (body.video_scene_detection or SceneDetectionSettings()).model_dump(),
-                           'video_detector': 'presentation-v3',
+                           'video_detector': 'presentation-v3' if body.video_scene_detection is not None or body.video_scene_mode == 'custom' else video_detail.VERSION,
                            'model': selected['public_id'], 'language': language, 'compute_device': device,
                            'compute_device_name': device_name, 'export_formats': []}
+                payload['video_scene_mode'] = 'auto' if payload['video_detector'] == video_detail.VERSION else 'custom'
+                if payload["video_detector"] == video_detail.VERSION:
+                    payload["video_scene_detail"] = body.video_scene_detail or "balanced"
+                    payload.pop("video_scene_detection", None)
                 job, replayed = await run_in_threadpool(store.complete, config, row, payload, api.idempotency_key_hash(key), fingerprint)
                 if replayed:
                     response.status_code = 200
@@ -557,13 +576,28 @@ def register(app: Any, api: Any) -> None:
             folder = config.jobs_dir / job_id / 'output/frames'
             before = {p.name for p in folder.glob('*.jpg')}
             try:
-                strict = video.get('detector') == 'presentation-v3'
+                strict = video.get('detector') in {'presentation-v3', *video_detail.DETECTORS}
                 if strict and body.action in {'merge_next', 'split', 'boundary'}:
                     from .video_detection import materialize, stable_representatives
                     affected = values[index:index + (2 if body.action in {'split', 'boundary'} else 1)]
                     source = Path(job['request']['input_path'])
-                    stable_representatives(source, folder.parent / 'scene-features', video.get('roi'), affected,
-                                           video['scene_detection']['min_stable_seconds'], lambda *args: None)
+                    if video['detector'] in video_detail.DETECTORS:
+                        from . import video_auto_index
+                        from .video_detection import source_samples
+                        try:
+                            _, records = video_auto_index.read(folder.parent/video_auto_index.NAME, source, video.get('roi'), version=video_detail.INDEX_VERSIONS[video['detector']])
+                        except (OSError, ValueError, KeyError, TypeError):
+                            detector = video_detail.DETECTORS[video['detector']]()
+                            records = []
+                            for t, frame in source_samples(source, video.get('roi'), max(0., affected[0]['start']-6), affected[-1]['end'], True):
+                                detector.feed(frame, t)
+                                records.append((t, detector.since))
+                            import numpy as np
+                            records = np.asarray(records).reshape(-1, 2)
+                        video_auto_index.select(records, affected)
+                    else:
+                        stable_representatives(source, folder.parent / 'scene-features', video.get('roi'), affected,
+                                               video['scene_detection']['min_stable_seconds'], lambda *args: None)
                     materialize(source, affected, folder, video.get('roi'), video.get('time_origin', 0), lambda *args: None)
                 for i, scene in enumerate(values):
                     explicit = body.action == 'frame' and i == index

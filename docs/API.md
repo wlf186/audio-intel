@@ -919,17 +919,17 @@ Set `AUDIO_INTEL_BASE_URL` and optional `AUDIO_INTEL_API_KEY` in the client shel
 
 ### 视频画面检测预览 / Video picture detection previews
 
-`asr.video.scene_detection` in capabilities provides the detector version and min/max/step/default for `min_change_percent` (default 3, range 0.5–50) and `min_stable_seconds` (default 1, range 0.5–5). `POST /api/v1/asr/video-jobs` accepts optional `video_scene_detection` with these fields. Omission uses server defaults; new requests snapshot presentation-v3 and effective settings. Historical retry/idempotent replay preserves its original request. Browser result-page preferences are supplied explicitly on later submissions; paused uploads keep their saved parameters.
+New video jobs default to `video_scene_mode="auto"` (presentation-v6). For presentation-v3, send `video_scene_mode="custom"` or supply `video_scene_detection` alone, including `{}`. Custom settings are discoverable under `asr.video.scene_detection` in capabilities. Combining explicit auto with numeric settings returns 422. Historical retries, idempotent replays and paused uploads retain their saved choices.
 
-capabilities 提供画面检测版本、范围及默认值；视频提交可传 `video_scene_detection` 两项参数，省略时使用服务端推荐值。新任务保存版本与有效参数；历史重试及幂等重放保持原请求。浏览器从结果页记住参数并在后续提交时显式传入，暂停上传不改参数。
+新视频省略模式与参数时启用自动检测。自定义模式允许设置变化比例（默认 3%，范围 0.5–50%）和保持时间（默认 1 秒，范围 0.5–5 秒）。创建预览可传 `mode`、自定义 `settings` 和可选的 `time_range`，例如 `{"revision":1,"mode":"auto","time_range":[3600,3780]}`。时间区间以原视频秒数表示，仅用于对照。应用局部预览或过期修订返回 409，只有完整预览支持应用。就绪预览的 `cache_source` 说明使用的检测数据来源。
 
 | Method / 方法 | Path / 路径 | Contract / 契约 |
 | --- | --- | --- |
-| POST | `/api/v1/jobs/{job_id}/video-scene-previews` | Required `Idempotency-Key`; JSON `revision`, `settings`. First 202, same-request replay 200, conflict 409, busy/disk limit 429 with Retry-After. / 创建预览，不改原结果。 |
+| POST | `/api/v1/jobs/{job_id}/video-scene-previews` | Required `Idempotency-Key`; JSON `revision`, optional `mode`, `settings`, `time_range`. First 202, same-request replay 200, conflict 409, busy/disk limit 429 with Retry-After. / 创建预览，不改原结果。 |
 | GET | `/api/v1/jobs/{job_id}/video-scene-previews/{preview_id}` | State, settings and measured phase progress; ready includes candidate scenes and protected preview URLs. / 查询真实进度与候选画面。 |
 | GET | `/api/v1/jobs/{job_id}/video-scene-previews/{preview_id}/frames/{name}` | Generated preview JPEG only. / 仅该预览生成的图片。 |
 | DELETE | `/api/v1/jobs/{job_id}/video-scene-previews/{preview_id}` | Wait for child exit, discard preview, 204. / 等待进程退出后清理。 |
-| PATCH | `/api/v1/jobs/{job_id}/video-scenes` | `action=apply_detection`, `revision`, `preview_id`; apply a ready preview, 200 with updated result, stale revision 409. / 显式应用。 |
+| PATCH | `/api/v1/jobs/{job_id}/video-scenes` | `action=apply_detection`, `revision`, `preview_id`; apply a complete ready preview, 200 with updated result, stale revision 409. / 显式应用。 |
 
 Preview settings example: `{"revision":1,"settings":{"min_change_percent":3,"min_stable_seconds":1}}`. States are running, ready, failed, cancelled, applying and applied. Progress phases are scanning, detecting, selecting and images; they describe video seconds or prepared image counts, not ASR progress. One active preview; at most eight retained; expiry after 30 minutes or restart returns 410. Idempotency receipts share the preview lifetime. Poll manually after network errors; recreate an expired preview. No inference queue entry is created. All routes require normal session/Bearer authentication and same-origin write protections.
 
@@ -1144,3 +1144,5 @@ HTML/Word topic exports accept optional `merge_repeated_topics:false` to use chr
 Browser-local paragraph comparison and compact timeline panels reuse existing result/media reads; they add no endpoints or request fields. Paragraph comparison does not submit optimization, seek media or change export scope. / 浏览器单段对照和紧凑时间轴复用既有读取接口，不新增端点或字段，不提交优化、不改变播放时间或导出范围。
 
 Document narration options are accepted by segmentation preview as a JSON object and by document submission as the `narration_options` JSON form string. New imports default to skipping high-confidence page numbers, note references and note bodies, with short structural pauses. API-only source-range overrides use Unicode code-point offsets and require the current analysis revision. Retained imports can be explicitly reanalyzed using `POST /api/v1/tts/document-imports/{identifier}/reanalyze` with `Idempotency-Key`; old jobs and audio remain unchanged. See [narration annotations and pauses](DOCUMENT_TTS.md#辅助文本与自然停顿--narration-annotations-and-pauses) for fields, errors, defaults and executable examples.
+
+自动检测 v5 支持截图详略。提交视频或创建预览时可传 `video_scene_detail`（`concise`、默认 `balanced`、`detailed`），自定义模式混传返回 422。历史任务重试沿用原版本。首次完整分析建立共享时间索引；切档只对所选代表图取图。仅整片预览可以应用并合并相邻讲解时段。浏览器记住上传时选择或成功应用的档位。

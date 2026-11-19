@@ -12,6 +12,7 @@ import uuid
 import zipfile
 import zlib
 from pathlib import Path
+from collections import deque
 from contextlib import ExitStack
 from typing import Any, Callable
 
@@ -20,6 +21,7 @@ import numpy as np
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import video_detail
 from .video_frames import crop_picture, features, picture_at, picture_from_container, save_picture
 
 VERSION = 'presentation-v3'
@@ -47,13 +49,18 @@ class DetectionLimit(BaseModel):
 
 class SceneDetectionCapability(BaseModel):
     detector: str
+    default_mode: str = 'auto'
+    modes: list[str] = ['auto', 'custom']
+    detail_levels: list[str] = ['concise', 'balanced', 'detailed']
+    default_detail: str = 'balanced'
+    range_preview: bool = True
     preview: bool
     min_change_percent: DetectionLimit
     min_stable_seconds: DetectionLimit
 
 
 def capability() -> dict:
-    return {'detector': VERSION, 'preview': True,
+    return {'default_mode': 'auto', 'modes': ['auto', 'custom'], 'range_preview': True, 'detector': video_detail.VERSION, 'detail_levels': ['concise', 'balanced', 'detailed'], 'default_detail': 'balanced', 'preview': True,
             'min_change_percent': {'min': .5, 'max': 50, 'step': .5, 'default': 3},
             'min_stable_seconds': {'min': .5, 'max': 5, 'step': .1, 'default': 1}}
 
@@ -139,6 +146,46 @@ class Detector:
                             'end': end, 'frame_time': max(self.start, min(self.frame_time, math.nextafter(end, 0)))})
 
 
+class StableDetector(Detector):
+    """Select representatives as soon as a sample's section is known.
+
+    A prospective cut can be backdated to candidate_time. Keep only that
+    unconfirmed suffix and deliver earlier samples to the fixed-reference
+    selector in timestamp order. A confirmed cut resets the selector.
+    """
+    def __init__(self, settings: dict | SceneDetectionSettings):
+        super().__init__(settings)
+        self.pending_samples: deque = deque()
+        self.reference: np.ndarray | None = None
+        self.reference_time = 0.
+        self.qualified: float | None = None
+
+    def _drain_before(self, end: float) -> None:
+        while self.pending_samples and self.pending_samples[0][0] < end:
+            timestamp, rgb = self.pending_samples.popleft()
+            if self.reference is None or difference(self.reference, rgb) >= .004:
+                self.reference = rgb.copy()
+                self.reference_time = timestamp
+            if timestamp - self.reference_time >= self.settings.min_stable_seconds:
+                self.qualified = self.reference_time
+
+    def feed(self, rgb: np.ndarray, timestamp: float) -> None:
+        super().feed(rgb, timestamp)
+        self.pending_samples.append((timestamp, rgb))
+        # An EOF timestamp is outside the final section. Hold the last sample
+        # until either a later timestamp or the measured duration is available.
+        self._drain_before(self.candidate_time if self.candidate is not None else timestamp)
+
+    def flush(self, end: float) -> None:
+        self._drain_before(end)
+        count = len(self.scenes)
+        super().flush(end)
+        if len(self.scenes) > count:
+            self.scenes[-1]['frame_time'] = self.qualified
+            self.reference = None
+            self.qualified = None
+
+
 def identity(source: Path, roi: dict | None) -> dict:
     stat = source.stat()
     return {'version': CACHE_VERSION, 'size': stat.st_size, 'mtime_ns': stat.st_mtime_ns,
@@ -154,6 +201,20 @@ class FeatureWriter:
         self.arrays: list[np.ndarray] = []
         self.times: list[float] = []
         self.chunks = 0
+        self.ranges = []
+        self.full = True
+        self.duration_hint = 0.
+        self.stride = 1
+        self.samples_seen = 0
+        self.skipped: list[list[float]] = []
+        self.previous_skipped = False
+        other = folder.parent / "scene-auto-index.bin"
+        try:
+            self.limit = CACHE_LIMIT - sum(p.stat().st_size for p in (other,folder.parent/"scene-auto-range.bin") if p.is_file())
+        except FileNotFoundError:
+            self.limit = CACHE_LIMIT
+        except OSError:
+            self.limit = 0
         self.bytes = 0
         self.enabled = True
         try:
@@ -162,8 +223,18 @@ class FeatureWriter:
             self.enabled = False
 
     def add(self, rgb: np.ndarray, timestamp: float) -> None:
-        if not self.enabled:
+        if not self.enabled or not self.full:
             return
+        block = self.samples_seen // CHUNK_SIZE
+        self.samples_seen += 1
+        if block % self.stride:
+            if self.previous_skipped:
+                self.skipped[-1][1] = timestamp
+            else:
+                self.skipped.append([timestamp, timestamp])
+            self.previous_skipped = True
+            return
+        self.previous_skipped = False
         self.arrays.append(rgb.copy())
         self.times.append(timestamp)
         if len(self.arrays) == CHUNK_SIZE:
@@ -179,24 +250,35 @@ class FeatureWriter:
             np.savez_compressed(buffer, frames=data, times=np.asarray(self.times, dtype=np.float64))
             payload = buffer.getvalue()
             check_resources(work=len(payload))
-            if self.bytes + len(payload) > CACHE_LIMIT or shutil.disk_usage(self.staging).free - len(payload) < self.min_free:
-                raise OSError('Feature cache budget exhausted')
+            if self.bytes + len(payload) + 1024 + 96*(self.chunks+len(self.skipped)+1) > self.limit or shutil.disk_usage(self.staging).free - len(payload) < self.min_free:
+                self.full = False
+                return
             (self.staging / f'{self.chunks:06d}.npz').write_bytes(payload)
             self.bytes += len(payload)
+            self.ranges.append([self.times[0], self.times[-1]])
             self.chunks += 1
+            # For high-motion long videos distribute complete lossless blocks
+            # across the timeline. Omitted samples are explicit in the manifest.
+            expected = math.ceil(self.duration_hint / (.5 * CHUNK_SIZE))
+            self.stride = max(1, math.ceil(expected * self.bytes / (self.chunks * max(1, self.limit))))
         except (OSError, AsrResourceLimitError):
-            self.abort()
+            self.full = False
+            try:
+                (self.staging / f'{self.chunks:06d}.npz').unlink(missing_ok=True)
+            except OSError:
+                self.abort()
         finally:
             self.arrays.clear()
             self.times.clear()
 
     def finish(self, duration: float, origin: float) -> bool:
         self._chunk()
-        if not self.enabled:
+        if not self.enabled or not self.chunks:
+            self.abort()
             return False
         try:
             (self.staging / 'manifest.json').write_text(json.dumps({
-                **self.identity, 'chunks': self.chunks, 'duration': duration, 'time_origin': origin}), encoding='utf-8')
+                **self.identity, 'chunks': self.chunks, 'ranges': self.ranges, 'skipped': self.skipped, 'complete': self.full and not self.skipped, 'duration': duration, 'time_origin': origin}), encoding='utf-8')
             # Readers/builders for a task are serialized by the preview manager.
             if self.folder.exists():
                 shutil.rmtree(self.folder)
@@ -211,15 +293,41 @@ class FeatureWriter:
         shutil.rmtree(self.staging, ignore_errors=True)
 
 
-def cached_samples(folder: Path, source: Path, roi: dict | None):
+def cached_samples(folder: Path, source: Path, roi: dict | None, start=0., end=math.inf):
     manifest = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))
     if any(manifest.get(k) != v for k, v in identity(source, roi).items()):
         raise ValueError('Feature cache identity mismatch')
     count = manifest['chunks']
     if not isinstance(count, int) or not 0 < count <= math.ceil(manifest['duration'] / .49 / CHUNK_SIZE) + 1:
         raise ValueError('Invalid feature cache length')
+    ranges = manifest.get('ranges')
+    if ranges is not None:
+        if not isinstance(ranges, list) or len(ranges) != count:
+            raise ValueError('Invalid cache index length')
+        previous_end = -1.
+        for pair in ranges:
+            if not isinstance(pair, list) or len(pair) != 2 or not all(isinstance(t, (int, float)) for t in pair):
+                raise ValueError('Invalid cache index')
+            if not previous_end < pair[0] <= pair[1] <= manifest['duration']:
+                raise ValueError('Invalid cache index timestamps')
+            previous_end = pair[1]
+    elif start or math.isfinite(end):
+        raise ValueError('Historical cache has no range index')
+    skipped = manifest.get('skipped', [])
+    if not isinstance(skipped, list):
+        raise ValueError('Invalid feature coverage')
+    for gap in skipped:
+        if (not isinstance(gap, list) or len(gap) != 2 or not all(isinstance(t, (int, float)) for t in gap)
+                or not 0 <= gap[0] <= gap[1] <= manifest['duration']):
+            raise ValueError('Invalid feature coverage')
+        if gap[0] < end and gap[1] >= start:
+            raise ValueError('Range crosses uncached samples')
+    if not manifest.get('complete', True) and (not ranges or end > ranges[-1][1]):
+        raise ValueError('Range outside cached coverage')
     previous = -1.
     for index in range(count):
+        if ranges and (ranges[index][1] < start or ranges[index][0] >= end):
+            continue
         path = folder / f'{index:06d}.npz'
         with zipfile.ZipFile(path) as archive:
             if set(archive.namelist()) != {'frames.npy', 'times.npy'} or any(
@@ -235,7 +343,8 @@ def cached_samples(folder: Path, source: Path, roi: dict | None):
             if not np.isfinite(timestamp) or timestamp <= previous or timestamp > manifest['duration']:
                 raise ValueError('Invalid feature cache timestamp')
             previous = float(timestamp)
-            yield float(timestamp), rgb
+            if start <= timestamp < end:
+                yield float(timestamp), rgb
 
 
 def scan(source: Path, roi: dict | None, detector: Detector, writer: FeatureWriter, progress: Callable) -> tuple[float, float]:
@@ -246,6 +355,7 @@ def scan(source: Path, roi: dict | None, detector: Detector, writer: FeatureWrit
             stream = next(s for s in container.streams.video if not s.disposition & av.stream.Disposition.attached_pic)
             origin = float(container.start_time or 0) / av.time_base
             duration = float(container.duration or 0) / av.time_base
+            writer.duration_hint = duration
             for frame in container.decode(stream):
                 timestamp = max(0., float(frame.time or 0) - origin)
                 end = max(end, timestamp + float(frame.duration or 0) * float(frame.time_base))
@@ -279,7 +389,10 @@ def materialize(source: Path, scenes: list[dict], folder: Path, roi: dict | None
                     if name and existing_folder and (existing_folder / name).is_file():
                         folder.mkdir(parents=True, exist_ok=True)
                         if not (folder / name).is_file():
-                            shutil.copyfile(existing_folder / name, folder / name)
+                            try:
+                                os.link(existing_folder / name, folder / name)
+                            except OSError:
+                                shutil.copyfile(existing_folder / name, folder / name)
                     else:
                         if container is None:
                             container = stack.enter_context(av.open(str(source)))
@@ -317,15 +430,20 @@ def select_representatives(samples, scenes: list[dict], hold: float, progress: C
         progress('selecting', timestamp, scenes[-1]['end'])
 
 
-def source_samples(source: Path, roi: dict | None):
+def source_samples(source: Path, roi: dict | None, start=0., end=math.inf, auto=False):
     last = -1.
     with av.open(str(source)) as container:
         stream = next(s for s in container.streams.video if not s.disposition & av.stream.Disposition.attached_pic)
         origin = float(container.start_time or 0) / av.time_base
+        if start:
+            container.seek(int((origin + start) / float(stream.time_base)), stream=stream, backward=True)
+        from .video_auto import sample
         for frame in container.decode(stream):
             timestamp = max(0., float(frame.time or 0) - origin)
-            if timestamp - last >= .49:
-                yield timestamp, thumbnail(frame, roi)
+            if timestamp >= end:
+                break
+            if timestamp >= start and timestamp - last >= .49:
+                yield timestamp, sample(frame, roi) if auto else thumbnail(frame, roi)
                 last = timestamp
 
 
@@ -338,9 +456,78 @@ def stable_representatives(source: Path, cache: Path, roi: dict | None, scenes: 
 
 
 def preview(request: dict, folder: Path, progress: Callable) -> dict:
+    from . import video_auto, video_auto_index
     source, cache = Path(request['source']), Path(request['cache'])
     roi = request['roi']
-    detector = Detector(request['settings'])
+    interval = request.get('time_range')
+    auto = request.get('mode') == 'auto'
+
+    def image_progress(phase, completed, total):
+        if shutil.disk_usage(folder).free < request['min_free']:
+            raise OSError('Insufficient storage')
+        progress(phase, completed, total)
+
+    detail = request.get('video_scene_detail')
+    if auto or interval or 'snapshot' in request:
+        start, end = interval if interval else (0., request['duration'])
+        hit = 'snapshot' in request
+        reuse = 'snapshot' if hit else 'source'
+        snapshot = request.get('snapshot')
+        if auto and not hit:
+            scopes = [None, interval] if detail and interval else [None]
+            for scope in scopes:
+                name = video_auto_index.RANGE_NAME if scope else video_auto_index.NAME
+                try:
+                    saved, records = video_auto_index.read(cache.parent/name, source, roi,
+                                                          version=video_detail.INDEX_VERSIONS[video_detail.VERSION] if detail else 1, interval=scope)
+                    del records
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue
+                if detail and interval and scope is None and len(saved[detail]) > 2000:
+                    continue
+                snapshot = video_detail.selected(saved, detail) if detail else saved
+                reuse = 'auto_index'
+                hit = True
+                break
+        if hit:
+            scenes = [dict(s) for s in snapshot if s['end'] > start and s['start'] < end]
+        else:
+            low, high = max(0., start - 6), min(request['duration'], end + 6)
+
+            def analyze(samples, phase):
+                detector = video_auto.AutoDetector(low) if auto else StableDetector(request['settings'])
+                if detail:
+                    detector = video_detail.ReadingDetector(low)
+                index = video_auto_index.SampleIndex() if auto and (detail or not interval) else None
+                detector.start = low
+                for timestamp, rgb in samples():
+                    detector.feed(rgb, timestamp)
+                    if index is not None:
+                        index.add(timestamp, detector.since)
+                    progress(phase, timestamp-low, high-low)
+                detector.flush(high)
+                if detail:
+                    index.save(cache.parent/(video_auto_index.RANGE_NAME if interval else video_auto_index.NAME),
+                               source, roi, detector.outputs, request['min_free'], version=video_detail.INDEX_VERSIONS[video_detail.VERSION], interval=interval)
+                    return [s for s in detector.result(detail) if s['end'] > start and s['start'] < end]
+                if index is not None:
+                    index.save(cache.parent/video_auto_index.NAME, source, roi, detector.scenes, request['min_free'])
+                return [s for s in detector.scenes if s['end'] > start and s['start'] < end]
+
+            if not auto:
+                try:
+                    scenes = analyze(lambda: cached_samples(cache, source, roi, low, high), 'detecting')
+                    hit = True
+                    reuse = 'features'
+                except (OSError, ValueError, KeyError, zipfile.BadZipFile, EOFError, zlib.error):
+                    pass
+            if not hit:
+                scenes = analyze(lambda: source_samples(source, roi, low, high, auto), 'scanning')
+        materialize(source, scenes, folder/'frames', roi, request['time_origin'], image_progress,
+                    request.get('snapshot', request.get('existing_scenes')), Path(request['existing_frames']))
+        return dict(scenes=scenes, settings=request['settings'], detector=video_detail.VERSION if detail else video_auto.VERSION if auto else VERSION,
+                    contract_version=2, cache_hit=hit, cache_source=reuse)
+    detector = StableDetector(request['settings'])
     hit = False
     try:
         for timestamp, rgb in cached_samples(cache, source, roi):
@@ -348,18 +535,19 @@ def preview(request: dict, folder: Path, progress: Callable) -> dict:
             progress('detecting', timestamp, request['duration'])
         hit = True
     except (OSError, ValueError, KeyError, zipfile.BadZipFile, EOFError, zlib.error):
-        detector = Detector(request['settings'])
+        detector = StableDetector(request['settings'])
         writer = FeatureWriter(cache, source, roi, request['min_free'])
+        try:
+            manifest = json.loads((cache / 'manifest.json').read_text(encoding='utf-8'))
+            if manifest.get('complete') is False and all(manifest.get(k) == v for k, v in identity(source, roi).items()):
+                writer.abort()
+        except (OSError, ValueError):
+            pass
         scan(source, roi, detector, writer, progress)
     detector.flush(request['duration'])
-    stable_representatives(source, cache, roi, detector.scenes, detector.settings.min_stable_seconds, progress)
-    def image_progress(phase, completed, total):
-        if shutil.disk_usage(folder).free < request['min_free']:
-            raise OSError('Insufficient storage')
-        progress(phase, completed, total)
     materialize(source, detector.scenes, folder / 'frames', roi, request['time_origin'], image_progress,
                 request.get('existing_scenes'), Path(request['existing_frames']))
-    return {'scenes': detector.scenes, 'settings': detector.settings.model_dump(), 'detector': VERSION, 'contract_version': 2, 'cache_hit': hit}
+    return {'scenes': detector.scenes, 'settings': detector.settings.model_dump(), 'detector': VERSION, 'contract_version': 2, 'cache_hit': hit, 'cache_source': 'features' if hit else 'source'}
 
 
 class PreviewProgress:

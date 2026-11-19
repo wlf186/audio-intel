@@ -1,6 +1,6 @@
 export type SceneDetectionSettings={min_change_percent:number;min_stable_seconds:number}
 type Limit={min:number;max:number;step:number;default:number}
-export type SceneDetectionCapability={detector:string;preview:boolean;min_change_percent:Limit;min_stable_seconds:Limit}
+export type SceneDetectionCapability={detector:string;default_mode?:SceneMode;modes?:string[];detail_levels?:SceneDetail[];range_preview?:boolean;preview:boolean;min_change_percent:Limit;min_stable_seconds:Limit}
 const key='audio-intel:video-scene-detection:v1'
 export function detectionDefaults(capability:SceneDetectionCapability):SceneDetectionSettings{
  return {min_change_percent:capability.min_change_percent.default,min_stable_seconds:capability.min_stable_seconds.default}
@@ -13,3 +13,14 @@ export function loadDetection(capability:SceneDetectionCapability):SceneDetectio
  return detectionDefaults(capability)
 }
 export function saveDetection(value:SceneDetectionSettings){try{localStorage.setItem(key,JSON.stringify(value))}catch{/* Applying a result does not depend on browser storage. */}}
+
+export type SceneMode='auto'|'custom'
+export function loadSceneMode():SceneMode{try{return localStorage.getItem('audio-intel:video-scene-mode:v1')==='custom'?'custom':'auto'}catch{return 'auto'}}
+export function saveSceneMode(value:SceneMode){try{localStorage.setItem('audio-intel:video-scene-mode:v1',value)}catch{/* Optional preference. */}}
+
+export type SceneDetail='concise'|'balanced'|'detailed'
+export function loadSceneDetail():SceneDetail{
+ try{const value=localStorage.getItem('audio-intel:video-scene-detail:v1');if(value==='concise'||value==='detailed')return value}catch{/* Optional preference. */}
+ return 'balanced'
+}
+export function saveSceneDetail(value:SceneDetail){try{localStorage.setItem('audio-intel:video-scene-detail:v1',value)}catch{/* Optional preference. */}}

@@ -127,7 +127,8 @@ def test_video_end_to_end_edit_pdf_and_idempotency(client,local,tmp_path):
     data=video_file(tmp_path/'input.mp4')
     assert probe(tmp_path/'input.mp4')['width']==320
     item=upload(client,data)
-    body={'upload_id':item['id'],'compute_device':'cpu','use_voiceprint_library':False}
+    controls={'min_change_percent':4,'min_stable_seconds':1.5}
+    body={'upload_id':item['id'],'compute_device':'cpu','use_voiceprint_library':False,'video_scene_detection':controls}
     headers={'Idempotency-Key':'video-job-0001'}
     response=client.post('/api/v1/asr/video-jobs',json=body,headers=headers)
     assert response.status_code==202,response.text
@@ -143,6 +144,7 @@ def test_video_end_to_end_edit_pdf_and_idempotency(client,local,tmp_path):
     result=db.get_job(job['id'])
     assert outcome['state']=='succeeded',result.get('error_message')
     video=result['result']['video'];assert len(video['scenes'])==2
+    assert video['scene_detection']==controls
     root='/api/v1/jobs/'+job['id']
     document = client.post(root+'/transcript-export',json={})
     assert document.content.startswith(b'<!doctype html>')

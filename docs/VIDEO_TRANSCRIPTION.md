@@ -22,9 +22,9 @@ Unfinished uploads expire after **24 idle hours** or **7 days from creation**, a
 
 ## 画面与讨论 / Images and discussion
 
-面向 PPT 讲解、屏幕录制。新任务使用 presentation-v3，按约 0.5 秒抽样，结合变化面积、候选持续时间与内容边缘保留率判断切换；同一页逐步显示内容尽量合并，保留稳定完整画面。旧任务重试保留其原有 v1/v2 版本。非相邻的重复页面保留各自时间范围。默认最多 2,000 段，超过时明确失败并提示拆分源文件。这里的「关键帧」指内容代表画面，不是视频编码的 I 帧。
+面向 PPT 讲解、屏幕录制。精简档优先保留完整观点，均衡档还保留关键操作步骤，详细档保留逐项揭示。遇到退场动画时，代表图可以选在中段。新任务默认使用 presentation-v6 自动检测。自定义模式沿用 presentation-v3，按约 0.5 秒抽样，结合变化面积、候选持续时间与内容边缘保留率判断切换；同一页逐步显示内容尽量合并，保留稳定完整画面。旧任务重试保留其原有检测器版本。非相邻的重复页面保留各自时间范围。默认最多 2,000 段，超过时明确失败并提示拆分源文件。这里的「关键帧」指内容代表画面，不是视频编码的 I 帧。
 
-Designed for slides and screen recordings. New tasks use presentation-v3: samples about every 0.5 seconds combine changed area, candidate duration and content retention. Incremental builds are merged where possible, retaining a stable complete frame. Historical retries retain their original v1/v2 detector. Nonadjacent repeated pages retain separate time ranges. More than 2,000 sections fails explicitly with a request to split the source. These are content representatives, not codec I-frames.
+Designed for slides and screen recordings. New tasks use presentation-v6 auto. Custom presentation-v3 uses the earlier rules: samples about every 0.5 seconds combine changed area, candidate duration and content retention. Incremental builds are merged where possible, retaining a stable complete frame. Historical retries retain their original detector. Nonadjacent repeated pages retain separate time ranges. More than 2,000 sections fails explicitly with a request to split the source. These are content representatives, not codec I-frames.
 
 视频时刻依据媒体 PTS，与音轨共用起点；音轨延迟以静音补齐，不按帧序号推算时间。跨页发言有完整可靠的逐词对齐时按词分配，否则整句归属时间重叠最多的一页，保持原文、不丢句。画面分析是启发式算法，不做 OCR 或语义理解；短于抽样/稳定窗口的页面、相似模板、复杂动画、镜头移动可能需要修正。带讲者小窗时可先框选 PPT 区域。
 
@@ -181,7 +181,7 @@ Audio processing is a compact status button beside downloads; its popover shows 
 
 ## 结果页画面检测 / Picture detection in results
 
-在「任务与结果 → 图文阅读 → 画面检测」设置最小画面变化比例（默认 3%，0.5–50%）与新画面最短保持时间（默认 1 秒）。具体范围与默认值以 capabilities 为准。同页增量显示尽量合并。
+在「任务与结果 → 图文阅读 → 画面检测」的自定义模式设置最小画面变化比例（默认 3%，0.5–50%）与新画面最短保持时间（默认 1 秒）。具体范围与默认值以 capabilities 为准。同页增量显示尽量合并。
 
 presentation-v3 将分段和截图确认分开：截图需要在同一分段内连续稳定达到用户配置的 `min_stable_seconds`，与音频、句子时长无关。截图使用独立的降噪容差（显著颜色变化面积低于 0.4%），小通知不能因低于分段面积阈值而绕过确认。多个合格区间采用最后一个区间的首个实际采样帧；短暂变化不覆盖已确认截图。无合格画面时 `image`、`frame_time` 和预览 `preview_url` 为 null，阅读界面与 HTML/DOCX 保留独立的文字和时间段，不显示大幅缺图占位；画面目录只列保留截图，缺图空文字段默认省略展示，检测明细仍可查看“无稳定画面”；这不是加载错误或导出隐藏。分段范围与截图时刻分别显示。
 
@@ -191,13 +191,13 @@ Presentation-v3 separates sections from screenshot confirmation. Automatic pictu
 
 Duration remains 0.5–5 seconds with a 0.1-second input step, including 0.6. Sampling remains about 0.5 seconds. Confirmation uses observed elapsed time without early acceptance, crossing sections or padding EOF; fractional settings may wait until the next sample. This remains a noise-tolerant visual heuristic without OCR or notification recognition. Explicit manual frame selection retains its API semantics.
 
-打开「画面检测」即显示当前画面及导出隐藏标记，无需先检测。点击「预览检测」后比较当前／候选画面，再点击「应用预览」；应用后弹窗保持打开。预览不改变结果，也不重跑音频转写；存在人工分段或截图修改时须勾选替换确认。其他客户端修改分段后必须重新预览。应用保留原转写文字、说话人和时间戳，更新画面及讨论归属。API 的 restore 操作恢复最近一次成功应用的自动分段；首次自动分段快照仍保留。旧结果不自动重算，旧任务重试沿用原算法。
+打开「画面检测」即显示当前画面及导出隐藏标记，无需先检测。按「预览此时段」或「预览整片」后，按时间浏览本次截图，点图可放大、翻页、查看原始尺寸。可单独切换到已应用画面；仅完整预览支持「应用到整片」；应用后弹窗保持打开。预览不改变结果，也不重跑音频转写；存在人工分段或截图修改时须勾选替换确认。其他客户端修改分段后必须重新预览。应用保留原转写文字、说话人和时间戳，更新画面及讨论归属。API 的 restore 操作恢复最近一次成功应用的自动分段；首次自动分段快照仍保留。旧结果不自动重算，旧任务重试沿用原算法。
 
-Opening Picture detection shows current pictures immediately. Preview the candidate count, times and images before applying; applying keeps the dialog open for export visibility selection. Preview leaves the result unchanged and does not rerun ASR. Replacing manual sections or images requires explicit confirmation. Concurrent edits require a new preview. Apply preserves transcript text, speaker identities and timestamps while updating picture boundaries and discussion grouping. The backend restore action restores the most recently applied detection; the first automatic snapshot remains available. Legacy results are not recomputed automatically and retries retain their original detector.
+Opening Picture detection shows current pictures immediately. Browse the chronological preview gallery independently of applied pictures. Open a thumbnail to inspect at actual size or step through pictures before applying a whole-video preview; applying keeps the dialog open for export visibility selection. Preview leaves the result unchanged and does not rerun ASR. Replacing manual sections or images requires explicit confirmation. Concurrent edits require a new preview. Apply preserves transcript text, speaker identities and timestamps while updating picture boundaries and discussion grouping. The backend restore action restores the most recently applied detection; the first automatic snapshot remains available. Legacy results are not recomputed automatically and retries retain their original detector.
 
-应用成功后，浏览器在独立的 `audio-intel:video-scene-detection:v1` localStorage 中保存这两项参数，刷新、关闭浏览器或退出登录后保留，用于该浏览器后续提交的视频；其他浏览器使用各自偏好。已有任务优先显示自己的实际设置。「恢复默认值」只重置待预览参数，重新预览并应用后才更新任务和偏好。未应用草稿关闭弹窗即丢弃。新建页不增加控件，暂停上传继续使用上传开始时保存的参数。
+应用成功后，浏览器在独立的 `audio-intel:video-scene-detection:v1` localStorage 中保存这两项参数，刷新、关闭浏览器或退出登录后保留，用于该浏览器后续提交的视频；其他浏览器使用各自偏好。已有任务优先显示自己的实际设置。「恢复默认值」只重置待预览参数，重新预览并应用后才更新任务和偏好。未应用草稿关闭弹窗即丢弃。新建视频页可在上传框下调整并记住这两个值，首次解析立即生效。暂停上传继续使用上传开始时保存的参数。
 
-After successful apply, the two settings are saved in the browser's independent `audio-intel:video-scene-detection:v1` localStorage, surviving reload, browser close and sign-out, and used for subsequent videos submitted from that browser. Existing tasks display their own applied settings. Restore defaults changes only the pending controls; preview and apply to update the task and preference. Closing the dialog discards unapplied drafts. Creation forms add no controls; resumed uploads retain their original submission snapshot.
+After successful apply, the two settings are saved in the browser's independent `audio-intel:video-scene-detection:v1` localStorage, surviving reload, browser close and sign-out, and used for subsequent videos submitted from that browser. Existing tasks display their own applied settings. Restore defaults changes only the pending controls; preview and apply to update the task and preference. Closing the dialog discards unapplied drafts. The video upload form remembers valid edits and uses them for the initial detection pass. Resumed uploads retain their original submission snapshot.
 
 首次分析顺带生成分块压缩的本地特征缓存，旧任务首次预览时补建。缓存位于任务目录，计入任务空间占用，删除任务时一起清理；每任务最多 512 MiB，超限或缓存失败可重新扫描，不影响转写成功。预览在独立 CPU 进程运行，全局最多一个，最多保留八份已完成预览；30 分钟或服务重启后失效。取消等待进程退出。全部图片、缓存和计算都留在本地。
 
@@ -213,13 +213,13 @@ AUDIO_INTEL_BASE_URL=http://127.0.0.1:20810 \
 
 ## 导出画面显示 / Export picture visibility
 
-“画面检测”的当前画面每批展示 12 张，接近底部自动加载下一批。可勾选一张或多张、全选已加载画面，再选择“导出时隐藏”或“恢复导出”；“全部恢复”恢复所有画面。操作立即随任务保存，刷新或换浏览器后仍有效。保存失败保留选择；修订冲突需关闭并重新打开。
+“画面检测”的当前画面每批展示 12 张，接近底部自动加载下一批。进入「管理导出画面」可勾选一张或多张、全选已加载画面，再选择“导出时隐藏”或“恢复导出”；“全部恢复”恢复所有画面。操作立即随任务保存，刷新或换浏览器后仍有效。保存失败保留选择；修订冲突需关闭并重新打开。
 
 隐藏仅影响导出：HTML/DOCX 用“画面已隐藏”占位框替代图片，编号、时间和文字保留；JSON 携带隐藏标记，TXT/SRT/VTT 保持完整文字。图文阅读显示原图及“导出时隐藏”标记，时间轴和原媒体不变。文字脱敏关闭时，画面隐藏仍生效。
 
 候选检测预览须先应用，再设置隐藏。修改任一检测参数并成功应用会清除旧标记；单纯修改输入、恢复默认输入、预览或取消均不清除。同参数重新应用仅保留时间范围、代表帧时间和图片均一致的标记。保存隐藏设置会使尚未应用的预览失效；参数保留，可重新预览。
 
-English: Picture detection immediately shows current pictures and export-hidden badges. It loads 12 pictures per batch automatically near the bottom. Select individual or loaded pictures, then Hide in exports, Restore in exports or Restore all. Changes are saved with the task across browsers. Failed saves retain selection; revision conflicts require closing and reopening. HTML/DOCX use a Picture hidden placeholder while retaining section numbers, times and text; JSON includes markers and text formats remain complete. Illustrated reading shows original pictures with export-hidden badges; timeline and source media remain unchanged. Picture hiding is independent of text redaction. Candidate previews must be applied before setting visibility. Applying changed detection parameters clears old markers; editing inputs, resetting inputs, previewing or cancelling does not. Unchanged parameters preserve markers only for identical time ranges, frame times and images. Saving visibility invalidates pending previews without clearing their input settings.
+English: Picture detection immediately shows current pictures and export-hidden badges. It loads 12 pictures per batch automatically near the bottom. Open Manage export pictures and select individual or loaded pictures, then Hide in exports, Restore in exports or Restore all. Changes are saved with the task across browsers. Failed saves retain selection; revision conflicts require closing and reopening. HTML/DOCX use a Picture hidden placeholder while retaining section numbers, times and text; JSON includes markers and text formats remain complete. Illustrated reading shows original pictures with export-hidden badges; timeline and source media remain unchanged. Picture hiding is independent of text redaction. Candidate previews must be applied before setting visibility. Applying changed detection parameters clears old markers; editing inputs, resetting inputs, previewing or cancelling does not. Unchanged parameters preserve markers only for identical time ranges, frame times and images. Saving visibility invalidates pending previews without clearing their input settings.
 
 ### 可编辑 Word 导出 / Editable Word export
 
@@ -264,3 +264,22 @@ Word 每张截图只用一个主标题；缺图内容和其优化标题使用普
 缺图正文的“查看画面”仅点击后请求现有只读帧接口，在内存中解码为临时预览；不创建检测预览任务，不写图片或重写视频，不加入导出。关闭弹窗释放预览，失败可重试，繁忙时遵循 Retry-After。手机详细时间轴默认收起，展开状态仅在当前页面内存中保留，刷新恢复默认；原有阅读、筛选、导出和检测偏好寿命不变。
 
 English: The picture directory numbers retained picture occurrences only. Independent text without a picture remains chronological and is never implicitly assigned to the previous picture. Empty reading blocks are omitted while raw sections/timing remain intact. Word uses one major heading per retained picture, with unillustrated prose and titles as ordinary paragraphs. Formatting-equivalent word alignment preserves original characters and offsets, falling back intact on content differences. Click-only frame previews decode into memory without media files or detection tasks. Mobile timeline expansion is page-memory-only and resets on reload; existing preference lifetimes are unchanged.
+
+## 自动或自定义检测 / Automatic and custom detection
+
+新视频默认使用 presentation-v6 自动检测，无需设置数值。检测稳定的局部内容替换、同页追加和滚动停止后的画面。选择「自定义参数」使用 presentation-v3 的变化面积和保持时间。浏览器记住主动选择的模式，升级前的数值作为自定义初值。旧任务仍使用提交时的版本重试。
+
+New submissions default to automatic detection. Use video_scene_mode=custom for presentation-v3. Supplying only video_scene_detection also selects custom, including an empty object. Explicit auto with numeric settings returns 422. Results retain actual sample timestamps and may have no stable screenshot.
+
+结果弹窗按播放位置初始化三分钟选区，可修改秒数或切换整片。局部试算用额外前后文，跨界段标为延续。仅完整预览可以应用；POST 预览可传 mode 和 time_range（原时间轴的起止秒），相同版本和参数可复用自动快照。局部预览不会修改原文或已应用画面。
+
+The preview endpoint accepts mode and an optional [start, end] time_range in media seconds. Only whole-video previews can be applied. Local previews use boundary context and are advisory. To compare a three-minute interval beginning one hour into a recording:
+
+```bash
+.runtime/api/bin/python scripts/preview_video_scenes.py JOB_ID --mode auto --time-range 3600 3780
+.runtime/api/bin/python scripts/preview_video_scenes.py JOB_ID --mode custom --min-change-percent 2 --min-stable-seconds 1 --apply
+```
+
+六小时转写、预览耗时、磁盘写入和真实片段画面命中数据见[画面检测验证记录](VIDEO_DETECTION_VALIDATION.md)。
+
+自动检测 v5 支持截图详略。提交视频或创建预览时可传 `video_scene_detail`（`concise`、默认 `balanced`、`detailed`），自定义模式混传返回 422。历史任务重试沿用原版本。首次完整分析建立共享时间索引；切档只对所选代表图取图。仅整片预览可以应用并合并相邻讲解时段。浏览器记住上传时选择或成功应用的档位。

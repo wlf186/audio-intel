@@ -109,10 +109,10 @@ def test_cache_budget_is_optional(tmp_path, monkeypatch):
     assert not list(tmp_path.glob('cache*'))
 
 
-def completed_video(client, local):
+def completed_video(client, local, **options):
     data=video_file(local.data_dir/'fixture.mp4')
     uploaded=upload(client,data)
-    response=client.post('/api/v1/asr/video-jobs',json={'upload_id':uploaded['id'],'compute_device':'cpu'},headers={'Idempotency-Key':'detection-job-0001'})
+    response=client.post('/api/v1/asr/video-jobs',json={'upload_id':uploaded['id'],'compute_device':'cpu',**options},headers={'Idempotency-Key':'detection-job-0001'})
     assert response.status_code==202,response.text
     identifier=response.json()['id']
     assert db.claim_job('asr','detector-test')['id']==identifier
@@ -201,12 +201,14 @@ def test_apply_conflict_auth_and_expiry_preserve_result(client,local):
 
 def test_legacy_retry_policy_and_submission_snapshot(client,local):
     job=completed_video(client,local)
-    assert job['request']['video_detector']=='presentation-v3'
-    assert job['request']['video_scene_detection']=={'min_change_percent':3,'min_stable_seconds':1}
+    assert job['request']['video_detector']=='presentation-v6'
+    assert job['request']['video_scene_detail']=='balanced'
+    assert 'video_scene_detection' not in job['request']
     # Historical caller snapshots omit the new optional field. Replaying the
     # same upload/key must not rewrite the persisted request to the new policy.
     old=copy.deepcopy(job['request'])
-    old.pop('video_detector');old.pop('video_scene_detection')
+    for field in ('video_detector', 'video_scene_mode', 'video_scene_detail', 'video_scene_detection'):
+        old.pop(field, None)
     with db.connect() as connection:
         connection.execute('UPDATE jobs SET request_json=? WHERE id=?',(json.dumps(old),job['id']))
     body={'upload_id':old['upload_id'],'compute_device':'cpu'}
@@ -332,7 +334,7 @@ def test_export_visibility_validation_persistence_and_pdf(client, local):
 
 
 def test_detection_visibility_preserved_only_for_unchanged_parameters_and_frames(client, local):
-    job = completed_video(client, local)
+    job = completed_video(client, local, video_scene_detection={})
     root = f"/api/v1/jobs/{job['id']}"
     hidden = [job['result']['video']['scenes'][0]['id']]
     assert client.patch(root+'/video-scenes', json={'revision':1,'action':'set_export_visibility','export_hidden_scene_ids':hidden}).status_code == 200

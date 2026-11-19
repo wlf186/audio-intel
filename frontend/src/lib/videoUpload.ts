@@ -48,6 +48,7 @@ export async function submitVideo(file:File,params:Record<string,unknown>,option
  try{
   let saved=loadVideoResume()
   if(saved&&(saved.name!==file.name||saved.size!==file.size))throw new Error(i18n.t('video.resumeMismatch'))
+  const oldDefault=saved&&!saved.params.video_scene_mode&&!saved.params.video_scene_detection&&(params.video_scene_mode||params.video_scene_detection)
   if(!saved){saved={name:file.name,size:file.size,createKey:createIdempotencyKey(),jobKey:createIdempotencyKey(),params};saveResume(saved)}
   options.onProgress?.({phase:'preparing',loadedBytes:0,totalBytes:file.size})
   let upload:Upload
@@ -71,7 +72,7 @@ export async function submitVideo(file:File,params:Record<string,unknown>,option
    upload=await chunkRequest(`/api/v1/asr/video-uploads/${upload.id}`,block,offset,checksum,file.size,options)
   }
   options.onProgress?.({phase:'creating',loadedBytes:file.size,totalBytes:file.size,percent:100})
-  const job=await request<Job>('/api/v1/asr/video-jobs',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':saved.jobKey},body:JSON.stringify({...saved.params,upload_id:upload.id}),signal:options.signal})
+  const job=await request<Job>('/api/v1/asr/video-jobs',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':saved.jobKey},body:JSON.stringify({...saved.params,...(oldDefault?{video_scene_mode:'custom'}:{}),upload_id:upload.id}),signal:options.signal})
   sessionStorage.removeItem(videoResumeKey)
   return job
  }finally{worker.terminate()}

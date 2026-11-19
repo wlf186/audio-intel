@@ -672,6 +672,8 @@ class VideoAnalysisResponse(PublicModel):
     time_origin: float
     roi: dict[str, float] | None = None
     detector: str
+    video_scene_detail: Literal['concise', 'balanced', 'detailed'] | None = None
+    scene_detection_mode: Literal['auto', 'custom'] | None = None
     scenes: list[VideoSceneResponse]
     original_scenes: list[VideoSceneResponse]
     export_hidden_scene_ids: list[str] = Field(default_factory=list, description='仅导出隐藏的当前画面 ID；缺失表示全部显示 / Current picture IDs hidden only in exports; absent means all visible')

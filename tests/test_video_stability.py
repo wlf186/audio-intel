@@ -149,7 +149,7 @@ def test_empty_preview_apply_edit_restore_exports_and_schema(client, local):
 @pytest.mark.parametrize('detector', ['presentation-v1', 'presentation-v2'])
 def test_historical_retry_keeps_detector_and_original_picture_contract(client, local, detector):
     import json
-    job = completed_video(client, local)
+    job = completed_video(client, local, video_scene_detection={})
     request = copy.deepcopy(job['request'])
     request['video_detector'] = detector
     if detector == 'presentation-v1':

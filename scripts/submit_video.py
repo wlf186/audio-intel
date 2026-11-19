@@ -22,6 +22,8 @@ def main() -> None:
     parser.add_argument('--state', type=Path, default=Path('tmp/video-upload-client.json'))
     parser.add_argument('--device', choices=('cpu', 'gpu'))
     parser.add_argument('--language', default='Auto')
+    parser.add_argument('--scene-detail', choices=('concise','balanced','detailed'))
+    parser.add_argument('--scene-mode', choices=('auto', 'custom'))
     parser.add_argument('--scene-min-change-percent', type=float, help='Minimum changed picture area, 0.5–50 percent')
     parser.add_argument('--scene-min-stable-seconds', type=float, help='Minimum stable picture/screenshot duration, 0.5–5 seconds (0.1-second input step); no qualifying screenshot uses a placeholder')
     parser.add_argument('--pdf', type=Path, help=argparse.SUPPRESS)
@@ -53,7 +55,8 @@ def main() -> None:
 def submit(args: argparse.Namespace) -> None:
     source = args.video.resolve()
     identity = {'path': str(source), 'size': source.stat().st_size}
-    if args.state.exists():
+    resuming = args.state.exists()
+    if resuming:
         state = json.loads(args.state.read_text(encoding='utf-8'))
         if state['file'] != identity:
             raise ValueError('Resume journal belongs to another file; use a different --state')
@@ -63,6 +66,17 @@ def submit(args: argparse.Namespace) -> None:
         controls = {key: getattr(args, argument) for key, argument in (
             ('min_change_percent', 'scene_min_change_percent'), ('min_stable_seconds', 'scene_min_stable_seconds'))
             if getattr(args, argument, None) is not None}
+        mode = getattr(args, 'scene_mode', None)
+        if getattr(args,'scene_detail',None):
+            if controls or mode == 'custom':
+                raise ValueError('Picture detail requires automatic detection')
+            state['parameters']['video_scene_detail'] = args.scene_detail
+        if mode:
+            if mode == 'auto' and controls:
+                raise ValueError('Automatic mode takes no numeric settings')
+            state['parameters']['video_scene_mode'] = mode
+        if not controls and not mode:
+            state['parameters']['video_scene_mode'] = 'auto'
         if controls:
             state['parameters']['video_scene_detection'] = controls
 
@@ -105,6 +119,8 @@ def submit(args: argparse.Namespace) -> None:
                         'Content-Type': 'application/octet-stream', 'Upload-Offset': str(upload['offset']),
                         'Upload-Checksum': hashlib.sha256(block).hexdigest()})
                     print(f"Uploaded {upload['offset']} / {identity['size']} bytes", flush=True)
+            if resuming and not {'video_scene_detection', 'video_scene_mode'}.intersection(state['parameters']):
+                state['parameters']['video_scene_mode'] = 'custom'
             job = call('POST', '/api/v1/asr/video-jobs', headers={'Idempotency-Key': state['job_key']},
                        json={**state['parameters'], 'upload_id': upload['id']})
         elif upload:
