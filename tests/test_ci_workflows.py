@@ -60,7 +60,10 @@ def test_full_checks_remain_on_main_and_tags_with_distinct_reports(platform):
         assert "if" not in check
         assert not check.get("continue-on-error", False)
         assert not job.get("continue-on-error", False)
+        assert "if" not in job
         assert "--grep" not in check["run"] and "--shard" not in check["run"]
+        if kind == "browser":
+            assert "matrix" not in job.get("strategy", {})
         artifacts.extend(step["with"]["name"] for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
     assert len(artifacts) == len(set(artifacts)) == 4
 
