@@ -1,10 +1,14 @@
 # 升级指南
 
-## 从 v0.1.48 升级当前源码 / Upgrading from v0.1.48
+## 从 v0.1.48 升级至 v0.1.49 / Upgrading from v0.1.48 to v0.1.49
 
 SQLite 从 v26 依次迁移到 v27（优化耗时与 Token 统计）和 v28（转写完成后的优化预约）。首次启动前停服，按[升级备份范围](#upgrade-backup-scope)创建 SQLite 一致快照即可；迁移保留已有稿件和媒体。完成部署验收后清理此次临时备份。旧优化稿的一次性清理仅发生在从 v18 或更早版本跨入 v19 时。
 
 Upgrading from v0.1.48 applies database-only migrations for optimization usage (v27) and pending requests (v28). Stop the service and snapshot SQLite before the first startup. Remove the temporary snapshot after deployment acceptance. Existing drafts and media are preserved.
+
+从正式版升级时，请在备份后使用 `./service.sh setup api`（Windows 用 `service.cmd setup api`）同步 API 依赖并重建前端，然后按原配置恢复服务。自动截图的精简档侧重每页最终状态，均衡档保留较大的构建步骤，详细档保留较小的新增元素。已有视频任务可先预览再应用新检测；正式应用会清理依赖旧画面划分的表达优化结果。使用转写导出的客户端应将 PDF 请求切换为 HTML。详见[视频转写](VIDEO_TRANSCRIPTION.md)和 [API 文档](API.md)。
+
+After the backup, run `./service.sh setup api` (Windows: `service.cmd setup api`) to synchronize the API environment and rebuild the frontend, then restore the original services. Preview new scene boundaries before applying them to historical jobs. Applying a new split clears optimization results tied to the previous split. Update transcript export clients to request HTML in place of PDF.
 
 ## 视频画面自动检测 / Automatic picture detection
 
