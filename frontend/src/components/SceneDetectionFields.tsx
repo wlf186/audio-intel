@@ -29,6 +29,6 @@ export function SceneModeChoice({value,onChange,disabled}:{value:string;onChange
 
 export function SceneDetailChoice({value,onChange,disabled}:{value:import('../lib/sceneDetection').SceneDetail;onChange:(v:import('../lib/sceneDetection').SceneDetail)=>void;disabled?:boolean}){
  const {t}=useTranslation()
- return <SceneChoice caption={t('sceneDetection.detail')} label={t('sceneDetection.detail')} value={value} disabled={disabled} onChange={onChange}
+ return <SceneChoice caption={t('sceneDetection.detail')+' · '+t(`sceneDetection.${value}Help`)} label={t('sceneDetection.detail')} value={value} disabled={disabled} onChange={onChange}
   choices={(['concise','balanced','detailed'] as const).map(level=>[level,t(`sceneDetection.${level}`)] as const)}/>
 }

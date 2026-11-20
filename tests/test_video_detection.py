@@ -201,7 +201,7 @@ def test_apply_conflict_auth_and_expiry_preserve_result(client,local):
 
 def test_legacy_retry_policy_and_submission_snapshot(client,local):
     job=completed_video(client,local)
-    assert job['request']['video_detector']=='presentation-v6'
+    assert job['request']['video_detector']=='presentation-v7'
     assert job['request']['video_scene_detail']=='balanced'
     assert 'video_scene_detection' not in job['request']
     # Historical caller snapshots omit the new optional field. Replaying the

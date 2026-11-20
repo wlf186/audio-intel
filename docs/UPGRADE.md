@@ -8,7 +8,7 @@ Upgrading from v0.1.48 applies database-only migrations for optimization usage (
 
 ## 视频画面自动检测 / Automatic picture detection
 
-新上传默认使用 presentation-v6 自动检测的均衡档；旧任务重试沿用持久化的检测器版本。自定义参数仍使用 presentation-v3。此项改动无需 SQLite 迁移或重写历史媒体。按下方本地维护流程重建前端、恢复原有 API 和 worker，并核验进程身份。长视频基准应使用独立服务目录。
+新上传默认使用 presentation-v7 自动检测的均衡档；旧任务重试沿用持久化的检测器版本。自定义参数仍使用 presentation-v3。此项改动无需 SQLite 迁移或重写历史媒体。按下方本地维护流程重建前端、恢复原有 API 和 worker，并核验进程身份。长视频基准应使用独立服务目录。
 
 New video submissions default to automatic detection. Existing jobs retain the detector used at submission. Rebuild the frontend and restore the original service components through local deployment acceptance. This change adds no database migration or required historical file conversion.
 

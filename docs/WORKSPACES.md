@@ -127,9 +127,9 @@ English: Narrow screens use a separate person detail route, with Back/browser hi
 
 English: Enhancement status and saved strengths occupy one compact summary; details show each operation, with partial fallback always visible. History shows per-task owned disk usage and a selection subtotal with unknown counts. Loading/errors never imply zero. Refresh remeasures owned inputs/outputs/temp files, excluding shared libraries/models/database; actual reclaimed space may differ. Clear replacement rules preserves redaction and offers transient exact-text undo; preference storage lifetime is unchanged.
 
-新视频默认使用自动模式的均衡档。结果页「画面检测」显示任务已应用的设置，可选精简、均衡或详细。自定义模式可调整变化比例与保持时间，先预览、再应用，详见[视频转写](VIDEO_TRANSCRIPTION.md#结果页画面检测--picture-detection-in-results)。成功应用后记住本浏览器后续视频参数，当前任务仍保留自己的设置；默认值重置只修改待预览值。弹窗关闭丢弃草稿，不占用主阅读区高度。
+新视频默认使用自动模式的均衡档。结果页「画面检测」显示任务已应用的设置，精简档优先保留完整页，均衡档保留关键讲解步骤，详细档还保留逐项揭示。自定义模式可调整变化比例与保持时间，先预览、再应用，详见[视频转写](VIDEO_TRANSCRIPTION.md#结果页画面检测--picture-detection-in-results)。成功应用后记住本浏览器后续视频参数，当前任务仍保留自己的设置；默认值重置只修改待预览值。弹窗关闭丢弃草稿，不占用主阅读区高度。
 
-New videos default to automatic Balanced detection. The result dialog opens with the job’s applied settings. Choose Concise, Balanced or Detailed, or switch to Custom to set change area and stable duration. Applied settings are remembered for future videos in this browser; each existing task keeps its own settings. Reset affects pending controls only. Closing discards the draft and the dialog adds no height to the reading area. See [video transcription](VIDEO_TRANSCRIPTION.md#结果页画面检测--picture-detection-in-results).
+New videos default to automatic Balanced detection. The result dialog opens with the job’s applied settings. For slides, choose Concise for complete pages, Balanced for key steps, or Detailed for individual reveals. Custom lets you set change area and stable duration. Applied settings are remembered for future videos in this browser; each existing task keeps its own settings. Reset affects pending controls only. Closing discards the draft and the dialog adds no height to the reading area. See [video transcription](VIDEO_TRANSCRIPTION.md#结果页画面检测--picture-detection-in-results).
 
 画面检测弹窗打开即显示当前画面；滚动自动加载，底部操作始终可达。导出隐藏标记随任务保存在服务端，不使用浏览器存储；应用变化后的检测参数时重置。检测参数的浏览器默认值生命周期保持不变。
 

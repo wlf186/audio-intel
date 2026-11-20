@@ -238,11 +238,14 @@ def decode(source: Path, normalized: Path, frame_directory: Path, roi: dict | No
         if padding > 0:
             samples.silence(padding)
         values = samples.finish(normalized)
-        detector.flush(end)
+        if isinstance(detector, video_detail.PageDetector):
+            detector.finish(end)
+        else:
+            detector.flush(end)
         if auto:
             from .video_detection import materialize
             extra = {}
-            if detector_version in {video_detail.LEGACY_VERSION, video_detail.VERSION}:
+            if isinstance(detector, video_detail.DetailDetector):
                 detector.scenes = detector.result(scene_detail)
                 index.save(frame_directory.parent/NAME, source, roi, detector.outputs, settings.min_free_disk_bytes, version=video_detail.INDEX_VERSIONS[detector_version])
                 extra["video_scene_detail"] = scene_detail

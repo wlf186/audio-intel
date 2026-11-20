@@ -27,7 +27,8 @@ export function SceneDetection({position,jobId,result,capability,onClose,onUpdat
  const video=result.video!
  const [openingRevision,setOpeningRevision]=useState(video.revision)
  const [values,setValues]=useState(()=>video.scene_detection||loadDetection(capability))
- const autoResult=video.detector==='presentation-v4'||['presentation-v5','presentation-v6'].includes(video.detector??'')
+ const hasDetail=Boolean(video.video_scene_detail)
+ const autoResult=video.scene_detection_mode==='auto'||video.detector==='presentation-v4'||hasDetail
  const [detail,setDetail]=useState<SceneDetail>(video.video_scene_detail??'balanced')
  const [mode,setMode]=useState(autoResult?'auto':'custom')
  const [local,setLocal]=useState(Boolean(capability.range_preview&&video.duration>180))
@@ -198,7 +199,7 @@ export function SceneDetection({position,jobId,result,capability,onClose,onUpdat
    <button ref={zoomClose} className="button" onClick={closeZoom}>{t('common.actions.close')}</button></div>
   </div>:null}
   <div hidden={Boolean(focused)} className="scene-detection-body" ref={scrollRoot} tabIndex={0} aria-label={t('sceneDetection.gallery')}>
-   <div className="scene-setting-head"><small>{t(expanded||current?'sceneDetection.appliedMode':'sceneDetection.mode')} · {expanded||current?t(video.detector==='presentation-v4'?'sceneDetection.oldAuto':['presentation-v5','presentation-v6'].includes(video.detector??'')?`sceneDetection.${video.video_scene_detail??'balanced'}`:video.scene_detection?'sceneDetection.custom':'sceneDetection.legacyMode'):t(mode==='auto'&&capability.detail_levels?`sceneDetection.${detail}`:mode==='auto'?'sceneDetection.auto':'sceneDetection.custom')}</small>
+   <div className="scene-setting-head"><small>{t(expanded||current?'sceneDetection.appliedMode':'sceneDetection.mode')} · {expanded||current?t(video.detector==='presentation-v4'?'sceneDetection.oldAuto':hasDetail?`sceneDetection.${video.video_scene_detail??'balanced'}`:video.scene_detection?'sceneDetection.custom':'sceneDetection.legacyMode'):t(mode==='auto'&&capability.detail_levels?`sceneDetection.${detail}`:mode==='auto'?'sceneDetection.auto':'sceneDetection.custom')}</small>
    {!expanded?<button className="button" onClick={()=>setExpanded(true)}>{t('sceneDetection.adjust')}</button>:null}</div>
    {expanded?<section className="scene-setup">
     {capability.modes?<SceneModeChoice value={mode} disabled={busy} onChange={setMode}/>:null}

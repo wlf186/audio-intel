@@ -154,7 +154,7 @@ def test_detail_preview_index_scope_and_legacy_fallback(tmp_path, monkeypatch):
         result = video_detection.preview(dict(request,time_range=scope,video_scene_detail=level),folder,lambda *args:None)
         assert result['cache_hit'] == cached
         assert len(calls)-before == int(not cached)
-        assert result['detector'] == 'presentation-v6'
+        assert result['detector'] == 'presentation-v7'
     index = tmp_path/video_auto_index.NAME
     payload = bytearray(index.read_bytes())
     payload[10] ^= 1
@@ -247,3 +247,56 @@ def test_persisted_v5_keeps_its_selector_and_index_format(tmp_path, monkeypatch)
     assert len(old['concise']) == len(video['scenes'])
     with pytest.raises(ValueError):
         video_auto_index.read(path, source, None, version=3)
+
+
+def test_page_build_preserves_nested_frames_and_complete_state_on_exit():
+    from audio_intel.video_detail import PageDetector
+
+    page = slide()
+    # A fixed title and two columns of text built in sequence.
+    page[70:90:4, 95:310] = 20
+    left = page.copy()
+    left[220:285:6, 110:280] = 45
+    right = left.copy()
+    right[212:290:6, 610:760] = 55
+    detector = PageDetector()
+    for index, frame in enumerate([page]*8 + [left]*8 + [right]*8 + [left]*8):
+        detector.feed(frame, .5*index)
+    detector.finish(16)
+    concise, balanced, detailed = [
+        [s['frame_time'] for s in detector.result(level)]
+        for level in ('concise', 'balanced', 'detailed')
+    ]
+    assert concise == [8]
+    assert balanced == [4, 8]
+    assert set(concise) <= set(balanced) <= set(detailed)
+    assert all(rows[-1]['end'] == 16 for rows in detector.outputs.values())
+
+
+def test_v6_jobs_keep_the_reading_detector_and_index():
+    from audio_intel.video_detail import DETECTORS, INDEX_VERSIONS, ReadingDetector
+
+    assert DETECTORS['presentation-v6'] is ReadingDetector
+    assert INDEX_VERSIONS['presentation-v6'] == 3
+
+
+def test_inset_charts_under_fixed_browser_chrome_use_viewport_detector(monkeypatch):
+    from audio_intel.video_detail import PageDetector, ReadingDetector, structure
+
+    window = slide()
+    window[:, :250] = 20
+    window[80:120:4, 120:470] = 110
+    first = window.copy()
+    first[220:380:9, 300:480] = 32
+    second = window.copy()
+    second[250:430:12, 520:780] = 65
+    def picture(frame):
+        plane, edges = structure(frame.astype(np.int16))
+        return plane, edges, np.zeros_like(edges)
+    called = []
+    def compare(reader, old, new):
+        called.append(True)
+        return 0, True
+    monkeypatch.setattr(ReadingDetector, 'compare', compare)
+    assert PageDetector().compare(picture(first), picture(second)) == (0, True)
+    assert called

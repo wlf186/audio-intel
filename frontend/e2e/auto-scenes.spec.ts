@@ -54,7 +54,7 @@ for(const [width,height] of [[1440,900],[1280,720],[390,844]])test(`local automa
 for (const locale of ['zh-CN','en-US']) for (const width of [1440,390]) {
  test(`scene choices align and fill their groups in ${locale} at ${width}px`,async({page},info)=>{
   const {state,errors}=await uxFixture(page)
-  Object.assign(state.job.result!.video!,{detector:'presentation-v6',video_scene_detail:'balanced'})
+  Object.assign(state.job.result!.video!,{detector:'presentation-v7',video_scene_detail:'balanced'})
   await page.setViewportSize({width,height:900})
   await page.addInitScript(lang=>localStorage.setItem('audio-intel:ui-locale:v1',lang),locale)
   await page.goto('/#asr')

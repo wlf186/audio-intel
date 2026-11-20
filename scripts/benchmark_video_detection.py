@@ -175,7 +175,7 @@ def previews(url, identifier, output, pid_file, work_dir):
         reply.raise_for_status()
         video = reply.json()['result']['video']
         duration = video['duration']
-        auto = video['detector'] in ('presentation-v4','presentation-v5','presentation-v6')
+        auto = video['detector'] in ('presentation-v4','presentation-v5','presentation-v6','presentation-v7')
         for label, center in [('start',0.), ('middle',duration/2), ('end',duration), ('whole',None)]:
             settings = {'mode':'auto'} if auto else {'mode':'custom','settings':{'min_change_percent':1}}
             body = dict(revision=video['revision'], **settings)

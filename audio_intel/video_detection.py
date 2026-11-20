@@ -497,7 +497,7 @@ def preview(request: dict, folder: Path, progress: Callable) -> dict:
             def analyze(samples, phase):
                 detector = video_auto.AutoDetector(low) if auto else StableDetector(request['settings'])
                 if detail:
-                    detector = video_detail.ReadingDetector(low)
+                    detector = video_detail.PageDetector(low)
                 index = video_auto_index.SampleIndex() if auto and (detail or not interval) else None
                 detector.start = low
                 for timestamp, rgb in samples():
@@ -505,7 +505,10 @@ def preview(request: dict, folder: Path, progress: Callable) -> dict:
                     if index is not None:
                         index.add(timestamp, detector.since)
                     progress(phase, timestamp-low, high-low)
-                detector.flush(high)
+                if detail and high == request['duration']:
+                    detector.finish(high)
+                else:
+                    detector.flush(high)
                 if detail:
                     index.save(cache.parent/(video_auto_index.RANGE_NAME if interval else video_auto_index.NAME),
                                source, roi, detector.outputs, request['min_free'], version=video_detail.INDEX_VERSIONS[video_detail.VERSION], interval=interval)

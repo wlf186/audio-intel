@@ -6,7 +6,8 @@ import numpy as np
 from .video_auto import AutoDetector, VERSION as AUTO_VERSION
 
 LEGACY_VERSION = 'presentation-v5'
-VERSION = 'presentation-v6'
+READING_VERSION = 'presentation-v6'
+VERSION = 'presentation-v7'
 LEVELS = ('concise', 'balanced', 'detailed')
 
 
@@ -224,6 +225,97 @@ class ReadingDetector(DetailDetector):
         return tier, True
 
 
-# Requests persist detector identities; cache formats are independently versioned.
-DETECTORS = {AUTO_VERSION: AutoDetector, LEGACY_VERSION: DetailDetector, VERSION: ReadingDetector}
-INDEX_VERSIONS = {AUTO_VERSION: 1, LEGACY_VERSION: 2, VERSION: 3}
+class PageDetector(ReadingDetector):
+    """Group stable slide builds by title and spatially related content."""
+
+    def __init__(self, start: float = 0.) -> None:
+        super().__init__(start)
+        self.header = None
+        self.block = None
+        self.on_page = False
+
+    def compare(self, previous: Picture, current: Picture) -> tuple[int, bool]:
+        plane, edges, overlay = current
+        before, old, prior_overlay = previous
+        header = np.s_[28:78, 45:285]
+        title = edges[header]
+        if self.header is None:
+            self.header = old[header].copy()
+        overlap = (self.header & title).sum()
+        match = overlap / max(1, self.header.sum(), title.sum())
+        region = np.s_[79:233, 24:-24]
+        valid = ~(overlay | prior_overlay)[region]
+        delta = (abs(plane[region] - before[region]) > 24) & valid
+        removed = old[region] & ~edges[region] & delta
+        added = edges[region] & ~old[region] & delta
+        replaced = (removed.sum() > max(110, .35*(old[region] & valid).sum())
+                    and added.sum() > .35*removed.sum())
+        # A presentation inside a browser can have a perfectly static browser
+        # header across unrelated charts. Defer inset viewports to the reader.
+        sidebar = plane[85:215:5, 40:95:5]
+        body = plane[85:215:5, 170:365:5]
+        inset = abs(np.median(sidebar) - np.median(body)) > 80
+        slide = (not inset and not replaced and self.header.sum() >= 80 and match >= .79
+                 and (self.on_page or edges.mean() < .18) and plane.std() > 14)
+        if not slide:
+            old_page = self.on_page
+            self.header = title.copy()
+            self.block = None
+            self.on_page = False
+            if old_page and match < .45:
+                return 0, True
+            return super().compare(previous, current)
+        self.on_page = True
+        # An in-place glyph replacement inside existing text can be a small
+        # result change. Require a compact edit with unchanged neighbouring ink.
+        if 8 <= delta.sum() <= 150 and min(removed.sum(), added.sum()) >= 5:
+            y, x = np.nonzero(delta)
+            if 3 <= np.ptp(y) <= 14 and 2 <= np.ptp(x) <= 18:
+                neighbours = old[region][max(0, y.min()-2):y.max()+3,
+                                         max(0, x.min()-10):x.max()+11]
+                if neighbours.sum() > 3 * removed.sum():
+                    return 1, True
+        # Remove long straight rules and empty panel borders.
+        added[added.sum(axis=1) > max(20, added.sum() * .18)] = False
+        added[:, added.sum(axis=0) > max(14, added.sum() * .15)] = False
+        ys, xs = np.nonzero(added)
+        if len(xs) < 32 or np.ptp(ys) < 4 or removed.sum() > 3*len(xs):
+            return 3, False
+        center = (np.median(xs), np.median(ys))
+        # A short section heading or an empty panel precedes the actual build.
+        if center[1] < 25 and np.percentile(ys, 90) < 26 and len(xs) < 500:
+            return 3, False
+        if self.block is None:
+            self.block = center
+            return 3, True
+        x, y = self.block
+        switched_side = (center[0] < 216) != (x < 216)
+        conclusion = center[1] > 125 and y < 125
+        distinct = (conclusion or switched_side and abs(center[0]-x) > 65
+                    or len(xs) > 800 and abs(center[0]-x) > 95)
+        self.block = center
+        if distinct or (removed.sum() > .65*len(xs) and delta.sum() < 180):
+            return 1, True
+        return 2, True
+
+    def finish(self, end: float) -> None:
+        if self.anchor is not None and self.on_page and end-self.start <= 15:
+            plane = self.anchor[::8, ::8]
+            side = plane.shape[1]//3
+            border = np.concatenate((plane[:, :side].ravel(), plane[:, -side:].ravel()))
+            middle = plane[plane.shape[0]//3:2*plane.shape[0]//3, side:-side]
+            # A thumbnail above its short caption, surrounded by black.
+            top, bottom = np.array_split(middle, 2)
+            if ((border < 12).mean() > .99 and (top > 40).mean() > .30
+                    and .015 < (bottom > 40).mean() < .30
+                    and (plane[:plane.shape[0]//4] < 12).mean() > .99):
+                for scenes in self.outputs.values():
+                    if scenes:
+                        scenes[-1]['end'] = end
+                return
+        self.flush(end)
+
+
+DETECTORS = {AUTO_VERSION: AutoDetector, LEGACY_VERSION: DetailDetector,
+             READING_VERSION: ReadingDetector, VERSION: PageDetector}
+INDEX_VERSIONS = {AUTO_VERSION: 1, LEGACY_VERSION: 2, READING_VERSION: 3, VERSION: 4}
