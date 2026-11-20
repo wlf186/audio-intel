@@ -106,6 +106,61 @@ jobs:
         name: linux-browser-logs
         path: logs/
         if-no-files-found: ignore
+  browser_trial:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      AUDIO_INTEL_MOCK_MODE: '1'
+      AUDIO_INTEL_PORT: '20810'
+      AUDIO_INTEL_LOAD_ENV: '0'
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+    - name: Install API runtime and build frontend
+      run: ./service.sh setup api
+    - name: Start and exercise services
+      run: 'AUDIO_INTEL_MOCK_MODE=1 ./service.sh start all
+
+        .runtime/api/bin/python scripts/smoke_test.py
+
+        '
+    - name: Install Chromium
+      run: corepack pnpm@10.34.5 --dir frontend exec playwright install --with-deps
+        chromium
+    - name: Browser checks
+      run: corepack pnpm@10.34.5 --dir frontend test:e2e --shard=${{ matrix.shard }}/2
+    - name: Repeat timing regressions
+      run: corepack pnpm@10.34.5 --dir frontend test:e2e --grep '@timing' --repeat-each=5
+        --output=../logs/playwright-stability
+      if: (github.event_name == 'workflow_dispatch' && inputs.stability_check) ||
+        startsWith(github.ref, 'refs/heads/ci/stability/')
+      env:
+        PLAYWRIGHT_JUNIT_OUTPUT_FILE: ../logs/ci/stability.xml
+    - name: Stop services
+      if: always()
+      run: ./service.sh stop all
+    - name: Upload test reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-browser-trial-${{ matrix.shard }}-reports
+        path: logs/ci/
+        if-no-files-found: ignore
+    - name: Upload logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-browser-trial-${{ matrix.shard }}-logs
+        path: logs/
+        if-no-files-found: ignore
   linux:
     needs:
     - backend
